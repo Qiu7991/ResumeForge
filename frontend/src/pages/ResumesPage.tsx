@@ -20,6 +20,7 @@ import type { DiffViewData } from "../types/resumeFieldDiff";
 import { useApi } from "../hooks/useApi";
 import type { ResumeBrief } from "../types";
 import ResumeTable from "./resumes/ResumeTable";
+import BatchExportModal from "./resumes/BatchExportModal";
 import DeliveryArchiveModal from "../components/resume/DeliveryArchiveModal";
 import ResumeRenameModal from "./resumes/ResumeRenameModal";
 import ResumeNoteModal from "./resumes/ResumeNoteModal";
@@ -29,6 +30,7 @@ import { useSelectAllResumes } from "./resumes/useSelectAllResumes";
 export default function ResumesPage() {
   const navigate = useNavigate();
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const { message, modal } = App.useApp();
   // 批量选择：勾选若干份简历后一次删除（全部进回收站，可恢复）。
@@ -322,6 +324,9 @@ export default function ResumesPage() {
               </Button>
             </Tooltip>
           )}
+          <Button disabled={batch.selectedCount === 0} onClick={() => setExportOpen(true)}>
+            导出所选
+          </Button>
           <Button danger disabled={batch.selectedCount === 0} onClick={removeSelected}>
             删除所选
           </Button>
@@ -363,6 +368,11 @@ export default function ResumesPage() {
             { replace: true },
           );
         }}
+      />
+      <BatchExportModal
+        open={exportOpen}
+        resumeIds={[...batch.selectedIds]}
+        onClose={() => setExportOpen(false)}
       />
       <ResumeRenameModal
         open={renameTarget !== null}

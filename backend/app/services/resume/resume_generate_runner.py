@@ -85,6 +85,22 @@ class ResumeGenerateRunner:
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    def _log_generation_usage(
+        self,
+        task_id: int,
+        generator: Any,
+        *,
+        estimated_prompt_tokens: int | None = None,
+    ) -> None:
+        """保留实例方法薄壳：实现已迁到 ``resume_runner_support``。
+
+        上游测试按 ``ResumeGenerateRunner()._log_generation_usage(...)`` 调用；
+        改名/删掉它等于给下次合并埋一个冲突，所以只在这里转发。
+        """
+        log_generation_usage(
+            task_id, generator, estimated_prompt_tokens=estimated_prompt_tokens
+        )
+
     def current_task_id(self) -> int | None:
         return self._current_task_id
 

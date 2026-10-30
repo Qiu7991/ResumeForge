@@ -64,9 +64,14 @@ def _export_record(
     request: ExportRequest,
     *,
     allow_incomplete: bool,
+    save_copy: bool = True,
     record_delivery: bool = False,
 ) -> Response:
     """导出闸门 + 管线委托 + 响应头，是 GET / POST 两条导出路径的共用出口。
+
+    ``save_copy``：为真时（默认）按设置里的「生成内容保存位置」额外落盘一份。
+    批量导出传假——否则一次导出 20 份会在保存目录里刷出 20 个文件，而批量导出的
+    交付物本来就是那个 zip（对齐上游同名参数）。
 
     ``record_delivery``（RF-17）：为真时把这次导出冻结成一份 ``source="export"``
     的投递快照（「正式投递存档」语义）。**默认不落**——预览导出零膨胀。新调用方
@@ -119,7 +124,7 @@ def _export_record(
     # 「生成内容保存位置」：设置非空且目录合法时，把同一份产物再落盘一份。**best-effort**：
     # 写失败只记日志、不阻断下载——用户已经等了一次生成，不能因为本地磁盘的问题白等。
     saved_location = get_export_save_location(db)
-    if saved_location and validate_directory(saved_location) is None:
+    if save_copy and saved_location and validate_directory(saved_location) is None:
         try:
             final_path = save_artifact(artifact.content, saved_location, artifact.filename)
         except (OSError, ValueError) as exc:

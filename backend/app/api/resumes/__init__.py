@@ -22,6 +22,7 @@ from ...services.llm import create_provider as create_provider
 from ...services.settings_service import get_llm_config as get_llm_config
 from . import (
     ai_edits_routes,
+    batch_export_routes,
     crud_routes,
     delivery_archive_routes,
     export_routes,
@@ -46,6 +47,8 @@ router = APIRouter(tags=["resumes"])
 # 该校验不参考父 router 自身的 prefix，因此原 ``APIRouter(prefix="/api/resumes")`` 写法无法通过。
 # 最终路径拼接公式为 父链 prefix + route.path，两种写法产出的 URL 与 OpenAPI 路径逐字符一致。
 router.include_router(templates_routes.router, prefix="/api/resumes")
+# 字面量路径必须在 crud 的 /{resume_id} 之前（同 GET /templates 的理由）。
+router.include_router(batch_export_routes.router, prefix="/api/resumes")
 router.include_router(generate_routes.router, prefix="/api/resumes")
 router.include_router(delivery_archive_routes.router, prefix="/api/resumes")
 router.include_router(crud_routes.router, prefix="/api/resumes")

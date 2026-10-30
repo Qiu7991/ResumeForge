@@ -90,6 +90,12 @@ _TEST_EXEMPTIONS: dict[str, Exemption] = {
     # ProfilePage.test.tsx 的豁免（触发条件 >800 行）已于 2026-10-13 到期执行：
     # 按其自身预案拆出 ProfilePage.webform.test.tsx + src/test/profilePageHarness.tsx，
     # 不再豁免。
+    # 2026-10-30 本地二开：岗位导入端点（import-url / import-current）的用例并入本文件
+    # 后 514 行，超线 14 行。该文件按域聚合多个新模块的 API 用例，拆出岗位域需要复制
+    # 共享的 client/db_session 脚手架与构造辅助。到期前拆出 test_job_import_api.py。
+    "backend/tests/test_new_modules_api.py": Exemption(
+        "本地二开新增岗位导入用例 +27 行，共享脚手架", _PR18_MULTI_PR_GROWTH
+    ),
 }
 
 # 书面豁免清单（路径相对仓库根；理由必须具体，禁止「暂缓拆分」式空话）
@@ -161,6 +167,14 @@ _EXEMPTIONS: dict[str, Exemption] = {
     #   拆分批执行并删除：datasets 拆出 datasets_admin，resume_generator 拆出
     #   resume_generator_prompts，resume_risk 拆出 resume_risk_rules 与
     #   resume_risk_outbound——均为纯搬迁，monkeypatch 落点留在原模块。）
+    # 2026-10-30 本地二开：模板库扩展给每套模板登记版式默认值，本文件 714 行
+    # （+346 行，纯声明式数据）。上游 10-23 起正在重构模板版式/下线模板界面，
+    # 现在拆分会与上游改动正面冲突；等合并上游后按上游的新结构一并迁移，
+    # 届时本豁免撤销（到期不续期即红）。
+    "backend/app/services/resume/resume_template_layout.py": Exemption(
+        "本地新增 9 套模板的版式数据（714 行），待合并上游后一并拆分",
+        _PR18_MULTI_PR_GROWTH,
+    ),
 }
 
 # scripts/（*.py，预算 800）的豁免清单：CLI/工具脚本的结构性长度。
