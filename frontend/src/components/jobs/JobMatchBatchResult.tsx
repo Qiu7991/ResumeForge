@@ -10,6 +10,7 @@ import {
   type JobMatchBatchOut,
   type MatchCondition,
 } from "../../types";
+import JobComparisonResult from "./JobComparisonResult";
 
 type BatchMatchResult = NonNullable<JobMatchBatchItem["result"]>;
 
@@ -158,13 +159,21 @@ function CollapselessDetail({ item }: { item: JobMatchBatchItem }) {
 }
 
 export function BatchResultView({ batch }: { batch: JobMatchBatchOut }) {
+  const comparing = batch.mode === "compare";
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      {batch.comparison ? (
+        <JobComparisonResult comparison={batch.comparison} items={batch.items} />
+      ) : null}
       <Alert
         type={batch.failed_count > 0 ? "warning" : "success"}
         showIcon
         title={`已完成 ${batch.completed_count} 个岗位，${batch.failed_count} 个岗位失败`}
-        description={`结果已保存，可在「历史记录」中回看；已按匹配度参考分从高到低排列。${batch.model ? `本批使用模型：${batch.model}` : "本批未配置模型，使用本地降级结果。"}`}
+        description={`结果已保存，可在「历史记录」中回看；${
+          comparing
+            ? "已按横向对比的名次排列（失败岗位在末尾）。"
+            : "已按匹配度参考分从高到低排列。"
+        }${batch.model ? `本批使用模型：${batch.model}` : "本批未配置模型，使用本地降级结果。"}`}
       />
       {batch.items.length === 0 ? (
         <Typography.Text type="secondary">没有可展示的分析结果</Typography.Text>

@@ -8,6 +8,8 @@ import { navigateForTask, notifyTaskDone } from "./taskNotify";
 export interface JobMatchBackgroundTaskView {
   id: string;
   label: string;
+  /** compare = 横向对比（AI 对比选岗）；老任务没有该字段，按逐岗匹配展示。 */
+  mode: "match" | "compare";
   status: JobMatchBackgroundTask["status"];
   requestedCount: number;
   completedCount: number;
@@ -51,6 +53,7 @@ function toView(task: JobMatchBackgroundTask, label: string): JobMatchBackground
   return {
     id: task.task_id,
     label,
+    mode: task.mode ?? "match",
     status: task.status,
     requestedCount: task.requested_count,
     completedCount: task.completed_count,
@@ -104,7 +107,7 @@ function finish(id: string, task: JobMatchBackgroundTaskView): void {
   emit();
   if (task.status === "completed") {
     notifyTaskDone({
-      title: "岗位适配度分析完成",
+      title: task.mode === "compare" ? "AI 对比选岗完成" : "岗位适配度分析完成",
       description:
         "已完成 " +
         task.completedCount +
@@ -125,13 +128,13 @@ function finish(id: string, task: JobMatchBackgroundTaskView): void {
   } else if (task.status === "failed") {
     notifyTaskDone({
       kind: "error",
-      title: "岗位适配度分析失败",
+      title: task.mode === "compare" ? "AI 对比选岗失败" : "岗位适配度分析失败",
       description: task.error || "请稍后重试。",
     });
   } else {
     notifyTaskDone({
       kind: "warning",
-      title: "岗位适配度分析已取消",
+      title: task.mode === "compare" ? "AI 对比选岗已取消" : "岗位适配度分析已取消",
       description: task.batchId ? "取消前已完成的结果仍已保存。" : undefined,
     });
   }

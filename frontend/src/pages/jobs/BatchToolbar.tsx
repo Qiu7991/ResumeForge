@@ -8,6 +8,7 @@ import {
   ClearOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  RobotOutlined,
   SendOutlined,
 } from "@ant-design/icons";
 import { App, Button, Popconfirm, Select, Space, Tooltip, Typography } from "antd";
@@ -31,6 +32,7 @@ export function BatchToolbar({
   totalCount = 0,
   selectAllPagesLoading = false,
   onSelectAllPages,
+  openMatchBatch,
 }: {
   selectionMode: boolean;
   selectedJobIds: number[];
@@ -46,6 +48,8 @@ export function BatchToolbar({
   selectAllPagesLoading?: boolean;
   /** 一键全选所有页；未传（undefined）时不渲染该入口。 */
   onSelectAllPages?: () => void;
+  /** 逐岗匹配度分析（对比选岗是筛选条的另一个入口）；未传时不渲染。 */
+  openMatchBatch?: (view?: "setup" | "history", mode?: "match" | "compare") => void;
 }) {
   // 导出 CSV 是纯前端动作（勾选的 id → 后端序列化 → 触发下载）：
   // 状态本地持有，不占用页面级的 batchAction（那边留给会改数据的操作）。
@@ -120,6 +124,15 @@ export function BatchToolbar({
           加入投递队列
         </Button>
       </Tooltip>
+      {openMatchBatch ? (
+        <Button
+          icon={<RobotOutlined />}
+          disabled={selectedJobIds.length === 0 || batchAction !== null}
+          onClick={() => openMatchBatch("setup", "match")}
+        >
+          匹配度分析
+        </Button>
+      ) : null}
       <Button
         icon={<DownloadOutlined />}
         disabled={selectedJobIds.length === 0 || batchAction !== null}

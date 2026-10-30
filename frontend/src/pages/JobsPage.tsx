@@ -2,7 +2,7 @@
 import { App } from "antd";
 import type { TableRowSelection } from "antd/es/table/interface";
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { markCandidateJobImported } from "../api/candidateJob";
 import { openWebFormUrl } from "../api/webform";
 import { startBackfill } from "../api/apply";
@@ -27,6 +27,8 @@ import type { BatchAction } from "./jobs/jobFilterOptions";
 import { useJobQueue } from "./jobs/useJobQueue";
 import { useJobsPageState } from "./jobs/useJobsPageState";
 import { useSelectAllJobs } from "./jobs/useSelectAllJobs";
+import { resolveMatchBatchGate } from "./jobs/matchBatchGate";
+import { useMatchBatchHistoryDeepLink } from "./jobs/useMatchBatchHistoryDeepLink";
 import { bulkEnqueueJobs, bulkEnqueueSummary } from "../components/apply/queue/bulkEnqueue";
 
 export default function JobsPage() {
@@ -73,6 +75,7 @@ export default function JobsPage() {
   const [matchJob, setMatchJob] = useState<Job | null>(null);
   const [matchBatchOpen, setMatchBatchOpen] = useState(false);
   const [matchBatchView, setMatchBatchView] = useState<"setup" | "history">("setup");
+  const [matchBatchMode, setMatchBatchMode] = useState<"match" | "compare">("compare");
   const [webFormJobId, setWebFormJobId] = useState<number | null>(null);
   const [selectedJobIds, setSelectedJobIds] = useState<number[]>([]);
   const [batchStatus, setBatchStatus] = useState<string>();
@@ -89,25 +92,8 @@ export default function JobsPage() {
   const [importedCandidateId, setImportedCandidateId] = useState<number | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
 
-  // 完成通知的「查看结果」深链（/jobs?match_batch=history）：打开分析记录后清掉参数，
-  // 让刷新/返回不会再弹。useJobsPageState 管它自己的筛选参数，这里只动 match_batch。
-  // URL → state 的镜像同步属"派生事件"，规则按书面理由豁免（与 useJobsPageState 同模式）。
-  /* eslint-disable react-hooks/set-state-in-effect */
-  const [searchParams, setSearchParams] = useSearchParams();
-  useEffect(() => {
-    if (searchParams.get("match_batch") !== "history") return;
-    setMatchBatchView("history");
-    setMatchBatchOpen(true);
-    setSearchParams(
-      (previous) => {
-        const next = new URLSearchParams(previous);
-        next.delete("match_batch");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [searchParams, setSearchParams]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  // 完成通知的「查看结果」深链（/jobs?match_batch=history）：见 hook 内注释。
+  useMatchBatchHistoryDeepLink(setMatchBatchView, setMatchBatchOpen);
 
   useEffect(() => {
     if (error) message.error(error);
@@ -307,25 +293,28 @@ export default function JobsPage() {
     setSelectionMode(true);
   }, [batchAction]);
 
-  const openMatchBatch = (view: "setup" | "history" = "setup") => {
-    if (view === "setup") {
-      if (!selectionMode) {
-        // 「AI 分析适配度」分析的是勾选的岗位：没进选择模式说明用户还没机会勾选——
-        // 直接带他进选择模式，而不是丢一句「请先选择岗位」的死路提示。
-        setSelectionMode(true);
-        message.info("已进入选择模式，勾选岗位后点分析");
-        return;
-      }
-      if (selectedJobIds.length === 0) {
-        message.warning("请先选择岗位");
-        return;
-      }
-      if (selectedJobIds.length > 50) {
-        message.warning("一次最多分析 50 个岗位");
-        return;
-      }
+  const openMatchBatch = (
+    view: "setup" | "history" = "setup",
+    mode: "match" | "compare" = "compare",
+  ) => {
+    const gate = resolveMatchBatchGate({
+      view,
+      mode,
+      selectionMode,
+      selectedCount: selectedJobIds.length,
+    });
+    if (gate.kind === "enter-selection") {
+      // 分析的是勾选的岗位：没进选择模式说明用户还没机会勾选——直接带他进选择模式。
+      setSelectionMode(true);
+      message.info("已进入选择模式，勾选岗位后点「AI 对比选岗」");
+      return;
     }
-    setMatchBatchView(view);
+    if (gate.kind === "warn") {
+      message.warning(gate.message);
+      return;
+    }
+    setMatchBatchMode(gate.mode);
+    setMatchBatchView(gate.view);
     setMatchBatchOpen(true);
   };
 
@@ -385,6 +374,7 @@ export default function JobsPage() {
         totalCount={jobs?.total ?? 0}
         selectAllPagesLoading={selectAllPagesLoading}
         onSelectAllPages={() => void selectAllPages()}
+        openMatchBatch={openMatchBatch}
       />
 
       <JobTable
@@ -491,6 +481,7 @@ export default function JobsPage() {
         open={matchBatchOpen}
         jobIds={selectedJobIds}
         initialView={matchBatchView}
+        mode={matchBatchMode}
         onClose={() => setMatchBatchOpen(false)}
       />
     </div>

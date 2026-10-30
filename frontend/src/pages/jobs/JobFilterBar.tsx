@@ -56,7 +56,7 @@ export function JobFilterBar({
   batchAction: BatchAction;
   selectionMode: boolean;
   exitSelectionMode: () => void;
-  openMatchBatch: (view?: "setup" | "history") => void;
+  openMatchBatch: (view?: "setup" | "history", mode?: "match" | "compare") => void;
   emptyDescriptionJobIds: number[];
   backfilling: boolean;
   backfillDetails: () => Promise<void>;
@@ -168,9 +168,9 @@ export function JobFilterBar({
         <Button
           type="primary"
           disabled={batchAction !== null}
-          onClick={() => openMatchBatch("setup")}
+          onClick={() => openMatchBatch("setup", "compare")}
         >
-          AI 分析适配度
+          AI 对比选岗
         </Button>
         <Button
           icon={<HistoryOutlined />}

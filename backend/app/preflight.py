@@ -40,6 +40,7 @@ _REQUIRED_FILES: Final[tuple[tuple[str, str], ...]] = (
     ("app/prompts/interview_report.md", "模拟面试评分报告提示词"),
     ("app/prompts/interview_system.md", "模拟面试官系统提示词"),
     ("app/prompts/job_analysis.md", "岗位分析提示词"),
+    ("app/prompts/job_comparison.md", "岗位横向对比（AI 对比选岗）提示词"),
     ("app/prompts/job_match.md", "岗位匹配度分析提示词"),
     ("app/prompts/job_multi_extract.md", "多份招聘信息拆分提示词"),
     ("app/prompts/job_text_extract.md", "招聘信息识别提示词"),

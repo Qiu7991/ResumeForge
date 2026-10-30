@@ -260,13 +260,13 @@ describe("JobsPage", () => {
     );
   });
 
-  it("未进选择模式点「AI 分析适配度」时直接进入选择模式并提示", async () => {
+  it("未进选择模式点「AI 对比选岗」时直接进入选择模式并提示", async () => {
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "AI 分析适配度" }));
+    fireEvent.click(screen.getByRole("button", { name: "AI 对比选岗" }));
 
     // 不是「请先选择岗位」的死路提示，而是把用户带进选择模式。
-    expect(await screen.findByText("已进入选择模式，勾选岗位后点分析")).toBeInTheDocument();
+    expect(await screen.findByText("已进入选择模式，勾选岗位后点「AI 对比选岗」")).toBeInTheDocument();
     expect(screen.getByText("退出选择")).toBeInTheDocument();
   });
 

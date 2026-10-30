@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -162,7 +163,7 @@ def build_match_messages(
 def parse_match_result(raw: str) -> JobMatchResult:
     """严格解析模型返回的匹配 JSON；仅兼容整段 Markdown 围栏包裹。"""
     if not raw or len(raw) > MAX_MATCH_RESPONSE_CHARS:
-        raise LLMError("模型返回的匹配结果为空或过长，请重试")
+        raise LLMError("模型返回的匹配结果为空或过长，请重试", retryable=True)
     cleaned = raw.strip()
     fenced = _MARKDOWN_JSON_RE.fullmatch(cleaned)
     if fenced is not None:
@@ -170,13 +171,13 @@ def parse_match_result(raw: str) -> JobMatchResult:
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise LLMError("模型未返回有效的匹配结果 JSON，请重试") from exc
+        raise LLMError("模型未返回有效的匹配结果 JSON，请重试", retryable=True) from exc
     if not isinstance(data, dict):
-        raise LLMError("模型返回的匹配结果结构无效，请重试")
+        raise LLMError("模型返回的匹配结果结构无效，请重试", retryable=True)
     try:
         return JobMatchResult.model_validate(data)
     except ValidationError as exc:
-        raise LLMError("模型返回的匹配结果字段不完整或超出限制，请重试") from exc
+        raise LLMError("模型返回的匹配结果字段不完整或超出限制，请重试", retryable=True) from exc
 
 
 def _normalize(value: str) -> str:
@@ -243,7 +244,7 @@ def validate_evidence(result: JobMatchResult, jd_source: str, personal_source: s
         if quote and not _candidate_in_sources(
             _normalize(quote), [normalized_jd], _INCLUSION_THRESHOLD
         ):
-            raise LLMError("模型返回的匹配结论缺少招聘原文依据，请重试")
+            raise LLMError("模型返回的匹配结论缺少招聘原文依据，请重试", retryable=True)
         evidence = condition.evidence.strip()
         if not evidence:
             continue
@@ -254,7 +255,7 @@ def validate_evidence(result: JobMatchResult, jd_source: str, personal_source: s
             [normalized_personal, normalized_jd],
             _INCLUSION_THRESHOLD,
         ):
-            raise LLMError("模型返回的匹配证据无法在资料或简历中核对，请重试")
+            raise LLMError("模型返回的匹配证据无法在资料或简历中核对，请重试", retryable=True)
 
 
 def _all_statuses(result: JobMatchResult) -> list[str]:
@@ -313,6 +314,41 @@ async def analyze_match(
         len(result.bonus_items),
     )
     return finalize_match_result(result)
+
+
+# 单岗匹配最多尝试次数：模型"这次产出跑偏"（JSON/证据核对不合格）再要一次通常就好；
+# 与批量匹配共用同一常量，避免两条路径的重试策略分叉。
+MAX_MATCH_ATTEMPTS_PER_JOB = 2
+
+
+async def analyze_match_with_retry(
+    provider: BaseLLMProvider,
+    job_payload_data: dict[str, Any],
+    profile_text: str,
+    resume_text: str,
+    *,
+    max_attempts: int = MAX_MATCH_ATTEMPTS_PER_JOB,
+    should_cancel: Callable[[], bool] | None = None,
+) -> JobMatchResult:
+    """单岗匹配的"失败再试一次"收口（单岗端点与批量匹配共用）。
+
+    只重试可重试的失败（``LLMError.retryable``：模型这次的产出不合格）；传输层
+    429/5xx 已由 provider 自己重试过，这里不再叠一层。每一次尝试都是一次真实模型
+    请求，受同一个 provider 的请求预算约束；取消信号优先，命中就不再重试。
+    """
+    last_error: LLMError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await analyze_match(provider, job_payload_data, profile_text, resume_text)
+        except LLMError as exc:
+            last_error = exc
+            if attempt >= max_attempts or not getattr(exc, "retryable", False):
+                raise
+            if should_cancel is not None and should_cancel():
+                raise
+            logger.info("岗位匹配将自动重试（第 %s 次尝试失败）：%s", attempt, exc)
+    assert last_error is not None  # pragma: no cover - 循环至少执行一次
+    raise last_error
 
 
 def _requirement_lines(job_payload_data: dict[str, Any]) -> list[str]:
@@ -400,7 +436,9 @@ async def generate_greeting(
 
 
 __all__ = [
+    "MAX_MATCH_ATTEMPTS_PER_JOB",
     "analyze_match",
+    "analyze_match_with_retry",
     "build_greeting_messages",
     "build_match_messages",
     "finalize_match_result",

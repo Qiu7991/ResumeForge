@@ -25,6 +25,7 @@
 | BOSS 详情解析（从 boss_search 拆出） | `backend/app/services/sites/boss_detail_parse.py` |
 | 底稿派生 / 生成 runner 支撑 | `backend/app/services/resume/resume_base_derive.py`、`resume_runner_support.py` |
 | 简历批量导出 | `backend/app/api/resumes/batch_export_routes.py`、`frontend/src/api/resumeBatchExport.ts`、`frontend/src/pages/resumes/BatchExportModal.tsx` |
+| AI 对比选岗（横向对比） | `backend/app/schemas/job_comparison.py`、`services/job/job_comparison.py`、`job_comparison_store.py`、`prompts/job_comparison.md`、`frontend/src/components/jobs/JobComparisonResult.tsx` |
 | 9 套技术方向模板 | `backend/app/templates/resume_{php,java,node,ios,android,web,cpp,architect,dev}.html.j2` |
 
 新增文件可以直接复用上游的公共能力，但**不要**为了"以后好合并"去复制上游代码；
@@ -38,6 +39,7 @@
 | 招呼语闸门 | `services/apply/task_apply.py`、`schemas/apply/config.py`、`api/apply.py`、`prompts/apply_greeting.md` | 未确认招呼语默认拒投（`require_greeting_review`），提示语按 JD 生成 |
 | 浏览器 | `services/browser/browser_manager.py` | Ego Lite 选项、列表式启动参数、扩展加载开关 |
 | 岗位 | `api/jobs.py`、`schemas/job.py`、`services/sites/boss_search*.py`、`frontend/src/pages/JobsPage.tsx` 等 | 收录时间排序、复选框常驻、类型默认社招、链接导入接线 |
+| 批量匹配 / 对比 | `api/job_match.py`、`services/job/job_match_batch.py`、`job_match_background.py`、`schemas/job_match_batch.py`、`services/job/job_match.py` | 移植上游 10-28：`mode=compare`、逐岗可重试失败、对比结论存 `app_setting`（零迁移）、LLMError.retryable |
 | 生成/修订 | `resume_generate_runner.py`、`GenerateResumeModal.tsx`、`ResumeReviseModal.tsx`、`api/client.ts`（`ai` 预算） | 可选底稿、180s 预算、等待秒数与耗时提示 |
 | 设置 | `components/settings/ApiKeyInput.tsx`、`LLMConfigCard.tsx` | 编辑态空框替换、显示后可编辑、清除已保存密钥 |
 | 导出 | `api/resumes/export_routes.py` | 仅新增 `save_copy` 参数（批量导出不往保存目录刷 N 份副本；上游同名参数） |
@@ -56,10 +58,14 @@
    这是产品取向差异，合并前先决定保不保留（见 `docs/upgrading.md` 的上游同步一节）。
 4. **隐藏板块是用户意图**：被隐藏的专业技能/校园经历/荣誉奖项**不放进简历、不润色**，
    不要以"内容更完整"为理由恢复。
-5. **单文件 500 行预算**：本地新增 9 套模板把 `resume_template_layout.py` 顶到 714 行，
+5. **资料取数口径**：上游 10-28 起 AI 读「当前资料组 + 去隐藏字段」（`profile/ai_profile.py`
+   + `profile_projection`），本仓库没有那套资料组投影，对比与批量匹配沿用
+   `get_profile_detail`（与单岗匹配一致）。合并上游资料组功能时，把
+   `job_match_batch.build_batch_inputs` 里的 `get_profile_detail` 换回 `load_ai_profile` 即可。
+6. **单文件 500 行预算**：本地新增 9 套模板把 `resume_template_layout.py` 顶到 714 行，
    已按仓库规则登记书面豁免（到期 2026-11-15）。合并上游后优先按上游新结构迁移，
    不要再往这个文件里堆数据。
-6. **站点名只出现在后端注册表**：前端生产代码禁止硬编码 `BOSS`/`zhipin` 等字样
+7. **站点名只出现在后端注册表**：前端生产代码禁止硬编码 `BOSS`/`zhipin` 等字样
    （`test_qa_browser_sites_adversarial.py` 钉住），新页面用"当前招聘网站"这类措辞。
 
 ## 三、新增功能的兼容性约定
@@ -114,7 +120,8 @@ git diff --name-only --diff-filter=U
 
 - `resume_template_layout.py` 714 行（豁免到期 2026-11-15）——合并上游后按新结构拆分。
 - `test_new_modules_api.py` 514 行（豁免到期 2026-11-15）——拆出 `test_job_import_api.py`。
-- 上游 10-28 的「AI 对比选岗」「AI 任务与用量计费」尚未移植；后者依赖上游
-  `ai_task_runner` / `batch_operation` 底座，移植前先评估是否连带引入设置页。
+- 「AI 对比选岗」已移植（含可重试失败与本地降级），但**资料组投影层未移植**（见第二节第 5 条）。
+- 上游 10-28 的「AI 任务与用量计费」尚未移植；它依赖 `ai_task_runner` / `batch_operation`
+  底座与设置页的批量区，移植前先评估是否连带引入。
 - 本地未跟踪：`frontend/.npmrc`（npmmirror 镜像配置）、`frontend/runtime/`（调试产物），
   不要提交。

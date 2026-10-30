@@ -36,20 +36,28 @@ def profile_text(profile: UserProfile) -> str:
     )
 
 
+def job_resume_text(db: Session, job: Job) -> str:
+    """岗位对应简历（绑定/默认）的序列化文本；没有简历时是空串。
+
+    单岗匹配与批量匹配共用这一处序列化（上游 10-28 拆出），避免两条链路对
+    "模型看到的简历"出现差异。
+    """
+    resume = apply_service.resolve_resume(db, job.id, None)
+    if resume is None:
+        return ""
+    return json.dumps(
+        {"title": resume.title, "job_title": resume.job_title, "content": resume.content},
+        ensure_ascii=False,
+    )
+
+
 def match_source_texts(
     db: Session, job: Job, *, profile: UserProfile | None = None
 ) -> tuple[UserProfile, str, str]:
     """返回岗位匹配所需的资料文本与岗位对应简历文本。"""
     current_profile = profile or get_profile_detail(db)
     personal_text = profile_text(current_profile)
-    resume = apply_service.resolve_resume(db, job.id, None)
-    resume_text = ""
-    if resume is not None:
-        resume_text = json.dumps(
-            {"title": resume.title, "job_title": resume.job_title, "content": resume.content},
-            ensure_ascii=False,
-        )
-    return current_profile, personal_text, resume_text
+    return current_profile, personal_text, job_resume_text(db, job)
 
 
-__all__ = ["match_source_texts", "profile_is_empty", "profile_text"]
+__all__ = ["job_resume_text", "match_source_texts", "profile_is_empty", "profile_text"]

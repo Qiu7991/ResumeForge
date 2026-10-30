@@ -26,6 +26,8 @@ const BATCH: JobMatchBatchOut = {
   completed_count: 2,
   failed_count: 0,
   model: "demo-model",
+  mode: "match",
+  comparison: null,
   created_at: "2026-09-29T08:00:00",
   updated_at: "2026-09-29T08:00:00",
   items: [
@@ -128,6 +130,7 @@ describe("JobMatchBatchPanel", () => {
       expect(apiMocks.startJobMatchBatchTask).toHaveBeenCalledWith({
         job_ids: [2, 1],
         force: false,
+        mode: "match",
       }),
     );
     expect(backgroundMocks.watchJobMatchBatchTask).toHaveBeenCalledWith(
@@ -227,5 +230,30 @@ describe("JobMatchBatchPanel", () => {
     );
     // 弹卡有自己的关闭按钮；面板没有被切走（分析设置页签的入口还在）。
     expect(screen.getAllByRole("button", { name: /关\s*闭/ }).length).toBeGreaterThan(1);
+  });
+});
+
+describe("JobMatchBatchPanel compare 模式", () => {
+  it("以 AI 对比选岗为标题/说明，并把 mode=compare 传给后台任务", async () => {
+    renderPanel({ mode: "compare" });
+
+    expect((await screen.findAllByText("AI 对比选岗")).length).toBeGreaterThan(0);
+    expect(
+      await screen.findByText(/将先逐岗分析 2 个岗位，再横向对比排出名次/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /开始分析/ }));
+
+    await waitFor(() =>
+      expect(apiMocks.startJobMatchBatchTask).toHaveBeenCalledWith({
+        job_ids: [2, 1],
+        force: false,
+        mode: "compare",
+      }),
+    );
+    expect(backgroundMocks.watchJobMatchBatchTask).toHaveBeenCalledWith(
+      expect.objectContaining({ task_id: "background-task-1" }),
+      "AI 对比选岗（2 个岗位）",
+    );
   });
 });

@@ -30,7 +30,7 @@ import {
   listJobMatchBatches,
   startJobMatchBatchTask,
 } from "../api/jobs";
-import type { JobMatchBatchOut, JobMatchBatchSummary } from "../types";
+import type { JobMatchBatchMode, JobMatchBatchOut, JobMatchBatchSummary } from "../types";
 import {
   cancelJobMatchBackgroundTask,
   watchJobMatchBatchTask,
@@ -40,8 +40,10 @@ import { useJobMatchBackgroundTasks } from "../hooks/useJobMatchBackgroundTasks"
 interface JobMatchBatchPanelProps {
   open: boolean;
   jobIds: number[];
-  /** 打开时先看哪个页签：筛选条「AI 分析适配度」进设置，「分析记录」进历史。 */
+  /** 打开时先看哪个页签：筛选条「AI 对比选岗」进设置，「分析记录」进历史。 */
   initialView?: "setup" | "history";
+  /** match = 逐岗匹配结论；compare = 逐岗结论之后再横向排序（默认 match，保持旧入口行为）。 */
+  mode?: JobMatchBatchMode;
   onClose: () => void;
 }
 
@@ -54,6 +56,7 @@ export default function JobMatchBatchPanel({
   open,
   jobIds,
   initialView = "setup",
+  mode = "match",
   onClose,
 }: JobMatchBatchPanelProps) {
   const { message } = App.useApp();
@@ -96,8 +99,8 @@ export default function JobMatchBatchPanel({
   // 打开面板：重置到目标页签 + 拉历史；有进行中的后台任务则回到进度视图
   // （跨页回来的"自动接上"），并把任务 id 交给面板自己的轮询。
   const [prevOpenKey, setPrevOpenKey] = useState<string | null>(null);
-  if (prevOpenKey !== `${open}-${initialView}-${jobIdsKey}`) {
-    setPrevOpenKey(`${open}-${initialView}-${jobIdsKey}`);
+  if (prevOpenKey !== `${open}-${initialView}-${jobIdsKey}-${mode}`) {
+    setPrevOpenKey(`${open}-${initialView}-${jobIdsKey}-${mode}`);
     if (open) {
       if (activeTask) {
         setRunningTaskId(activeTask.id);
@@ -174,8 +177,17 @@ export default function JobMatchBatchPanel({
       setStarting(true);
       setError("");
       try {
-        const task = await startJobMatchBatchTask({ job_ids: jobIds, force: overrideForce });
-        watchJobMatchBatchTask(task, "岗位适配度分析（" + jobIds.length + " 个岗位）");
+        const task = await startJobMatchBatchTask({
+          job_ids: jobIds,
+          force: overrideForce,
+          mode,
+        });
+        watchJobMatchBatchTask(
+          task,
+          mode === "compare"
+            ? "AI 对比选岗（" + jobIds.length + " 个岗位）"
+            : "岗位适配度分析（" + jobIds.length + " 个岗位）",
+        );
         setRunningTaskId(task.task_id);
         setPhase("running");
         void loadHistory();
@@ -185,7 +197,7 @@ export default function JobMatchBatchPanel({
         setStarting(false);
       }
     },
-    [jobIds, loadHistory, message],
+    [jobIds, loadHistory, message, mode],
   );
 
   const cancelRunning = async () => {
@@ -267,8 +279,16 @@ export default function JobMatchBatchPanel({
       <Alert
         type="info"
         showIcon
-        title={`将为 ${jobIds.length} 个勾选的岗位逐一分析适配度`}
-        description="分析在后台逐个岗位进行：可以随时取消，也可以关掉窗口先去忙别的，完成时会弹出通知；结论不带百分比，参考分仅作展示排序用。"
+        title={
+          mode === "compare"
+            ? `将先逐岗分析 ${jobIds.length} 个岗位，再横向对比排出名次`
+            : `将为 ${jobIds.length} 个勾选的岗位逐一分析适配度`
+        }
+        description={
+          mode === "compare"
+            ? "横向对比回答「这几个岗位里哪个更适合我、差在哪一条」：排序是相对判断，不出现百分比；结论只依据已有的匹配结论与资料，失败岗位不参与排名。"
+            : "分析在后台逐个岗位进行：可以随时取消，也可以关掉窗口先去忙别的，完成时会弹出通知；结论不带百分比，参考分仅作展示排序用。"
+        }
       />
       <Checkbox checked={force} onChange={(event) => setForce(event.target.checked)}>
         重新分析已有结论的岗位（默认跳过已有适配度结论的岗位）
@@ -293,7 +313,7 @@ export default function JobMatchBatchPanel({
           ]}
         >
           <ListyMeta
-            title={`第 ${item.id} 批 · ${formatTime(item.created_at)}`}
+            title={`第 ${item.id} 批 · ${item.mode === "compare" ? "AI 对比选岗" : "适配度分析"} · ${formatTime(item.created_at)}`}
             description={`共 ${item.requested_count} 个岗位，完成 ${item.completed_count} 个，失败 ${item.failed_count} 个${item.top_score === null ? "" : `，最高参考分 ${item.top_score}`}`}
           />
         </ListyItem>
@@ -325,7 +345,7 @@ export default function JobMatchBatchPanel({
         title={
           <Space>
             <RobotOutlined />
-            岗位批量适配度分析
+            {mode === "compare" ? "AI 对比选岗" : "岗位批量适配度分析"}
           </Space>
         }
         width={900}

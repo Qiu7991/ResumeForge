@@ -37,7 +37,19 @@ def build_request_timeout(
 
 
 class LLMError(Exception):
-    """对外暴露的模型调用错误，message 为可直接展示给用户的中文提示。"""
+    """对外暴露的模型调用错误，message 为可直接展示给用户的中文提示。
+
+    ``retryable`` 表示"同一个请求再来一次有机会成功"——典型是模型这一次的产出不合格
+    （JSON 解析不出来、引用的 JD 原文在 JD 里找不到、证据在资料里核对不上）。批量分析
+    据此决定要不要在批内再试一次。
+
+    **默认 False，而且刻意保守**：传输层的重试（429 / 5xx / retry-after）已经由 provider
+    自己做过一轮，这里再叠一层只会把"模型名写错""余额不足"这类硬错误重复烧两遍钱。
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def log_llm_failure(category: str, detail: str) -> None:
