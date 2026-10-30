@@ -4,7 +4,7 @@
 # `pip install -r requirements.txt` abort with UnicodeDecodeError before it
 # reads a single pin.
 fastapi==0.142.2
-starlette==1.7.0
+starlette==1.9.0
 # Multipart form parsing for the referral note-image upload endpoint.
 python-multipart==0.0.32
 uvicorn[standard]==0.54.0
@@ -17,8 +17,8 @@ alembic==1.20.0
 # Uploaded documents and images are decoded locally: pypdf reads PDF text,
 # Pillow converts formats no model accepts (bmp/tiff) into PNG. Both are pure
 # or wheel-published, so the first-run installer stays build-tool free.
-pillow==12.3.0
-pypdf==6.19.0
+pillow==13.0.0
+pypdf==6.21.2
 # Server-side PDF export: fpdf2 embeds a system CJK font so the resume PDF can be
 # downloaded directly. fonttools is its font-parsing backend; pinning it keeps
 # the first-run install reproducible. 4.66+ requires Python >=3.11, which is
