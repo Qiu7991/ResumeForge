@@ -31,8 +31,8 @@ import {
 } from "antd";
 import PageSkeleton from "./common/PageSkeleton";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { deleteJobMatch, generateJobMatch, getJobMatch } from "../api/jobs";
-import { notifyTaskDone } from "../utils/taskNotify";
+import { deleteJobMatch, getJobMatch } from "../api/jobs";
+import { startAiTask } from "../utils/aiTaskWatcher";
 import { beginMatchAnalysis, endMatchAnalysis } from "../utils/jobMatchAnalysisState";
 import {
   ADMISSION_META,
@@ -152,30 +152,35 @@ export default function JobMatchModal({ job, onClose }: Props) {
     leftWhileAnalyzing.current = false;
     beginMatchAnalysis(jobId);
     try {
-      await generateJobMatch(jobId, data != null && data.id > 0);
-      // 无论人是否还在弹窗前，完成都走统一出口（通知卡片 + 提醒声）——
-      // 用户反馈过"生成完了没有任何提醒"。区别只在文案指路。
-      notifyTaskDone({
-        title: "匹配度分析已完成",
-        description: leftWhileAnalyzing.current
-          ? "回到岗位详情点「匹配度分析」即可看到结论。"
-          : "结论已在本窗口更新。",
+      // 走通用 AI 任务：建任务立即返回，模型在服务端线程里跑；关掉弹窗/切页都不影响，
+      // 页头任务入口能看到进度并取消，终态由 aiTaskWatcher 统一通知。
+      await startAiTask({
+        kind: "job_match",
+        payload: { job_id: jobId, force: data != null && data.id > 0 },
+        label: "岗位匹配度分析",
+        onFinished: (task) => {
+          endMatchAnalysis(jobId);
+          if (lastJobId.current !== jobId) return;
+          setAnalyzing(false);
+          if (task.status === "canceled") {
+            if (!leftWhileAnalyzing.current) message.info("已取消匹配分析");
+            return;
+          }
+          if (task.status === "failed") {
+            if (!leftWhileAnalyzing.current) {
+              setError(task.error || "匹配分析失败，请稍后重试");
+            }
+            return;
+          }
+          if (!leftWhileAnalyzing.current) void load();
+        },
       });
-      if (leftWhileAnalyzing.current) return;
-      await load();
     } catch (analyzeError) {
-      const detail =
-        analyzeError instanceof Error ? analyzeError.message : "生成匹配分析失败，请稍后重试";
-      notifyTaskDone({
-        kind: "error",
-        title: "匹配度分析失败",
-        description: leftWhileAnalyzing.current ? `${detail}（可回到岗位详情重试）` : detail,
-      });
-      if (leftWhileAnalyzing.current) return;
-      setError(detail);
-    } finally {
       endMatchAnalysis(jobId);
-      if (!leftWhileAnalyzing.current) setAnalyzing(false);
+      const detail =
+        analyzeError instanceof Error ? analyzeError.message : "创建匹配分析任务失败，请稍后重试";
+      setAnalyzing(false);
+      if (!leftWhileAnalyzing.current) setError(detail);
     }
   };
 

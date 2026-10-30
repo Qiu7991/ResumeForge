@@ -16,6 +16,7 @@ from . import (
     models,  # noqa: F401 - 确保全部模型注册到 Base.metadata
 )
 from .api import (
+    ai_tasks,
     analytics,
     apply,
     assistant,
@@ -77,6 +78,8 @@ from .runtime.log_redact import RedactExceptionFilter
 from .services.apply import apply_service
 from .services.apply.task_runner import get_task_runner
 from .services.data_backup import cleanup_temp_directories
+from .services.ai_task_recovery import fail_orphaned_ai_tasks
+from .services.ai_task_runner import get_ai_task_runner
 from .services.job.job_match_background import get_job_match_background_runner
 from .services.resume.generate_recovery import fail_orphaned_generate_tasks
 from .services.resume.resume_generate_runner import get_resume_generate_runner
@@ -244,6 +247,10 @@ async def lifespan(_app: FastAPI):
             fail_orphaned_generate_tasks(session)
         except Exception:  # noqa: BLE001 - 清理失败不应阻断启动
             startup_logger.warning("清理中断的简历生成任务失败", exc_info=True)
+        try:
+            fail_orphaned_ai_tasks(session)
+        except Exception:  # noqa: BLE001 - 清理失败不应阻断启动
+            startup_logger.warning("清理中断的 AI 任务失败", exc_info=True)
     startup_logger.info("启动自检完成，开始接收请求")
     # 自动备份放后台调度线程（RF-05）：启动时先检查一次"是否到期"，之后每个
     # check_seconds 周期再查；快照可能几百 MB，不能让它卡住"开始接收请求"这一行。
@@ -299,6 +306,10 @@ def _shutdown_runtime_services(job_match_runner: object) -> None:
         get_resume_generate_runner().shutdown()
     except Exception:  # noqa: BLE001 - 退出路径必须继续清理其它资源
         logging.getLogger(__name__).warning("关闭简历生成任务运行器失败", exc_info=True)
+    try:
+        get_ai_task_runner().shutdown()
+    except Exception:  # noqa: BLE001 - 退出路径必须继续清理其它资源
+        logging.getLogger(__name__).warning("关闭通用 AI 任务运行器失败", exc_info=True)
     try:
         from .services.data_backup import scheduler as auto_backup_scheduler
 
@@ -379,6 +390,7 @@ def create_app() -> FastAPI:
     for router in (
         # 批量匹配的 `/match-batches` 是岗位路由下的字面量路径，必须先于 jobs.router
         # 的 `/{job_id}` 参数路径注册，否则 FastAPI 会把它尝试解析成整数并返回 422。
+        ai_tasks.router,
         job_match.router,
         jobs.router,
         resumes.router,

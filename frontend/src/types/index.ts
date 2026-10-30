@@ -35,3 +35,4 @@ export * from "./sharePackage";
 export * from "./templateMarket";
 export * from "./webform";
 export * from "./usage";
+export * from "./aiTask";

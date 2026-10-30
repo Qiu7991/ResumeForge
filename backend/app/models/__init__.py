@@ -1,5 +1,6 @@
 """集中导入全部模型，保证 Base.metadata 注册完整（create_all 依赖此注册）。"""
 
+from .ai_task import AiTask
 from .apply import (
     ADMISSIONS,
     FAILURE_CATEGORIES,
@@ -176,6 +177,7 @@ __all__ = [
     "DRILL_STATUS_FINISHED",
     "InterviewExperience",
     "EXPERIENCE_SOURCES",
+    "AiTask",
     "EXPERIENCE_ROUND_TYPES",
     "InterviewReviewRecord",
     "KnowledgeEntry",

@@ -10,9 +10,11 @@
  */
 import { CloseCircleOutlined, LoadingOutlined, QuestionCircleOutlined } from "@ant-design/icons";
 import { App, Badge, Button, Popover, Space, Tooltip, Typography } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useBackgroundTasks } from "../hooks/useBackgroundTasks";
 import { useJobMatchBackgroundTasks } from "../hooks/useJobMatchBackgroundTasks";
+import { useAiTasks } from "../hooks/useAiTasks";
+import { cancelAiTaskEntry, restoreActiveAiTasks, type AiTaskView } from "../utils/aiTaskWatcher";
 import {
   cancelBackgroundTask,
   dismissBackgroundTask,
@@ -75,6 +77,33 @@ function TaskRow({
   );
 }
 
+function AiTaskRow({
+  task,
+  onCancel,
+}: {
+  task: AiTaskView;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="background-task-row">
+      <Space size={8} align="start">
+        <LoadingOutlined className="background-task-spin" />
+        <div>
+          <Typography.Text strong className="background-task-label">
+            {task.label}
+          </Typography.Text>
+          <Typography.Text type="secondary" className="background-task-progress">
+            {task.progress}% · {task.message || "正在准备…"}
+          </Typography.Text>
+        </div>
+      </Space>
+      <Button size="small" danger type="text" icon={<CloseCircleOutlined />} onClick={onCancel}>
+        取消
+      </Button>
+    </div>
+  );
+}
+
 function JobMatchTaskRow({
   task,
   onCancel,
@@ -112,9 +141,15 @@ export default function BackgroundTasksIndicator() {
   const { message } = App.useApp();
   const tasks = useBackgroundTasks();
   const matchTasks = useJobMatchBackgroundTasks();
+  const aiTasks = useAiTasks();
   const [cancelling, setCancelling] = useState<number | string | null>(null);
 
-  if (tasks.length === 0 && matchTasks.length === 0) return null;
+  // 刷新后把仍在跑的通用 AI 任务接回页头与轮询（与简历任务同一恢复语义）。
+  useEffect(() => {
+    void restoreActiveAiTasks();
+  }, []);
+
+  if (tasks.length === 0 && matchTasks.length === 0 && aiTasks.length === 0) return null;
 
   const cancel = async (task: BackgroundTask) => {
     if (cancelling !== null) return;
@@ -122,6 +157,19 @@ export default function BackgroundTasksIndicator() {
     try {
       await cancelBackgroundTask(task.id);
       message.info(`已取消「${task.label}」`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "取消失败，请稍后重试");
+    } finally {
+      setCancelling(null);
+    }
+  };
+
+  const cancelAiTask = async (task: AiTaskView) => {
+    if (cancelling !== null) return;
+    setCancelling(task.id);
+    try {
+      await cancelAiTaskEntry(task.id);
+      message.info("已请求取消「" + task.label + "」");
     } catch (error) {
       message.error(error instanceof Error ? error.message : "取消失败，请稍后重试");
     } finally {
@@ -159,6 +207,9 @@ export default function BackgroundTasksIndicator() {
       {matchTasks.map((task) => (
         <JobMatchTaskRow key={task.id} task={task} onCancel={() => void cancelMatchTask(task)} />
       ))}
+      {aiTasks.map((task) => (
+        <AiTaskRow key={task.id} task={task} onCancel={() => void cancelAiTask(task)} />
+      ))}
       <Typography.Text type="secondary" className="background-tasks-hint">
         关掉窗口也会继续跑，完成后会弹窗提醒并响一声。
       </Typography.Text>
@@ -167,7 +218,9 @@ export default function BackgroundTasksIndicator() {
 
   return (
     <Popover content={content} title="正在进行的任务" trigger="click" placement="bottomRight">
-      <Tooltip title={tasks.length + matchTasks.length + " 个任务正在进行"}>
+      <Tooltip
+        title={tasks.length + matchTasks.length + aiTasks.length + " 个任务正在进行"}
+      >
         <Button className="background-tasks-button" type="text" aria-label="查看后台任务">
           <Badge count={tasks.length + matchTasks.length} size="small" offset={[2, -2]}>
             <LoadingOutlined /> 后台任务

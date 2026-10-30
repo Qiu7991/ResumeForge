@@ -8,15 +8,15 @@ import { endMatchAnalysis } from "../utils/jobMatchAnalysisState";
 
 const apiMocks = vi.hoisted(() => ({
   getJobMatch: vi.fn(),
-  generateJobMatch: vi.fn(),
   deleteJobMatch: vi.fn(),
 }));
+const aiMocks = vi.hoisted(() => ({ startAiTask: vi.fn() }));
 
 vi.mock("../api/jobs", () => ({
   getJobMatch: apiMocks.getJobMatch,
-  generateJobMatch: apiMocks.generateJobMatch,
   deleteJobMatch: apiMocks.deleteJobMatch,
 }));
+vi.mock("../utils/aiTaskWatcher", () => ({ startAiTask: aiMocks.startAiTask }));
 
 vi.mock("../utils/notifySound", () => ({
   playDoneSound: vi.fn(),
@@ -228,7 +228,7 @@ describe("JobMatchModal", () => {
 
   it("forces a re-analysis only when the user asks", async () => {
     apiMocks.getJobMatch.mockResolvedValue(ANALYZED);
-    apiMocks.generateJobMatch.mockResolvedValue(ANALYZED.result);
+    aiMocks.startAiTask.mockResolvedValue({ id: 1 });
 
     render(
       <AntdApp>
@@ -238,7 +238,14 @@ describe("JobMatchModal", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /重新分析/ }));
 
-    await waitFor(() => expect(apiMocks.generateJobMatch).toHaveBeenCalledWith(JOB.id, true));
+    await waitFor(() =>
+      expect(aiMocks.startAiTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "job_match",
+          payload: { job_id: JOB.id, force: true },
+        }),
+      ),
+    );
   });
 
   it("shows a friendly error with a retry action", async () => {
@@ -254,8 +261,19 @@ describe("JobMatchModal", () => {
     expect(screen.getByRole("button", { name: /重试/ })).toBeInTheDocument();
   });
 
-  it("分析完成无论人是否还在，都走统一出口提醒（用户反馈过完成无提醒）", async () => {
-    apiMocks.generateJobMatch.mockResolvedValue(ANALYZED.result);
+  it("分析完成回调到达后刷新结论（通知由任务登记表统一发）", async () => {
+    aiMocks.startAiTask.mockImplementation(async (input: { onFinished?: (task: unknown) => void }) => {
+      input.onFinished?.({
+        id: 1,
+        kind: "job_match",
+        label: "岗位匹配度分析",
+        status: "succeeded",
+        progress: 100,
+        message: "",
+        error: "",
+      });
+      return { id: 1 };
+    });
 
     render(
       <AntdApp>
@@ -265,15 +283,23 @@ describe("JobMatchModal", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /开始分析/ }));
 
-    await waitFor(() =>
-      expect(notices.some((item) => item.title === "匹配度分析已完成")).toBe(true),
-    );
-    // 人还在窗口前：完成通知之后还会重新拉取最新结论（初次挂载 + 完成后各一次）。
+    // 初次挂载 + 完成后各拉一次。
     await waitFor(() => expect(apiMocks.getJobMatch).toHaveBeenCalledTimes(2));
   });
 
-  it("分析失败同样提醒（kind=error），弹窗内保留错误与重试", async () => {
-    apiMocks.generateJobMatch.mockRejectedValue(new Error("模型调用超时"));
+  it("任务失败时弹窗内保留错误与重试", async () => {
+    aiMocks.startAiTask.mockImplementation(async (input: { onFinished?: (task: unknown) => void }) => {
+      input.onFinished?.({
+        id: 1,
+        kind: "job_match",
+        label: "岗位匹配度分析",
+        status: "failed",
+        progress: 40,
+        message: "",
+        error: "模型调用超时",
+      });
+      return { id: 1 };
+    });
 
     render(
       <AntdApp>
@@ -283,20 +309,17 @@ describe("JobMatchModal", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /开始分析/ }));
 
-    await waitFor(() =>
-      expect(notices.some((item) => item.title === "匹配度分析失败" && item.kind === "error")).toBe(
-        true,
-      ),
-    );
     expect(await screen.findByText("模型调用超时")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /重试/ })).toBeInTheDocument();
   });
 
-  it("分析进行中关掉弹窗：完成后仍提醒，文案指路岗位详情", async () => {
-    let resolveGenerate: (value: unknown) => void = () => {};
-    apiMocks.generateJobMatch.mockReturnValue(
-      new Promise((resolve) => {
-        resolveGenerate = resolve;
-      }),
+  it("分析进行中关掉弹窗：任务继续，回来后不再刷新已关闭的弹窗", async () => {
+    let finish: (task: unknown) => void = () => {};
+    aiMocks.startAiTask.mockImplementation(
+      async (input: { onFinished?: (task: unknown) => void }) => {
+        finish = input.onFinished ?? (() => {});
+        return { id: 1 };
+      },
     );
 
     const onClose = vi.fn();
@@ -307,16 +330,19 @@ describe("JobMatchModal", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: /开始分析/ }));
-    // 分析进行中关闭弹窗（antd 关闭按钮的可访问名）。
     fireEvent.click(await screen.findByRole("button", { name: /close|Close/ }));
     expect(onClose).toHaveBeenCalled();
 
-    resolveGenerate(undefined);
-    await waitFor(() =>
-      expect(notices.some((item) => item.title === "匹配度分析已完成")).toBe(true),
-    );
-    // 人已经走了：不再对（可能已卸载的）弹窗内容做刷新，文案指路详情页。
-    const notice = notices.find((item) => item.title === "匹配度分析已完成");
-    expect(notice?.description).toContain("岗位详情");
+    finish({
+      id: 1,
+      kind: "job_match",
+      label: "岗位匹配度分析",
+      status: "succeeded",
+      progress: 100,
+      message: "",
+      error: "",
+    });
+    // 人已经走了：不再刷新弹窗内容（初次挂载那次之外没有新请求）。
+    await waitFor(() => expect(apiMocks.getJobMatch).toHaveBeenCalledTimes(1));
   });
 });
