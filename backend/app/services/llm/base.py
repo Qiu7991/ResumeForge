@@ -173,6 +173,7 @@ class BaseLLMProvider(ABC):
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         retries: int = 0,
+        cache_hit_tokens: int | None = None,
     ) -> None:
         """写入最后一次调用的用量记录（``last_usage`` 约定见构造器注释）。"""
         self.last_usage = build_usage(
@@ -182,7 +183,13 @@ class BaseLLMProvider(ABC):
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             retries=retries,
+            cache_hit_tokens=cache_hit_tokens,
         )
+        # R04：把"这次调用发生过"统一上报用量账本。任务名由 HTTP 中间件/后台上下文
+        # 写入 ContextVar；没有任务名的调用（单测直接构造 provider）不落账。
+        from .usage_tasks import record_ambient_usage
+
+        record_ambient_usage(self)
 
     @abstractmethod
     async def chat(self, messages: list[dict], *, thinking: bool = True) -> str:

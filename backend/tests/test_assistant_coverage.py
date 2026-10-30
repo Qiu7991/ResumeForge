@@ -30,6 +30,11 @@ COVERAGE: dict[str, tuple[str, ...] | str] = {
     "llm_config_record": "不暴露：模型配置里含 API Key。助手既不读也不写这份配置，"
     "避免密钥进入对话上下文或被间接改动。",
     "profile_photo": "不暴露：照片是二进制图片。助手无法理解图片内容，换照片在「我的资料」里做。",
+    "llm_usage_record": "不暴露：这是每次模型调用的数字账本（token、耗时、结束原因、重试次数），"
+    "不含任何业务内容。助手读它没有增量，反而会把计费数字带进对话；用户要看去设置页"
+    "「用量与计费」。",
+    "usage_pricing_record": "不暴露：这是用户配置的模型单价档案（每百万 token 的三档价格），"
+    "属于计费设置而非求职数据。助手既不读也不改，避免把价格带进对话或误改计费口径。",
     # ===== 资料（个人档案与各分区）=====
     "user_profile": ("get_profile", "update_profile"),
     "education": ("get_profile", "update_profile", "add_profile_entry"),

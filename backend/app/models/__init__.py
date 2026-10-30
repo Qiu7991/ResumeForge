@@ -50,6 +50,7 @@ from .interview_experience import (
 from .interview_review_record import InterviewReviewRecord
 from .job import Job
 from .job_match_batch import JobMatchBatch
+from .llm_usage import LLMUsageRecord
 from .knowledge_entry import KnowledgeEntry
 from .material import MATERIAL_CATEGORIES, CandidateJob, Material
 from .profile import (
@@ -94,6 +95,7 @@ from .tracker import (
     ApplicationTrack,
     ApplicationTrackEvent,
 )
+from .usage_pricing import UsagePricingRecord
 from .user_file import UserFile
 from .web_form_profile import WebFormProfileEntry
 from .web_form_profile_record import WebFormProfileRecord
@@ -177,6 +179,7 @@ __all__ = [
     "EXPERIENCE_ROUND_TYPES",
     "InterviewReviewRecord",
     "KnowledgeEntry",
+    "LLMUsageRecord",
     "QuestionBankRecord",
     "Referral",
     "REFERRAL_STATUSES",
@@ -191,5 +194,6 @@ __all__ = [
     "SOURCE_BATCH",
     "SOURCE_LIVE",
     "WebFormUrlHistory",
+    "UsagePricingRecord",
     "UserFile",
 ]

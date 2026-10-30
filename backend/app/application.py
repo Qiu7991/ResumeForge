@@ -45,6 +45,7 @@ from .api import (
     stats,
     tracker,
     trash,
+    usage,
     user_files,
     webform,
 )
@@ -404,6 +405,7 @@ def create_app() -> FastAPI:
         webform.router,
         tracker.router,
         settings_api.router,
+        usage.router,
         datasets.router,
         skills.router,
         search.router,

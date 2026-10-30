@@ -12,6 +12,7 @@ import StorageStatsCard from "../components/settings/StorageStatsCard";
 import AssistantOrbCard from "../components/settings/AssistantOrbCard";
 import LLMConfigCard from "../components/settings/LLMConfigCard";
 import LLMConfigRecordsCard from "../components/settings/LLMConfigRecordsCard";
+import UsagePricingCard from "../components/settings/UsagePricingCard";
 import ReminderPopupCard from "../components/settings/ReminderPopupCard";
 import WebFormRelaxedModeCard from "../components/settings/WebFormRelaxedModeCard";
 import ExportSaveCard from "../components/settings/ExportSaveCard";
@@ -221,6 +222,9 @@ export default function SettingsPage() {
                     if (!recordSaving) setRecordModalOpen(false);
                   }}
                 />
+
+                {/* 用量与计费：账本只记数字；单价没配置时不估算金额。 */}
+                <UsagePricingCard />
 
                 {/* 联网搜索与模型配置同页：两者一起决定助手"能查什么、查得多细"。 */}
                 <SettingsGroupTitle text="助手能力" hint="助手能查什么、会什么、能读什么" />

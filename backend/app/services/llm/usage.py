@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """模型调用用量的兼容层（RF-14 §2.2）。
 
 返回通道（兼容性核心）：``chat() / stream_chat() / stream_chat_events()`` 的返回签名
@@ -9,6 +10,7 @@
 「未知」，**禁止伪造 0**，也禁止用字符数折算成"精确" token 数冒充真实值。
 本模块不含 prompt/response 内容（隐私边界：日志与落库都不允许记录它们）。
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -34,6 +36,9 @@ class LLMUsage:
     elapsed_ms: int  # 本次调用本地墙钟（恒可得）
     finish_reason: str  # stop | length | tool_calls | cancelled | budget_exhausted | error
     retries: int = 0  # 传输层重试次数（§2.4）
+    # 输入里命中缓存的 token 数（0067）：服务商没给就是 None。有了它，费用估算才能把
+    # 命中价（通常是未命中价的 1/10）单独算出来。
+    cache_hit_tokens: int | None = None
 
     def to_dict(self) -> dict:
         """可序列化形态（进 SSE / ChatMessage.context）。缺失值是 null，不是 0。"""
@@ -45,6 +50,7 @@ class LLMUsage:
             "elapsed_ms": self.elapsed_ms,
             "finish_reason": self.finish_reason,
             "retries": self.retries,
+            "cache_hit_tokens": self.cache_hit_tokens,
         }
 
 
@@ -56,6 +62,7 @@ def build_usage(
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
     retries: int = 0,
+    cache_hit_tokens: int | None = None,
 ) -> LLMUsage:
     """统一构造入口：total_tokens 只在两项都存在时求和，否则保持 None。"""
     total = (
@@ -71,6 +78,7 @@ def build_usage(
         elapsed_ms=elapsed_ms,
         finish_reason=finish_reason,
         retries=retries,
+        cache_hit_tokens=cache_hit_tokens,
     )
 
 
@@ -88,6 +96,23 @@ def extract_openai_usage(usage: object) -> tuple[int | None, int | None]:
     return _clean_token(usage.get("prompt_tokens")), _clean_token(usage.get("completion_tokens"))
 
 
+def extract_cache_hit_tokens(usage: object) -> int | None:
+    """输入里命中缓存（prompt cache）的 token 数；服务商没给就是 None。
+
+    两种常见写法都认：OpenAI 系的 ``prompt_tokens_details.cached_tokens``，以及
+    DeepSeek 等在 OpenAI 协议上直接给的 ``prompt_cache_hit_tokens``。认不出就返回
+    None——**不用 0 冒充"全部未命中"**，否则账单会凭空变贵且看不出是猜的。
+    """
+    if not isinstance(usage, dict):
+        return None
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, dict):
+        cached = _clean_token(details.get("cached_tokens"))
+        if cached is not None:
+            return cached
+    return _clean_token(usage.get("prompt_cache_hit_tokens"))
+
+
 def summarize_usages(
     usages: Iterable[LLMUsage], *, finish_reason: str | None = None
 ) -> dict | None:
@@ -101,7 +126,14 @@ def summarize_usages(
         return None
 
     def _sum(values: list[int | None]) -> int | None:
-        return sum(values) if all(value is not None for value in values) else None
+        # 逐项累加而不是 `sum(values)`：只有**每一项都有值**才给和，缺一个就整体
+        # 报"未知"——部分和会被误读成完整值。逐个判空也让类型收窄成立。
+        total = 0
+        for value in values:
+            if value is None:
+                return None
+            total += value
+        return total
 
     last = records[-1]
     return {
@@ -147,9 +179,7 @@ def merge_openai_stream_usage(
     )
 
 
-def usage_log_line(
-    usage: LLMUsage, *, estimated_prompt_tokens: int | None = None
-) -> str:
+def usage_log_line(usage: LLMUsage, *, estimated_prompt_tokens: int | None = None) -> str:
     """把用量记录拼成结构化日志字段串（生成任务的模型用量日志与未来消费方共用）。
 
     只含 model / token 计数 / 耗时 / 结束原因 / 重试次数——**绝不包含 prompt/

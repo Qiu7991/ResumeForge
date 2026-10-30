@@ -110,6 +110,9 @@ class AnthropicProvider(BaseLLMProvider):
         gate = retry.StatusRetryGate(deadline_remaining_fn=self._deadline_remaining)
         prompt_tokens: int | None = None
         completion_tokens: int | None = None
+        # 缓存命中只在使用量对象里出现；非 200 / 异常路径直接走 finally，不初始化会
+        # 在 _record_usage 处 UnboundLocalError。None = 认不出，与 base 的约定一致。
+        cache_hit_tokens: int | None = None
         finish_reason = FINISH_ERROR
         try:
             while True:
@@ -164,6 +167,12 @@ class AnthropicProvider(BaseLLMProvider):
                 if isinstance(usage, dict):
                     input_tokens = usage.get("input_tokens")
                     output_tokens = usage.get("output_tokens")
+                    cache_read = usage.get("cache_read_input_tokens")
+                    cache_hit_tokens = (
+                        cache_read
+                        if isinstance(cache_read, int) and not isinstance(cache_read, bool)
+                        else None
+                    )
                     prompt_tokens = (
                         input_tokens
                         if isinstance(input_tokens, int) and not isinstance(input_tokens, bool)
@@ -195,6 +204,7 @@ class AnthropicProvider(BaseLLMProvider):
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 retries=gate.retries,
+                cache_hit_tokens=cache_hit_tokens,
             )
 
     async def stream_chat(self, messages: list[dict]) -> AsyncIterator[str]:

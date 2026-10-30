@@ -26,6 +26,7 @@
 | 底稿派生 / 生成 runner 支撑 | `backend/app/services/resume/resume_base_derive.py`、`resume_runner_support.py` |
 | 简历批量导出 | `backend/app/api/resumes/batch_export_routes.py`、`frontend/src/api/resumeBatchExport.ts`、`frontend/src/pages/resumes/BatchExportModal.tsx` |
 | AI 对比选岗（横向对比） | `backend/app/schemas/job_comparison.py`、`services/job/job_comparison.py`、`job_comparison_store.py`、`prompts/job_comparison.md`、`frontend/src/components/jobs/JobComparisonResult.tsx` |
+| 模型用量账本与单价 | `models/llm_usage.py`、`models/usage_pricing.py`、`schemas/usage.py`、`services/llm/usage_ledger.py`、`usage_pricing.py`、`usage_tasks.py`、`api/usage.py`、`migrations/versions/0047_usage_ledger.py`、`frontend/src/api/usage.ts`、`types/usage.ts`、`components/settings/UsagePricingCard.tsx` |
 | 9 套技术方向模板 | `backend/app/templates/resume_{php,java,node,ios,android,web,cpp,architect,dev}.html.j2` |
 
 新增文件可以直接复用上游的公共能力，但**不要**为了"以后好合并"去复制上游代码；
@@ -43,6 +44,7 @@
 | 生成/修订 | `resume_generate_runner.py`、`GenerateResumeModal.tsx`、`ResumeReviseModal.tsx`、`api/client.ts`（`ai` 预算） | 可选底稿、180s 预算、等待秒数与耗时提示 |
 | 设置 | `components/settings/ApiKeyInput.tsx`、`LLMConfigCard.tsx` | 编辑态空框替换、显示后可编辑、清除已保存密钥 |
 | 导出 | `api/resumes/export_routes.py` | 仅新增 `save_copy` 参数（批量导出不往保存目录刷 N 份副本；上游同名参数） |
+| 用量自动落账 | `services/llm/base.py`、`openai_compat.py`、`anthropic.py`、`middleware/dataset_request.py` | provider 每次调用把 token 写进账本；任务名由中间件按请求路径写入 ContextVar；新增缓存命中 token 捕获 |
 | 模板库 | `resume_template_catalog.py`、`resume_template_layout.py`、`TemplateGalleryModal.tsx` 等 | 新增 9 套模板及其版式数据 |
 
 ## 二、刻意与上游不同的地方（合并时不要"顺手改回去"）
@@ -65,7 +67,9 @@
 6. **单文件 500 行预算**：本地新增 9 套模板把 `resume_template_layout.py` 顶到 714 行，
    已按仓库规则登记书面豁免（到期 2026-11-15）。合并上游后优先按上游新结构迁移，
    不要再往这个文件里堆数据。
-7. **站点名只出现在后端注册表**：前端生产代码禁止硬编码 `BOSS`/`zhipin` 等字样
+7. **AI 任务表尚未移植**：上游 0068 的通用 `ai_task` 表（所有 AI 入口统一登记/恢复/取消）
+   不在本仓库；用量账本不依赖它，主键仍是各自的业务表。以后移植时再处理。
+8. **站点名只出现在后端注册表**：前端生产代码禁止硬编码 `BOSS`/`zhipin` 等字样
    （`test_qa_browser_sites_adversarial.py` 钉住），新页面用"当前招聘网站"这类措辞。
 
 ## 三、新增功能的兼容性约定
@@ -121,6 +125,7 @@ git diff --name-only --diff-filter=U
 - `resume_template_layout.py` 714 行（豁免到期 2026-11-15）——合并上游后按新结构拆分。
 - `test_new_modules_api.py` 514 行（豁免到期 2026-11-15）——拆出 `test_job_import_api.py`。
 - 「AI 对比选岗」已移植（含可重试失败与本地降级），但**资料组投影层未移植**（见第二节第 5 条）。
+- 「用量与计费」已移植（0047 账本 + 单价档案），但**通用 AI 任务表（0068）未移植**（见第二节第 7 条）。
 - 上游 10-28 的「AI 任务与用量计费」尚未移植；它依赖 `ai_task_runner` / `batch_operation`
   底座与设置页的批量区，移植前先评估是否连带引入。
 - 本地未跟踪：`frontend/.npmrc`（npmmirror 镜像配置）、`frontend/runtime/`（调试产物），

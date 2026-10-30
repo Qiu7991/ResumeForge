@@ -13,7 +13,7 @@ from app.services import search_fts
 from sqlalchemy import create_engine, inspect, text
 
 PREVIOUS_REVISION = "0045_delivery_ledger"
-HEAD_REVISION = "0046_search_fts"
+HEAD_REVISION = "0047_usage_ledger"
 
 # 0044 也建 FTS 派生索引（knowledge_fts）：升到 0045 时它已经在库里，
 # "业务表集合"的口径必须把两代派生索引都排除。
@@ -55,7 +55,9 @@ def test_upgrade_adds_fts_tables_and_keeps_business_tables_untouched(tmp_path):
     _upgrade(config, PREVIOUS_REVISION)
     before = _business_tables(engine)
 
-    _upgrade(config, HEAD_REVISION)
+    # 只验 0046 这一步：HEAD 之后的新表（0047 用量账本）不属于本迁移的范围。
+    _upgrade(config, PREVIOUS_REVISION)
+    _upgrade(config, "0046_search_fts")
     expected = {search_fts.fts_table_name(base) for base in search_fts.SEARCH_FTS_SPECS}
     assert expected <= _fts_tables(engine)
     assert _business_tables(engine) == before
