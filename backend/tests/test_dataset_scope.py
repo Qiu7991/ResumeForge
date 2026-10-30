@@ -27,39 +27,31 @@ from app.services.llm.base import BaseLLMProvider
 
 MAIN = "main"
 
-
 # ===== 公共小工具 =====
-
 
 def _add_job(client, title: str) -> None:
     response = client.post("/api/jobs", json={"title": title, "company": "示例公司"})
     assert response.status_code in (200, 201)
-
 
 def _job_titles(client) -> set[str]:
     response = client.get("/api/jobs")
     assert response.status_code == 200
     return {item["title"] for item in response.json()["items"]}
 
-
 def _create_dataset(client, name: str) -> str:
     response = client.post("/api/settings/datasets", json={"name": name})
     assert response.status_code == 200
     return response.json()["id"]
 
-
 def _activate(client, dataset_id: str):
     return client.post(f"/api/settings/datasets/{dataset_id}/activate")
-
 
 @pytest.fixture
 def fast_drain(monkeypatch):
     """把切换排空的上限降到 0.2s：期望超时的用例用小预算，不拖慢整轮测试。"""
     monkeypatch.setattr("app.services.datasets._DRAIN_TIMEOUT_SECONDS", 0.2)
 
-
 # ===== 租约：切换的排空依据 =====
-
 
 def test_a_held_lease_blocks_switching_and_release_unblocks_it(client, fast_drain):
     """A 库任务运行中（持租约）→ 切换 B 返回 409 → release → 切换成功。"""
@@ -79,7 +71,6 @@ def test_a_held_lease_blocks_switching_and_release_unblocks_it(client, fast_drai
     assert current_dataset_id() == other
     assert current_generation() == generation_before + 1
 
-
 def test_acquire_lease_fails_while_switch_lock_is_held():
     """切换持锁期间取租约直接失败：封死"排空后放进新任务"的 TOCTOU 窗口。"""
     with switch_lock(), pytest.raises(DatasetScopeError, match="切换"):
@@ -89,13 +80,11 @@ def test_acquire_lease_fails_while_switch_lock_is_held():
     lease.release()
     assert dataset_scope.leases_pending() == 0
 
-
 def test_lease_release_is_idempotent():
     lease = acquire_lease("once")
     lease.release()
     lease.release()  # 幂等：重复 release 不抛、计数不再减
     assert dataset_scope.leases_pending() == 0
-
 
 def test_lease_check_rejects_writes_after_the_identity_changed():
     lease = acquire_lease("writer")
@@ -109,9 +98,7 @@ def test_lease_check_rejects_writes_after_the_identity_changed():
         lease.check()
     lease.release()
 
-
 # ===== 冻结会话工厂：按值捕获 engine =====
-
 
 def test_frozen_session_factory_keeps_writing_to_the_old_database(client):
     """rebind 之后，冻结工厂开的会话仍连旧库——"按值捕获 SessionLocal"冻不住，
@@ -138,9 +125,7 @@ def test_frozen_session_factory_keeps_writing_to_the_old_database(client):
     assert _activate(client, MAIN).status_code == 200
     assert _job_titles(client) == {"切换前的岗位", "冻结工厂写入"}
 
-
 # ===== 目标库预检：失败不发布 =====
-
 
 def test_a_failed_preview_keeps_the_current_dataset_usable(client):
     """目标库损坏 → 预检失败（409）→ 指针与引擎保持 A → A 继续可用。"""
@@ -158,15 +143,12 @@ def test_a_failed_preview_keeps_the_current_dataset_usable(client):
     _add_job(client, "预检失败后仍可写")
     assert "预检失败后仍可写" in _job_titles(client)
 
-
 def test_a_missing_target_file_is_reported_before_anything_changes(client):
     response = _activate(client, "0123456789abcdef")
     assert response.status_code == 404
     assert current_dataset_id() == MAIN
 
-
 # ===== 相同记录 ID 的隔离 =====
-
 
 def test_rows_with_the_same_id_stay_isolated_across_datasets(client, db_session):
     """两个库各有一条 id=777777 的岗位：切换后读写都只能看到自己那份数据。"""
@@ -184,9 +166,7 @@ def test_rows_with_the_same_id_stay_isolated_across_datasets(client, db_session)
     assert _activate(client, MAIN).status_code == 200
     assert _job_titles(client) == {"主数据 777777"}
 
-
 # ===== 并发切换互斥 =====
-
 
 def test_concurrent_switches_are_serialized_not_interleaved(client, monkeypatch):
     """两个线程同时切换：互斥串行，两个都成功，generation 恰好 +2。"""
@@ -219,7 +199,6 @@ def test_concurrent_switches_are_serialized_not_interleaved(client, monkeypatch)
     assert current_dataset_id() in {dataset_b, dataset_c}
     assert current_generation() == generation_before + 2
 
-
 def _seed_generation_prerequisites(client) -> None:
     assert (
         client.put(
@@ -241,10 +220,8 @@ def _seed_generation_prerequisites(client) -> None:
     config = LLMConfig(base_url="https://api.example.com/v1", api_key="k", model="m")
     assert client.put("/api/settings/llm", json=config.model_dump()).status_code == 200
 
-
 def _job(client) -> dict:
     return client.post("/api/jobs", json={"title": "后端开发工程师", "company": "示例公司"}).json()
-
 
 def _wait_terminal(client, task_id: int) -> dict:
 
@@ -257,9 +234,7 @@ def _wait_terminal(client, task_id: int) -> dict:
         body = client.get(f"/api/resumes/generate/tasks/{task_id}").json()
     return body
 
-
 # ===== 后台 runner 接租约 =====
-
 
 def test_apply_task_runner_holds_a_lease_for_the_task_duration(monkeypatch):
     from app.services.apply.task_runner import TaskRunner
@@ -282,7 +257,6 @@ def test_apply_task_runner_holds_a_lease_for_the_task_duration(monkeypatch):
     runner.shutdown()  # join 工作线程，租约在收拢链路里释放
     assert dataset_scope.leases_pending() == 0
 
-
 def test_job_match_runner_holds_a_lease_for_the_task_duration(monkeypatch):
     from app.services.job.job_match_background import JobMatchBackgroundRunner
 
@@ -304,7 +278,6 @@ def test_job_match_runner_holds_a_lease_for_the_task_duration(monkeypatch):
         gate.set()
     runner.shutdown()
     assert dataset_scope.leases_pending() == 0
-
 
 def test_resume_generate_runner_holds_a_lease_and_releases_at_terminal(client, monkeypatch):
     _seed_generation_prerequisites(client)
@@ -342,7 +315,6 @@ def test_resume_generate_runner_holds_a_lease_and_releases_at_terminal(client, m
     assert final["status"] == "completed"
     # 任务结束后租约必须释放，否则切换会永远 409。
     assert dataset_scope.leases_pending() == 0
-
 
 def test_starting_a_generation_while_switch_is_in_progress_returns_409_without_orphan(
     client,

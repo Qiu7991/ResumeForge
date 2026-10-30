@@ -191,3 +191,98 @@ def test_section_order_survives_template_validation():
     # 非法输入（空列表 / 字符串以外的东西）不会炸掉整份配置。
     assert "section_order" not in validated_format_config({"section_order": []})
     assert "section_order" not in validated_format_config({"section_order": "projects"})
+
+
+# ===== 隐藏板块 =====
+
+HIDDEN_CONFIG = {**CUSTOM_CONFIG, "hidden_sections": ["campus_experience", "awards"]}
+HIDDEN_TITLES = ("校园经历", "荣誉奖项")
+
+
+def test_normalized_hidden_sections_drops_unknown_and_dedupes():
+    from app.services.resume.resume_sections import normalized_hidden_sections
+
+    assert normalized_hidden_sections(["awards", "awards", "不存在的键"]) == ["awards"]
+    # 查询串写法也认，与 normalized_section_order 保持一致。
+    assert normalized_hidden_sections("projects, skills") == ["projects", "skills"]
+    # 空/非法输入 = 一个都不藏，不抛异常。
+    assert normalized_hidden_sections(None) == []
+    assert normalized_hidden_sections(12) == []
+
+
+def test_resolved_visible_sections_keeps_order_and_drops_hidden():
+    from app.services.resume.resume_sections import resolved_visible_sections
+
+    visible = resolved_visible_sections(HIDDEN_CONFIG)
+    assert visible == [key for key in CUSTOM_ORDER if key not in {"campus_experience", "awards"}]
+    # 顺序完整性不被隐藏破坏：放开隐藏后还会回到原位（存储里仍是完整排列）。
+    assert resolved_visible_sections({"section_order": CUSTOM_ORDER}) == CUSTOM_ORDER
+    assert resolved_visible_sections(None) == list(DEFAULT_SECTION_ORDER)
+
+
+def test_html_preview_omits_hidden_sections():
+    html = render_html(_sample_resume(), format_config=HIDDEN_CONFIG)
+    for title in HIDDEN_TITLES:
+        assert title not in html
+    # 没被藏的分区还在，且仍是自定义顺序。
+    assert "项目经历" in html and "个人总结" in html
+    assert html.index("项目经历") < html.index("个人总结")
+
+
+def test_markdown_and_txt_omit_hidden_sections():
+    from app.services.resume.resume_sections import resolved_visible_sections
+
+    visible = resolved_visible_sections(HIDDEN_CONFIG)
+    markdown = export_markdown(_sample_resume(), section_order=visible)
+    plain = export_txt(_sample_resume(), section_order=visible)
+    for title in HIDDEN_TITLES:
+        assert title not in markdown
+        assert title not in plain
+    assert "项目经历" in markdown
+
+
+def test_word_document_omits_hidden_sections():
+    from docx import Document
+
+    document = build_resume_docx(_sample_resume(), format_config=HIDDEN_CONFIG)
+    text = "\n".join(p.text for p in Document(io.BytesIO(document.content)).paragraphs)
+    for title in HIDDEN_TITLES:
+        assert title not in text
+    assert "项目经历" in text
+
+
+def test_pdf_measurement_and_render_both_skip_hidden_sections():
+    """隐藏了板块时，量高的和画 PDF 的必须用同一份可见列表，否则一页适配会白缩字号。"""
+    from app.services.pdf_exporter import (
+        build_resume_pdf,
+        measure_content_height,
+        resolve_layout,
+    )
+    from app.services.resume.resume_templates import validated_format_config
+
+    overrides = validated_format_config(HIDDEN_CONFIG)
+    layout = resolve_layout(template="classic", base_px=14, format_config=overrides)
+    full_height = measure_content_height(
+        _sample_resume(),
+        accent=(22, 54, 92),
+        layout=layout,
+        format_config=validated_format_config(CUSTOM_CONFIG),
+    )
+    hidden_height = measure_content_height(
+        _sample_resume(), accent=(22, 54, 92), layout=layout, format_config=overrides
+    )
+    assert hidden_height < full_height
+    document = build_resume_pdf(_sample_resume(), format_config=HIDDEN_CONFIG)
+    assert document.content.startswith(b"%PDF-")
+
+
+def test_hidden_sections_survive_template_validation():
+    """校验层要保留 hidden_sections，否则 PATCH /layout 一存就把它丢了。"""
+    from app.services.resume.resume_templates import validated_format_config
+
+    validated = validated_format_config(HIDDEN_CONFIG)
+    assert validated["hidden_sections"] == ["campus_experience", "awards"]
+    assert validated["section_order"] == CUSTOM_ORDER
+    # 空列表等于不藏，不写进配置（前端取消全部隐藏时也是直接删键）。
+    assert "hidden_sections" not in validated_format_config({"hidden_sections": []})
+    assert "hidden_sections" not in validated_format_config({"hidden_sections": ["bogus"]})

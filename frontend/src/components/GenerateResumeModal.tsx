@@ -28,6 +28,7 @@ import type { ResumeFormatConfig } from "../types/resumeFormat";
 import type { LayoutMeasure } from "../utils/resumeLayoutMeasure";
 import type { ResumePreviewHandle } from "./ResumePreview";
 import GenerationConfigStage from "./generate-resume/GenerationConfigStage";
+import { useBaseResumeOptions } from "./generate-resume/useBaseResumeOptions";
 import GenerationProgressStage from "./generate-resume/GenerationProgressStage";
 import GenerationErrorStage from "./generate-resume/GenerationErrorStage";
 import GenerationPreviewStage from "./generate-resume/GenerationPreviewStage";
@@ -49,6 +50,9 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
   const navigate = useNavigate();
 
   const [stage, setStage] = useState<Stage>("config");
+  // 底稿候选与选择：仅在打开时拉列表，关闭自动清空。
+  const { baseResumeId, setBaseResumeId, baseResumeOptions, resetBaseResume } =
+    useBaseResumeOptions(open);
   const [title, setTitle] = useState("");
   const [enhance, setEnhance] = useState(false);
   const [enhancementLevel, setEnhancementLevel] = useState<EnhancementLevel>("balanced");
@@ -68,6 +72,8 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
   const [measure, setMeasure] = useState<LayoutMeasure | null>(null);
   const [pdfDirectAvailable, setPdfDirectAvailable] = useState(true);
   const [relayouting, setRelayouting] = useState(false);
+  // 版式重渲染的"最后一次生效"版本号：换模板/改字号/加页数都走它。
+  const layoutRequestVersion = useRef(0);
   const [modelName, setModelName] = useState("");
   const [llmReady, setLlmReady] = useState(true);
   // 生成改为后台任务：taskId 驱动轮询，task 是最近一次轮询到的状态。
@@ -166,7 +172,8 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
     setLayoutStatus(null);
     setMeasure(null);
     setCustomInstruction("");
-  }, [initialTitle]);
+    resetBaseResume();
+  }, [initialTitle, resetBaseResume]);
 
   const loadPreview = useCallback(async (resumeId: number) => {
     try {
@@ -196,13 +203,15 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
         job_id: job?.id ?? null,
         title: job ? "" : title.trim(),
         options: {
-          enhance,
+          // 底稿模式下"美化拓展"没有意义：底稿的措辞正是要保留的东西。
+          enhance: baseResumeId ? false : enhance,
           enhancement_level: enhancementLevel,
           page_limit: layout.page_limit,
           font_scale: layout.font_scale,
           template: layout.template,
           format_name: layout.format_name,
           custom_instruction: customInstruction.trim(),
+          base_resume_id: baseResumeId,
         },
       });
       setTaskId(started.id);
@@ -359,18 +368,24 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
   const applyLayout = async (next: ResumeLayout) => {
     setLayout(next);
     const detail = result?.detail;
-    if (!detail || relayouting) return;
+    if (!detail) return;
+    // 连续点击（换模板后立刻换版式）时，旧请求的返回会覆盖新结果，所以用版本号
+    // 让"最后一次操作"胜出。**不能**用 `if (relayouting) return` 直接丢弃：那会让
+    // 用户的后一次点击静默失效，表现就是"点了模板但预览没变"。
+    const versionAtStart = ++layoutRequestVersion.current;
     setRelayouting(true);
     try {
       const html = await renderResume(detail.content, next);
+      if (versionAtStart !== layoutRequestVersion.current) return;
       setPreviewHtml(html);
       if (result?.detail.id) {
         await updateResumeLayout(result.detail.id, next);
       }
     } catch (err) {
+      if (versionAtStart !== layoutRequestVersion.current) return;
       message.error(err instanceof Error ? err.message : "按新版式渲染失败");
     } finally {
-      setRelayouting(false);
+      if (versionAtStart === layoutRequestVersion.current) setRelayouting(false);
     }
   };
 
@@ -378,15 +393,19 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
   const applyFittedFormat = async (formatConfig: ResumeFormatConfig) => {
     const detail = result?.detail;
     if (!detail) return;
+    const versionAtStart = ++layoutRequestVersion.current;
     const next: ResumeLayout = { ...layout, format_config: formatConfig };
     setLayout(next);
     setRelayouting(true);
     try {
-      setPreviewHtml(await renderResume(detail.content, next));
+      const rendered = await renderResume(detail.content, next);
+      if (versionAtStart !== layoutRequestVersion.current) return;
+      setPreviewHtml(rendered);
     } catch (err) {
+      if (versionAtStart !== layoutRequestVersion.current) return;
       message.error(err instanceof Error ? err.message : "按新版式渲染失败");
     } finally {
-      setRelayouting(false);
+      if (versionAtStart === layoutRequestVersion.current) setRelayouting(false);
     }
   };
 
@@ -414,6 +433,9 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
           setEnhance={setEnhance}
           enhancementLevel={enhancementLevel}
           setEnhancementLevel={setEnhancementLevel}
+          baseResumeId={baseResumeId}
+          setBaseResumeId={setBaseResumeId}
+          baseResumeOptions={baseResumeOptions}
           layout={layout}
           setLayout={setLayout}
           customInstruction={customInstruction}

@@ -14,7 +14,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from jinja2.sandbox import SandboxedEnvironment
 
 from ..schemas.resume import MAX_RESUME_PAGES, ResumeContent
-from .resume.resume_sections import DEFAULT_SECTION_ORDER, resolved_section_order
+from .resume.resume_sections import DEFAULT_SECTION_ORDER, resolved_visible_sections
 from .resume.resume_template_style import style_css, validated_style_config
 from .resume.resume_templates import (
     DEFAULT_FONT_SCALE,
@@ -86,7 +86,13 @@ def export_markdown(
     lines.append(f"# {header}")
     contacts = " | ".join(
         item
-        for item in [resume.phone, resume.email, resume.city, resume.birth_year]
+        for item in [
+            resume.phone,
+            resume.email,
+            f"GitHub：{resume.github}" if resume.github else "",
+            resume.city,
+            resume.birth_year,
+        ]
         if item
     )
     if contacts:
@@ -224,8 +230,9 @@ def render_html(
         "csp_nonce": csp_nonce,
         "page_limit": normalize_page_limit(page_limit),
         "base_px": base_px,
-        # 正文分区顺序（页眉不参与）。模板里有页码、A4 适配脚本等同样读这个上下文。
-        "resume_section_order": resolved_section_order(overrides),
+        # 正文分区（页眉不参与）：顺序里去掉用户隐藏的板块。模板里有页码、A4 适配脚本
+        # 等同样读这个上下文。
+        "resume_section_order": resolved_visible_sections(overrides),
         "template_config": style_values,
     }
 

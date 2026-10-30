@@ -11,6 +11,7 @@ import time
 import pytest
 from app.models.apply import STEP_FILLING, ApplyTask, ApplyTaskItem
 from test_apply_task_runner import (
+
     FakeAdapter,
     _config,
     _item_statuses,
@@ -21,7 +22,6 @@ from test_apply_task_runner import (
     _wait,
     _wait_db,
 )
-
 
 def test_runner_pause_and_resume(db_session):
     gate = threading.Event()
@@ -45,7 +45,6 @@ def test_runner_pause_and_resume(db_session):
     db_session.expire_all()
     assert db_session.get(ApplyTask, task.id).status == "completed"
     assert db_session.query(ApplyTaskItem).filter_by(task_id=task.id).one().status == "success"
-
 
 def test_runner_stop_marks_remaining_items_skipped(db_session):
     gate = threading.Event()
@@ -77,7 +76,6 @@ def test_runner_stop_marks_remaining_items_skipped(db_session):
     assert items[0].status == "skipped"
     assert items[1].status == "skipped"
 
-
 def test_stop_returns_after_lease_released(db_session):
     """stop 返回时，runner 线程必须已归还 apply-task 租约（resume 运行器同款修复）。
 
@@ -108,7 +106,6 @@ def test_stop_returns_after_lease_released(db_session):
     owners = dataset_scope.lease_owners()
     assert "apply-task" not in owners, f"lease still held after stop: {owners}"
 
-
 def test_runner_breaker_pauses_after_consecutive_failures(db_session):
     task = _setup_task(db_session, 2, breaker_threshold=1)
     runner = _runner(FakeAdapter(fail_categories=["selector_invalid"]))
@@ -137,7 +134,6 @@ def test_runner_breaker_pauses_after_consecutive_failures(db_session):
     assert first.failure_category == "selector_invalid"
     assert "自动暂停" in stored.message or stored.stop_reason == "user"
 
-
 def test_runner_isolates_single_item_exception(db_session):
     task = _setup_task(db_session, 2, breaker_threshold=3)
     runner = _runner(FakeAdapter(raise_first_error=True))
@@ -164,9 +160,7 @@ def test_runner_isolates_single_item_exception(db_session):
     assert items[0].status == "failed"
     assert items[1].status == "success"
 
-
 # ===== 修复 A：控制接口回写不得覆盖工作线程提交的终态（pause/resume 竞态根因）=====
-
 
 def _bare_task(db_session, status: str = "running") -> ApplyTask:
     """直接造一条指定状态的任务行，用于白盒直测 ``_set_status`` 的终态守卫。"""
@@ -174,7 +168,6 @@ def _bare_task(db_session, status: str = "running") -> ApplyTask:
     db_session.add(task)
     db_session.commit()
     return task
-
 
 @pytest.mark.parametrize("terminal", ["completed", "stopped", "failed"])
 def test_set_status_refuses_to_overwrite_a_terminal_status(db_session, terminal):
@@ -192,7 +185,6 @@ def test_set_status_refuses_to_overwrite_a_terminal_status(db_session, terminal)
 
     db_session.expire_all()
     assert _task_status(db_session, task.id) == terminal
-
 
 def test_set_status_still_applies_active_transitions(db_session):
     """终态守卫只拦"终态→活动态"，不能误伤运行中的暂停 / 恢复 / 停止。"""
@@ -214,7 +206,6 @@ def test_set_status_still_applies_active_transitions(db_session):
     assert stored.status == "stopped"
     assert stored.stop_reason == "user"
 
-
 def test_resume_after_worker_completed_keeps_the_terminal_status(db_session):
     """端到端复现：任务已 completed，控制线程再补一次 running 回写必须被拒绝。"""
     runner = _runner(FakeAdapter())
@@ -225,7 +216,6 @@ def test_resume_after_worker_completed_keeps_the_terminal_status(db_session):
 
     db_session.expire_all()
     assert _task_status(db_session, task.id) == "completed"
-
 
 def test_pause_resume_cycle_never_strands_a_task_in_running(db_session):
     """真实 worker + 控制接口并发：pause→resume 收尾后必须停在终态，绝不残留 running。

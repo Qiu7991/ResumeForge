@@ -136,9 +136,24 @@ function ApplySettingsForm({ onClose, onSaved }: Omit<Props, "open">) {
       <Form.Item
         name="default_greeting"
         label="默认招呼语"
-        extra="队列条目没有单独填写招呼语时使用；投递前可逐岗位预览并修改。"
+        extra="开启下面的「发送前必须确认招呼语」时，这里只作为兜底文案；每个岗位仍要单独确认。"
       >
         <HintedTextArea rows={2} maxLength={1000} />
+      </Form.Item>
+
+      <Form.Item
+        name="require_greeting_review"
+        label="发送前必须确认招呼语"
+        valuePropName="checked"
+        extra={
+          <>
+            开启后，队列里没有填写招呼语的岗位会被<strong>跳过</strong>（记录里写明「招呼语未确认」），
+            绝不拿默认招呼语替你群发。在队列行末「更多操作 → 编辑」里按岗位生成、改好并保存即可。
+            {defaults && <div>{defaultsHint(defaults.require_greeting_review)}</div>}
+          </>
+        }
+      >
+        <Switch />
       </Form.Item>
 
       <Divider plain style={{ margin: "4px 0 16px" }} />

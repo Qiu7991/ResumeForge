@@ -105,6 +105,39 @@ describe("ResumeEditorModal reference panel", () => {
 });
 
 /**
+ * 写作增强页签：输入框里的文字就是「个人总结」。直接编辑必须随保存落库——
+ * 早期版本只有点「回填」才写回表单，用户改完点「保存并更新预览」什么都不会变。
+ */
+describe("ResumeEditorModal 写作增强回写", () => {
+  it("在写作增强里直接编辑，保存时写进 summary", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <AntdApp>
+        <ResumeEditorModal
+          open
+          resumeId={7}
+          content={{ ...CONTENT, summary: "旧总结" }}
+          onClose={vi.fn()}
+          onSave={onSave}
+        />
+      </AntdApp>,
+    );
+
+    fireEvent.click(screen.getByText("写作增强"));
+    const box = await screen.findByLabelText("写作输入文本");
+    expect(box).toHaveValue("旧总结");
+
+    fireEvent.change(box, { target: { value: "新总结：LLM 应用与结构化抽取" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存并更新预览/ }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect((onSave.mock.calls[0][0] as ResumeContent).summary).toBe(
+      "新总结：LLM 应用与结构化抽取",
+    );
+  });
+});
+
+/**
  * 未保存守卫（RF-13）：表单被改过还没保存时，取消/遮罩要先弹确认
  * （「未保存的修改将丢失」继续编辑/放弃）；保存成功即解除。beforeunload
  * 的挂载/解除模式与 ProfilePage 相同。

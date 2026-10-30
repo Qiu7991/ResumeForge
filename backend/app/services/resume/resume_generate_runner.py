@@ -26,45 +26,42 @@ from sqlalchemy.orm import sessionmaker
 
 from ...config import get_settings
 from ...database import SessionLocal
-from ...models.job import Job
 from ...models.profile import utcnow
 from ...models.resume import (
     GENERATE_STATUS_CANCELLED,
     GENERATE_STATUS_FAILED,
     GENERATE_STATUS_RUNNING,
     ResumeGenerateTask,
+    ResumeRecord,
 )
 from ...runtime import dataset_scope
 from ...runtime.dataset_scope import DatasetLease, DatasetScopeError
 from ...runtime.log_context import run_with_bound_context
 from ...runtime.operation_budget import OperationBudget, OperationCancelled
-from ...schemas.job import JobOut
 from ...schemas.resume import GenerateOptions
 from ...services import trash
-from ...services.claims import build_baseline
 from ...services.llm import create_provider
 from ...services.llm.base import LLMError
 from ...services.llm.client_pool import aclose_clients_for_current_loop
-from ...services.llm.usage import summarize_usages
-from ...services.profile.profile_service import get_profile_detail, to_profile_out
 from ...services.resume.resume_generator import ResumeGenerator
 from ...services.resume.resume_task_state import (
     claim_completed,
     finalize_task,
     set_cancelled,
 )
-from ...services.settings_service import get_llm_config
+from .resume_base_derive import BaseResumeMissing, derive_from_base, load_base_resume
 from .resume_runner_loop import RunnerEventLoopHandle
+from .resume_runner_support import (
+    ResumeGenerateRunnerError,
+    build_snapshot,
+    log_generation_usage,
+)
 
 logger = logging.getLogger(__name__)
 
 # 已接收字数写库的粒度：没必要每个 chunk 都 commit 一次，但要让前端 1.5s 轮询能看到
 # 进展，所以每累计 200 字符落一次。
 _CHAR_COMMIT_STEP = 200
-
-
-class ResumeGenerateRunnerError(Exception):
-    """运行器控制类错误（任务未在运行等），message 为中文提示。"""
 
 
 class ResumeGenerateRunner:
@@ -190,7 +187,7 @@ class ResumeGenerateRunner:
             )
 
             try:
-                job_out, profile_out, baseline, provider = self._snapshot(session, task)
+                job_out, profile_out, baseline, provider = build_snapshot(session, task, make_provider=create_provider)
             except Exception as exc:  # noqa: BLE001 - 快照失败转为可读的失败状态
                 logger.warning("简历生成任务快照失败 task_id=%s：%s", task_id, exc)
                 self._finalize(
@@ -206,6 +203,19 @@ class ResumeGenerateRunner:
             session.commit()
 
             options = GenerateOptions.model_validate(task.options or {})
+            # 底稿模式：先把底稿读出来并校验可用，之后再决定走"按 JD 修订"而不是"从资料生成"。
+            # 这一步放在生成循环之前，底稿不存在时任务立刻 failed，不会白跑一次模型。
+            base_record: ResumeRecord | None = None
+            if options.base_resume_id is not None:
+                try:
+                    base_record = load_base_resume(
+                        session, options.base_resume_id, is_deleted=trash.is_deleted
+                    )
+                except BaseResumeMissing as exc:
+                    self._finalize(
+                        session, task, GENERATE_STATUS_FAILED, error=str(exc)
+                    )
+                    return
             generator = ResumeGenerator(provider)
             resume: dict | None = None
             warnings: list[str] = []
@@ -223,6 +233,21 @@ class ResumeGenerateRunner:
                     nonlocal resume, warnings, coverage_notes, rationale, fact_annotations
                     nonlocal last_char_commit, received_chars_total
                     nonlocal estimated_prompt_tokens
+                    if base_record is not None:
+                        # 底稿模式：复制底稿后按 JD 修订（细节见 resume_base_derive）。
+                        def _progress(message: str) -> None:
+                            task.message = message
+                            session.commit()
+
+                        resume, warnings = await derive_from_base(
+                            provider,
+                            base_record,
+                            job_out,
+                            options.custom_instruction,
+                            budget=budget,
+                            on_progress=_progress,
+                        )
+                        return
                     # aclosing 纪律（审计 PR-07-4）：取消/超时/异常路径也显式关闭生成
                     # 器——GeneratorExit 逐层展开，generator/provider 各层的 finally
                     # （段复位、usage 补记、response 关闭）才真正执行。
@@ -303,7 +328,7 @@ class ResumeGenerateRunner:
                 # 轮次合并为一条总口径；缺值保留 None（不伪造 0）。成功、取消、超时、
                 # 失败各路径都经过这里，恰好记一次。prompt/response 内容与密钥绝不
                 # 入日志（隐私边界）。
-                self._log_generation_usage(
+                log_generation_usage(
                     task_id, generator, estimated_prompt_tokens=estimated_prompt_tokens
                 )
 
@@ -371,6 +396,10 @@ class ResumeGenerateRunner:
                     fact_annotations=fact_annotations,
                     commit=False,
                 )
+                # 底稿来源记在记录上（parent_revision_id 本来就是"由谁派生"的意思）：
+                # 之后能追溯这份岗位简历是从哪份母版改出来的。
+                if base_record is not None:
+                    record.parent_revision_id = base_record.id
             except Exception:  # noqa: BLE001 - 落库失败不能让任务停在 running
                 logger.exception("简历生成结果落库失败 task_id=%s", task_id)
                 # 回滚丢弃已执行的认领 UPDATE（running→completed）与半成品记录，再按
@@ -399,62 +428,12 @@ class ResumeGenerateRunner:
                 self._frozen_factory = None
             self._stop.clear()
 
-    def _snapshot(
-        self, session: Any, task: ResumeGenerateTask
-    ) -> tuple[JobOut | None, Any, Any, Any]:
-        """在后台线程里重建生成所需的只读快照，返回 ``(job_out, profile_out, baseline, provider)``。
-
-        快照在流开始前一次性取齐，随后立即释放请求会话——生成本身是纯计算 + 模型调用，
-        不持有数据库连接（与 SSE 路径 ``db.close()`` 的做法一致）。
-        """
-        job = session.get(Job, task.job_id) if task.job_id is not None else None
-        if task.job_id is not None and (job is None or trash.is_deleted(job)):
-            raise ResumeGenerateRunnerError("岗位不存在或已被删除")
-        job_out = JobOut.model_validate(job) if job is not None else None
-        profile = get_profile_detail(session)
-        profile_out = to_profile_out(profile)
-        baseline = build_baseline(session)
-        config = get_llm_config(session)
-        if not config.base_url or not config.model:
-            raise ResumeGenerateRunnerError("请先在「设置」页配置大模型 API")
-        provider = create_provider(config)
-        return job_out, profile_out, baseline, provider
 
     # ===== 状态写入 =====
     # 终态仲裁三件套的实现拆在 resume_task_state.py（RF-02 纪律：条件 UPDATE +
     # 先到者赢）；这里保留薄方法委托，调用点与测试锚点（``runner._finalize`` 直接
     # 调用、``ResumeGenerateRunner._claim_completed`` monkeypatch）保持不变。
 
-    def _log_generation_usage(
-        self,
-        task_id: int,
-        generator: Any,
-        *,
-        estimated_prompt_tokens: int | None,
-    ) -> None:
-        """多段用量汇总日志（审计 PR-07-6，RF-14 §2.2-5）。
-
-        主生成 / 格式修复 / 质量重试 / 失败与取消轮次的用量在
-        ``generator.usage_records`` 里逐段收集（假 Provider 缺该属性时容忍），
-        这里合并为一条总口径。token 缺失保留 None（「未知」，不伪造 0）；
-        estimated_* 遥测只在估算开启时存在。
-        """
-        records = list(getattr(generator, "usage_records", None) or [])
-        summary = summarize_usages(records)
-        if summary is None:
-            return
-        fields = [
-            f"model={summary['model']}",
-            f"prompt_tokens={summary['prompt_tokens']}",
-            f"completion_tokens={summary['completion_tokens']}",
-            f"total_tokens={summary['total_tokens']}",
-            f"elapsed_ms={summary['elapsed_ms']}",
-            f"finish_reason={summary['finish_reason']}",
-            f"retries={summary['retries']}",
-        ]
-        if estimated_prompt_tokens is not None:
-            fields.append(f"estimated_prompt_tokens={estimated_prompt_tokens}")
-        logger.info("简历生成任务模型用量 task_id=%s %s", task_id, " ".join(fields))
 
     def _finalize(
         self, session: Any, task: ResumeGenerateTask, status: str, error: str = ""

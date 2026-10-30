@@ -216,6 +216,7 @@ export default function ResumeEditorModal({
                 <ResumeWritingPanel
                   resumeId={resumeId}
                   initialText={content?.summary ?? ""}
+                  onTextChange={(text) => form.setFieldValue("summary", text)}
                   onApply={(text) => form.setFieldValue("summary", text)}
                 />
               ),

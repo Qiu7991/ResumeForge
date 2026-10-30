@@ -18,6 +18,7 @@ from app.services.sites.base import (
     SiteAdapter,
 )
 from test_apply_stop_semantics_qa import (
+
     FakeCdp,
     GatedAdapter,
     _FastClock,
@@ -29,7 +30,6 @@ from test_apply_stop_semantics_qa import (
 )
 
 # ===== 采集：翻页之间停止 =====
-
 
 class _PagingAdapter(SiteAdapter):
     key = "paging"
@@ -66,7 +66,6 @@ class _PagingAdapter(SiteAdapter):
 
     def fill_and_submit(self, client, data, greeting):  # pragma: no cover
         raise AssertionError("采集不应触发投递")
-
 
 def test_collect_stop_between_pages_exits_cleanly(db_session):
     from app.schemas.apply import CollectConfigIn
@@ -107,9 +106,7 @@ def test_collect_stop_between_pages_exits_cleanly(db_session):
     assert stored.stop_reason == "user"
     assert _wait_no_leftover(), f"残留线程：{_leftover_threads()}"
 
-
 # ===== 采集：无条目批次的提前停止收尾（对应工程师修复 3 的采集路径） =====
-
 
 def _collect_task(db_session, *, total: int = 20) -> ApplyTask:
     from app.schemas.apply import CollectConfigIn
@@ -123,7 +120,6 @@ def _collect_task(db_session, *, total: int = 20) -> ApplyTask:
     db_session.add(task)
     db_session.commit()
     return task
-
 
 def test_early_stop_on_a_collect_task_records_a_finish_time(db_session):
     """采集批次没有 apply_task_item；刚启动就被停止时也必须正常收尾。
@@ -152,7 +148,6 @@ def test_early_stop_on_a_collect_task_records_a_finish_time(db_session):
     assert stored.stop_reason == "user"
     assert stored.finished_at is not None, "采集任务提前停止也必须写入结束时间"
     assert _wait_no_leftover(), f"残留线程：{_leftover_threads()}"
-
 
 def test_finalize_early_stop_handles_a_collect_task_without_items(db_session):
     """直击 ``_finalize_early_stop`` 在采集（无条目）路径：items=[] 只收尾任务、不抛异常。"""

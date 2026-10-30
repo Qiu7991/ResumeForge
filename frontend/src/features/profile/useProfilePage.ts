@@ -1,7 +1,7 @@
 /** 我的资料页状态、加载保存和拖拽/粘贴操作。 */
 
 import { App, Form, Upload } from "antd";
-import type { UploadProps } from "antd";
+import type { FormInstance, UploadProps } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { getProfile, parseProfileText, saveProfile } from "../../api/profile";
 import { normalizeSectionOrder } from "../../components/profile/ProfileSectionConfig";
@@ -14,6 +14,81 @@ export type ProfileFormValues = Omit<Profile, "id" | "updated_at">;
 
 const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const PHOTO_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * 字段名 → 中文标签。`validateFields()` 的 `errorFields` 只给字段路径（如 `name`），
+ * 不给表单项的 label，所以提示条里必须自己翻译一次，否则用户看到的是英文 key。
+ * 只收必填与常见字段：没登记的字段退回字段名，至少能定位。
+ */
+const FIELD_LABELS: Record<string, string> = {
+  name: "姓名",
+  phone: "手机号",
+  email: "邮箱",
+  city: "所在城市",
+  job_intent: "求职意向",
+  summary: "个人总结",
+  school: "学校",
+  major: "专业",
+  company: "公司",
+  role: "角色/职位",
+  organization: "组织/部门",
+  project_name: "项目名称",
+  skill_name: "技能名称",
+  award_name: "奖项名称",
+  title: "名称",
+};
+
+/**
+ * 表单校验失败时的可见反馈：列出没填好的字段并滚到第一个错误处。
+ *
+ * 为什么必须有这一步：`form.validateFields()` 失败只 reject、不弹任何东西，调用方以前
+ * 直接 `catch { return false }`，于是用户点「保存全部资料」看到的就是"按钮点了没反应"。
+ * 而红字提示可能远在下方几屏（姓名在页头、技能在页尾），滚动到错误处比只弹一条提示更
+ * 能让人立刻明白卡在哪。
+ */
+function reportValidationFailure(
+  form: FormInstance<ProfileFormValues>,
+  message: { error: (content: string) => void },
+  error: unknown,
+): void {
+  const errorFields = (
+    error as { errorFields?: { name: (string | number)[]; errors: string[] }[] } | null
+  )?.errorFields;
+  if (!errorFields || errorFields.length === 0) {
+    message.error("资料没有保存：有字段没填好，请检查页面上的红字提示");
+    return;
+  }
+
+  // 字段路径转成可读名：数组下标换成「第 N 条」，键名翻成中文。
+  const describe = (field: { name: (string | number)[]; errors: string[] }): string => {
+    const parts: string[] = [];
+    for (let index = 0; index < field.name.length; index += 1) {
+      const part = field.name[index];
+      if (typeof part === "number") {
+        parts.push(`第 ${part + 1} 条`);
+        continue;
+      }
+      // 紧跟在数组下标后的键是条目内的字段，直接用中文名即可（不必重复"第 N 条 学校"）。
+      parts.push(FIELD_LABELS[part] ?? String(part));
+    }
+    return `${parts.join(" ")}（${field.errors[0] || "没填好"}）`;
+  };
+
+  const labels = errorFields.map(describe);
+  const shown = labels.slice(0, 3).join("、");
+  const more = labels.length > 3 ? ` 等 ${labels.length} 处` : "";
+  message.error(`资料没有保存：${shown}${more}`);
+
+  // 滚到第一个错误字段，并聚焦它——提示条会消失，位置不会。
+  const first = errorFields[0].name;
+  if (first.length > 0) {
+    window.setTimeout(() => {
+      form.scrollToField(first, { behavior: "smooth", block: "center" });
+      const instance = form.getFieldInstance(first) as { focus?: () => void } | undefined;
+      instance?.focus?.();
+    });
+  }
+}
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -149,7 +224,10 @@ export function useProfilePage() {
     try {
       const formValues = await form.validateFields();
       values = { ...formValues, section_order: sectionOrder } as ProfileFormValues;
-    } catch {
+    } catch (error) {
+      // 校验不过时必须给出提示：以前这里静默 return，用户点「保存全部资料」看到的就是
+      // "按钮点了没反应"——而真实原因是某个必填项还空着，红字提示可能在下方几屏之外。
+      reportValidationFailure(form, message, error);
       return false;
     }
     setSaving(true);

@@ -109,7 +109,7 @@ export function createManualResume(payload: {
 }
 
 export function generateResumeSuggestions(id: number): Promise<ResumeSuggestions> {
-  return request(`/resumes/${id}/suggestions`, { method: "POST" });
+  return request(`/resumes/${id}/suggestions`, { method: "POST", budget: "ai" });
 }
 
 /**
@@ -119,9 +119,11 @@ export function generateResumeSuggestions(id: number): Promise<ResumeSuggestions
  * 提出的内容——「只改提出的内容」这条约束由后端提示词强制，前端无法绕过。
  */
 export function reviseResume(id: number, instructions: string): Promise<ResumeDetail> {
+  // 这是同步等模型返回的接口：default 15s 必定误超时，用 AI 预算兜住整轮生成。
   return request(`/resumes/${id}/revise`, {
     method: "POST",
     body: JSON.stringify({ instructions }),
+    budget: "ai",
   });
 }
 

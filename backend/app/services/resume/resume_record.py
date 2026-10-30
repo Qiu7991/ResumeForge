@@ -37,7 +37,11 @@ logger = logging.getLogger(__name__)
 
 
 def record_format_config(db: Session, record: ResumeRecord) -> dict:
-    """这份简历实际生效的版式配置：具名格式模板 + 只属于它的覆盖。"""
+    """这份简历实际生效的版式配置：具名格式模板 + 只属于它的覆盖。
+
+    优先级与渲染端点一致：**按简历的覆盖赢过具名预设**。用户手调的紧凑参数
+    （行高/页边距/区块间距）正是"这份简历正好一页"所依赖的东西，不能被预设盖掉。
+    """
     config = dict(validated_format_config(resolve_style_config(db, record.template)))
     config.update(resolve_format_config(db, record.format_name))
     config.update(validated_format_config(record.format_config))

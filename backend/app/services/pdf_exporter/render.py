@@ -9,7 +9,7 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
 from ...schemas.resume import ResumeContent
-from ..resume.resume_sections import resolved_section_order
+from ..resume.resume_sections import resolved_visible_sections
 from .canvas import _ResumePDF
 from .fonts import FONT_FAMILY, ResumePDFError
 from .layout import (
@@ -96,7 +96,16 @@ def _draw_resume(
     extra_size = base * layout.name_extra_ratio
     gender = (resume.gender or "").strip()
     intent_text = f"求职意向：{resume.job_intent}" if resume.job_intent else ""
-    contact = _join([resume.phone, resume.email, resume.city, resume.birth_year], "    ")
+    contact = _join(
+        [
+            resume.phone,
+            resume.email,
+            f"GitHub：{resume.github}" if resume.github else "",
+            resume.city,
+            resume.birth_year,
+        ],
+        "    ",
+    )
 
     # 先量页头正文的高度（不落笔）：modern 的底色块要按它定尺寸、并画在文字之下。
     # 姓名与性别**各量各的**（`plan_name_gender`，与绘制同一逻辑），性别不再并入
@@ -325,5 +334,5 @@ def _draw_resume(
         "skills": draw_skills,
         "awards": draw_awards,
     }
-    for section_key in resolved_section_order(format_config):
+    for section_key in resolved_visible_sections(format_config):
         drawers[section_key]()

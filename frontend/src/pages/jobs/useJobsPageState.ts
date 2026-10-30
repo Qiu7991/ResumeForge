@@ -19,6 +19,10 @@ export function useJobsPageState() {
     const raw = searchParams.get("source_kind");
     return raw === "collected" || raw === "manual" ? raw : "";
   });
+  const [sort, setSort] = useState<"created_desc" | "created_asc" | "posted_desc">(() => {
+    const raw = searchParams.get("sort");
+    return raw === "created_asc" || raw === "posted_desc" ? raw : "created_desc";
+  });
   const [page, setPage] = useState(Number(searchParams.get("page")) || 1);
   const [pageSize, setPageSize] = useState(Number(searchParams.get("page_size")) || 10);
 
@@ -56,11 +60,12 @@ export function useJobsPageState() {
         source_kind: sourceKind || undefined,
         page,
         page_size: pageSize,
+        sort,
       }),
-    [keyword, jobType, status, sourceKind, page, pageSize],
+    [keyword, jobType, status, sourceKind, page, pageSize, sort],
   );
 
-  // 筛选 / 分页写回 URL（replace 语义）。effect 只依赖这些状态本身，不依赖 searchParams：
+  // 筛选 / 排序 / 分页写回 URL（replace 语义）。effect 只依赖这些状态本身，不依赖 searchParams：
   // 写回触发的重渲染里 deps 没变、不会再写，因此不会形成循环重渲染。
   // 其余参数（job_id、collect_task_ids）通过 functional 更新原样保留。
   useEffect(() => {
@@ -135,6 +140,8 @@ export function useJobsPageState() {
     setStatus,
     sourceKind,
     setSourceKind,
+    sort,
+    setSort,
     page,
     setPage,
     pageSize,

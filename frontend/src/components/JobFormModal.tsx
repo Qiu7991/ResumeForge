@@ -381,7 +381,7 @@ export default function JobFormModal({
           form={form}
           layout="vertical"
           disabled={submitting}
-          initialValues={{ job_type: "校招", status: "开放中" }}
+          initialValues={{ job_type: "社招", status: "开放中" }}
         >
           {!isEdit && (
             <RecognitionSourceSection

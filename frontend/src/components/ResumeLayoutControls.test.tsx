@@ -265,7 +265,7 @@ describe("ResumeLayoutControls · 板块顺序", () => {
     });
 
     expect(await screen.findByRole("button", { name: "调整简历板块顺序" })).toHaveTextContent(
-      "顺序·已调整",
+      "板块·已调整",
     );
 
     await openOrderPanel();
@@ -277,5 +277,77 @@ describe("ResumeLayoutControls · 板块顺序", () => {
     expect(nextLayout.format_config).not.toHaveProperty("section_order");
     // accent 是用户自己的覆盖，不动它。
     expect(nextLayout.format_config).toMatchObject({ accent: "#123456" });
+  });
+
+  it("点眼睛把板块写进 format_config.hidden_sections，顺序保持不变", async () => {
+    const onChange = renderControls();
+    await openOrderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "隐藏校园经历" }));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const nextLayout = onChange.mock.calls[0][0] as ResumeLayout;
+    expect(nextLayout.format_config?.hidden_sections).toEqual(["campus_experience"]);
+    // 隐藏不改写顺序：放开以后它还回到原来的位置。
+    expect(nextLayout.format_config).not.toHaveProperty("section_order");
+    expect(nextLayout.template).toBe("classic");
+  });
+
+  it("再点一次放回来：隐藏清空后直接删掉这个键", async () => {
+    const onChange = renderControls({
+      layout: { ...DEFAULT_LAYOUT, format_config: { hidden_sections: ["campus_experience"] } },
+    });
+    await openOrderPanel();
+
+    // 隐藏的行要划掉，让用户看得出来它当前不会出现在输出里。
+    expect(screen.getByText("校园经历")).toHaveClass("is-hidden");
+
+    fireEvent.click(screen.getByRole("button", { name: "显示校园经历" }));
+    const nextLayout = onChange.mock.calls[0][0] as ResumeLayout;
+    expect(nextLayout.format_config).not.toHaveProperty("hidden_sections");
+  });
+
+  it("只隐藏、没调顺序时也标「已调整」，「恢复默认」把两个键一起清掉", async () => {
+    const onChange = renderControls({
+      layout: {
+        ...DEFAULT_LAYOUT,
+        format_config: { accent: "#123456", hidden_sections: ["awards"] },
+      },
+    });
+    expect(await screen.findByRole("button", { name: "调整简历板块顺序" })).toHaveTextContent(
+      "板块·已调整",
+    );
+
+    await openOrderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "恢复默认" }));
+    const nextLayout = onChange.mock.calls[0][0] as ResumeLayout;
+    expect(nextLayout.format_config).not.toHaveProperty("hidden_sections");
+    expect(nextLayout.format_config).not.toHaveProperty("section_order");
+    // accent 是用户自己的覆盖，不动它。
+    expect(nextLayout.format_config).toMatchObject({ accent: "#123456" });
+  });
+
+  it("只剩一个可见板块时不再允许隐藏", async () => {
+    renderControls({
+      layout: {
+        ...DEFAULT_LAYOUT,
+        format_config: {
+          hidden_sections: [
+            "summary",
+            "education",
+            "experience",
+            "campus_experience",
+            "projects",
+            "skills",
+          ],
+        },
+      },
+    });
+    await openOrderPanel();
+
+    // 只剩「荣誉奖项」：再藏就成了一份没有正文的简历。
+    expect(screen.getByRole("button", { name: "隐藏荣誉奖项" })).toBeDisabled();
+    // 已经隐藏的仍可随时放回来。
+    expect(screen.getByRole("button", { name: "显示个人总结" })).toBeEnabled();
   });
 });

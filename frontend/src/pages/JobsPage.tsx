@@ -22,6 +22,7 @@ import JobTable from "../components/jobs/JobTable";
 import type { CandidateJobDetail, Job, JobList } from "../types";
 import { BatchToolbar } from "./jobs/BatchToolbar";
 import { JobFilterBar } from "./jobs/JobFilterBar";
+import { useJobsImportBridge } from "./jobs/useJobsImportBridge";
 import type { BatchAction } from "./jobs/jobFilterOptions";
 import { useJobQueue } from "./jobs/useJobQueue";
 import { useJobsPageState } from "./jobs/useJobsPageState";
@@ -31,6 +32,7 @@ import { bulkEnqueueJobs, bulkEnqueueSummary } from "../components/apply/queue/b
 export default function JobsPage() {
   const navigate = useNavigate();
   const { message } = App.useApp();
+
 
   // 筛选 / 分页 / 详情 job_id 的 URL 状态化与由它驱动的列表查询都收在 hook 里：
   // 初值从 URL 读、改动写回，链接可分享、刷新后状态不丢。
@@ -43,6 +45,8 @@ export default function JobsPage() {
     setStatus,
     sourceKind,
     setSourceKind,
+    sort,
+    setSort,
     page,
     setPage,
     pageSize,
@@ -58,6 +62,8 @@ export default function JobsPage() {
     reload,
     error,
   } = useJobsPageState();
+
+  useJobsImportBridge(reload);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
@@ -333,6 +339,8 @@ export default function JobsPage() {
         return;
       }
       setSelectedJobIds(jobIds);
+      // 复选框常驻后，"勾选"本身就意味着进入批量模式：批量工具栏按它显示。
+      if (jobIds.length > 0) setSelectionMode(true);
     },
     getCheckboxProps: () => ({ disabled: batchAction !== null }),
   };
@@ -349,6 +357,8 @@ export default function JobsPage() {
         setStatus={setStatus}
         sourceKind={sourceKind}
         setSourceKind={setSourceKind}
+        sort={sort}
+        setSort={setSort}
         batchAction={batchAction}
         selectionMode={selectionMode}
         exitSelectionMode={exitSelectionMode}
@@ -359,6 +369,7 @@ export default function JobsPage() {
         setCandidatesOpen={setCandidatesOpen}
         setFormOpen={setFormOpen}
         onImportCsv={() => setImportCsvOpen(true)}
+        reloadJobs={() => void reload()}
       />
 
       <BatchToolbar

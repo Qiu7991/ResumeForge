@@ -64,3 +64,25 @@ export function moveSection(order: string[], index: number, direction: -1 | 1): 
   [next[index], next[target]] = [next[target], next[index]];
   return next;
 }
+
+/**
+ * 归一化「被隐藏的分区」：只留已知键、去重。
+ *
+ * 与顺序不同，这个列表允许为空（= 一个都不藏），也允许不完整（没提到就是显示）。
+ * 未知键直接丢弃——它来自版式配置的一个 JSON 字段，抛异常会让整份版式失效。
+ */
+export function normalizeHiddenSections(
+  stored: unknown,
+  defaultOrder: string[] = DEFAULT_RESUME_SECTION_ORDER,
+): string[] {
+  const known = new Set(defaultOrder);
+  const hidden: string[] = [];
+  if (Array.isArray(stored)) {
+    for (const item of stored) {
+      if (typeof item === "string" && known.has(item) && !hidden.includes(item)) {
+        hidden.push(item);
+      }
+    }
+  }
+  return hidden;
+}

@@ -36,7 +36,6 @@ from app.services.sites.registry import SiteRegistry
 
 THREAD_PREFIX = "rf-task-"
 
-
 class _FastClock:
     """每次读表都大步前进，让岗位间限速立即结束。"""
 
@@ -46,7 +45,6 @@ class _FastClock:
     def __call__(self) -> float:
         self._t += 100.0
         return self._t
-
 
 class FakeCdp(CdpClient):
     def __init__(self) -> None:
@@ -78,7 +76,6 @@ class FakeCdp(CdpClient):
     def close(self):
         self.closed = True
 
-
 class GatedAdapter(SiteAdapter):
     """在 ``open_apply`` 里阻塞，模拟"正在投递某个岗位"的中途状态。"""
 
@@ -109,12 +106,10 @@ class GatedAdapter(SiteAdapter):
         self.applied.append(getattr(data, "get", lambda *_: "")("job_intent"))
         return ApplyOutcome(success=True, greeting_sent=greeting)
 
-
 def _registry(adapter: SiteAdapter) -> SiteRegistry:
     registry = SiteRegistry()
     registry.register(adapter)
     return registry
-
 
 def _runner(adapter: SiteAdapter) -> TaskRunner:
     return TaskRunner(
@@ -125,7 +120,6 @@ def _runner(adapter: SiteAdapter) -> TaskRunner:
         poll_interval=0.01,
     )
 
-
 def _config(**overrides) -> ApplyConfigIn:
     data = {
         "interval_seconds": 1,
@@ -133,10 +127,12 @@ def _config(**overrides) -> ApplyConfigIn:
         "breaker_threshold": 3,
         "daily_limit": 60,
         "per_task_limit": 20,
+        # 这组用例校验执行/熔断/停止语义，夹具不带招呼语：关掉"发送前必须确认"闸门
+        # （闸门本身由 test_apply_greeting_gate.py 覆盖）。
+        "require_greeting_review": False,
     }
     data.update(overrides)
     return ApplyConfigIn(**data)
-
 
 def _setup_task(db_session, count: int = 2, **config_overrides) -> ApplyTask:
     task = ApplyTask(
@@ -175,17 +171,14 @@ def _setup_task(db_session, count: int = 2, **config_overrides) -> ApplyTask:
     db_session.commit()
     return task
 
-
 def _wait_thread_exit(runner: TaskRunner, timeout: float = 5.0) -> bool:
     deadline = time.monotonic() + timeout
     while runner.is_running() and time.monotonic() < deadline:
         time.sleep(0.01)
     return not runner.is_running()
 
-
 def _leftover_threads() -> list[str]:
     return [t.name for t in threading.enumerate() if t.name.startswith(THREAD_PREFIX)]
-
 
 def _wait_no_leftover(timeout: float = 3.0) -> bool:
     """线程退出与 ``threading.enumerate()`` 之间有一瞬间的窗口，轮询等它消失。"""
@@ -196,9 +189,7 @@ def _wait_no_leftover(timeout: float = 3.0) -> bool:
         time.sleep(0.01)
     return not _leftover_threads()
 
-
 # ===== 边界：刚启动就停止 =====
-
 
 def test_stopping_immediately_after_start_still_leaves_a_stopped_task(db_session):
     gate = threading.Event()
@@ -217,7 +208,6 @@ def test_stopping_immediately_after_start_still_leaves_a_stopped_task(db_session
     assert stored.stop_reason == "user"
     assert _wait_no_leftover(), f"残留线程：{_leftover_threads()}"
     assert runner.current_task_id() is None
-
 
 def test_stop_before_the_worker_begins_still_records_a_finish_time(db_session):
     """停止早于工作线程开始时应与正常停止**同形**：写 finished_at、剩余条目标为已跳过。
@@ -250,9 +240,7 @@ def test_stop_before_the_worker_begins_still_records_a_finish_time(db_session):
     assert _wait_no_leftover(), f"残留线程：{_leftover_threads()}"
     assert runner.current_task_id() is None
 
-
 # ===== 边界：停止后重复停止 =====
-
 
 def test_second_stop_after_the_thread_exited_is_rejected_not_crashed(db_session):
     gate = threading.Event()
@@ -268,9 +256,7 @@ def test_second_stop_after_the_thread_exited_is_rejected_not_crashed(db_session)
     with pytest.raises(TaskRunnerError):
         runner.stop(task.id)
 
-
 # ===== 边界：停止一个已完成的任务 =====
-
 
 def test_stopping_a_completed_task_is_rejected(db_session):
     gate = threading.Event()
@@ -286,9 +272,7 @@ def test_stopping_a_completed_task_is_rejected(db_session):
     with pytest.raises(TaskRunnerError):
         runner.stop(task.id)
 
-
 # ===== 边界：暂停状态下停止 =====
-
 
 def test_stop_while_paused_unblocks_and_stops(db_session):
     gate = threading.Event()
@@ -318,9 +302,7 @@ def test_stop_while_paused_unblocks_and_stops(db_session):
     assert stored.stop_reason == "user"
     assert _wait_no_leftover(), f"残留线程：{_leftover_threads()}"
 
-
 # ===== 停止信号在 CDP 调用前后生效 =====
-
 
 def test_stop_midway_through_an_item_skips_it_and_the_rest(db_session):
     gate = threading.Event()
@@ -355,9 +337,7 @@ def test_stop_midway_through_an_item_skips_it_and_the_rest(db_session):
     # 没有任何岗位真的投递成功。
     assert stored.succeeded == 0
 
-
 # ===== 并发两个任务被拒绝 =====
-
 
 def test_starting_a_second_task_while_one_runs_is_rejected(db_session, monkeypatch):
     from app.services.apply import task_runner as task_runner_module

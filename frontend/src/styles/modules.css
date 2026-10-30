@@ -786,6 +786,36 @@
 
 /* 内置样式缩略图墙：每个内置样式一张真实渲染的 A4 缩略图，点开看大图。
    缩略图是缩放的 iframe（不是截图），所以永远和真实模板一致。 */
+.builtin-style-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.builtin-style-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #595959;
+}
+
+.builtin-style-group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #f0f2f5;
+  color: #8c8c8c;
+  font-size: 12px;
+  font-weight: 400;
+}
+
 .builtin-style-gallery {
   display: flex;
   flex-wrap: wrap;
@@ -991,8 +1021,39 @@
 
 .template-gallery-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: 16px;
+}
+
+/* 分类分组：模板多了之后平铺一墙很难找，按「通用 / 后端开发 / …」分段。 */
+.template-gallery-group + .template-gallery-group {
+  margin-top: 20px;
+}
+
+.template-gallery-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #eef0f3;
+  font-size: 14px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.template-gallery-group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #f0f2f5;
+  color: #8c8c8c;
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .template-gallery-card {
@@ -1015,23 +1076,26 @@
    卡片右侧留一条空白（用户看到的就是"没居中 + 右边有空"）。 */
 .template-gallery-preview {
   position: relative;
-  height: 405px; /* 1123 × 0.36 ≈ 404.3，取整避免露出一条底边 */
+  height: 540px; /* 1123 × 0.48 ≈ 539，比原来的 0.36 放大三分之一，字号差异才看得出来 */
   background: #f5f6f8;
   overflow: hidden;
 }
 
 /* A4 页面按缩放后的大小渲染并**水平居中**：
    `left: 50%` 把 794px 的布局盒推到容器中线，再用半页宽的负 margin 把"缩放后可见区"
-   （794 × 0.36 = 286px）拉回正中间。 */
+   （794 × 0.48 = 381px）拉回正中间。
+   缩放比例为什么从 0.36 提到 0.48：0.36 时 11px 与 18px 的正文在屏幕上只差 2px 左右，
+   用户切「小字号 / 大字号」几乎看不出变化，会以为预览没刷新。放大后差异约 3px 起步，
+   配合卡片加宽，档位切换才真的看得出来。 */
 .template-gallery-frame {
   position: absolute;
   top: 0;
   left: 50%;
   width: 794px;
   height: 1123px;
-  margin-left: -143px; /* 286 / 2 */
+  margin-left: -191px; /* 381 / 2 */
   border: 0;
-  transform: scale(0.36);
+  transform: scale(0.48);
   transform-origin: top left;
   pointer-events: none;
 }

@@ -44,8 +44,11 @@ export function calculatePreviewGeometry({
 }: PreviewGeometryInput): PreviewGeometry {
   const viewportWidth = availableSpace.width || A4_WIDTH_PX;
   const viewportHeight = availableSpace.height || paperHeight;
-  // 选择 2/3 页时即使内容没有溢出，也固定按 A4 列横向展示；溢出只是把列数继续扩展。
-  const horizontalPages = pageCount > 1 || overflow;
+  // 什么时候按横向多栏排布：**只在用户主动选了多页时**。
+  // 这里曾写成 `pageCount > 1 || overflow`，于是「选 1 页但内容超出」也会并排成两张纸，
+  // 用户看到的就是"简历被分隔开了"——换任何更松的版式（舒展、换模板）都会触发，
+  // 看起来像随机坏掉。溢出该由黄色提示条 + 超出量数字表达，画布保持单页。
+  const horizontalPages = pageCount > 1;
   const totalVisualPages = horizontalPages
     ? Math.max(overflow ? pageCount + 1 : pageCount, Math.round(naturalWidth / A4_WIDTH_PX))
     : 1;

@@ -6,12 +6,16 @@ import type { BrowserState } from "./tasks";
  * 投递专用浏览器的选择方式。
  * `auto` = 自动（优先 Chrome，未装回退 Edge）；`custom` = 用下面填的自定义路径。
  */
-export type BrowserChoice = "auto" | "chrome" | "edge" | "custom";
+export type BrowserChoice = "auto" | "chrome" | "edge" | "ego" | "custom";
 
 export const BROWSER_CHOICE_META: Record<BrowserChoice, { label: string; hint: string }> = {
   auto: { label: "自动（优先 Chrome）", hint: "优先用 Chrome；没装 Chrome 时自动回退 Edge。" },
   chrome: { label: "Google Chrome", hint: "只用 Chrome；找不到会明确提示，不会改用别的浏览器。" },
   edge: { label: "Microsoft Edge", hint: "只用 Edge；找不到会明确提示，不会改用别的浏览器。" },
+  ego: {
+    label: "Ego Lite",
+    hint: "只用 Ego Lite（Chromium 内核）；找不到会明确提示，可在下面的自定义路径里直接指向 ego.exe。",
+  },
   custom: {
     label: "自定义路径",
     hint: "填写浏览器可执行文件的完整路径（必须真实存在）。",
@@ -27,6 +31,8 @@ export interface ApplyConfig {
   default_greeting: string;
   skip_same_company: boolean;
   confirm_real_gap: boolean;
+  /** 发送前必须确认招呼语（默认开）：队列里没填招呼语的岗位会被跳过。 */
+  require_greeting_review: boolean;
   browser_port: number;
   /** 投递台使用的浏览器：自动 / Chrome / Edge / 自定义路径。 */
   browser_choice: BrowserChoice;

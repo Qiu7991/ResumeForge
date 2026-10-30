@@ -102,4 +102,37 @@ describe("ResumeReviseModal", () => {
     expect(await screen.findByText(/配置大模型/)).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it("shows a live wait indicator and keeps the dialog open while generating", async () => {
+    let resolveRevise!: (value: ResumeDetail) => void;
+    vi.mocked(reviseResume).mockReturnValue(
+      new Promise<ResumeDetail>((resolve) => {
+        resolveRevise = resolve;
+      }),
+    );
+    const onClose = vi.fn();
+    renderModal(<ResumeReviseModal open recordId={7} onClose={onClose} onApplied={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "整体重新生成" }));
+
+    // 生成中要给"在跑"的明确反馈：等待秒数会走，取消被禁用，关闭入口收起。
+    expect(await screen.findByText(/正在生成…（已等待 \d+ 秒）/)).toBeInTheDocument();
+    expect(screen.getByText(/通常需要 20–60 秒/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /取\s*消/ })).toBeDisabled();
+    expect(screen.queryByLabelText("Close")).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    resolveRevise(detail());
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it("reports how long the generation took when it succeeds", async () => {
+    vi.mocked(reviseResume).mockResolvedValue(detail());
+    renderModal(<ResumeReviseModal open recordId={7} onClose={vi.fn()} onApplied={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "整体重新生成" }));
+
+    // 成功提示带上耗时，用户能确认这一轮确实跑过，而不是看到了旧内容。
+    expect(await screen.findByText(/已重新生成简历内容（用时 \d+ 秒）/)).toBeInTheDocument();
+  });
 });

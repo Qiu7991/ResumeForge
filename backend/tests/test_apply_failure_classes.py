@@ -17,6 +17,7 @@ from app.services.apply import task_apply, task_config
 from app.services.sites.base import ApplyOutcome
 from app.services.sites.boss import BossAdapter
 from test_apply_task_runner import (
+
     FakeAdapter,
     _config,
     _item_statuses,
@@ -30,7 +31,6 @@ from test_apply_task_runner import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FAILURES_TS = REPO_ROOT / "frontend" / "src" / "types" / "apply" / "failures.ts"
 
-
 class UnconfirmingAdapter(FakeAdapter):
     """动手了但读不到成功凭据的适配器：outcome.success=False，不抛异常。"""
 
@@ -38,9 +38,7 @@ class UnconfirmingAdapter(FakeAdapter):
         self.calls += 1
         return ApplyOutcome(success=False, greeting_sent=greeting)
 
-
 # ===== profile_insufficient：软跳过，不计失败、不触发熔断 =====
-
 
 def test_missing_resume_is_skipped_with_the_profile_insufficient_category(db_session):
     task = _setup_task(db_session, 2, with_resume=False)
@@ -60,9 +58,7 @@ def test_missing_resume_is_skipped_with_the_profile_insufficient_category(db_ses
     assert stored.skipped == 2
     assert adapter.calls == 0
 
-
 # ===== unconfirmed：记失败但不计入连续失败熔断 =====
-
 
 def test_unconfirmed_never_claims_success_and_never_trips_the_breaker(db_session):
     """连续 3 次「无法确认」超过默认熔断阈值（3）也不暂停：重试可能重复投递。"""
@@ -80,7 +76,6 @@ def test_unconfirmed_never_claims_success_and_never_trips_the_breaker(db_session
     for item in db_session.query(ApplyTaskItem).filter_by(task_id=task.id).all():
         assert item.failure_category == "unconfirmed"
 
-
 def test_unconfirmed_still_counts_as_a_failed_item(db_session):
     """不计熔断 ≠ 记成功：条目必须是 failed + 分类 unconfirmed。"""
     task = _setup_task(db_session, 1)
@@ -94,7 +89,6 @@ def test_unconfirmed_still_counts_as_a_failed_item(db_session):
     stored = db_session.get(ApplyTask, task.id)
     assert stored.failed == 1
     assert stored.succeeded == 0
-
 
 def test_a_real_site_failure_still_counts_toward_the_breaker(db_session):
     """收紧不能顺手放宽：selector_invalid 连续 3 次仍要熔断（既有语义钉住）。"""
@@ -115,9 +109,7 @@ def test_a_real_site_failure_still_counts_toward_the_breaker(db_session):
     runner.stop(task.id)
     _wait(runner)
 
-
 # ===== 前端镜像守卫（failures.ts 是手工镜像，落后即红） =====
-
 
 def test_frontend_failures_mirror_contains_the_new_categories():
     text = FAILURES_TS.read_text(encoding="utf-8")
@@ -126,7 +118,6 @@ def test_frontend_failures_mirror_contains_the_new_categories():
     assert "资料不足，需要先补充简历/网申资料" in text
     assert "无法确认投递结果，请到浏览器核对" in text
 
-
 def test_frontend_failures_mirror_covers_every_backend_category():
     from app.models.apply import FAILURE_CATEGORY_LABELS
 
@@ -134,17 +125,13 @@ def test_frontend_failures_mirror_covers_every_backend_category():
     for category in FAILURE_CATEGORY_LABELS:
         assert f'"{category}"' in text, f"failures.ts 缺少后端分类 {category}"
 
-
 # ===== 适配器版本与 task.config 快照 =====
-
 
 def test_boss_adapter_declares_version_one():
     assert BossAdapter.version == "1"
 
-
 def test_adapter_base_defaults_to_unversioned():
     assert FakeAdapter.version == "0"
-
 
 def test_run_apply_snapshots_the_adapter_into_task_config(db_session):
     task = _setup_task(db_session, 1)
@@ -157,7 +144,6 @@ def test_run_apply_snapshots_the_adapter_into_task_config(db_session):
     db_session.expire_all()
     stored = db_session.get(ApplyTask, task.id)
     assert stored.config["adapter"] == {"key": "fake", "version": "0"}
-
 
 def test_load_config_ignores_the_runtime_adapter_snapshot():
     """adapter 快照不是用户配置：extra="forbid" 的 ApplyConfigIn 必须忽略它而不是退回默认。"""
@@ -172,9 +158,7 @@ def test_load_config_ignores_the_runtime_adapter_snapshot():
     loaded = task_config.load_config(task, ApplyConfigIn, ignore=("adapter",))
     assert loaded.breaker_threshold == 5
 
-
 # ===== apply.step 诊断事件 =====
-
 
 @pytest.fixture
 def step_events(monkeypatch):
@@ -187,7 +171,6 @@ def step_events(monkeypatch):
     )
     yield events
     monkeypatch.setattr(diagnostics, "record_event", original)
-
 
 def test_apply_step_events_are_recorded_with_task_and_item_ids(db_session, step_events):
     task = _setup_task(db_session, 1)
@@ -207,7 +190,6 @@ def test_apply_step_events_are_recorded_with_task_and_item_ids(db_session, step_
         assert event["site_key"] == "fake"
         assert event["adapter_version"] == "0"
         assert isinstance(event["elapsed_ms"], int)
-
 
 def test_apply_step_events_never_carry_profile_values(db_session, step_events):
     """仿 test_prompt_never_contains_any_profile_value：事件里不得出现招呼语或资料值。"""
@@ -237,14 +219,12 @@ def test_apply_step_events_never_carry_profile_values(db_session, step_events):
         assert sentinel not in serialized, f"诊断事件泄漏了资料值：{sentinel}"
     assert all(event["event"] != "greeting" for event in step_events)
 
-
 def test_record_step_helper_has_a_closed_field_set():
     """钉住事件字段：加字段可以，但必须是有意的——不允许顺手把 payload 塞进来。"""
     import inspect
 
     params = list(inspect.signature(task_apply.record_step).parameters)
     assert params == ["task", "item", "step", "site_key", "adapter_version", "since"]
-
 
 def test_unconfirmed_failure_detail_is_actionable(db_session):
     """记录里的 detail 要告诉用户下一步：去浏览器核对，而不是含糊的内部错误。"""

@@ -243,6 +243,7 @@ export default function TemplateWorkbench({ onChanged }: Props) {
                     .map((item) => ({
                       name: item.name,
                       label: item.label,
+                      category: item.category,
                       description: item.description,
                     }))}
                 />

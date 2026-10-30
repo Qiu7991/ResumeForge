@@ -67,7 +67,7 @@ export function BatchToolbar({
       setExporting(false);
     }
   };
-  if (!selectionMode) return null;
+  if (!selectionMode && selectedJobIds.length === 0) return null;
   return (
     <Space style={{ marginBottom: 12, minHeight: 32 }} wrap>
       <Typography.Text type="secondary">已选 {selectedJobIds.length} 个岗位</Typography.Text>

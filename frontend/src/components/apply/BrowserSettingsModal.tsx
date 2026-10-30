@@ -66,6 +66,7 @@ export default function BrowserSettingsModal({ open, onClose, onSaved }: Props) 
         default_greeting: current.default_greeting,
         skip_same_company: current.skip_same_company,
         confirm_real_gap: current.confirm_real_gap,
+        require_greeting_review: current.require_greeting_review,
         browser_port: current.browser_port,
         browser_choice: values.browser_choice,
         browser_path: values.browser_path,

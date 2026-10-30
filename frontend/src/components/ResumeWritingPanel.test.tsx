@@ -43,6 +43,30 @@ describe("ResumeWritingPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "回填" }));
     expect(onApply).toHaveBeenCalledWith("负责后端服务开发，性能提升 30%");
+    // 回填后输入框也要跟着变成结果，否则框里还显示旧文字，用户会以为没生效。
+    expect(screen.getByLabelText("写作输入文本")).toHaveValue("负责后端服务开发，性能提升 30%");
+  });
+
+  it("直接编辑输入框会通知父组件，这段文字就是个人总结", () => {
+    const onTextChange = vi.fn();
+    render(
+      <AntdApp>
+        <ResumeWritingPanel
+          resumeId={7}
+          initialText="旧的总结"
+          onApply={vi.fn()}
+          onTextChange={onTextChange}
+        />
+      </AntdApp>,
+    );
+
+    const box = screen.getByLabelText("写作输入文本");
+    expect(box).toHaveValue("旧的总结");
+    fireEvent.change(box, { target: { value: "新的总结" } });
+
+    // 父组件靠这个回调把改动写进表单；丢掉它就会出现"改完保存却没变化"。
+    expect(onTextChange).toHaveBeenCalledWith("新的总结");
+    expect(box).toHaveValue("新的总结");
   });
 
   it("话术生成展示三种版式", async () => {

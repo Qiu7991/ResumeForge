@@ -6,6 +6,8 @@
 
 ### Added
 
+- **简历样式模板扩充到 17 种，并按分类分组展示。** 新增 9 个技术方向模板（源自 geekcompany/ResumeSample 的内容框架，重绘为样式模板）：PHP 后端、Java 开发、Node.js 开发、iOS 开发、Android 开发、Web 前端、C/C++ 系统、架构师、通用技术。样式选择弹窗与工作台「内置样式」区按分类（通用 / 技术研发 / 后端开发 / 前端开发 / 移动开发 / 系统与底层 / 架构与管理）分组，模板多时不再难找。目录接口新增 `category` 字段（`resume_template_catalog.py` 的 `CATEGORY_ORDER`），自制模板归入「自制」组。
+
 ### Fixed
 
 ### Changed

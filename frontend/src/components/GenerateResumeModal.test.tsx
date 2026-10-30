@@ -46,6 +46,7 @@ const apiMocks = vi.hoisted(() => ({
   updateResume: vi.fn(),
   updateResumeLayout: vi.fn(),
   fetchResumeTemplates: vi.fn(),
+  listResumes: vi.fn(),
   getLLMConfig: vi.fn(),
 }));
 
@@ -61,6 +62,7 @@ vi.mock("../api/resumes", async (importOriginal) => ({
   updateResume: apiMocks.updateResume,
   updateResumeLayout: apiMocks.updateResumeLayout,
   fetchResumeTemplates: apiMocks.fetchResumeTemplates,
+  listResumes: apiMocks.listResumes,
 }));
 vi.mock("../api/settings", () => ({ getLLMConfig: apiMocks.getLLMConfig }));
 
@@ -141,6 +143,8 @@ beforeEach(() => {
   apiMocks.updateResume.mockReset();
   apiMocks.updateResumeLayout.mockReset();
   apiMocks.fetchResumeTemplates.mockReset();
+  apiMocks.listResumes.mockReset();
+  apiMocks.listResumes.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 50 });
   apiMocks.getLLMConfig.mockReset();
   apiMocks.getLLMConfig.mockResolvedValue({ base_url: "https://api.example.com/v1", model: "m" });
   apiMocks.startResumeGeneration.mockResolvedValue(makeTask());
@@ -371,5 +375,54 @@ describe("GenerateResumeModal 后台生成任务", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     expect(apiMocks.cancelResumeGenerateTask).not.toHaveBeenCalled();
     expect(apiMocks.startResumeGeneration).toHaveBeenCalledOnce();
+  });
+});
+
+/**
+ * 底稿模式：选一份已有简历作为生成底稿。
+ *
+ * 守两件事：候选项真的来自简历列表；选中后请求里带 base_resume_id、且「美化拓展」被停用
+ * （底稿的措辞正是要保留的东西，再让它去拓展等于把底稿冲掉）。
+ */
+describe("GenerateResumeModal 底稿", () => {
+  it("选底稿后请求带 base_resume_id，且停用美化开关", async () => {
+    apiMocks.listResumes.mockResolvedValue({
+      items: [
+        {
+          id: 10,
+          title: "张三-通用母版",
+          job_id: null,
+          job_title: "AI 方向",
+          company: "",
+          source: "ai",
+          favorite: true,
+          note: "",
+          model: "m",
+          enhancement_enabled: false,
+          enhancement_level: "balanced",
+          template: "classic",
+          created_at: "2026-10-28T10:00:00",
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 50,
+    } as never);
+
+    renderModal();
+
+    const selector = await screen.findByLabelText("选择底稿简历");
+    fireEvent.mouseDown(selector);
+    fireEvent.click(await screen.findByText(/张三-通用母版 · AI 方向 · 2026-10-28/));
+
+    // 美化开关在底稿模式下降级为禁用
+    expect(screen.getByRole("switch")).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /开始生成/ }));
+
+    await waitFor(() => expect(apiMocks.startResumeGeneration).toHaveBeenCalledTimes(1));
+    const payload = apiMocks.startResumeGeneration.mock.calls[0][0];
+    expect(payload.options.base_resume_id).toBe(10);
+    expect(payload.options.enhance).toBe(false);
   });
 });

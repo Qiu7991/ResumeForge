@@ -37,6 +37,7 @@ const CONFIG: ApplyConfig = {
   default_greeting: "您好，我想应聘这个岗位。",
   skip_same_company: true,
   confirm_real_gap: false,
+  require_greeting_review: true,
   browser_port: 9333,
   browser_choice: "auto",
   browser_path: "",

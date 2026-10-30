@@ -201,6 +201,36 @@ describe("ProfilePage 资料分页", () => {
  * 浏览器会静默丢掉全部未保存编辑。这里钉住 beforeunload 的挂载/解除时机——
  * 有更改就挂上（浏览器出原生的"未保存的更改将丢失"），两次提交都成功才解除。
  */
+describe("ProfilePage 保存反馈", () => {
+  it("必填项没填时点保存会明确提示，而不是静默无反应", async () => {
+    apiMocks.getProfile.mockResolvedValue({ ...DEFAULT_PROFILE, name: "" });
+    renderProfilePage();
+    await screen.findByRole("button", { name: /编辑资料/ });
+
+    fireEvent.click(screen.getByRole("button", { name: /编辑资料/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /保存全部资料/ }));
+
+    // 用户反馈过"点保存没反应"：校验不过必须给可见提示（姓名是唯一必填项）。
+    await waitFor(() =>
+      expect(screen.getByText(/资料没有保存：.*姓名/)).toBeInTheDocument(),
+    );
+    // 没通过校验就不该发请求。
+    expect(apiMocks.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it("必填项齐了就能正常保存", async () => {
+    apiMocks.getProfile.mockResolvedValue({ ...DEFAULT_PROFILE, name: "张三" });
+    renderProfilePage();
+    await screen.findByRole("button", { name: /编辑资料/ });
+
+    fireEvent.click(screen.getByRole("button", { name: /编辑资料/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /保存全部资料/ }));
+
+    await waitFor(() => expect(apiMocks.saveProfile).toHaveBeenCalled());
+    expect(await screen.findByText(/资料已保存/)).toBeInTheDocument();
+  });
+});
+
 describe("ProfilePage 未保存防护", () => {
   function spyBeforeUnload() {
     const addSpy = vi.spyOn(window, "addEventListener");

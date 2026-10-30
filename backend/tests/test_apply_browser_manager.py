@@ -328,3 +328,52 @@ def test_start_still_guards_against_a_double_launch_while_booting(tmp_path):
     manager.start()
 
     assert len(popen.calls) == 1  # 没有第二次拉起
+
+
+def test_locate_browser_uses_ego_lite_when_chosen(tmp_path, monkeypatch):
+    """Ego Lite 是 Chromium 分支，装在「Citro Labs\ego lite」下；选了就只认它。"""
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    program_files = tmp_path / "pf"
+    ego_dir = program_files / "Citro Labs" / "ego lite" / "Application"
+    ego_dir.mkdir(parents=True)
+    ego = ego_dir / "ego.exe"
+    ego.write_text("")
+    # 同时装 Chrome：选 ego 时不能被 Chrome 抢走
+    chrome_dir = program_files / "Google" / "Chrome" / "Application"
+    chrome_dir.mkdir(parents=True)
+    (chrome_dir / "chrome.exe").write_text("")
+
+    manager = BrowserManager(
+        profile_dir=tmp_path / "profile",
+        browser_path=None,
+        browser_choice="ego",
+        env={"PROGRAMFILES": str(program_files)},
+        popen=FakePopen(),
+        http_transport=_transport(),
+    )
+
+    assert manager._locate_browser() == ego
+
+
+def test_ego_lite_has_its_own_chinese_name(tmp_path):
+    from app.services.browser.browser_manager import browser_display_name
+
+    assert browser_display_name(r"C:\Program Files\Citro Labs\ego lite\Application\ego.exe") == (
+        "Ego Lite（Chromium）"
+    )
+
+def test_start_arguments_load_the_bundled_capture_extension(tmp_path):
+    """随应用分发的扩展由启动参数带入：用户不用去扩展商店安装。"""
+    from pathlib import Path
+
+    from app.services.browser import browser_manager
+
+    extension_dir = Path(browser_manager.__file__).resolve().parent / "extension"
+    assert (extension_dir / "manifest.json").is_file()
+
+    manager, _popen = _manager(tmp_path)
+    args = manager._start_arguments(tmp_path / "chrome.exe")
+
+    assert any(str(arg).startswith("--load-extension=") for arg in args)
+    assert any(str(arg).startswith("--disable-extensions-except=") for arg in args)
+    assert args[-1] == "about:blank"

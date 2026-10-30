@@ -155,6 +155,94 @@ export default function TemplateGalleryModal({ open, layout, resumeId, onSelect,
   );
 
   const selectedName = layout.template;
+
+  // 按分类分组：模板多了之后（内置 17 个 + 自制），平铺一墙会很难找。
+  // 分组顺序 = 模板清单里第一次出现的顺序（后端已按 CATEGORY_ORDER 排好），
+  // 自制模板归入「自制」并排在最后。
+  const groups = useMemo(() => {
+    const result: { category: string; items: ResumeTemplateOption[] }[] = [];
+    for (const item of templates) {
+      const category = item.custom ? "自制" : item.category || "其他";
+      const group = result.find((entry) => entry.category === category);
+      if (group) {
+        group.items.push(item);
+      } else {
+        result.push({ category, items: [item] });
+      }
+    }
+    // 自制排到最后（内置模板的展示优先级更高）。
+    const customIndex = result.findIndex((entry) => entry.category === "自制");
+    if (customIndex >= 0 && customIndex !== result.length - 1) {
+      const [customGroup] = result.splice(customIndex, 1);
+      result.push(customGroup);
+    }
+    return result;
+  }, [templates]);
+
+  const renderCard = useCallback(
+    (item: ResumeTemplateOption) => (
+      <div
+        key={item.name}
+        className={`template-gallery-card${item.name === selectedName ? " is-active" : ""}`}
+      >
+      <div
+        className="template-gallery-preview"
+        role="button"
+        tabIndex={0}
+        aria-label={`查看${item.label}模板大图`}
+        onClick={() => void openZoom(item)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            void openZoom(item);
+          }
+        }}
+      >
+        {previews[item.name] ? (
+          <iframe
+            title={`${item.label} 预览`}
+            className="template-gallery-frame"
+            sandbox=""
+            // 内层滚动条在缩略图上是一根多余的竖条（用户反馈"不美观"）；
+            // 完整内容走「查看大图」，那里该滚就滚。
+            srcDoc={withHiddenScrollbar(previews[item.name])}
+          />
+        ) : failed[item.name] ? (
+          <div className="template-gallery-error">{failed[item.name]}</div>
+        ) : (
+          <div className="template-gallery-loading">
+            <LoadingBlock size="small" minHeight={120} />
+          </div>
+        )}
+      </div>
+      <div className="template-gallery-meta">
+        <div className="template-gallery-title">
+          <span>{item.label}</span>
+          {item.custom ? <Tag color="blue">自制</Tag> : null}
+          {item.name === selectedName ? <Tag color="green">使用中</Tag> : null}
+        </div>
+        <Typography.Text type="secondary" className="template-gallery-desc">
+          {item.description || "用户自制的样式模板"}
+        </Typography.Text>
+        <Space size={8}>
+          <Button size="small" onClick={() => void openZoom(item)}>
+            查看大图
+          </Button>
+          <Button
+            size="small"
+            type={item.name === selectedName ? "default" : "primary"}
+            disabled={item.name === selectedName}
+            onClick={() => onSelect(item.name)}
+          >
+            {item.name === selectedName ? "当前使用" : "用这个模板"}
+          </Button>
+        </Space>
+      </div>
+    </div>
+    ),
+    [selectedName, previews, failed, onSelect, openZoom],
+  );
+
   const body = useMemo(
     () => (
       <div className="template-gallery">
@@ -175,71 +263,18 @@ export default function TemplateGalleryModal({ open, layout, resumeId, onSelect,
             onChange={(value) => setPreviewScale(value as ResumeFontScale)}
           />
         </div>
-        <div className="template-gallery-grid">
-          {templates.map((item) => (
-            <div
-              key={item.name}
-              className={`template-gallery-card${item.name === selectedName ? " is-active" : ""}`}
-            >
-              <div
-                className="template-gallery-preview"
-                role="button"
-                tabIndex={0}
-                aria-label={`查看${item.label}模板大图`}
-                onClick={() => void openZoom(item)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    void openZoom(item);
-                  }
-                }}
-              >
-                {previews[item.name] ? (
-                  <iframe
-                    title={`${item.label} 预览`}
-                    className="template-gallery-frame"
-                    sandbox=""
-                    // 内层滚动条在缩略图上是一根多余的竖条（用户反馈"不美观"）；
-                    // 完整内容走「查看大图」，那里该滚就滚。
-                    srcDoc={withHiddenScrollbar(previews[item.name])}
-                  />
-                ) : failed[item.name] ? (
-                  <div className="template-gallery-error">{failed[item.name]}</div>
-                ) : (
-                  <div className="template-gallery-loading">
-                    <LoadingBlock size="small" minHeight={120} />
-                  </div>
-                )}
-              </div>
-              <div className="template-gallery-meta">
-                <div className="template-gallery-title">
-                  <span>{item.label}</span>
-                  {item.custom ? <Tag color="blue">自制</Tag> : null}
-                  {item.name === selectedName ? <Tag color="green">使用中</Tag> : null}
-                </div>
-                <Typography.Text type="secondary" className="template-gallery-desc">
-                  {item.description || "用户自制的样式模板"}
-                </Typography.Text>
-                <Space size={8}>
-                  <Button size="small" onClick={() => void openZoom(item)}>
-                    查看大图
-                  </Button>
-                  <Button
-                    size="small"
-                    type={item.name === selectedName ? "default" : "primary"}
-                    disabled={item.name === selectedName}
-                    onClick={() => onSelect(item.name)}
-                  >
-                    {item.name === selectedName ? "当前使用" : "用这个模板"}
-                  </Button>
-                </Space>
-              </div>
+        {groups.map((group) => (
+          <div key={group.category} className="template-gallery-group">
+            <div className="template-gallery-group-title">
+              {group.category}
+              <span className="template-gallery-group-count">{group.items.length}</span>
             </div>
-          ))}
-        </div>
+            <div className="template-gallery-grid">{group.items.map(renderCard)}</div>
+          </div>
+        ))}
       </div>
     ),
-    [templates, previews, failed, selectedName, resumeId, previewScale, onSelect, openZoom],
+    [groups, renderCard, previewScale, resumeId],
   );
 
   return (

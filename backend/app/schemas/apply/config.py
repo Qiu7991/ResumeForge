@@ -33,6 +33,9 @@ class ApplyConfigIn(BaseModel):
     default_greeting: str = Field(default=DEFAULT_GREETING, max_length=GREETING_INPUT_MAX_CHARS)
     skip_same_company: bool = True
     confirm_real_gap: bool = False
+    # 发送前必须确认招呼语：开启时，队列条目里没有"已确认招呼语"的岗位会被跳过，
+    # 绝不拿默认招呼语顶上去群发。用户要求"每条都先看过再发"，默认就是开。
+    require_greeting_review: bool = True
     browser_port: int = Field(default=DEFAULT_BROWSER_PORT, ge=1024, le=65535)
     # 用户可自由选择投递台使用的浏览器：auto（优先 Chrome）/ chrome / edge / custom（自定义路径）。
     browser_choice: BrowserChoice = DEFAULT_BROWSER_CHOICE

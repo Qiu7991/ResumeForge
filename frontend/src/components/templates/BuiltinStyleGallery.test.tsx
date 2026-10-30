@@ -59,4 +59,28 @@ describe("BuiltinStyleGallery", () => {
     expect(screen.getByRole("button", { name: "预览「经典」样式效果" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "预览「现代」样式效果" })).toBeInTheDocument();
   });
+
+  it("按分类分组展示，缺省分类归入「其他」", async () => {
+    apiMocks.previewResumeTemplate.mockResolvedValue("<html><body>简历</body></html>");
+    render(
+      <BuiltinStyleGallery
+        items={[
+          { name: "classic", label: "经典", category: "通用", description: "稳重的通用款式" },
+          { name: "modern", label: "现代", category: "通用", description: "适合互联网岗位" },
+          { name: "cpp", label: "C/C++ 系统", category: "系统与底层", description: "信息密度高" },
+          { name: "custom", label: "无分类样式", description: "没给分类" },
+        ]}
+      />,
+    );
+
+    // 分组标题与计数都在。
+    expect(screen.getByText("通用")).toBeInTheDocument();
+    expect(screen.getByText("系统与底层")).toBeInTheDocument();
+    expect(screen.getByText("其他")).toBeInTheDocument();
+    // 四个卡片都渲染出来了（分组不吞条目）。
+    await waitFor(() => expect(apiMocks.previewResumeTemplate).toHaveBeenCalledTimes(4));
+    for (const label of ["经典", "现代", "C/C++ 系统", "无分类样式"]) {
+      expect(screen.getByRole("button", { name: `预览「${label}」样式效果` })).toBeInTheDocument();
+    }
+  });
 });

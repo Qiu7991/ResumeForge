@@ -251,7 +251,34 @@ def test_resume_template_catalog_and_layout_update(client):
         "minimal",
         "editorial",
         "split",
+        # ResumeSample 方向模板（2026-10-16 扩充）。
+        "php",
+        "java",
+        "node",
+        "ios",
+        "android",
+        "web",
+        "cpp",
+        "architect",
+        "dev",
     } <= names
+    # 每个内置模板都要带 category：选择器与工作台按它分组，缺了就会掉进「其他」。
+    assert all(
+        item.get("category") for item in body["templates"] if not item["custom"]
+    ), [item for item in body["templates"] if not item.get("category")]
+    # 分组顺序来自后端目录表的排列（通用 → 技术研发 → 后端 → 前端 → 移动 → 系统 → 架构），
+    # 前端按"第一次出现的顺序"分组，所以这里钉住前几组的先后。
+    builtin_categories = [item["category"] for item in body["templates"] if not item["custom"]]
+    first_seen = list(dict.fromkeys(builtin_categories))
+    assert first_seen == [
+        "通用",
+        "技术研发",
+        "后端开发",
+        "前端开发",
+        "移动开发",
+        "系统与底层",
+        "架构与管理",
+    ], first_seen
     assert [item for item in body["templates"] if item["custom"]] == []
     assert {item["name"] for item in body["font_scales"]} == {"small", "standard", "large"}
     # 每个档位都必须带 `base_px`，且**与后端唯一的档位表 FONT_SCALES 完全一致**：

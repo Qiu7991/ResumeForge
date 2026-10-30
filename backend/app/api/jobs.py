@@ -63,8 +63,12 @@ from ..services.text_extraction import (
     no_model_warning,
 )
 from ..services.user_files import save_from_data_url
+from ..services.vision_fallback import attach_warning, run_with_vision_fallback
+from .job_import import router as job_import_router
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+# 按链接导入岗位（独立模块，别把 jobs.py 顶过 500 行预算）。
+router.include_router(job_import_router)
 logger = logging.getLogger(__name__)
 
 
@@ -171,11 +175,25 @@ def list_jobs(
     source_kind: str = Query(default=""),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    sort: str = Query(
+        default="created_desc",
+        pattern="^(created_desc|created_asc|posted_desc)$",
+        description="排序：收录时间倒序（默认）/ 正序 / 发布时间倒序",
+    ),
 ):
     query = _filtered_query(db, keyword, job_type, status, favorite, source_kind)
     total = query.count()
+    order_by = {
+        "created_desc": Job.created_at.desc(),
+        "created_asc": Job.created_at.asc(),
+        # 发布时间是用户手填/采集来的文本日期，缺失时为空串：用 created_at 兜底才不会把空值排到最前。
+        "posted_desc": Job.posted_at.desc(),
+    }[sort]
     jobs = (
-        query.order_by(Job.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        query.order_by(order_by, Job.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
     )
     return Page(items=[_to_list_out(job) for job in jobs], total=total)
 
@@ -239,10 +257,16 @@ async def parse_job_text_draft(payload: JobTextParseRequest, db: Session = Depen
             has_images=has_images,
             document_warnings=documents.warnings,
         )
-    provider = create_provider(config)
     db.close()
     try:
-        result = await extract_job_text(provider, source_text, local_draft, image_urls)
+        result, vision_note = await run_with_vision_fallback(
+            config,
+            lambda active: extract_job_text(active, source_text, local_draft, image_urls),
+            has_images=has_images,
+            make_provider=create_provider,
+        )
+        if vision_note:
+            result = attach_warning(result, vision_note)
     except LLMError as exc:
         logger.warning("岗位文本 AI 识别失败，已回退本地解析：%s", exc)
         result = mark_local_fallback(
@@ -309,10 +333,16 @@ async def parse_job_text_multiple(payload: JobTextParseRequest, db: Session = De
             parse_engine="local",
         )
 
-    provider = create_provider(config)
     db.close()
     try:
-        results = await extract_multiple_jobs(provider, source_text, image_urls)
+        results, vision_note = await run_with_vision_fallback(
+            config,
+            lambda active: extract_multiple_jobs(active, source_text, image_urls),
+            has_images=has_images,
+            make_provider=create_provider,
+        )
+        if vision_note:
+            results = [attach_warning(item, vision_note) for item in results]
         engine = "ai"
     except LLMError as exc:
         logger.warning("多份岗位 AI 识别失败，已回退本地切分：%s", exc)

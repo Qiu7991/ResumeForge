@@ -11,6 +11,7 @@
  */
 import { App as AntdApp } from "antd";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserStatus } from "../../types";
 import BrowserStatusBar from "./BrowserStatusBar";
@@ -23,6 +24,9 @@ const apiMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../api/apply", () => ({ ...apiMocks }));
+
+const jobMocks = vi.hoisted(() => ({ importCurrentJobPage: vi.fn() }));
+vi.mock("../../api/jobs", () => jobMocks);
 
 const apiState = vi.hoisted(() => ({
   data: null as BrowserStatus | null,
@@ -66,9 +70,11 @@ const RUNNING_FROM_A_PREVIOUS_RUN: BrowserStatus = {
 
 function renderBar() {
   return render(
-    <AntdApp>
-      <BrowserStatusBar />
-    </AntdApp>,
+    <MemoryRouter>
+      <AntdApp>
+        <BrowserStatusBar />
+      </AntdApp>
+    </MemoryRouter>,
   );
 }
 
@@ -175,5 +181,26 @@ describe("BrowserStatusBar", () => {
 
     expect(screen.getByText("调试端口 9333")).toBeInTheDocument();
     expect(screen.queryByText("正在刷新")).not.toBeInTheDocument();
+  });
+
+  it("浏览器运行中可一键导入当前页到岗位广场", async () => {
+    apiState.data = {
+      ...(apiState.data as BrowserStatus),
+      state: "running",
+      owned: true,
+      port: 9333,
+      entry_url: "https://www.zhipin.com/",
+    } as BrowserStatus;
+    apiMocks.getBrowserStatus.mockResolvedValue(apiState.data);
+    jobMocks.importCurrentJobPage.mockResolvedValue({
+      id: 6,
+      title: "电力市场AI应用实习生",
+      company: "清能互联科技",
+    });
+
+    renderBar();
+    fireEvent.click(await screen.findByRole("button", { name: /导入当前页到岗位广场/ }));
+
+    await waitFor(() => expect(jobMocks.importCurrentJobPage).toHaveBeenCalledTimes(1));
   });
 });

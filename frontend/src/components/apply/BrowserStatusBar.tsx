@@ -8,6 +8,7 @@
  */
 import {
   ChromeOutlined,
+  InboxOutlined,
   LinkOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
@@ -15,12 +16,15 @@ import {
 } from "@ant-design/icons";
 import { Alert, App, Button, Space, Tag, Tooltip, Typography } from "antd";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { getBrowserStatus, openBrowserSite, startBrowser, stopBrowser } from "../../api/apply";
+import { importCurrentJobPage } from "../../api/jobs";
 import { BROWSER_STATUS_POLL_INTERVAL_MS, useBrowserStatus } from "../../hooks/useBrowserStatus";
 import { BROWSER_STATE_META } from "../../types";
 
 export default function BrowserStatusBar() {
   const { message } = App.useApp();
+  const navigate = useNavigate();
   const { data, loading, error, reload, setData } = useBrowserStatus(getBrowserStatus);
   const [busy, setBusy] = useState(false);
 
@@ -45,6 +49,20 @@ export default function BrowserStatusBar() {
       message.success("已在该窗口里打开招聘网站，请在里面扫码登录");
     } catch (err) {
       message.error(err instanceof Error ? err.message : "打开招聘网站失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleImportCurrent = async () => {
+    setBusy(true);
+    try {
+      const job = await importCurrentJobPage();
+      message.success(`已导入「${job.title}」到岗位广场`);
+      // 直接跳到岗位广场并打开这条详情：用户下一步多半就是看 JD / 做匹配 / 加队列。
+      navigate(`/jobs?job_id=${job.id}`);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "导入当前页面失败");
     } finally {
       setBusy(false);
     }
@@ -101,6 +119,14 @@ export default function BrowserStatusBar() {
                 : "浏览器启动后可用；用于标签页被关掉或跳走时找回登录页"
             }
           >
+            <Button
+              icon={<InboxOutlined />}
+              loading={busy}
+              disabled={!canOpenSite}
+              onClick={() => void handleImportCurrent()}
+            >
+              导入当前页到岗位广场
+            </Button>
             <Button
               icon={<LinkOutlined />}
               loading={busy}

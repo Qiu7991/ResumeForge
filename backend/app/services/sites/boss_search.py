@@ -12,6 +12,7 @@ from ...models.apply import FAILURE_NETWORK_TIMEOUT, FAILURE_SELECTOR_INVALID
 from ..browser.cdp_client import CdpClient, CdpError
 from .base import CollectQuery, FilterResolution, SearchPage, SearchResult, SiteFailure
 from .boss_city import CityResolutionError
+from .boss_detail_parse import parse_job_detail
 from .boss_filters import (
     CONDITIONS_ENDPOINT,
     FILTER_BAR_SCRIPT,
@@ -78,7 +79,7 @@ from .boss_search_scripts import (
 from .boss_search_scripts import (
     _session_conditions_script as _session_conditions_script,
 )
-from .boss_text import looks_like_salary, normalize_text, split_job_fields, split_title_salary
+from .boss_text import looks_like_salary, normalize_text, split_title_salary
 
 logger = logging.getLogger(__name__)
 
@@ -117,23 +118,6 @@ def parse_search_payload(
         has_next=bool(payload.get("has_next")),
         unmapped_conditions=list(unmapped_conditions or []),
     )
-
-
-def parse_job_detail(payload: dict[str, Any]) -> dict[str, Any]:
-    """把 BOSS 岗位详情响应规整成标准字段；需求缺失时退回描述里拆出的需求。"""
-    if not isinstance(payload, dict):
-        raise SiteFailure(FAILURE_SELECTOR_INVALID, "岗位详情返回了无法解析的内容")
-    dom_requirements = normalize_text(payload.get("requirements", ""))
-    sections = split_job_fields(payload.get("description", ""))
-    return {
-        "job_title": normalize_text(payload.get("job_title", "")),
-        "company": normalize_text(payload.get("company", "")),
-        "description": sections.description,
-        "requirements": dom_requirements or sections.requirements,
-        # 福利待遇 / 公司介绍这类第三段（对应 ``Job.additional_info``）。
-        "additional_info": sections.additional,
-        "url": str(payload.get("url", "")),
-    }
 
 
 def _with_response_bodies(client: CdpClient, events: list[dict[str, Any]]) -> list[Any]:

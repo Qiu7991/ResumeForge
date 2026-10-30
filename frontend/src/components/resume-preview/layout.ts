@@ -60,10 +60,15 @@ export function layoutFrame({
 
   const pagesNeeded = measured ? pagesNeededFor(measured) : overflow ? pageCount + 1 : pageCount;
   overflow = overflow || pagesNeeded > pageCount;
-  // 选择多页本身就是横向分页，不要等内容溢出后才切 columns；否则 2/3 页内容较少时
-  // 会被错误地画成一张纵向长纸。
-  const useColumns = pageCount > 1 || overflow;
-  const visualPages = useColumns ? Math.max(overflow ? pageCount + 1 : pageCount, pagesNeeded) : 1;
+  // 什么时候切成横向多栏（CSS columns）：**只在用户主动选了多页时**。
+  //
+  // 这里曾写成 `pageCount > 1 || overflow`，于是「选了 1 页但内容超出」也会被切成
+  // 左右两栏。那对用户是个误导：他选的是 1 页，看到的却是并排两张纸，像是"简历被
+  // 分隔开了"；而且换任何更松的版式（舒展、换模板）都会触发，看起来像随机坏掉。
+  // 溢出本身已经有明确的黄色提示与超出量数字，那才是用户该看到的信号；
+  // 并排多栏只在"我就是要 2/3 页"时才有意义。
+  const useColumns = pageCount > 1;
+  const visualPages = useColumns ? Math.max(pageCount, pagesNeeded) : 1;
   style.textContent = useColumns ? columnsCss(visualPages) : "html,body{overflow:hidden!important}";
 
   // 令 columns 真正参与布局；宽度不再用于反推页数，只作为画布尺寸。

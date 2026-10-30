@@ -192,15 +192,28 @@ describe("ResumePreview 溢出时的多页视图", () => {
     expect(screen.getByText(/正文还多出约 30%/)).toBeTruthy();
   });
 
-  it("多页视图出现且带「近似」标注（去掉标注会红）", () => {
+  it("1 页上限溢出时不出现分页标注，只保留溢出提示", () => {
     measureState.value = { usedHeight: 1300, pageContentHeight: 1000, pageLimit: 1 };
     render(
       <ResumePreview html="<!doctype html><html><body></body></html>" warnings={[]} pages={1} />,
     );
     fireEvent.load(getPreviewFrame());
 
-    expect(screen.getByText(/第 2 页 \/ 共 2 页（近似）/)).toBeTruthy();
+    // 单页模式下没有"第 2 页"这种说法：用户只买了一页，画布也只有一页。
+    expect(screen.queryByText(/第 2 页/)).toBeNull();
+    // 但溢出本身必须说清楚，不能静默。
+    expect(screen.getByText(/约需 2 页/)).toBeTruthy();
     expect(screen.getByText(/按 A4 高度切分的近似分页/)).toBeTruthy();
+  });
+
+  it("选 2 页且溢出时才有「近似」分页标注", () => {
+    measureState.value = { usedHeight: 1900, pageContentHeight: 1000, pageLimit: 2 };
+    render(
+      <ResumePreview html="<!doctype html><html><body></body></html>" warnings={[]} pages={2} />,
+    );
+    fireEvent.load(getPreviewFrame());
+
+    expect(screen.getByText(/第 2 页 \/ 共 \d+ 页（近似）/)).toBeTruthy();
   });
 
   it("多页展示不改动 page_limit：上报的 pages 仍是用户设的上限", () => {
@@ -221,7 +234,7 @@ describe("ResumePreview 溢出时的多页视图", () => {
     expect(lastCall?.overflow).toBe(true);
   });
 
-  it("溢出时多页视图是横向并排（columns），而不是纵向堆叠", () => {
+  it("1 页上限溢出时保持单页、不切横向分栏，只给溢出提示", () => {
     measureState.value = { usedHeight: 1300, pageContentHeight: 1000, pageLimit: 1 };
     const { container } = render(
       <ResumePreview html="<!doctype html><html><body></body></html>" warnings={[]} pages={1} />,
@@ -229,14 +242,36 @@ describe("ResumePreview 溢出时的多页视图", () => {
     const iframe = getPreviewFrame();
     fireEvent.load(iframe);
 
-    // 注入的样式用 CSS columns 横向铺开（单流、单一 fit-scale），而不是把 iframe 拉高后纵向堆叠。
+    // 用户选的是 1 页：溢出不等于"自动帮我拆成两栏"。切成并排两张纸会让人以为
+    // 简历被分隔开了——换任何更松的版式（舒展、换模板）都会触发，看起来像随机坏掉。
+    // 溢出信号交给黄色提示条，画布仍是单页。
+    const injected = iframe.contentDocument?.getElementById("resume-preview-style")?.textContent;
+    expect(injected).not.toContain("column-width");
+    expect(injected).toContain("overflow:hidden");
+    // 也不许把 iframe 纵向拉长成"连续流"——那会让纸张高度失去 A4 含义。
+    expect(iframe.getAttribute("height")).toBe("1123");
+
+    // 不出现页间隙分隔条，但仍要有溢出提示。
+    expect(container.querySelector(".resume-preview-page-separator")).toBeNull();
+    expect(screen.getByText(/约需 2 页/)).toBeTruthy();
+  });
+
+  it("用户主动选 2 页时才是横向并排（columns）", () => {
+    measureState.value = { usedHeight: 1300, pageContentHeight: 1000, pageLimit: 2 };
+    const { container } = render(
+      <ResumePreview html="<!doctype html><html><body></body></html>" warnings={[]} pages={2} />,
+    );
+    const iframe = getPreviewFrame();
+    fireEvent.load(iframe);
+
+    // 多页视图用 CSS columns 横向铺开（单流、单一 fit-scale），而不是把 iframe 拉高后纵向堆叠。
     const injected = iframe.contentDocument?.getElementById("resume-preview-style")?.textContent;
     expect(injected).toContain("column-width");
     expect(injected).toContain("column-fill");
     expect(injected).not.toContain("overflow-y:visible");
 
     // 页间隙是竖直的：定位用 left（水平），不再用 top（垂直）；宽度随缩放给出的
-    // “裁切间隙”——观感是两张并排的独立 A4 纸，不是贯穿虚线。
+    // "裁切间隙"——观感是两张并排的独立 A4 纸，不是贯穿虚线。
     const separator = container.querySelector(
       ".resume-preview-page-separator",
     ) as HTMLElement | null;

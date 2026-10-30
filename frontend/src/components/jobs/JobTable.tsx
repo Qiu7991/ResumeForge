@@ -165,6 +165,12 @@ export default function JobTable({
       },
     },
     {
+      title: "收录时间",
+      dataIndex: "created_at",
+      width: 120,
+      render: (value: string) => (value ? formatDateTime(value) : "-"),
+    },
+    {
       title: "发布时间",
       dataIndex: "posted_at",
       width: 150,
@@ -227,7 +233,8 @@ export default function JobTable({
     <Table
       className="jobs-table"
       rowKey="id"
-      rowSelection={selectionMode ? rowSelection : undefined}
+      // 复选框常驻：不需要先右键「批量选择」才能勾。
+      rowSelection={rowSelection}
       columns={columns}
       dataSource={jobs?.items ?? []}
       loading={loading}

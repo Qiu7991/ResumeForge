@@ -66,6 +66,7 @@ from ..services.tracker import (
     list_track_deliveries as list_track_delivery_records,
 )
 from ..services.tracker_extract import extract_tracker_records, local_tracker_records
+from ..services.vision_fallback import run_with_vision_fallback
 
 router = APIRouter(prefix="/api/tracker", tags=["tracker"])
 logger = logging.getLogger(__name__)
@@ -225,11 +226,17 @@ async def parse_tracks(payload: TrackParseRequest, db: Session = Depends(get_db)
             items=preview_merges(db, records), parse_engine="local", notes=[*notes, *extra]
         )
 
-    provider = create_provider(config)
     # 模型调用可能持续几十秒：先释放请求会话，避免 await 期间一直占着连接池。
     db.close()
     try:
-        records, extra = await extract_tracker_records(provider, source_text, urls)
+        (records, extra), vision_note = await run_with_vision_fallback(
+            config,
+            lambda active: extract_tracker_records(active, source_text, urls),
+            has_images=bool(urls),
+            make_provider=create_provider,
+        )
+        if vision_note:
+            notes.append(vision_note)
         engine = "ai"
     except LLMError as exc:
         logger.warning("求职进度识别失败，已回退本地规则：%s", exc)

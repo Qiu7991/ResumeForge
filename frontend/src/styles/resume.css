@@ -423,6 +423,12 @@
   font-size: 13px;
 }
 
+/* 被隐藏的板块：划掉并压暗，但不上 disabled——位置仍保留，随时能放回来。 */
+.resume-section-order-label.is-hidden {
+  color: #a0a7b4;
+  text-decoration: line-through;
+}
+
 .resume-section-order-hint {
   margin: 10px 0 0 !important;
   font-size: 12px;

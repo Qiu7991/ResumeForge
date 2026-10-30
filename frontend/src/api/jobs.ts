@@ -31,6 +31,8 @@ export interface JobListParams {
   source_kind?: "collected" | "manual";
   page?: number;
   page_size?: number;
+  /** 排序：created_desc（默认，收录时间倒序）/ created_asc / posted_desc。 */
+  sort?: "created_desc" | "created_asc" | "posted_desc";
 }
 
 /** 列表响应是瘦身版 JobListOut（无 JD 全文，带 has_description）；要 JD 用 getJob。 */
@@ -49,6 +51,29 @@ export function getJob(id: number): Promise<Job> {
 
 export function createJob(payload: JobPayload): Promise<Job> {
   return request("/jobs", { method: "POST", body: JSON.stringify(payload) });
+}
+
+/**
+ * 按招聘网站链接导入岗位：后端用投递专用浏览器打开该页、抓 JD 落库。
+ *
+ * 比「手动添加」强的地方只有一个——它带着 `source_url`，所以导入后能直接进投递台。
+ */
+export function importJobFromUrl(url: string): Promise<Job> {
+  return request("/jobs/import-url", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+    // 要开一次页面并等网络响应，default 15s 不够（站点慢时更久）。
+    budget: "recognition",
+  });
+}
+
+/**
+ * 导入「专用浏览器里当前打开的岗位详情页」。
+ *
+ * 比 importJobFromUrl 少一步复制粘贴：浏览器本来就在应用手里，标签页 URL 随时可读。
+ */
+export function importCurrentJobPage(): Promise<Job> {
+  return request("/jobs/import-current", { method: "POST", budget: "recognition" });
 }
 
 export function updateJob(id: number, payload: Partial<JobPayload>): Promise<Job> {

@@ -3,6 +3,8 @@
 import {
   ArrowDownOutlined,
   ArrowUpOutlined,
+  EyeInvisibleOutlined,
+  EyeOutlined,
   PictureOutlined,
   UndoOutlined,
 } from "@ant-design/icons";
@@ -11,11 +13,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useApi } from "../hooks/useApi";
 import { fetchResumeTemplates } from "../api/resumes";
 import { RESUME_PAGE_LIMITS, type ResumeLayout } from "../types";
+import type { ResumeFormatConfig } from "../types/resumeFormat";
 import type { ResumePreviewHandle } from "./ResumePreview";
 import TemplateGalleryModal from "./resume/TemplateGalleryModal";
 import {
   DEFAULT_RESUME_SECTION_ORDER,
   moveSection,
+  normalizeHiddenSections,
   normalizeSectionOrder,
   RESUME_SECTION_LABELS,
 } from "../utils/resumeSectionOrder";
@@ -107,6 +111,19 @@ export default function ResumeLayoutControls({
   const currentTemplate = templates.find((item) => item.name === layout.template);
   const defaultTierLabel = tierByName(tiers, catalog?.defaults.font_scale ?? "standard").label;
 
+  // 记住用户自己那套版式参数（不含预设写进来的值）。
+  // 切到预设时我们会把预设值写进 format_config；切回「模板自带」要能还原成用户原来那一套，
+  // 所以每次「非预设状态」下的 format_config 都记一份。这是"切走再切回还是原来那份"的
+  // 唯一依据——库里只存当前生效值，不存历史。
+  // ref 写入放 effect（Compiler 禁止渲染期写 ref）：切预设的那一帧 format_name 已非空，
+  // 这里自然跳过，记下来的仍是切走前那份。
+  const userFormatConfigRef = useRef<ResumeFormatConfig>({});
+  useEffect(() => {
+    if (!layout.format_name) {
+      userFormatConfigRef.current = { ...layout.format_config };
+    }
+  });
+
   // 正文分区顺序：键与标签由后端下发（改默认值只改一处），归一化在前端做同样的事，
   // 因为控件展示的是"完整排列"，而存储里可能只有用户动过的那几项。
   const defaultSectionOrder = useMemo(
@@ -118,7 +135,12 @@ export default function ResumeLayoutControls({
     () => normalizeSectionOrder(layout.format_config?.section_order, defaultSectionOrder),
     [layout.format_config?.section_order, defaultSectionOrder],
   );
+  const hiddenSections = useMemo(
+    () => normalizeHiddenSections(layout.format_config?.hidden_sections, defaultSectionOrder),
+    [layout.format_config?.hidden_sections, defaultSectionOrder],
+  );
   const isCustomOrder = sectionOrder.join(",") !== defaultSectionOrder.join(",");
+  const isCustomized = isCustomOrder || hiddenSections.length > 0;
 
   const handleSectionMove = (index: number, direction: -1 | 1) => {
     const next = moveSection(sectionOrder, index, direction);
@@ -129,10 +151,26 @@ export default function ResumeLayoutControls({
     });
   };
 
+  const handleSectionToggle = (key: string) => {
+    const hidden = hiddenSections.includes(key)
+      ? hiddenSections.filter((item) => item !== key)
+      : [...hiddenSections, key];
+    const nextFormatConfig = { ...layout.format_config };
+    // 一个都不藏时把这个键删掉，而不是留一个空数组：与 section_order 一样，
+    // "没设过"和"设成空"要能区分开。
+    if (hidden.length > 0) {
+      nextFormatConfig.hidden_sections = hidden;
+    } else {
+      delete nextFormatConfig.hidden_sections;
+    }
+    onChange({ ...layout, format_config: nextFormatConfig });
+  };
+
   const handleSectionOrderReset = () => {
-    if (!isCustomOrder) return;
+    if (!isCustomized) return;
     const nextFormatConfig = { ...layout.format_config };
     delete nextFormatConfig.section_order;
+    delete nextFormatConfig.hidden_sections;
     onChange({ ...layout, format_config: nextFormatConfig });
   };
 
@@ -212,7 +250,23 @@ export default function ResumeLayoutControls({
               ]}
               onChange={(value) => {
                 setFormatTipOpen(false);
-                onChange({ ...layout, format_name: value });
+                // 选预设时把预设的值**写进** format_config，而不是把它删掉。
+                //
+                // 为什么不能只删：用户手调过的紧凑参数（行高/页边距/区块间距）正是
+                // "这份简历正好一页"所依赖的东西。删掉之后再切回「模板自带」，那几个
+                // 参数已经没了，简历就再也回不到原来的一页——这正是"切走再切回也回不去"
+                // 的成因。
+                // 写进去则两个方向都可逆：预设 → 记下预设值；切回「模板自带」→ 记回
+                // 用户原来那套值。渲染时 format_config 优先于预设，所以写进去就等于生效。
+                const preset = formatPresets.find((item) => item.name === value);
+                const nextFormatConfig = { ...layout.format_config };
+                if (preset) {
+                  Object.assign(nextFormatConfig, preset.config);
+                } else {
+                  // 「模板自带」= 回到这份简历自己的参数：恢复用户手调的那一套。
+                  Object.assign(nextFormatConfig, userFormatConfigRef.current);
+                }
+                onChange({ ...layout, format_name: value, format_config: nextFormatConfig });
               }}
             />
           </span>
@@ -233,8 +287,8 @@ export default function ResumeLayoutControls({
           arrow={false}
           title={
             <span className="resume-section-order-title">
-              调整板块顺序
-              {isCustomOrder && (
+              调整板块顺序与显示
+              {isCustomized && (
                 <Button size="small" type="link" onClick={handleSectionOrderReset}>
                   恢复默认
                 </Button>
@@ -248,11 +302,37 @@ export default function ResumeLayoutControls({
                   sectionOptions.find((item) => item.key === key)?.label ??
                   RESUME_SECTION_LABELS[key] ??
                   key;
+                const hidden = hiddenSections.includes(key);
+                const visibleCount = sectionOrder.length - hiddenSections.length;
                 return (
                   <div className="resume-section-order-row" role="listitem" key={key}>
                     <span className="resume-section-order-index">{index + 1}</span>
-                    <span className="resume-section-order-label">{label}</span>
+                    <span
+                      className={`resume-section-order-label${hidden ? " is-hidden" : ""}`}
+                      title={hidden ? "这个板块已被隐藏，不会出现在预览与导出里" : label}
+                    >
+                      {label}
+                    </span>
                     <Space size={0}>
+                      <Tooltip
+                        title={
+                          !hidden && visibleCount <= 1
+                            ? "至少保留一个板块"
+                            : hidden
+                              ? `显示${label}`
+                              : `隐藏${label}`
+                        }
+                      >
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={hidden ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                          aria-label={hidden ? `显示${label}` : `隐藏${label}`}
+                          aria-pressed={hidden}
+                          disabled={disabled || (!hidden && visibleCount <= 1)}
+                          onClick={() => handleSectionToggle(key)}
+                        />
+                      </Tooltip>
                       <Tooltip title="上移">
                         <Button
                           size="small"
@@ -278,15 +358,15 @@ export default function ResumeLayoutControls({
                 );
               })}
               <Typography.Paragraph type="secondary" className="resume-section-order-hint">
-                顺序对预览、PDF、Word
-                与文本导出同时生效；页眉（姓名、求职意向、联系方式）固定在最前。
+                顺序与显示状态对预览、PDF、Word 和文本导出同时生效；隐藏的板块不会出现在任何
+                输出里。页眉（姓名、求职意向、联系方式）固定在最前。
               </Typography.Paragraph>
             </div>
           }
         >
-          <Tooltip title="调整个人总结、教育经历、项目经历等板块在简历里的先后顺序">
+          <Tooltip title="调整个人总结、教育经历、项目经历等板块的先后顺序，或隐藏不需要的板块">
             <Button size="small" disabled={disabled} aria-label="调整简历板块顺序">
-              顺序{isCustomOrder ? "·已调整" : ""}
+              板块{isCustomized ? "·已调整" : ""}
             </Button>
           </Tooltip>
         </Popover>

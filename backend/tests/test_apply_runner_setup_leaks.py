@@ -8,6 +8,7 @@ from app.models.apply import ApplyTask
 from app.services.apply.task_runner import TaskRunner
 from app.services.sites.registry import SiteRegistry
 from test_apply_runner_robustness_qa import (
+
     FakeCdp,
     ScriptedAdapter,
     _FastClock,
@@ -18,13 +19,11 @@ from test_apply_runner_robustness_qa import (
     _wait_no_leftover,
 )
 
-
 class _ExplodingRegistry(SiteRegistry):
     """``resolve_for_job`` 直接抛异常：逼出 run_apply 装配段（适配器快照）的失败。"""
 
     def resolve_for_job(self, job):  # noqa: D401 - 测试替身
         raise RuntimeError("模拟注册表异常")
-
 
 def _counting_client_factory(created: list):
     def factory(_config):
@@ -33,7 +32,6 @@ def _counting_client_factory(created: list):
         return client
 
     return factory
-
 
 def test_apply_client_is_closed_when_setup_after_make_client_fails(db_session):
     """run_apply 拿到 client 后、进入 try 前的装配段抛异常，client 也必须被关闭。"""
@@ -55,7 +53,6 @@ def test_apply_client_is_closed_when_setup_after_make_client_fails(db_session):
     assert _wait_no_leftover(), f"残留线程：{_leftover_threads()}"
     assert created, "client 工厂未被调用（用例自检）"
     assert created[0].closed, "client 未被关闭（CDP 连接泄漏）"
-
 
 def test_collect_client_is_closed_when_recorder_setup_fails(db_session, monkeypatch):
     """run_collect 的样例录制装配（走文件系统）抛异常，client 也必须被关闭。"""

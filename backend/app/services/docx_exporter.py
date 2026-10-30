@@ -35,7 +35,7 @@ from .pdf_exporter import (
     resolve_accent,
     resolve_layout,
 )
-from .resume.resume_sections import resolved_section_order
+from .resume.resume_sections import resolved_visible_sections
 
 # Word 里写的是字体名，最终由用户机器上的 Word 解析；用微软雅黑与 PDF 首选字体一致。
 DOCX_FONT = "微软雅黑"
@@ -159,7 +159,16 @@ def _header(doc, resume: ResumeContent, *, accent: tuple[int, int, int], layout,
         intent_run = intent_paragraph.add_run(f"求职意向：{resume.job_intent}")
         _set_run_font(intent_run, size_pt=base * layout.intent_ratio * _PX_TO_PT, color=_MUTED_COLOR)
 
-    contact = _join([resume.phone, resume.email, resume.city, resume.birth_year], "　　")
+    contact = _join(
+        [
+            resume.phone,
+            resume.email,
+            f"GitHub：{resume.github}" if resume.github else "",
+            resume.city,
+            resume.birth_year,
+        ],
+        "　　",
+    )
     if contact:
         contact_paragraph = _paragraph(doc)
         contact_run = contact_paragraph.add_run(contact)
@@ -350,6 +359,8 @@ def build_resume_docx(
         layout=layout,
         page_limit=limit,
         include_photo=include_photo,
+        # 量高与画文档必须用同一份配置：隐藏了板块却仍按全部板块估页，会白缩字号。
+        format_config=overrides,
     )
     final_layout = layout.with_fit_scale(fit_scale)
     content = _build_document(
@@ -357,7 +368,7 @@ def build_resume_docx(
         accent=accent,
         layout=final_layout,
         include_photo=include_photo,
-        section_order=resolved_section_order(overrides),
+        section_order=resolved_visible_sections(overrides),
     )
     return ResumeDOCX(content=content, pages=pages, scale=fit_scale, overflow=overflow)
 
@@ -369,6 +380,7 @@ def _estimate_fit(
     layout,
     page_limit: int,
     include_photo: bool,
+    format_config: dict | None = None,
 ) -> tuple[float, int | None, bool]:
     """复用 ``decide_fit_scale`` 的同一口径估 Word 页数与缩放。
 
@@ -389,6 +401,7 @@ def _estimate_fit(
             regular=regular,
             bold=bold,
             include_photo=include_photo,
+            format_config=format_config,
         )
 
     def pages_at(value: float) -> int:

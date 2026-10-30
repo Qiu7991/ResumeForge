@@ -7,6 +7,7 @@ import {
   CloseCircleOutlined,
   HistoryOutlined,
   InboxOutlined,
+  LinkOutlined,
   PlusOutlined,
   ReloadOutlined,
   UploadOutlined,
@@ -15,6 +16,7 @@ import { Button, Input, Select, Space } from "antd";
 import { useState } from "react";
 import type { BatchAction } from "./jobFilterOptions";
 import { JOB_TYPE_OPTIONS, SOURCE_KIND_OPTIONS, STATUS_OPTIONS } from "./jobFilterOptions";
+import ImportJobUrlModal from "./ImportJobUrlModal";
 
 export function JobFilterBar({
   keyword,
@@ -26,6 +28,8 @@ export function JobFilterBar({
   setStatus,
   sourceKind,
   setSourceKind,
+  sort,
+  setSort,
   batchAction,
   selectionMode,
   exitSelectionMode,
@@ -36,6 +40,7 @@ export function JobFilterBar({
   setCandidatesOpen,
   setFormOpen,
   onImportCsv,
+  reloadJobs,
 }: {
   keyword: string;
   setKeyword: (value: string) => void;
@@ -46,6 +51,8 @@ export function JobFilterBar({
   setStatus: (value: string) => void;
   sourceKind: "" | "collected" | "manual";
   setSourceKind: (value: "" | "collected" | "manual") => void;
+  sort: "created_desc" | "created_asc" | "posted_desc";
+  setSort: (value: "created_desc" | "created_asc" | "posted_desc") => void;
   batchAction: BatchAction;
   selectionMode: boolean;
   exitSelectionMode: () => void;
@@ -56,7 +63,12 @@ export function JobFilterBar({
   setCandidatesOpen: (value: boolean) => void;
   setFormOpen: (value: boolean) => void;
   onImportCsv: () => void;
+  /** 按链接导入成功后刷新列表。 */
+  reloadJobs: () => void;
 }) {
+  // 按链接导入岗位的弹窗开关（导入成功后由页面 reload 列表）。
+  const [importUrlOpen, setImportUrlOpen] = useState(false);
+
   // 搜索框受控：本地镜像同步外部 keyword（URL 带参等外部变化能回填输入框），
   // 点 × 清空时立即把筛选也清掉——之前非受控时清空后列表仍按旧关键词过滤。
   // Compiler 规范：镜像同步用渲染期守卫式调整。
@@ -127,6 +139,20 @@ export function JobFilterBar({
           }}
           options={SOURCE_KIND_OPTIONS}
         />
+        <Select
+          aria-label="排序"
+          style={{ width: 150 }}
+          value={sort}
+          onChange={(value) => {
+            setSort(value);
+            setPage(1);
+          }}
+          options={[
+            { value: "created_desc", label: "收录时间：新→旧" },
+            { value: "created_asc", label: "收录时间：旧→新" },
+            { value: "posted_desc", label: "发布时间：新→旧" },
+          ]}
+        />
         {/* 进入选择模式的入口在行右键菜单的「批量选择」（R8）；这里只保留退出。 */}
         {selectionMode && (
           <Button
@@ -173,6 +199,13 @@ export function JobFilterBar({
             补齐详情
           </Button>
         )}
+        <Button
+          icon={<LinkOutlined />}
+          disabled={batchAction !== null}
+          onClick={() => setImportUrlOpen(true)}
+        >
+          导入链接
+        </Button>
         <Button icon={<UploadOutlined />} disabled={batchAction !== null} onClick={onImportCsv}>
           导入 CSV
         </Button>
@@ -185,6 +218,11 @@ export function JobFilterBar({
           手动添加
         </Button>
       </Space>
+      <ImportJobUrlModal
+        open={importUrlOpen}
+        onClose={() => setImportUrlOpen(false)}
+        onImported={() => reloadJobs()}
+      />
     </div>
   );
 }

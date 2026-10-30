@@ -41,6 +41,7 @@ from ..services.text_extraction import (
     no_model_warning,
 )
 from ..services.user_files import save_from_data_url
+from ..services.vision_fallback import attach_warning, run_with_vision_fallback
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 logger = logging.getLogger(__name__)
@@ -145,10 +146,16 @@ async def parse_profile_text_draft(payload: ProfileTextParseRequest, db: Session
             has_images=has_images,
             document_warnings=documents.warnings,
         )
-    provider = create_provider(config)
     db.close()
     try:
-        result = await extract_profile_text(provider, source_text, local_draft, image_urls)
+        result, vision_note = await run_with_vision_fallback(
+            config,
+            lambda active: extract_profile_text(active, source_text, local_draft, image_urls),
+            has_images=has_images,
+            make_provider=create_provider,
+        )
+        if vision_note:
+            result = attach_warning(result, vision_note)
     except LLMError as exc:
         logger.warning("个人资料 AI 识别失败，已回退本地解析：%s", exc)
         result = mark_local_fallback(

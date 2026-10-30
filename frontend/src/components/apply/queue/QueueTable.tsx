@@ -124,9 +124,19 @@ export function QueueTable({
           >
             {item.resume_title || "按默认规则解析"}
           </Typography.Text>
-          <Typography.Text type="secondary" ellipsis={{ tooltip: item.greeting || "默认招呼语" }}>
-            {item.greeting || "默认招呼语"}
-          </Typography.Text>
+          {item.greeting ? (
+            <Typography.Text type="secondary" ellipsis={{ tooltip: item.greeting }}>
+              {item.greeting}
+            </Typography.Text>
+          ) : (
+            // 空招呼语 = 没确认过。开启「发送前必须确认招呼语」时这条会被跳过，
+            // 所以标签要把话说透，而不是含糊地写「默认招呼语」让人以为会照默认发。
+            <Tooltip title="还没确认招呼语：开始投递时会被跳过。点行末「更多操作 → 编辑」，按岗位生成并保存即可。">
+              <Tag color="orange" style={{ marginInlineEnd: 0, width: "fit-content" }}>
+                招呼语未确认
+              </Tag>
+            </Tooltip>
+          )}
         </Space>
       ),
     },

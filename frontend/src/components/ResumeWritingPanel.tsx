@@ -1,7 +1,9 @@
 /** 简历写作增强面板：STAR 改写 / 话术生成 / 风格润色 / 中英互译。
  *
- * 自包含：一段文本进、一段文本出。结果既可复制，也可一键回填——由父组件决定
- * 「回填到哪个字段」，这里只负责把结果交回去。
+ * 输入框里的文字就是父组件选定的那个字段（在整份编辑器里是「个人总结」）：
+ * 直接改会通过 `onTextChange` 写回表单，随保存一起落库；生成结果点「回填」覆盖同一段。
+ * 早期版本把这段文字放在面板私有 state 里，用户改完点保存却什么也没发生——
+ * 因为只有点「回填」才会写到表单，这个坑别再踩。
  */
 import { App, Button, Checkbox, Input, Radio, Segmented, Space, Spin, Typography } from "antd";
 import { useMemo, useState } from "react";
@@ -44,9 +46,16 @@ interface Props {
   initialText?: string;
   /** 把某条结果回填到父组件选定的字段。 */
   onApply: (text: string) => void;
+  /** 输入框里的文字改了：父组件应把它写回同一个字段，让「保存」能带走这次编辑。 */
+  onTextChange?: (text: string) => void;
 }
 
-export default function ResumeWritingPanel({ resumeId, initialText = "", onApply }: Props) {
+export default function ResumeWritingPanel({
+  resumeId,
+  initialText = "",
+  onApply,
+  onTextChange,
+}: Props) {
   const { message } = App.useApp();
   const [text, setText] = useState(initialText);
   const [operation, setOperation] = useState<Operation>("star");
@@ -56,6 +65,11 @@ export default function ResumeWritingPanel({ resumeId, initialText = "", onApply
   const [loading, setLoading] = useState(false);
   const [singleResult, setSingleResult] = useState("");
   const [phrasesResult, setPhrasesResult] = useState<PhrasesResult | null>(null);
+
+  const editText = (next: string) => {
+    setText(next);
+    onTextChange?.(next);
+  };
 
   const canRun = useMemo(() => text.trim().length > 0, [text]);
 
@@ -83,8 +97,9 @@ export default function ResumeWritingPanel({ resumeId, initialText = "", onApply
 
   const apply = (result: string) => {
     if (!result) return;
+    setText(result);
     onApply(result);
-    message.success("已回填");
+    message.success("已回填到个人总结");
   };
 
   return (
@@ -92,10 +107,13 @@ export default function ResumeWritingPanel({ resumeId, initialText = "", onApply
       <Input.TextArea
         rows={4}
         value={text}
-        placeholder="粘贴或输入一段简历描述"
-        onChange={(event) => setText(event.target.value)}
+        placeholder="这里就是简历里的「个人总结」，可以直接改"
+        onChange={(event) => editText(event.target.value)}
         aria-label="写作输入文本"
       />
+      <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: -8 }}>
+        直接改这段文字等于改个人总结，点「保存并更新预览」就会生效；生成结果点「回填」会覆盖这一段。
+      </Typography.Text>
 
       <Segmented
         block

@@ -69,6 +69,15 @@ _REQUIRED_FILES: Final[tuple[tuple[str, str], ...]] = (
     ("app/templates/resume_minimal.html.j2", "极简简历模板"),
     ("app/templates/resume_editorial.html.j2", "社论简历模板"),
     ("app/templates/resume_split.html.j2", "分栏简历模板"),
+    ("app/templates/resume_php.html.j2", "PHP 后端方向模板"),
+    ("app/templates/resume_java.html.j2", "Java 开发方向模板"),
+    ("app/templates/resume_node.html.j2", "Node.js 开发方向模板"),
+    ("app/templates/resume_ios.html.j2", "iOS 开发方向模板"),
+    ("app/templates/resume_android.html.j2", "Android 开发方向模板"),
+    ("app/templates/resume_web.html.j2", "Web 前端方向模板"),
+    ("app/templates/resume_cpp.html.j2", "C/C++ 系统方向模板"),
+    ("app/templates/resume_architect.html.j2", "架构师方向模板"),
+    ("app/templates/resume_dev.html.j2", "通用技术方向模板"),
     # `_resume_sections.j2` 里 `{% import "_resume_blocks.j2" %}`：少了它，任何一次
     # 简历渲染都会在 Jinja 编译阶段失败（而且报错信息不会指出缺的是哪个文件）。
     # 这个文件曾经只存在于工作区、没进版本库，于是按 HEAD 打包的发行版缺它——

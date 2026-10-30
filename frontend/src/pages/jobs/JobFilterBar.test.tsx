@@ -37,6 +37,9 @@ function StatefulHarness({ onKeywordChange }: { onKeywordChange?: (value: string
       setCandidatesOpen={vi.fn()}
       setFormOpen={vi.fn()}
       onImportCsv={vi.fn()}
+      reloadJobs={vi.fn()}
+      sort="created_desc"
+      setSort={vi.fn()}
     />
   );
 }
@@ -63,6 +66,9 @@ function ControlledHarness({ keyword }: { keyword: string }) {
       setCandidatesOpen={vi.fn()}
       setFormOpen={vi.fn()}
       onImportCsv={vi.fn()}
+      reloadJobs={vi.fn()}
+      sort="created_desc"
+      setSort={vi.fn()}
     />
   );
 }

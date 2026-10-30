@@ -208,8 +208,14 @@ describe("SettingsPage model presets", () => {
     // 关键区别：自定义模型保留当前内容，纯手动配置要一套空的
     expect(screen.getByLabelText("Base URL")).toHaveValue("");
     expect(screen.getByLabelText("模型名称")).toHaveValue("");
-    // 预设本来就不碰密钥，这里也不该替用户清掉它
-    expect(screen.getByLabelText("API Key（选填）")).toHaveValue("********");
+    // 预设本来就不碰密钥，这里也不该替用户清掉它。编辑态下掩码不回显成可编辑
+    // 文本（否则新密钥会被打在星号后面），所以看的是表单引用：留空保存仍是掩码。
+    const keyInput = screen.getByLabelText("API Key（选填）");
+    expect(keyInput).toHaveValue("");
+    expect(keyInput).toHaveAttribute(
+      "placeholder",
+      "已保存密钥：直接输入新密钥即可替换，留空保存则保持不变",
+    );
 
     fireEvent.change(screen.getByLabelText("Base URL"), {
       target: { value: "https://relay.example.com/v1" },
@@ -351,9 +357,9 @@ describe("SettingsPage model presets", () => {
     fireEvent.change(screen.getByLabelText("模型名称"), {
       target: { value: "private-model" },
     });
-    fireEvent.change(screen.getByLabelText("API Key（选填）"), {
-      target: { value: "" },
-    });
+    // 已存密钥不能靠"把空框清空"来表达：空框保存等于保持原值，
+    // 要改成本地无鉴权服务得点显式清除。
+    fireEvent.click(screen.getByRole("button", { name: "清除已保存密钥" }));
     fireEvent.click(screen.getByRole("button", { name: /保存配置/ }));
 
     await waitFor(() =>

@@ -23,7 +23,6 @@ from app.services.sites.base import (
 )
 from app.services.sites.registry import SiteRegistry
 
-
 class _FakeClock:
     """每次读表都大步前进，让岗位间限速立即结束（离线测试不真等）。"""
 
@@ -33,7 +32,6 @@ class _FakeClock:
     def __call__(self) -> float:
         self._t += 100.0
         return self._t
-
 
 class FakeCdp(CdpClient):
     def __init__(self) -> None:
@@ -64,7 +62,6 @@ class FakeCdp(CdpClient):
 
     def close(self):
         self.closed = True
-
 
 class FakeAdapter(SiteAdapter):
     key = "fake"
@@ -108,12 +105,10 @@ class FakeAdapter(SiteAdapter):
                 raise SiteFailure(category, f"模拟失败：{category}")
         return ApplyOutcome(success=True, greeting_sent=greeting)
 
-
 def _registry(adapter: SiteAdapter) -> SiteRegistry:
     registry = SiteRegistry()
     registry.register(adapter)
     return registry
-
 
 def _runner(adapter: SiteAdapter) -> TaskRunner:
     return TaskRunner(
@@ -124,7 +119,6 @@ def _runner(adapter: SiteAdapter) -> TaskRunner:
         poll_interval=0.01,
     )
 
-
 def _config(**overrides) -> ApplyConfigIn:
     data = {
         "interval_seconds": 1,
@@ -132,10 +126,12 @@ def _config(**overrides) -> ApplyConfigIn:
         "breaker_threshold": 3,
         "daily_limit": 60,
         "per_task_limit": 20,
+        # 本文件及复用它的用例集中校验执行/熔断/取消语义，历史夹具不带招呼语：
+        # 默认关掉"发送前必须确认招呼语"；闸门本身由 test_apply_greeting_gate.py 覆盖。
+        "require_greeting_review": False,
     }
     data.update(overrides)
     return ApplyConfigIn(**data)
-
 
 def _setup_task(
     db_session,
@@ -183,12 +179,10 @@ def _setup_task(
     db_session.commit()
     return task
 
-
 def _wait(runner: TaskRunner, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while runner.is_running() and time.monotonic() < deadline:
         time.sleep(0.01)
-
 
 def _wait_db(db_session, read, expected, describe: str, timeout: float = 10.0):
     """轮询等待数据库里的观测值到达 ``expected``；超时给出带实测值的可读失败。
@@ -212,11 +206,9 @@ def _wait_db(db_session, read, expected, describe: str, timeout: float = 10.0):
         f"{describe}：{timeout}s 内未到达期望值 {expected!r}，实际观测为 {observed!r}"
     )
 
-
 def _task_status(db_session, task_id: int) -> str:
     task = db_session.get(ApplyTask, task_id)
     return task.status if task is not None else "<missing>"
-
 
 def _item_statuses(db_session, task_id: int) -> list[str]:
     return [
@@ -226,7 +218,6 @@ def _item_statuses(db_session, task_id: int) -> list[str]:
         .order_by(ApplyTaskItem.sort_order)
         .all()
     ]
-
 
 def _poll(db_session, predicate, timeout: float = 5.0):
     deadline = time.monotonic() + timeout
@@ -238,7 +229,6 @@ def _poll(db_session, predicate, timeout: float = 5.0):
         time.sleep(0.01)
     db_session.expire_all()
     return predicate()
-
 
 def test_runner_completes_and_writes_back_job_status(db_session):
     task = _setup_task(db_session, 1)
@@ -257,7 +247,6 @@ def test_runner_completes_and_writes_back_job_status(db_session):
     assert item.status == "success"
     assert item.greeting  # 默认招呼语已写入记录
     assert job.status == JOB_STATUS_APPLIED
-
 
 def test_a_custom_greeting_wins_over_the_default_one(db_session):
     """**用户为这个岗位自己写的招呼语，必须真的被发出去**（而不是被默认招呼语顶掉）。
@@ -283,7 +272,6 @@ def test_a_custom_greeting_wins_over_the_default_one(db_session):
     sent = db_session.query(ApplyTaskItem).filter_by(task_id=task.id).one()
     assert sent.greeting == "您好，我是自己写的那一条 SENTINEL_GREETING"
 
-
 def test_runner_records_a_tracker_row_for_each_successful_apply(db_session):
     """投出去的岗位要自动出现在「求职进度」里，否则用户还得手工再录一遍。"""
     task = _setup_task(db_session, 1)
@@ -302,7 +290,6 @@ def test_runner_records_a_tracker_row_for_each_successful_apply(db_session):
     assert tracks[0].status == STATUS_APPLIED
     assert tracks[0].source == SOURCE_APPLY
     assert tracks[0].job_id == item.job_id
-
 
 def test_runner_allows_an_adapter_that_does_not_require_a_generated_resume(db_session):
     """BOSS 的立即沟通不依赖本地岗位版简历，缺简历时仍应进入站点投递流程。"""
@@ -323,7 +310,6 @@ def test_runner_allows_an_adapter_that_does_not_require_a_generated_resume(db_se
     assert item.status == "success"
     assert adapter.calls == 1
 
-
 def test_runner_still_skips_missing_resume_when_the_adapter_requires_it(db_session):
     task = _setup_task(db_session, 1, with_resume=False)
     adapter = FakeAdapter()
@@ -339,13 +325,11 @@ def test_runner_still_skips_missing_resume_when_the_adapter_requires_it(db_sessi
     assert "未找到可用简历" in item.failure_detail
     assert adapter.calls == 0
 
-
 # ===== 「同公司只投一个岗位」=====
 #
 # 这个开关在设置界面里已经存在很久（默认开），但**投递逻辑从来没有读过它**——用户打开它、
 # 保存它、以为最多给一家公司发一条，实际上队列里有几条就发几条。2026-09-21 在真实投递里
 # 发现并补上。作用域按产品决定取「本批次内」。
-
 
 def test_same_company_skips_the_second_job_of_that_company(db_session):
     task = _setup_task(
@@ -376,7 +360,6 @@ def test_same_company_skips_the_second_job_of_that_company(db_session):
     assert db_session.get(ApplyTask, task.id).skipped == 1
     assert db_session.get(ApplyTask, task.id).processed == 3
 
-
 def test_same_company_switch_off_sends_every_job(db_session):
     """关掉开关时行为与从前完全一致——这是"改一处别把别的弄坏"的那一半。"""
     task = _setup_task(
@@ -390,7 +373,6 @@ def test_same_company_switch_off_sends_every_job(db_session):
 
     assert adapter.calls == 3
     assert _item_statuses(db_session, task.id) == ["success", "success", "success"]
-
 
 def test_same_company_matching_ignores_spacing_and_case(db_session):
     """公司名带空格、大小写不同，仍是同一家——不归一化就等于开关形同虚设。"""
@@ -406,7 +388,6 @@ def test_same_company_matching_ignores_spacing_and_case(db_session):
     assert adapter.calls == 1
     assert _item_statuses(db_session, task.id) == ["success", "skipped"]
 
-
 def test_items_without_a_company_are_never_skipped(db_session):
     """没有公司名的条目不作同公司判断（判断不了就不做判断），否则会把无关岗位一起吞掉。"""
     task = _setup_task(db_session, 2, companies=["", ""], skip_same_company=True)
@@ -417,7 +398,6 @@ def test_items_without_a_company_are_never_skipped(db_session):
     _wait(runner)
 
     assert adapter.calls == 2
-
 
 def test_a_failed_first_job_still_claims_the_company(db_session):
     """**失败也算"投过"。** 失败可能发生在确认环节——招呼语其实已经发出去了。这时再给同一家
@@ -433,7 +413,6 @@ def test_a_failed_first_job_still_claims_the_company(db_session):
 
     assert adapter.calls == 1, "第一条失败之后，第二条仍不该发"
     assert _item_statuses(db_session, task.id) == ["failed", "skipped"]
-
 
 def test_company_key_normalizes_whitespace_and_case():
     assert company_key(" 核桃 编程 ") == company_key("核桃 编程")

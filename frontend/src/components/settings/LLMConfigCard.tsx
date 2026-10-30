@@ -239,7 +239,7 @@ export default function LLMConfigCard({
         <Form.Item
           name="api_key"
           label="API Key（选填）"
-          tooltip="多数云模型服务需要填写；Ollama 等无需鉴权的本地兼容服务可留空。点击眼睛时才会从本机后端临时读取已保存密钥，隐藏后立即清除显示值。"
+          tooltip="多数云模型服务需要填写；Ollama 等无需鉴权的本地兼容服务可留空。已保存密钥时编辑态显示为空框，直接输入新密钥即可替换，不填则保持原值；点击眼睛会从本机后端临时读取已保存密钥，显示出来的内容也可以直接改。"
         >
           <ApiKeyInput
             editing={editing}

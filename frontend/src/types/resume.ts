@@ -83,6 +83,8 @@ export type ResumePageLimit = (typeof RESUME_PAGE_LIMITS)[number];
 export interface ResumeTemplateOption {
   name: string;
   label: string;
+  /** 展示分组（如「通用」「后端开发」）；后端对未知分类兜底为「其他」。 */
+  category?: string;
   description: string;
   /** 用户自制的样式模板；内置模板为 false。 */
   custom?: boolean;
@@ -391,6 +393,8 @@ export interface GenerateOptions {
   format_name: string;
   /** 用户自己补充的生成要求（≤2000 字），作为附加上下文交给模型。 */
   custom_instruction: string;
+  /** 以哪份已有简历为底稿；null = 从「我的资料」重新生成。 */
+  base_resume_id?: number | null;
 }
 
 /** 生成接口 SSE 事件（与后端 generator 事件一一对应）。 */

@@ -28,7 +28,6 @@ from app.services.sites.registry import SiteRegistry
 
 THREAD_PREFIX = "rf-task-"
 
-
 class _FastClock:
     def __init__(self) -> None:
         self._t = 0.0
@@ -36,7 +35,6 @@ class _FastClock:
     def __call__(self) -> float:
         self._t += 100.0
         return self._t
-
 
 class FakeCdp(CdpClient):
     def __init__(self) -> None:
@@ -64,7 +62,6 @@ class FakeCdp(CdpClient):
     def close(self):
         return None
 
-
 class GatedAdapter(SiteAdapter):
     key = "gated"
     display_name = "示例站点"
@@ -90,12 +87,10 @@ class GatedAdapter(SiteAdapter):
         client.evaluate("rf:submit")
         return ApplyOutcome(success=True, greeting_sent=greeting)
 
-
 def _registry(adapter: SiteAdapter) -> SiteRegistry:
     registry = SiteRegistry()
     registry.register(adapter)
     return registry
-
 
 def _runner(adapter: SiteAdapter) -> TaskRunner:
     return TaskRunner(
@@ -106,16 +101,16 @@ def _runner(adapter: SiteAdapter) -> TaskRunner:
         poll_interval=0.01,
     )
 
-
 def _config() -> ApplyConfigIn:
+    # 本用例只校验暂停/恢复的终态一致性，夹具不带招呼语：关掉"发送前必须确认"闸门。
     return ApplyConfigIn(
+        require_greeting_review=False,
         interval_seconds=1,
         interval_jitter_seconds=0,
         breaker_threshold=3,
         daily_limit=60,
         per_task_limit=20,
     )
-
 
 def _setup_task(db_session, count: int = 1) -> ApplyTask:
     task = ApplyTask(kind="apply", status="pending", total=count, config=_config().model_dump())
@@ -149,16 +144,13 @@ def _setup_task(db_session, count: int = 1) -> ApplyTask:
     db_session.commit()
     return task
 
-
 def _status(db_session, task_id: int) -> str:
     db_session.expire_all()
     task = db_session.get(ApplyTask, task_id)
     return task.status if task is not None else "<missing>"
 
-
 def _task_threads() -> list[str]:
     return [t.name for t in threading.enumerate() if t.name.startswith(THREAD_PREFIX)]
-
 
 def _dump_stacks() -> str:
     frames = sys._current_frames()
@@ -169,7 +161,6 @@ def _dump_stacks() -> str:
         if frame is not None:
             chunks.append("".join(traceback.format_stack(frame)))
     return "\n".join(chunks)
-
 
 def test_pause_resume_completes_without_clobbering_final_status(db_session):
     """复现 pause→resume 时序；若卡在 running，给出线程级诊断。"""
@@ -219,7 +210,6 @@ def test_pause_resume_completes_without_clobbering_final_status(db_session):
     assert thread_alive is False
     assert leftover == []
 
-
 def test_set_status_refuses_to_clobber_a_terminal_status(db_session):
     """直击写状态原语：``_set_status`` 绝不把已落终态的任务改回活动态。
 
@@ -240,9 +230,7 @@ def test_set_status_refuses_to_clobber_a_terminal_status(db_session):
     final = _status(db_session, task.id)
     assert final == "completed", f"终态被 _set_status 覆盖成了 {final!r}"
 
-
 # ===== 边界攻击：修复 A 的条件 UPDATE 不能误伤正常迁移，也不能并发出事 =====
-
 
 @pytest.mark.parametrize(
     ("start", "target"),
@@ -267,7 +255,6 @@ def test_set_status_allows_normal_lifecycle_transitions(db_session, start, targe
 
     assert _status(db_session, task.id) == target, f"{start}→{target} 被条件 UPDATE 误伤"
 
-
 @pytest.mark.parametrize("terminal", ["completed", "stopped", "failed"])
 @pytest.mark.parametrize("target", ["running", "paused", "stopped"])
 def test_set_status_never_revives_a_terminal_task(db_session, terminal, target):
@@ -280,7 +267,6 @@ def test_set_status_never_revives_a_terminal_task(db_session, terminal, target):
     runner._set_status(task.id, target)
 
     assert _status(db_session, task.id) == terminal
-
 
 def test_concurrent_control_writes_do_not_deadlock_or_raise(db_session):
     """并发 pause/resume/stop 回写同一行：不得抛未处理异常、不得卡死、结果落在合法集合内。"""

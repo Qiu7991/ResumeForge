@@ -295,6 +295,8 @@ describe("BUDGETS_MS", () => {
       task: 30_000,
       // AI 识别：非流式等完整 JSON，大文本 15s 会误超时（AI 提速批次）。
       recognition: 90_000,
+      // 同步 AI 文本生成：必须长于后端 LLM 超时（默认 120s）。
+      ai: 180_000,
       stream: 0,
     });
   });

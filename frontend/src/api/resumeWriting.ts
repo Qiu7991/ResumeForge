@@ -11,6 +11,7 @@ import type {
 } from "../types/resumeWriting";
 import { request } from "./client";
 
+// 下面五个接口都要同步等模型返回，统一走 AI 预算（180s）；diff 是本地计算，保持默认预算。
 export function rewriteStar(
   id: number,
   text: string,
@@ -19,6 +20,7 @@ export function rewriteStar(
   return request(`/resumes/${id}/writing/star`, {
     method: "POST",
     body: JSON.stringify({ text, claim_id: claimId }),
+    budget: "ai",
   });
 }
 
@@ -30,6 +32,7 @@ export function generatePhrases(
   return request(`/resumes/${id}/writing/phrases`, {
     method: "POST",
     body: JSON.stringify({ text, modes }),
+    budget: "ai",
   });
 }
 
@@ -41,6 +44,7 @@ export function polishResumeText(
   return request(`/resumes/${id}/writing/polish`, {
     method: "POST",
     body: JSON.stringify({ text, style }),
+    budget: "ai",
   });
 }
 
@@ -52,6 +56,7 @@ export function translateResumeText(
   return request(`/resumes/${id}/writing/translate`, {
     method: "POST",
     body: JSON.stringify({ text, direction }),
+    budget: "ai",
   });
 }
 
@@ -80,5 +85,6 @@ export function rewriteResumeField(
   return request(`/resumes/${id}/writing/rewrite-field`, {
     method: "POST",
     body: JSON.stringify({ path, instruction }),
+    budget: "ai",
   });
 }

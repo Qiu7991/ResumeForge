@@ -26,9 +26,25 @@ CUSTOM_STYLE = """<!DOCTYPE html>
 """
 
 
-# 设计上**给技能加"小框"**的模板（底色或边框）。其余两个是刻意的**无框**设计：
-# compact 用 `·` 分隔、minimal 纯文本。这份清单是"快照"——某个模板的框被误删时会立刻红。
-SKILL_TAG_BOX_TEMPLATES = {"classic", "elegant", "modern", "technical", "split"}
+# 设计上**给技能加"小框"**的模板（底色或边框）。其余是刻意的**无框**设计：
+# compact 用 `·` 分隔、minimal 纯文本、ios 纯文字清单。这份清单是"快照"——
+# 某个模板的框被误删时会立刻红。
+SKILL_TAG_BOX_TEMPLATES = {
+    "classic",
+    "elegant",
+    "modern",
+    "technical",
+    "split",
+    # ResumeSample 方向模板：除 ios（刻意的纯文字设计）外都带框。
+    "php",
+    "java",
+    "node",
+    "android",
+    "web",
+    "cpp",
+    "architect",
+    "dev",
+}
 
 
 @pytest.mark.parametrize("name", sorted(RESUME_TEMPLATES))

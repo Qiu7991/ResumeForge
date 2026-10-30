@@ -189,7 +189,7 @@ def test_import_falls_back_to_default_job_type_when_candidate_has_none(db_sessio
 
     import_candidates(db_session, [candidate.id])
 
-    assert db_session.query(Job).one().job_type == "校招"
+    assert db_session.query(Job).one().job_type == "社招"
 
 
 def test_import_infers_internship_from_the_title(db_session):

@@ -58,6 +58,9 @@ export default function ResumeDetailModal({ recordId, onClose }: Props) {
   const loadedRecordId = useRef<number | null>(null);
   const requestVersion = useRef(0);
   const saveRequestVersion = useRef(0);
+  // 版式重渲染的"最后一次生效"版本号：换模板/改字号/加页数都走它。
+  // 与 requestVersion（正文请求）分开，避免改版式把正文请求判成过期。
+  const layoutRequestVersion = useRef(0);
   const layoutDirty = JSON.stringify(layout) !== JSON.stringify(savedLayout);
 
   // Compiler 规范：随 recordId 变化的重置用渲染期守卫式调整（含首次挂载）；
@@ -153,30 +156,41 @@ export default function ResumeDetailModal({ recordId, onClose }: Props) {
 
   /** 换模板 / 加页数 / 改字号：先改本地草稿并重新渲染，不立即写回记录。 */
   const applyLayout = async (next: ResumeLayout) => {
-    if (!detail || relayouting) return;
+    if (!detail) return;
+    // 连续点击（换模板后立刻换版式）时，旧请求的返回会覆盖新结果，所以用版本号
+    // 让"最后一次操作"胜出。**不能**用 `if (relayouting) return` 直接丢弃：那会让
+    // 用户的后一次点击静默失效，表现就是"点了模板但预览没变"。
+    const versionAtStart = ++layoutRequestVersion.current;
     setRelayouting(true);
     setLayout(next);
     try {
-      setHtml(await renderResume(detail.content, next));
+      const rendered = await renderResume(detail.content, next);
+      if (versionAtStart !== layoutRequestVersion.current) return;
+      setHtml(rendered);
     } catch (err) {
+      if (versionAtStart !== layoutRequestVersion.current) return;
       message.error(err instanceof Error ? err.message : "按新版式渲染失败");
     } finally {
-      setRelayouting(false);
+      if (versionAtStart === layoutRequestVersion.current) setRelayouting(false);
     }
   };
 
   /** 「自动一页」也只写入当前草稿，用户确认后再保存。 */
   const applyFittedFormat = async (formatConfig: ResumeFormatConfig) => {
     if (!detail) return;
+    const versionAtStart = ++layoutRequestVersion.current;
     const next: ResumeLayout = { ...layout, format_config: formatConfig };
     setLayout(next);
     setRelayouting(true);
     try {
-      setHtml(await renderResume(detail.content, next));
+      const rendered = await renderResume(detail.content, next);
+      if (versionAtStart !== layoutRequestVersion.current) return;
+      setHtml(rendered);
     } catch (err) {
+      if (versionAtStart !== layoutRequestVersion.current) return;
       message.error(err instanceof Error ? err.message : "按新版式渲染失败");
     } finally {
-      setRelayouting(false);
+      if (versionAtStart === layoutRequestVersion.current) setRelayouting(false);
     }
   };
 

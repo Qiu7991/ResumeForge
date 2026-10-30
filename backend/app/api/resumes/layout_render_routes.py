@@ -138,6 +138,12 @@ def render_resume(payload: ResumeRenderRequest, db: Session = Depends(get_db)):
     「自动一页」逐档试版式时用它，试出结果之前不落库。
     """
     template_name, template_html = resolve_style_template(db, payload.template)
+    # 优先级：按简历的 format_config 覆盖 > 具名版式预设。
+    #
+    # 这是"后设置的赢"：用户选了预设，前端会把预设拥有的三个键（行高/页边距/区块间距）
+    # 从 format_config 里清掉，预设自然生效；用户手工调了行高，它写进 format_config，
+    # 就该压过预设——那正是他此刻的显式意图，也是"这份简历正好一页"所依赖的参数。
+    # （曾反过来试过预设优先，结果把用户手调的紧凑参数作废，原本刚好一页的简历立刻溢出。）
     config = dict(resolve_format_config(db, payload.format_name))
     config.update(validated_format_config(payload.format_config))
     return Response(

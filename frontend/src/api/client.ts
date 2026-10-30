@@ -8,9 +8,16 @@ export type ApiErrorCode = "http" | "network" | "timeout" | "cancelled";
 
 /**
  * 请求预算分类（毫秒）：文件上传/大文件导出给长预算，普通请求 15s，任务类 30s，
- * stream 不限时（SSE 流式路径不走 request()，此档供显式豁免的调用方使用）。
+ * 同步 AI 生成 180s，stream 不限时（SSE 流式路径不走 request()，此档供显式豁免的调用方使用）。
  */
-export type RequestBudgetKind = "default" | "upload" | "export" | "task" | "recognition" | "stream";
+export type RequestBudgetKind =
+  | "default"
+  | "upload"
+  | "export"
+  | "task"
+  | "recognition"
+  | "ai"
+  | "stream";
 
 export const BUDGETS_MS: Record<RequestBudgetKind, number> = {
   default: 15_000,
@@ -20,6 +27,9 @@ export const BUDGETS_MS: Record<RequestBudgetKind, number> = {
   // AI 识别（岗位/资料解析）：非流式等完整 JSON，大文本 30s 不够——90s 兜底，
   // 正常在几秒到十几秒返回，超时才报错（此前 default 15s 会让大文本直接超时）。
   recognition: 90_000,
+  // 同步 AI 文本生成（简历修订/建议/润色等）：后端 LLM 超时默认 120s，客户端预算
+  // 必须比它长。否则前端 15s 先超时、后端仍在生成并落库，用户看到"失败"但简历已变。
+  ai: 180_000,
   stream: 0, // 0 表示不限时
 };
 

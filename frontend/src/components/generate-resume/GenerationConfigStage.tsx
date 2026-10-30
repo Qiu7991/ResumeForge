@@ -3,7 +3,17 @@
  * 纯展示受控组件——全部配置状态与开始动作由 GenerateResumeModal 持有，经 props 回传；
  * 零 api 导入。
  */
-import { Alert, Button, Input, Segmented, Space, Switch, Tooltip, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Input,
+  Segmented,
+  Select,
+  Space,
+  Switch,
+  Tooltip,
+  Typography,
+} from "antd";
 import type { EnhancementLevel, Job, ResumeLayout } from "../../types";
 import { RESUME_ENHANCEMENT_LEVELS, enhancementLevelDescription } from "../../config";
 import { MaxLengthHint } from "../common/MaxLengthHint";
@@ -11,6 +21,11 @@ import ResumeLayoutControls from "../ResumeLayoutControls";
 
 /** 自定义提示词上限，与后端 GenerateOptions.custom_instruction 一致。 */
 export const MAX_CUSTOM_INSTRUCTION = 2000;
+
+export interface BaseResumeOption {
+  value: number;
+  label: string;
+}
 
 interface Props {
   job: Job | null;
@@ -20,6 +35,10 @@ interface Props {
   setEnhance: (value: boolean) => void;
   enhancementLevel: EnhancementLevel;
   setEnhancementLevel: (value: EnhancementLevel) => void;
+  /** 以哪份已有简历为底稿；null = 从「我的资料」重新生成。 */
+  baseResumeId: number | null;
+  setBaseResumeId: (value: number | null) => void;
+  baseResumeOptions: BaseResumeOption[];
   layout: ResumeLayout;
   setLayout: (next: ResumeLayout) => void;
   customInstruction: string;
@@ -38,6 +57,9 @@ export default function GenerationConfigStage({
   setEnhance,
   enhancementLevel,
   setEnhancementLevel,
+  baseResumeId,
+  setBaseResumeId,
+  baseResumeOptions,
   layout,
   setLayout,
   customInstruction,
@@ -82,22 +104,45 @@ export default function GenerationConfigStage({
           />
         </div>
       )}
+      <Typography.Title level={5} style={{ marginTop: 20 }}>
+        底稿
+      </Typography.Title>
+      <Space orientation="vertical" size={8} style={{ width: "100%", marginBottom: 8 }}>
+        <Select
+          style={{ width: "100%" }}
+          aria-label="选择底稿简历"
+          value={baseResumeId ?? 0}
+          options={[
+            { value: 0, label: "不使用底稿（从「我的资料」重新生成）" },
+            ...baseResumeOptions,
+          ]}
+          onChange={(value) => setBaseResumeId(value === 0 ? null : Number(value))}
+        />
+        <Typography.Text type="secondary">
+          {baseResumeId
+            ? "将以这份简历为底稿：复制它的正文，再按岗位 JD 调整取舍与表达；底稿本身不会被修改，生成结果是一条新记录。"
+            : "选一份已生成的简历当底稿，比「从资料重写」更能保住你已经改好的措辞；不选则按原来的方式从资料生成。"}
+        </Typography.Text>
+      </Space>
       <Typography.Title level={5}>{job ? "岗位适配与内容美化" : "内容美化"}</Typography.Title>
       <Space orientation="vertical" size={14} style={{ width: "100%" }}>
         <Space size={10}>
-          <Switch checked={enhance} onChange={setEnhance} />
+          {/* 底稿模式下不再"美化拓展"：底稿的措辞正是要保留的东西，再去拓展会把它冲掉。 */}
+          <Switch checked={enhance} disabled={Boolean(baseResumeId)} onChange={setEnhance} />
           <Typography.Text strong>
             {job ? "根据岗位要求美化拓展经历" : "用资料里的总结文件补足经历细节"}
           </Typography.Text>
         </Space>
         <Typography.Text type="secondary">
-          {job
-            ? "基于已有经历和总结文件补足表达细节，突出与岗位相关的能力，不修改个人资料原文。"
-            : "基于已有经历和总结文件补足表达细节，突出资料本身的重点，不修改个人资料原文。"}
+          {baseResumeId
+            ? "已选底稿：不再做「美化拓展」，模型只在底稿上按岗位做取舍与表达调整。"
+            : job
+              ? "基于已有经历和总结文件补足表达细节，突出与岗位相关的能力，不修改个人资料原文。"
+              : "基于已有经历和总结文件补足表达细节，突出资料本身的重点，不修改个人资料原文。"}
         </Typography.Text>
         <Segmented
           block
-          disabled={!enhance}
+          disabled={!enhance || Boolean(baseResumeId)}
           value={enhancementLevel}
           // 下面的说明只讲当前选中的那一档，得先点一下才知道别的档是什么；
           // 每一档自己带上悬停说明，生成前可以先把三档比一遍。

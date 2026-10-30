@@ -61,7 +61,7 @@ MAX_BACKFILL_REQUEST_ITEMS = 1000
 
 BrowserState = Literal["stopped", "starting", "running", "unknown"]
 # 浏览器选择：auto=自动（优先 Chrome，未装回退 Edge）/ chrome / edge / custom=自定义路径。
-BrowserChoice = Literal["auto", "chrome", "edge", "custom"]
+BrowserChoice = Literal["auto", "chrome", "edge", "ego", "custom"]
 QueueStatus = Literal["pending", "skipped", "done"]
 TaskStatus = Literal[
     "pending",

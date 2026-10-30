@@ -10,18 +10,19 @@ import type { ResumeTemplateCatalog, ResumeLayout } from "../types";
 
 export const TEMPLATE_CATALOG: ResumeTemplateCatalog = {
   templates: [
-    { name: "classic", label: "经典", description: "深蓝标题与左侧色条，稳重的通用款式" },
-    { name: "modern", label: "现代", description: "青绿配色与圆角标签，适合互联网岗位" },
-    { name: "compact", label: "精简", description: "细线分隔、排版紧凑，适合内容多、想压在一页" },
-    { name: "elegant", label: "优雅", description: "居中标题与衬线字，留白舒展" },
-    { name: "technical", label: "技术", description: "色块标题与等宽辅助信息，信息密度高" },
-    { name: "minimal", label: "极简", description: "只用黑灰与字号层级，没有色块与装饰" },
+    { name: "classic", label: "经典", category: "通用", description: "深蓝标题与左侧色条，稳重的通用款式" },
+    { name: "modern", label: "现代", category: "通用", description: "青绿配色与圆角标签，适合互联网岗位" },
+    { name: "compact", label: "精简", category: "通用", description: "细线分隔、排版紧凑，适合内容多、想压在一页" },
+    { name: "elegant", label: "优雅", category: "通用", description: "居中标题与衬线字，留白舒展" },
+    { name: "technical", label: "技术", category: "技术研发", description: "色块标题与等宽辅助信息，信息密度高" },
+    { name: "minimal", label: "极简", category: "通用", description: "只用黑灰与字号层级，没有色块与装饰" },
     {
       name: "editorial",
       label: "社论",
+      category: "通用",
       description: "衬线字体与细线分隔，适合文商科、内容与管理岗位",
     },
-    { name: "split", label: "分栏", description: "正文双栏、信息密度高，适合经历与技能较多的简历" },
+    { name: "split", label: "分栏", category: "通用", description: "正文双栏、信息密度高，适合经历与技能较多的简历" },
   ],
   font_scales: [
     {

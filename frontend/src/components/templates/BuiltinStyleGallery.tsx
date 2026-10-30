@@ -28,6 +28,8 @@ const THUMB_SCALE = THUMB_WIDTH / A4_WIDTH_PX;
 export interface BuiltinStyleItem {
   name: string;
   label: string;
+  /** 展示分组（如「通用」「后端开发」）；缺省时归入「其他」。 */
+  category?: string;
   description?: string;
 }
 
@@ -60,47 +62,70 @@ export default function BuiltinStyleGallery({ items }: Props) {
 
   const openedHtml = opened ? (previews[opened.name] ?? "") : "";
 
+  // 按分类分组展示：内置样式从 8 个扩到 17 个之后，一堵平铺的墙很难找。
+  // 分组顺序 = items 里第一次出现的顺序（后端按 CATEGORY_ORDER 排好下发）。
+  const groups: { category: string; items: BuiltinStyleItem[] }[] = [];
+  for (const item of items) {
+    const category = item.category || "其他";
+    const group = groups.find((entry) => entry.category === category);
+    if (group) {
+      group.items.push(item);
+    } else {
+      groups.push({ category, items: [item] });
+    }
+  }
+
+  const renderCard = (item: BuiltinStyleItem) => {
+    const html = previews[item.name];
+    return (
+      <button
+        type="button"
+        key={item.name}
+        className="builtin-style-card"
+        aria-label={`预览「${item.label}」样式效果`}
+        onClick={() => setOpened(item)}
+      >
+        <span
+          className="builtin-style-thumb"
+          style={{ width: THUMB_WIDTH, height: THUMB_HEIGHT }}
+        >
+          {html ? (
+            <iframe
+              className="builtin-style-frame"
+              title={`${item.label} 样式缩略图`}
+              aria-hidden="true"
+              tabIndex={-1}
+              sandbox=""
+              scrolling="no"
+              srcDoc={html}
+              style={{
+                width: A4_WIDTH_PX,
+                height: A4_HEIGHT_PX,
+                transform: `scale(${THUMB_SCALE})`,
+                transformOrigin: "top left",
+              }}
+            />
+          ) : (
+            <Skeleton.Node active style={{ width: THUMB_WIDTH, height: THUMB_HEIGHT }} />
+          )}
+        </span>
+        <span className="builtin-style-name">{item.label}</span>
+      </button>
+    );
+  };
+
   return (
     <>
-      <div className="builtin-style-gallery">
-        {items.map((item) => {
-          const html = previews[item.name];
-          return (
-            <button
-              type="button"
-              key={item.name}
-              className="builtin-style-card"
-              aria-label={`预览「${item.label}」样式效果`}
-              onClick={() => setOpened(item)}
-            >
-              <span
-                className="builtin-style-thumb"
-                style={{ width: THUMB_WIDTH, height: THUMB_HEIGHT }}
-              >
-                {html ? (
-                  <iframe
-                    className="builtin-style-frame"
-                    title={`${item.label} 样式缩略图`}
-                    aria-hidden="true"
-                    tabIndex={-1}
-                    sandbox=""
-                    scrolling="no"
-                    srcDoc={html}
-                    style={{
-                      width: A4_WIDTH_PX,
-                      height: A4_HEIGHT_PX,
-                      transform: `scale(${THUMB_SCALE})`,
-                      transformOrigin: "top left",
-                    }}
-                  />
-                ) : (
-                  <Skeleton.Node active style={{ width: THUMB_WIDTH, height: THUMB_HEIGHT }} />
-                )}
-              </span>
-              <span className="builtin-style-name">{item.label}</span>
-            </button>
-          );
-        })}
+      <div className="builtin-style-groups">
+        {groups.map((group) => (
+          <div key={group.category} className="builtin-style-group">
+            <div className="builtin-style-group-title">
+              {group.category}
+              <span className="builtin-style-group-count">{group.items.length}</span>
+            </div>
+            <div className="builtin-style-gallery">{group.items.map(renderCard)}</div>
+          </div>
+        ))}
       </div>
 
       <Modal

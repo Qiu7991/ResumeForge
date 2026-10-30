@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .resume_sections import normalized_section_order
+from .resume_sections import normalized_hidden_sections, normalized_section_order
 
 FORMAT_FIELDS: tuple[dict, ...] = (
     {"key": "accent", "label": "强调色", "type": "color", "css": "--accent"},
@@ -66,6 +66,13 @@ def validated_format_config(raw: dict | None) -> dict:
         if str(key) == "section_order":
             if isinstance(value, (list, tuple)) and value:
                 result["section_order"] = normalized_section_order(value)
+            continue
+        if str(key) == "hidden_sections":
+            # 空列表也是合法值（= 一个都不藏），但没必要写进库里；前端取消全部隐藏时会
+            # 直接删掉这个键，所以这里只在非空时保留。
+            hidden = normalized_hidden_sections(value)
+            if hidden:
+                result["hidden_sections"] = hidden
             continue
         field = _format_field(str(key))
         if field is None or value in (None, ""):

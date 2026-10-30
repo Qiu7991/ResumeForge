@@ -31,7 +31,6 @@ from app.services.sites.base import (
 )
 from app.services.sites.registry import SiteRegistry
 
-
 class _FastClock:
     def __init__(self) -> None:
         self._t = 0.0
@@ -39,7 +38,6 @@ class _FastClock:
     def __call__(self) -> float:
         self._t += 100.0
         return self._t
-
 
 class FakeCdp(CdpClient):
     def __init__(self) -> None:
@@ -66,7 +64,6 @@ class FakeCdp(CdpClient):
     def close(self):
         self.closed = True
         return None
-
 
 class ScriptedAdapter(SiteAdapter):
     """按脚本返回结果：第 n 次调用取 ``script[n-1]``；``None`` 表示成功。"""
@@ -103,7 +100,6 @@ class ScriptedAdapter(SiteAdapter):
             raise SiteFailure(category, f"模拟失败：{category}")
         return ApplyOutcome(success=True, greeting_sent=greeting)
 
-
 class _BrokenRegistry:
     """``all()`` 直接抛异常，用来逼出运行器顶层的兜底分支。"""
 
@@ -112,7 +108,6 @@ class _BrokenRegistry:
 
     def for_job(self, job):  # pragma: no cover
         raise AssertionError("不应走到这里")
-
 
 def _runner(adapter) -> TaskRunner:
     registry = adapter if isinstance(adapter, _BrokenRegistry) else _registry(adapter)
@@ -124,12 +119,10 @@ def _runner(adapter) -> TaskRunner:
         poll_interval=0.01,
     )
 
-
 def _registry(adapter: SiteAdapter) -> SiteRegistry:
     registry = SiteRegistry()
     registry.register(adapter)
     return registry
-
 
 def _config(**overrides) -> ApplyConfigIn:
     data = {
@@ -138,14 +131,15 @@ def _config(**overrides) -> ApplyConfigIn:
         "breaker_threshold": 3,
         "daily_limit": 60,
         "per_task_limit": 20,
+        # 这组用例校验执行/熔断/停止语义，夹具不带招呼语：关掉"发送前必须确认"闸门
+        # （闸门本身由 test_apply_greeting_gate.py 覆盖）。
+        "require_greeting_review": False,
     }
     data.update(overrides)
     return ApplyConfigIn(**data)
 
-
 def _setup_task(db_session, count: int, **config_overrides) -> ApplyTask:
     return _make_apply_task(db_session, count, _config(**config_overrides))
-
 
 def _make_apply_task(db_session, count: int, config: ApplyConfigIn) -> ApplyTask:
     task = ApplyTask(kind="apply", status="pending", total=count, config=config.model_dump())
@@ -177,16 +171,13 @@ def _make_apply_task(db_session, count: int, config: ApplyConfigIn) -> ApplyTask
     db_session.commit()
     return task
 
-
 def _wait(runner: TaskRunner, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while runner.is_running() and time.monotonic() < deadline:
         time.sleep(0.01)
 
-
 def _leftover_threads() -> list[str]:
     return [t.name for t in threading.enumerate() if t.name.startswith("rf-task-")]
-
 
 def _wait_no_leftover(timeout: float = 3.0) -> bool:
     """线程退出与 ``threading.enumerate()`` 之间有一瞬间的窗口，轮询等它消失。"""
@@ -197,9 +188,7 @@ def _wait_no_leftover(timeout: float = 3.0) -> bool:
         time.sleep(0.01)
     return not _leftover_threads()
 
-
 # ===== 熔断计数在成功一次后必须归零 =====
-
 
 def test_breaker_counter_resets_after_a_success(db_session):
     """失败 2 次 → 成功 1 次 → 再失败 2 次，阈值 3，绝不该熔断。
@@ -228,7 +217,6 @@ def test_breaker_counter_resets_after_a_success(db_session):
     assert stored.stop_reason == "done"
     assert [item.status for item in items] == ["failed", "failed", "success", "failed", "failed"]
 
-
 def test_breaker_triggers_when_failures_are_truly_consecutive(db_session):
     """反向对照：中间没有成功时，连续 3 次失败必须熔断。"""
     adapter = ScriptedAdapter(["selector_invalid"])  # 每次调用都失败
@@ -251,9 +239,7 @@ def test_breaker_triggers_when_failures_are_truly_consecutive(db_session):
     _wait(runner)
     assert _wait_no_leftover(), f"残留线程：{_leftover_threads()}"
 
-
 # ===== 每日上限只计成功 =====
-
 
 def test_daily_success_count_counts_only_successes(db_session):
     base = utcnow()
@@ -277,7 +263,6 @@ def test_daily_success_count_counts_only_successes(db_session):
     db_session.commit()
 
     assert apply_service.daily_success_count(db_session) == 1
-
 
 def test_failed_items_do_not_consume_the_daily_quota(db_session):
     """daily_limit=1：一个失败 + 两个成功，只允许成功占额度。
@@ -307,7 +292,6 @@ def test_failed_items_do_not_consume_the_daily_quota(db_session):
     assert items[2].status == "skipped"
     assert stored.status == "stopped"
     assert "上限" in stored.message
-
 
 def test_starting_a_task_is_blocked_only_by_successful_deliveries(db_session, monkeypatch):
     """已达每日上限时应拒绝开始；但只有失败记录时不应拒绝。"""
@@ -362,9 +346,7 @@ def test_starting_a_task_is_blocked_only_by_successful_deliveries(db_session, mo
             db_session, apply_service.ApplyTaskCreate(job_ids=[job.id], use_queue=False)
         )
 
-
 # ===== 异常不吞 =====
-
 
 def test_single_item_error_is_logged_and_next_item_continues(db_session, caplog):
     adapter = ScriptedAdapter([None, None], raise_on=1)
@@ -391,7 +373,6 @@ def test_single_item_error_is_logged_and_next_item_continues(db_session, caplog)
     assert any(record.exc_info for record in caplog.records)
     assert "投递单个岗位失败" in caplog.text
     assert _wait_no_leftover(), f"残留线程：{_leftover_threads()}"
-
 
 def test_top_level_worker_error_marks_task_failed_with_readable_message(db_session, caplog):
     """工作线程顶层异常必须兜底：任务置失败、message 可读、logger.exception 留痕、线程干净退出。"""
@@ -427,7 +408,6 @@ def test_top_level_worker_error_marks_task_failed_with_readable_message(db_sessi
     assert runner.is_running() is False
     assert runner.current_task_id() is None
     assert _wait_no_leftover(), f"残留线程：{_leftover_threads()}"
-
 
 # ===== client 的 finally 全覆盖 =====
 #

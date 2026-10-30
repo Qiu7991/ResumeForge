@@ -5,13 +5,13 @@
 就只对那一处生效，另外三处会**悄悄地**保持旧顺序——而"导出的和预览的不一样"是那种
 用户会怀疑整个工具的问题。所以顺序在这里定义一次，四个渲染器都从这里取。
 
-存储位置：简历的 `format_config`（按简历的版式覆盖）里的 `section_order`。
-放在版式配置里而不是新增数据库列，是因为它本来就是"内容怎么排"的一部分，而且
-`format_config` 已经是按简历存的一份 JSON 覆盖，不需要迁移。
+存储位置：简历的 `format_config`（按简历的版式覆盖）里的 `section_order` 与
+`hidden_sections`。放在版式配置里而不是新增数据库列，是因为它本来就是"内容怎么排"
+的一部分，而且 `format_config` 已经是按简历存的一份 JSON 覆盖，不需要迁移。
 
 一条刻意的约束：**存下来的顺序永远是七个键的一个完整排列**（`normalized_section_order`
-负责补齐）。这样渲染器不必处理"某个分区不在列表里"这种状态——那种状态只有一种解释
-（忘记写了），而它的表现是"某个板块凭空消失"，是最难被发现的一类 bug。
+负责补齐）。隐藏是另一个维度：`hidden_sections` 只记"不要显示的那几个"，顺序本身保持
+完整。这样用户隐藏某个板块再放开，它仍回到自己原来的位置，而不是跑到最后面。
 """
 
 from __future__ import annotations
@@ -79,10 +79,50 @@ def resolved_section_order(format_config: dict | None) -> list[str]:
     return normalized_section_order(format_config.get("section_order"))
 
 
+def normalized_hidden_sections(raw: object) -> list[str]:
+    """把任意输入归一化成"只含已知分区键、无重复"的隐藏列表。
+
+    与顺序不同，这个列表**允许为空**（= 一个都不藏），也允许不完整——没提到的分区
+    就是显示的。未知键直接丢弃：它来自 JSON 字段，抛异常会让整份版式失效。
+    """
+    if isinstance(raw, (list, tuple)):
+        candidates = raw
+    elif isinstance(raw, str):
+        candidates = raw.split(",")
+    else:
+        return []
+
+    hidden: list[str] = []
+    for item in candidates:
+        key = str(item).strip()
+        if key in SECTION_LABELS and key not in hidden:
+            hidden.append(key)
+    return hidden
+
+
+def resolved_hidden_sections(format_config: dict | None) -> list[str]:
+    """从版式覆盖里取被隐藏的分区；没设过就是一个都不藏。"""
+    if not isinstance(format_config, dict):
+        return []
+    return normalized_hidden_sections(format_config.get("hidden_sections"))
+
+
+def resolved_visible_sections(format_config: dict | None) -> list[str]:
+    """渲染器真正应该输出的分区：顺序里去掉被隐藏的那些。
+
+    四个渲染器（HTML/PDF/Word/Markdown）都从这里取，避免"预览里藏了、导出的还在"。
+    """
+    hidden = set(resolved_hidden_sections(format_config))
+    return [key for key in resolved_section_order(format_config) if key not in hidden]
+
+
 __all__ = [
     "DEFAULT_SECTION_ORDER",
     "SECTION_LABELS",
+    "normalized_hidden_sections",
     "normalized_section_order",
+    "resolved_hidden_sections",
     "resolved_section_order",
+    "resolved_visible_sections",
     "section_label",
 ]

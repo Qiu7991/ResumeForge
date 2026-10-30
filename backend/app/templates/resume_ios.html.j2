@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'nonce-{{ csp_nonce }}'; base-uri 'none'; form-action 'none'" />
+<title>{{ resume.name }} - {{ resume.job_intent }} - 简历</title>
+<style>
+  /* iOS 开发模板：石墨灰极简风、留白舒展、纯文字技能清单，适合 iOS / 移动端岗位。 */
+  :root {
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --line: #e2e2e5;
+    --accent: #3a3a3c;
+    --accent-soft: #f5f5f7;
+    --bg: #ffffff;
+    --fs: calc({{ base_px }}px * var(--fit-scale, 1));
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    font-size: var(--fs);
+    line-height: 1.78;
+    width: 210mm;
+    height: {{ page_limit * 297 }}mm;
+    padding: 17mm;
+  }
+  .header { display: flex; align-items: flex-start; gap: calc(var(--fs) * 1.5); margin-bottom: calc(var(--fs) * 1.6); }
+  .header-main { flex: 1; min-width: 0; }
+  .header .name { font-size: calc(var(--fs) * 1.9); font-weight: 700; color: var(--accent); letter-spacing: 1px; }
+  .name-extra { font-size: calc(var(--fs) * 0.93); font-weight: 400; color: var(--muted); }
+  .header .intent { font-size: calc(var(--fs) * 1); color: var(--muted); margin-top: calc(var(--fs) * 0.28); }
+  .header .contact { font-size: calc(var(--fs) * 0.9); color: var(--muted); margin-top: calc(var(--fs) * 0.5); }
+  .header .contact span { margin-right: calc(var(--fs) * 1.14); }
+  .profile-photo { width: calc(var(--fs) * 5.4); height: calc(var(--fs) * 7); flex: 0 0 auto; object-fit: cover; border: 1px solid var(--line); }
+  .section { margin-bottom: calc(var(--fs) * 1.4); }
+  .section-title { font-size: calc(var(--fs) * 1.02); font-weight: 700; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: calc(var(--fs) * 0.24); margin-bottom: calc(var(--fs) * 0.71); }
+  .entry { margin-bottom: calc(var(--fs) * 0.92); }
+  .entry-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--fs); }
+  .entry-head .title { font-size: calc(var(--fs) * 1.05); font-weight: 600; }
+  .entry-head .meta { font-size: calc(var(--fs) * 0.9); color: var(--muted); white-space: nowrap; }
+  .entry .sub { font-size: calc(var(--fs) * 0.9); color: var(--muted); margin: calc(var(--fs) * 0.14) 0 calc(var(--fs) * 0.28); }
+  ul { padding-left: calc(var(--fs) * 1.4); }
+  li { margin-bottom: calc(var(--fs) * 0.2); }
+  li::marker { color: var(--accent); }
+  .summary-text { font-size: var(--fs); }
+  .skill-list { padding-left: 0; }
+  .skill-list li { list-style: none; display: inline-block; color: var(--text); margin: 0 calc(var(--fs) * 1.0) calc(var(--fs) * 0.36) 0; font-size: calc(var(--fs) * 0.93); }
+  @page { size: A4; margin: 0; }
+  @media print {
+    .section, .entry { break-inside: avoid; }
+    /* 让背景色与边框在打印时保留：技能标签的底色/左侧色条就靠这句。 */
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+{% include "_resume_sections.j2" %}
+{% include "_resume_fit_script.j2" %}
+</body>
+</html>
