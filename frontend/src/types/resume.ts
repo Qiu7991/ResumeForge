@@ -39,6 +39,8 @@ export interface ResumeTemplateOption {
   name: string;
   label: string;
   description: string;
+  /** 展示分组（本地 17 套模板的分类；上游新模板/自制模板可能没有）。 */
+  category?: string;
   /** 用户自制的模板；内置模板为 false。 */
   custom?: boolean;
   id?: number | null;

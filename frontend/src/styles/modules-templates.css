@@ -463,3 +463,17 @@
   justify-content: center;
   background: var(--rf-surface);
 }
+
+/* 模板画廊的分类标题：跨满整行，让 17+ 套模板按方向分组扫读。 */
+.template-gallery-group {
+  grid-column: 1 / -1;
+  margin: 8px 0 0;
+  color: var(--rf-text-secondary, #6b7280);
+}
+
+/* 模板管理页内置画廊的分类标题：跨满整行。 */
+.builtin-style-group {
+  grid-column: 1 / -1;
+  margin: 8px 0 0;
+  color: var(--rf-text-secondary, #6b7280);
+}

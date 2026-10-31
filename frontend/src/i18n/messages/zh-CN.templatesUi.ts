@@ -94,6 +94,21 @@ const templatesUi = {
   "templatesUi.workbench.error.loadCatalog": "读取版式目录失败",
   "templatesUi.workbench.error.delete": "删除失败",
   "templatesUi.workbench.toast.deleted": "已删除「{name}」；引用它的简历会退回默认版式",
+  "templatesUi.workbench.style.title": "样式模板",
+  "templatesUi.workbench.format.title": "格式模板（版式）",
+  "templatesUi.workbench.action.createStyle": "自制模板",
+  "templatesUi.workbench.action.copyBuiltin": "复制改一份",
+  "templatesUi.workbench.action.importHtml": "导入 HTML",
+  "templatesUi.workbench.action.importReference": "导入参考模板",
+  "templatesUi.workbench.builtinStyles": "内置样式（{count} 个，只读）",
+  "templatesUi.workbench.empty.style": "还没有自制样式模板。点右上角「复制改一份」从内置模板开始。",
+  "templatesUi.workbench.empty.format": "还没有自制格式模板。想压进一页时，用它调行高与页边距最快。",
+  "templatesUi.workbench.error.readBuiltin": "读取内置模板失败",
+  "templatesUi.workbench.warning.tooLarge": "模板文件不要超过 400 KB",
+  "templatesUi.workbench.uploadHint": "松开即可导入模板 HTML",
+  "templatesUi.workbench.copySuffix": "{label} 副本",
+  "templatesUi.workbench.prompt.newLayout": "帮我新建一个版式：",
+  "templatesUi.workbench.prompt.adjustFormat": "帮我调整格式模板「{name}」：",
 } as const;
 
 export default templatesUi;

@@ -16,7 +16,7 @@
  */
 import { Modal, Skeleton, Typography } from "antd";
 import PageSkeleton from "../common/PageSkeleton";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { previewResumeTemplate } from "../../api/resumes";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
@@ -33,6 +33,8 @@ export interface BuiltinStyleItem {
   name: string;
   label: string;
   description?: string;
+  /** 展示分组（本地 17 套模板的分类）。 */
+  category?: string;
 }
 
 interface Props {
@@ -68,9 +70,17 @@ export default function BuiltinStyleGallery({ items }: Props) {
   return (
     <>
       <div className="builtin-style-gallery">
-        {items.map((item) => {
+        {items.map((item, index) => {
           const html = previews[item.name];
+          const previousCategory = index > 0 ? items[index - 1].category : undefined;
+          const showCategory = Boolean(item.category) && item.category !== previousCategory;
           return (
+            <Fragment key={item.name}>
+            {showCategory ? (
+              <Typography.Text strong className="builtin-style-group">
+                {item.category}
+              </Typography.Text>
+            ) : null}
             <button
               type="button"
               key={item.name}
@@ -104,6 +114,7 @@ export default function BuiltinStyleGallery({ items }: Props) {
               </span>
               <span className="builtin-style-name">{item.label}</span>
             </button>
+            </Fragment>
           );
         })}
       </div>

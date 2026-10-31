@@ -106,32 +106,24 @@ describe("TemplateWorkbench 的求职助手入口", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("location").textContent).toBe(
-        `/assistant?ask=${encodeURIComponent("帮我调整版式「压页版式」：")}`,
+        `/assistant?ask=${encodeURIComponent("帮我调整格式模板「压页版式」：")}`,
       ),
     );
   });
 });
 
-describe("TemplateWorkbench 下线自制模板后的现状", () => {
-  /**
-   * 本批从组件里删掉的入口文案。用**整段文本包含**判断而不是 `queryByText`：
-   * 这些词出现在任何位置（按钮、空态、说明卡）都算回退。
-   */
-  const REMOVED_COPY = ["导入 HTML", "导入参考模板", "复制为新模板", "自制模板"];
-
-  it("「版式」卡片还在，自制模板的入口与空态文案一条都不剩", async () => {
+describe("TemplateWorkbench 保留自制模板后的现状", () => {
+  it("样式与版式两张卡都在，自制模板入口可用", async () => {
     renderWorkbench();
 
-    // 卡片标题与页签同一个词：改造后页面只有这一张卡。
-    expect(await screen.findByText(t("skills.tab.layout"))).toBeInTheDocument();
+    expect(await screen.findByText(t("templatesUi.workbench.style.title"))).toBeInTheDocument();
+    expect(screen.getByText(t("templatesUi.workbench.format.title"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /导入 HTML/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /导入参考模板/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /自制模板/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /自制版式/ })).toBeInTheDocument();
-
-    const text = document.body.textContent ?? "";
-    for (const copy of REMOVED_COPY) {
-      expect(text).not.toContain(copy);
-    }
-    // 内置模板的行数提示（"内置模板（8 个，只读）"）也随缩略图墙一起下线。
-    expect(text).not.toContain("（只读）");
+    // 内置样式缩略图墙保留（上游曾经把它藏起来）。
+    expect(document.body.textContent ?? "").toContain("内置样式");
   });
 
   it("内置版式的标签行仍然渲染（目录里已有的预设）", async () => {

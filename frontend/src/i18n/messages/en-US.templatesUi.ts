@@ -86,6 +86,23 @@ const templatesUi = {
   "templatesUi.workbench.error.delete": "Could not delete",
   "templatesUi.workbench.toast.deleted":
     'Deleted "{name}"; resumes using it fall back to the default layout preset',
+  "templatesUi.workbench.style.title": "Style templates",
+  "templatesUi.workbench.format.title": "Format presets",
+  "templatesUi.workbench.action.createStyle": "New style template",
+  "templatesUi.workbench.action.copyBuiltin": "Duplicate a built-in",
+  "templatesUi.workbench.action.importHtml": "Import HTML",
+  "templatesUi.workbench.action.importReference": "Import reference",
+  "templatesUi.workbench.builtinStyles": "Built-in styles ({count}, read-only)",
+  "templatesUi.workbench.empty.style":
+    "No custom style templates yet. Use “Duplicate a built-in” to start.",
+  "templatesUi.workbench.empty.format":
+    "No custom format presets yet. Use one to tighten line height and page margins.",
+  "templatesUi.workbench.error.readBuiltin": "Could not read the built-in template",
+  "templatesUi.workbench.warning.tooLarge": "Template files must stay under 400 KB",
+  "templatesUi.workbench.uploadHint": "Drop a template HTML file here",
+  "templatesUi.workbench.copySuffix": "{label} copy",
+  "templatesUi.workbench.prompt.newLayout": "Help me create a layout preset: ", // model prompt, Chinese is intentional
+  "templatesUi.workbench.prompt.adjustFormat": "Help me adjust the format preset \"{name}\": ", // model prompt
 } as const;
 
 export default templatesUi;
