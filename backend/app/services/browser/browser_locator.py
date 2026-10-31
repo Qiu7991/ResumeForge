@@ -50,9 +50,21 @@ def browser_display_name(path: str | Path | None) -> str:
     return _CUSTOM_NAME
 
 
+def bundled_extension_arguments(extension_dir: Path) -> list[str]:
+    """随应用分发的扩展的启动参数；目录里没有 manifest 时返回空列表。"""
+    if not (extension_dir / "manifest.json").is_file():
+        return []
+    return [
+        f"--load-extension={extension_dir}",
+        f"--disable-extensions-except={extension_dir}",
+        "--disable-features=DisableLoadExtensionCommandLineSwitch",
+    ]
+
+
 __all__ = [
     "CHROME_RELATIVE",
     "EDGE_RELATIVE",
     "EGO_RELATIVE",
+    "bundled_extension_arguments",
     "browser_display_name",
 ]

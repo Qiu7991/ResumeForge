@@ -62,7 +62,6 @@ def test_scholar_is_registered_and_visible():
     assert spec["serif_heading"] is False
     assert (TEMPLATES_DIR / spec["file"]).is_file()
     assert TEMPLATE_NAME in VISIBLE_TEMPLATE_NAMES
-    assert VISIBLE_TEMPLATE_NAMES[-1] == TEMPLATE_NAME
 
 
 def test_scholar_renders_through_the_shared_sections_fragment():

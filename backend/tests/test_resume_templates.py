@@ -11,6 +11,7 @@ from app.services.resume.resume_template_store import (
     validate_template_name,
 )
 from app.services.resume.resume_template_style import validated_style_config
+from app.services.resume.resume_template_catalog import VISIBLE_TEMPLATE_NAMES
 from app.services.resume.resume_templates import (
     FORMAT_PRESETS,
     RESUME_TEMPLATES,
@@ -30,7 +31,22 @@ CUSTOM_STYLE = """<!DOCTYPE html>
 
 # 设计上**给技能加"小框"**的模板（底色或边框）。其余两个是刻意的**无框**设计：
 # compact 用 `·` 分隔、minimal 纯文本。这份清单是"快照"——某个模板的框被误删时会立刻红。
-SKILL_TAG_BOX_TEMPLATES = {"classic", "elegant", "modern", "technical", "split"}
+SKILL_TAG_BOX_TEMPLATES = {
+    "classic",
+    "elegant",
+    "modern",
+    "technical",
+    "split",
+    # 本地技术方向模板里除 ios（纯文字清单）之外都带底色或边框。
+    "php",
+    "java",
+    "node",
+    "web",
+    "android",
+    "cpp",
+    "architect",
+    "dev",
+}
 
 
 @pytest.mark.parametrize("name", sorted(RESUME_TEMPLATES))
@@ -213,70 +229,53 @@ def test_template_name_validation():
         validate_template_name("<script>")
 
 
-def test_builtin_template_list_has_six_items(client):
-    """「选择模板」只列 6 套；下线的三套仍能渲染，但不再出现在清单里。"""
+def test_builtin_template_list_matches_visible_names(client):
+    """「选择模板」列全部可见模板（本地 17 套 + 上游 scholar，按分类顺序）。"""
     builtin = client.get("/api/resume-templates/builtin").json()
 
-    assert [item["name"] for item in builtin] == [
-        "classic",
-        "modern",
-        "compact",
-        "elegant",
-        "minimal",
-        # 2026-10 新增的第 6 套（学术）：参考一份学术简历的版式移植，
-        # 与前面 5 套在配色 / 标题形状 / 短条目排法上都明显不同，所以进入可选清单。
-        "scholar",
-    ]
-    # 下线的三套保留在 catalog 里（老简历继续按原模板渲染）。
+    assert [item["name"] for item in builtin] == list(VISIBLE_TEMPLATE_NAMES)
+    assert len(builtin) == 18
     for name in ("technical", "editorial", "split"):
         assert name in RESUME_TEMPLATES
-        assert name not in [item["name"] for item in builtin]
+        assert name in [item["name"] for item in builtin]
 
 
-def test_style_template_cannot_be_created_or_copied(client, db_session):
-    """自制样式模板已下线：创建 400，目录里也不再出现「自制」条目。"""
+def test_style_template_can_be_created_and_appears_in_catalog(client, db_session):
+    """本地二开保留自制样式模板：创建成功，并出现在可选模板清单的「自制」条目里。"""
     created = client.post(
         "/api/resume-templates",
         json={"name": "我的深色模板", "kind": "style", "html": CUSTOM_STYLE, "description": "测试"},
     )
-    assert created.status_code == 400
-    assert created.json()["detail"] == "自制模板已下线，只能创建版式"
+    assert created.status_code == 201, created.text
 
     catalog = client.get("/api/resumes/templates").json()
-    assert [item for item in catalog["templates"] if item["custom"]] == []
-    assert [item["name"] for item in catalog["templates"]] == [
-        "classic",
-        "modern",
-        "compact",
-        "elegant",
-        "minimal",
-        "scholar",
-    ]
+    custom = [item for item in catalog["templates"] if item["custom"]]
+    assert [item["name"] for item in custom] == ["我的深色模板"]
+    # 内置 18 套仍然全部在列。
+    assert [item["name"] for item in catalog["templates"] if not item["custom"]] == list(
+        VISIBLE_TEMPLATE_NAMES
+    )
 
 
-def test_preview_ignores_html_and_style_config(client):
-    """预览端点保留（版式缩略图还在用），但 `html` / `style_config` 不再生效。
-
-    字段仍留在 schema 里：删字段会让还没更新的前端直接 422。这里钉住「传了也不生效」，
-    而不是「传了报错」——后者会把缩略图请求打成 400。
-    """
+def test_preview_renders_html_and_style_config(client):
+    """本地二开保留自制模板：预览会真的渲染传入的 HTML 与 style_config。"""
     preview = client.post(
         "/api/resume-templates/preview",
         json={
             "template_name": "modern",
-            "html": "<html><head></head><body>{% if %}</body></html>",
-            "style_config": {
-                "accent": "#8b3a3a",
-                "column_count": 2,
-                "badges": [{"label": "作品集"}],
-            },
+            "html": CUSTOM_STYLE,
+            "style_config": {"accent": "#8b3a3a"},
         },
     )
     assert preview.status_code == 200, preview.text
-    # 坏 HTML 没有被渲染（渲染了会 400），自定义视觉配置也没生效。
-    assert "作品集" not in preview.text
-    assert "#8b3a3a" not in preview.text
-    assert "示例" in preview.text or "张" in preview.text
+    assert "#8b3a3a" in preview.text
+
+    # 坏 HTML 现在会如实报错（而不是静默忽略用户写的那段）。
+    broken = client.post(
+        "/api/resume-templates/preview",
+        json={"html": "<html><head></head><body>{% if %}</body></html>"},
+    )
+    assert broken.status_code == 400
 
 
 def test_user_format_template_changes_layout(client):
@@ -336,14 +335,14 @@ def test_template_preview_uses_sample_content(client):
     assert "示例" in response.text or "张" in response.text
 
 
-def test_template_preview_no_longer_renders_user_html(client):
-    """坏的自制 HTML 不会再让预览 400——那段 HTML 根本不再参与渲染。"""
+def test_template_preview_reports_broken_user_html(client):
+    """自制 HTML 写错时预览给可读的 400，而不是 500 或静默忽略。"""
     response = client.post(
         "/api/resume-templates/preview",
         json={"html": "<html><head></head><body>{% if %}</body></html>"},
     )
-    assert response.status_code == 200
-    assert "模板渲染失败" not in response.text
+    assert response.status_code == 400
+    assert response.json()["detail"]
 
 
 def test_format_presets_are_valid():

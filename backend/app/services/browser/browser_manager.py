@@ -39,6 +39,7 @@ from .browser_locator import (
     EDGE_RELATIVE,
     EGO_RELATIVE,
     browser_display_name,
+    bundled_extension_arguments,
 )
 from .cdp_client import DEFAULT_HOST, WebsocketCdpClient
 
@@ -321,7 +322,6 @@ class BrowserManager:
         )
 
     # ===== 启动 / 停止 =====
-
     def _start_arguments(self, browser: Path) -> list[str]:
         """拉起浏览器用的参数列表（纯函数便于单测，不含任何进程操作）。"""
         args = [
@@ -333,15 +333,9 @@ class BrowserManager:
             "--no-default-browser-check",
         ]
         # 随应用分发的「收录当前岗位」扩展：浏览器由应用拉起，直接挂载即可。
-        extension_dir = Path(__file__).resolve().parent / "extension"
-        if (extension_dir / "manifest.json").is_file():
-            args.extend(
-                [
-                    f"--load-extension={extension_dir}",
-                    f"--disable-extensions-except={extension_dir}",
-                    "--disable-features=DisableLoadExtensionCommandLineSwitch",
-                ]
-            )
+        args.extend(
+            bundled_extension_arguments(Path(__file__).resolve().parent / "extension")
+        )
         args.extend(["--new-window", "about:blank"])
         return args
 

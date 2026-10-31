@@ -2,6 +2,7 @@
 """Built-in template layout defaults used by HTML, PDF, and Word renderers."""
 
 from .resume_template_catalog import DEFAULT_TEMPLATE
+from .resume_template_layout_local import LOCAL_TEMPLATE_LAYOUT_DEFAULTS
 from .resume_template_tags import (
     TEMPLATE_COLUMN_DEFAULTS,
     TEMPLATE_LIST_DEFAULTS,
@@ -483,6 +484,8 @@ TEMPLATE_LAYOUT_DEFAULTS: dict[str, dict[str, float | str | bool | int | tuple[f
     }
     for name, values in _BASE_DEFAULTS.items()
 }
+# 本地二开的 9 套技术方向模板：新字段已在上游 classic 基底上补齐，整份覆盖合并。
+TEMPLATE_LAYOUT_DEFAULTS.update(LOCAL_TEMPLATE_LAYOUT_DEFAULTS)
 
 
 def template_layout_defaults(

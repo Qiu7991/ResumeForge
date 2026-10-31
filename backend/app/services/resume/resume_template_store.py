@@ -125,7 +125,7 @@ def create_user_template(
     if count >= MAX_USER_TEMPLATES:
         raise TemplateError(f"自制模板最多 {MAX_USER_TEMPLATES} 个，请先删除不再使用的")
     if kind not in TEMPLATE_KINDS:
-        raise TemplateError("模板类型只有「模板」与「版式」两种")
+        raise TemplateError("模板类型只有「样式模板」与「格式模板」两种")
 
     if kind == TEMPLATE_KIND_STYLE:
         template_html = sanitize_template_html(validate_template_html(html))
@@ -134,7 +134,7 @@ def create_user_template(
         template_html = ""
         normalized = validated_format_config(config)
         if not normalized:
-            raise TemplateError("版式至少需要设置一项参数")
+            raise TemplateError("格式模板至少需要设置一项参数")
 
     template = ResumeTemplate(
         name=cleaned_name,
@@ -194,27 +194,29 @@ def delete_user_template(db: Session, template: ResumeTemplate) -> None:
 
 
 def resolve_style_template(db: Session, name: str | None) -> tuple[str, str]:
-    """解析模板名 → ``(内置模板名, 用户模板 HTML)``。
+    """解析样式模板名 → ``(内置模板名, 用户模板 HTML)``。
 
-    **自制模板（``kind='style'``）的读路径已在 2026-11 下线**：本函数第二个返回值恒为
-    空串，用户模板 HTML 不再参与渲染。DB 里的存量行**没有删**（零迁移），只是不再被读取。
-
-    名字是内置模板就用它；其余一律退回默认内置模板——记录里的模板名可能指向一个已经
-    下线的自制模板，渲染必须仍然可用（外观会变成经典款，这是这次下线的既定代价）。
+    两者只会有一个生效：内置模板返回 HTML 空串，用户模板返回内置兜底名 + HTML。
+    名字既查不到内置也查不到用户模板时退回默认内置模板——记录里的模板名可能是用户
+    删掉的自制模板，渲染必须仍然可用。
     """
     key = (name or "").strip()
     if key in RESUME_TEMPLATES:
         return key, ""
+    user = find_by_name(db, key)
+    if user is not None and user.kind == TEMPLATE_KIND_STYLE and user.enabled and user.html:
+        return DEFAULT_TEMPLATE, user.html
     return DEFAULT_TEMPLATE, ""
 
 
 def resolve_style_config(db: Session, name: str) -> dict:
-    """视觉配置解析：恒返回空字典。
-
-    自制模板下线后没有任何来源能提供 ``style_config``（内置模板的视觉参数走
-    ``format_config``，那是另一条仍然有效的链路）。签名保留是为了让 8 个调用点
-    （导出、预览、分享、版式指纹）不用各改一行。
-    """
+    """解析用户样式模板的视觉配置；内置模板与旧模板返回空字典。"""
+    key = (name or "").strip()
+    if key in RESUME_TEMPLATES:
+        return {}
+    user = find_by_name(db, key)
+    if user is not None and user.kind == TEMPLATE_KIND_STYLE and user.enabled:
+        return _validated_style_config(user.config)
     return {}
 
 
@@ -233,13 +235,18 @@ def resolve_format_config(db: Session, name: str) -> dict:
 
 
 def custom_template_options(db: Session) -> list[dict]:
-    """「可选模板」清单里的自制模板部分：恒为空列表。
-
-    自制模板下线后不再有任何自制样式模板可选项；函数与签名保留，是因为
-    ``api/resumes/templates_routes.py`` 与 ``template_options_with_custom`` 都以
-    "给一个列表"的形式拼接（传 ``[]`` 是合法调用）。
-    """
-    return []
+    """给「可选模板」清单用的自制样式模板精简结构。"""
+    return [
+        {
+            "id": item.id,
+            "name": item.name,
+            "label": item.name,
+            "description": item.description,
+            "kind": item.kind,
+        }
+        for item in list_user_templates(db, kind=TEMPLATE_KIND_STYLE)
+        if item.enabled
+    ]
 
 
 def custom_format_options(db: Session) -> list[dict]:

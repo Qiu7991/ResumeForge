@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; script-src 'nonce-{{ csp_nonce }}'; base-uri 'none'; form-action 'none'" />
+<title>{{ resume.name }} - {{ resume.job_intent }} - 简历</title>
+<style>
+  /* Node.js 开发模板：草绿强调色、下划线区块标题与等宽辅助信息，适合 Node.js / 全栈岗位。 */
+  :root {
+    --text: #1f2a22;
+    --muted: #64776b;
+    --line: #d6e3da;
+    --accent: #2f7d4f;
+    --accent-soft: #eaf6ee;
+    --bg: #ffffff;
+    --fs: {{ base_px }}px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    font-size: var(--fs);
+    line-height: 1.66;
+    width: 210mm;
+    height: {{ page_limit * 297 }}mm;
+    padding: 13mm;
+  }
+  .header { display: flex; align-items: flex-start; gap: calc(var(--fs) * 1.5); border-bottom: 1px solid var(--accent); padding-bottom: calc(var(--fs) * 0.75); margin-bottom: calc(var(--fs) * 1.05); }
+  .header-main { flex: 1; min-width: 0; }
+  .header .name { font-size: calc(var(--fs) * 1.78 * var(--name-scale, 1)); font-weight: 700; color: var(--accent); letter-spacing: 1px; }
+  .name-extra { font-size: calc(var(--fs) * 0.94); font-weight: 400; color: var(--muted); }
+  .header .intent { font-size: calc(var(--fs) * 1.03); color: var(--muted); margin-top: calc(var(--fs) * 0.28); }
+  .header .contact { font-size: calc(var(--fs) * 0.88); color: var(--muted); margin-top: calc(var(--fs) * 0.5); }
+  .header .contact span { margin-right: calc(var(--fs) * 1.14); white-space: nowrap; }
+  .profile-photo { width: calc(var(--fs) * 5.6 * var(--photo-scale, 1)); height: calc(var(--fs) * 7.2 * var(--photo-scale, 1)); flex: 0 0 auto; object-fit: cover; border: 1px solid var(--line); }
+  .section { margin-bottom: calc(var(--fs) * 1.1); }
+  .section-title { font-size: calc(var(--fs) * 1.08 * var(--section-title-scale, 1)); font-weight: 700; color: var(--accent); border-bottom: 1px solid var(--line); padding-bottom: calc(var(--fs) * 0.15); margin-bottom: calc(var(--fs) * 0.55); }
+  .entry { margin-bottom: calc(var(--fs) * 0.66 * var(--entry-gap, 1)); }
+  .entry-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--fs); }
+  .entry-head .title { font-size: calc(var(--fs) * 1.04); font-weight: 600; }
+  .entry-head .meta { font-family: Consolas, "Cascadia Mono", Menlo, monospace; font-size: calc(var(--fs) * 0.88); color: var(--muted); white-space: nowrap; }
+  .entry .sub { font-size: calc(var(--fs) * 0.9); color: var(--muted); margin: calc(var(--fs) * 0.1) 0 calc(var(--fs) * 0.2); }
+  ul { padding-left: calc(var(--fs) * 1.4); }
+  li { margin-bottom: calc(var(--fs) * 0.15); }
+  li::marker { color: var(--accent); }
+  .summary-text { font-size: var(--fs); }
+  .skill-list { padding-left: 0; }
+  .skill-list li { list-style: none; display: inline-block; font-family: Consolas, "Cascadia Mono", Menlo, monospace; background: #eaf6ee; color: #2f7d4f; padding: 0 calc(var(--fs) * 0.5); margin: 0 calc(var(--fs) * 0.43) calc(var(--fs) * 0.36) 0; font-size: calc(var(--fs) * 0.88); }
+  @page { size: A4; margin: 0; }
+  @media print {
+    .section, .entry { break-inside: avoid; }
+    /* 让背景色与边框在打印时保留：技能标签的底色/左侧色条就靠这句。 */
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+{% include "_resume_sections.j2" %}
+{% include "_resume_fit_script.j2" %}
+</body>
+</html>
