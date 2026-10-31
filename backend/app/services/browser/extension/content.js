@@ -15,6 +15,9 @@
 (() => {
   if (document.getElementById("resumeforge-capture")) return;
 
+  // 上游架构由后端直接提供前端页面（8005），不再使用 Vite 的 5173。
+  const APP_ORIGIN = "http://127.0.0.1:8005";
+
   const resolveJobUrl = () => {
     if (location.pathname.startsWith("/job_detail/")) return location.href;
     const active = document.querySelector(
@@ -75,7 +78,7 @@
       open.style.cssText = "color:#fff;text-decoration:underline;margin-left:4px";
       open.addEventListener("click", (event) => {
         event.preventDefault();
-        window.open("http://127.0.0.1:5173/jobs", "_blank");
+        window.open(APP_ORIGIN + "/jobs", "_blank");
       });
       status.appendChild(open);
     }
@@ -105,7 +108,7 @@
     button.disabled = true;
     button.textContent = "收录中…";
     const target =
-      "http://127.0.0.1:5173/jobs?close_after=1&import_url=" + encodeURIComponent(url);
+      APP_ORIGIN + "/jobs?close_after=1&import_url=" + encodeURIComponent(url);
     const popup = window.open(target, "resumeforge-import", "width=460,height=560");
     window.focus();
     if (!popup) {
@@ -118,7 +121,7 @@
     pendingTimer = setTimeout(() => {
       button.disabled = false;
       button.textContent = "＋ 收录到简历通";
-      showStatus("导入窗口没有回应：请确认简历通页面能打开（127.0.0.1:5173）", false);
+      showStatus("导入窗口没有回应：请确认简历通页面能打开（" + APP_ORIGIN + "）", false);
     }, 15000);
   });
 
