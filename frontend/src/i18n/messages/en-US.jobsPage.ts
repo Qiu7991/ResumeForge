@@ -87,6 +87,18 @@ const jobsPage = {
     "The current filters match {count} jobs, over the {limit}-job per-batch limit. Narrow the range with filters or search first.",
   "jobsPage.selectAll.done": "Selected all {count} jobs matching the current filters (all pages)",
   "jobsPage.selectAll.failed": "Could not load the job list",
+  "jobsPage.filter.importUrl": "Import by link",
+  "jobsPage.importUrl.title": "Import a job from a link",
+  "jobsPage.importUrl.intro":
+    "Paste a job detail page URL. The app opens it in the signed-in dedicated browser and saves the title, company and full JD as a job record.",
+  "jobsPage.importUrl.hint":
+    "Only registered job sites are supported. Start the dedicated browser on the Apply page and sign in first.",
+  "jobsPage.importUrl.placeholder": "Paste the full job detail page URL",
+  "jobsPage.importUrl.urlAria": "Job URL",
+  "jobsPage.importUrl.submit": "Import",
+  "jobsPage.importUrl.success": "Imported \"{title}\"",
+  "jobsPage.importUrl.failed": "Import failed. Please try again.",
+  "jobsPage.importUrl.imported": "Job imported",
 } as const;
 
 export default jobsPage;

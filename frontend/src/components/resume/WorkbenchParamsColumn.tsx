@@ -51,6 +51,7 @@ import ResumeMeasureControls from "./ResumeMeasureControls";
 import ResumeParamGroup from "./ResumeParamGroup";
 import ResumeSpacingControls from "./ResumeSpacingControls";
 import ResumeTemplateControls from "./ResumeTemplateControls";
+import ResumeHiddenSectionsControl from "./ResumeHiddenSectionsControl";
 import { useLocale } from "../../i18n/i18nContext";
 
 /** 左栏页签：排版参数 / 文档大纲（W06）/ 表达资产（W17）/ 双语版本（W16）。 */
@@ -289,6 +290,12 @@ export default function WorkbenchParamsColumn({
                   format_config: reset ? {} : formatConfig,
                 });
               }}
+              onChange={onChange}
+            />
+            <ResumeHiddenSectionsControl
+              layout={layout}
+              options={catalog?.section_options ?? []}
+              disabled={relayouting}
               onChange={onChange}
             />
           </ResumeParamGroup>

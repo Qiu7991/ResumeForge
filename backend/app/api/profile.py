@@ -50,6 +50,7 @@ from ..services.text_extraction import (
     no_model_warning,
 )
 from ..services.user_files import save_from_data_url
+from ..services.vision_fallback import attach_warning, run_with_vision_fallback
 from ._disconnect import client_gone, run_until_disconnect
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
@@ -229,11 +230,23 @@ async def parse_profile_text_draft(
     db.close()
     try:
         # 一次识别要几十秒：客户端断开就停下（结果没人要，本地兜底也不必算）。
-        result = await run_until_disconnect(
-            request,
-            extract_profile_text(provider, source_text, local_draft, image_urls),
-            what="个人资料识别",
+        async def _run(active):
+            return await run_until_disconnect(
+                request,
+                extract_profile_text(active, source_text, local_draft, image_urls),
+                what="个人资料识别",
+            )
+
+        result, vision_note = await run_with_vision_fallback(
+            config,
+            _run,
+            has_images=has_images,
+            make_provider=create_provider,
         )
+        if result is None:
+            raise client_gone("个人资料识别")
+        if vision_note:
+            result = attach_warning(result, vision_note)
     except LLMError as exc:
         logger.warning("个人资料 AI 识别失败，已回退本地解析：%s", exc)
         result = mark_local_fallback(

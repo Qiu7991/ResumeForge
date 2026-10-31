@@ -93,6 +93,18 @@ const jobsPage = {
     "当前筛选下共 {count} 个岗位，超出单次批量上限 {limit} 个；请先用筛选或搜索缩小范围",
   "jobsPage.selectAll.done": "已选中当前筛选下的全部 {count} 个岗位（所有页）",
   "jobsPage.selectAll.failed": "获取岗位列表失败",
+  "jobsPage.filter.importUrl": "按链接导入",
+  "jobsPage.importUrl.title": "按招聘网站链接导入岗位",
+  "jobsPage.importUrl.intro":
+    "把招聘网站上的岗位详情页链接粘进来，应用会用「投递台」那个已登录的专用浏览器打开它，把岗位名称、公司、JD 全文抓下来存成岗位记录。",
+  "jobsPage.importUrl.hint":
+    "只支持已注册的招聘网站；抓取前请先在「投递台」启动专用浏览器并确认已登录。",
+  "jobsPage.importUrl.placeholder": "粘贴岗位详情页的完整链接",
+  "jobsPage.importUrl.urlAria": "岗位链接",
+  "jobsPage.importUrl.submit": "导入",
+  "jobsPage.importUrl.success": "已导入「{title}」",
+  "jobsPage.importUrl.failed": "导入失败，请稍后重试",
+  "jobsPage.importUrl.imported": "已导入岗位",
 } as const;
 
 export default jobsPage;

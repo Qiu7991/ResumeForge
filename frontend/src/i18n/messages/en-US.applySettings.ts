@@ -51,6 +51,9 @@ const applySettings = {
   "applySettings.action.save": "Save settings",
   "applySettings.saved": "Apply settings saved",
   "applySettings.saveFailed": "Could not save the apply settings",
+  "applySettings.greetingReview.label": "Review the greeting before sending",
+  "applySettings.greetingReview.extra":
+    "When enabled, queued jobs without a confirmed greeting are skipped and marked \"greeting missing\"; the default greeting is never sent on your behalf.",
 } as const;
 
 export default applySettings;

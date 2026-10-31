@@ -161,6 +161,20 @@ function ApplySettingsForm({ onClose, onSaved }: Omit<Props, "open">) {
         <HintedTextArea rows={2} maxLength={1000} />
       </Form.Item>
 
+      <Form.Item
+        name="require_greeting_review"
+        label={t("applySettings.greetingReview.label")}
+        valuePropName="checked"
+        extra={
+          <>
+            {t("applySettings.greetingReview.extra")}
+            {defaults && <div>{defaultsHint(defaults.require_greeting_review)}</div>}
+          </>
+        }
+      >
+        <Switch />
+      </Form.Item>
+
       <Divider plain style={{ margin: "4px 0 16px" }} />
 
       <Form.Item

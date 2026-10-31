@@ -13,6 +13,7 @@ import {
   UploadOutlined,
 } from "@ant-design/icons";
 import { Button, Input, Select, Space, Tooltip } from "antd";
+import type { ReactNode } from "react";
 import { useState } from "react";
 import { t } from "../../i18n";
 import { JOB_STATUS_LABEL_KEYS, JOB_TYPE_LABEL_KEYS } from "../../i18n/enum/jobs";
@@ -40,6 +41,7 @@ export function JobFilterBar({
   setCandidatesOpen,
   setFormOpen,
   onImportCsv,
+  importUrlEntry,
   sortState,
   applySort,
   selectionMode = false,
@@ -61,6 +63,8 @@ export function JobFilterBar({
   setCandidatesOpen: (value: boolean) => void;
   setFormOpen: (value: boolean) => void;
   onImportCsv: () => void;
+  /** 「按链接导入」按钮与弹窗（由页面注入，筛选条本身不 import api）。 */
+  importUrlEntry?: ReactNode;
   /** 当前排序（E）：只存在页面状态里，用于「恢复默认排序」的禁用态。 */
   sortState: JobSortState;
   applySort: (next: JobSortState) => void;
@@ -202,6 +206,7 @@ export function JobFilterBar({
             {t("jobsPage.filter.backfill")}
           </Button>
         )}
+        {importUrlEntry}
         <Button icon={<UploadOutlined />} disabled={batchAction !== null} onClick={onImportCsv}>
           {t("jobsPage.filter.importCsv")}
         </Button>

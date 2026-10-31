@@ -72,6 +72,12 @@ const sections = {
     "简历内容最多排几页 A4；内容少时会自然留白，不会硬撑满",
   /** 段控的每一项：2 页。 */
   "sections.templateControls.pageLimitPages": "{count} 页",
+  "sections.hidden.title": "隐藏板块",
+  "sections.hidden.hint": "被隐藏的板块不会出现在预览、PDF、Word 和文本导出里。",
+  "sections.hidden.show": "显示{label}",
+  "sections.hidden.hide": "隐藏{label}",
+  "sections.hidden.keepOne": "至少要保留一个板块",
+  "sections.hidden.count": "{hidden}/{total} 个已隐藏",
 } as const;
 
 export default sections;

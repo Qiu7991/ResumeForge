@@ -62,6 +62,7 @@ from ..services.text_extraction import (
     no_model_warning,
 )
 from ..services.user_files import save_from_data_url
+from ..services.vision_fallback import attach_warning, run_with_vision_fallback
 
 from .job_import import router as job_import_router
 
@@ -262,7 +263,14 @@ async def parse_job_text_draft(payload: JobTextParseRequest, db: Session = Depen
     provider = create_provider(config)
     db.close()
     try:
-        result = await extract_job_text(provider, source_text, local_draft, image_urls)
+        result, vision_note = await run_with_vision_fallback(
+            config,
+            lambda active: extract_job_text(active, source_text, local_draft, image_urls),
+            has_images=has_images,
+            make_provider=create_provider,
+        )
+        if vision_note:
+            result = attach_warning(result, vision_note)
     except LLMError as exc:
         logger.warning("岗位文本 AI 识别失败，已回退本地解析：%s", exc)
         result = mark_local_fallback(
@@ -333,7 +341,14 @@ async def parse_job_text_multiple(payload: JobTextParseRequest, db: Session = De
     provider = create_provider(config)
     db.close()
     try:
-        results = await extract_multiple_jobs(provider, source_text, image_urls)
+        results, vision_note = await run_with_vision_fallback(
+            config,
+            lambda active: extract_multiple_jobs(active, source_text, image_urls),
+            has_images=has_images,
+            make_provider=create_provider,
+        )
+        if vision_note:
+            results = [attach_warning(item, vision_note) for item in results]
         engine = "ai"
     except LLMError as exc:
         logger.warning("多份岗位 AI 识别失败，已回退本地切分：%s", exc)

@@ -91,6 +91,9 @@ const enumsApply = {
   "enumsApply.step.verifying": "Confirming the result",
   "enumsApply.step.waiting": "Waiting between Jobs",
   "enumsApply.step.idle": "Idle",
+  "enumsApply.browserChoice.ego.label": "Ego Lite (Chromium)",
+  "enumsApply.browserChoice.ego.hint":
+    "Use Ego Lite (a Chromium build); if it is missing the app says so instead of falling back.",
 } as const;
 
 export default enumsApply;

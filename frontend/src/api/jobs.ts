@@ -64,6 +64,20 @@ export function createJob(payload: JobPayload): Promise<Job> {
   return request("/jobs", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export function importJobFromUrl(url: string): Promise<Job> {
+  return request("/jobs/import-url", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+    // 要开一次页面并等网络响应，default 15s 不够（站点慢时更久）。
+    budget: "recognition",
+  });
+}
+
+/** 导入「专用浏览器里当前打开的岗位详情页」（比复制链接少一步）。 */
+export function importCurrentJobPage(): Promise<Job> {
+  return request("/jobs/import-current", { method: "POST", budget: "recognition" });
+}
+
 export function updateJob(id: number, payload: Partial<JobPayload>): Promise<Job> {
   return request(`/jobs/${id}`, { method: "PUT", body: JSON.stringify(payload) });
 }

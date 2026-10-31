@@ -60,6 +60,9 @@ const applySettings = {
   "applySettings.action.save": "保存设置",
   "applySettings.saved": "投递设置已保存",
   "applySettings.saveFailed": "保存投递设置失败",
+  "applySettings.greetingReview.label": "发送前必须确认招呼语",
+  "applySettings.greetingReview.extra":
+    "开启后，队列里没有填写招呼语的岗位会被跳过（记录里写明「招呼语未确认」），绝不拿默认招呼语替你群发。",
 } as const;
 
 export default applySettings;

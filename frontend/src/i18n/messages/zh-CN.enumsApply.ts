@@ -87,6 +87,9 @@ const enumsApply = {
   "enumsApply.step.verifying": "确认结果",
   "enumsApply.step.waiting": "岗位间间隔",
   "enumsApply.step.idle": "空闲",
+  "enumsApply.browserChoice.ego.label": "Ego Lite（Chromium 分支）",
+  "enumsApply.browserChoice.ego.hint":
+    "使用 Ego Lite（Chromium 分支）；找不到会明确提示，不会改用别的浏览器。",
 } as const;
 
 export default enumsApply;

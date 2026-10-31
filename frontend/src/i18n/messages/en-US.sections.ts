@@ -38,6 +38,13 @@ const sections = {
   "sections.templateControls.pageLimitHint":
     "Maximum number of A4 pages for the Resume; short content leaves natural whitespace instead of stretching",
   "sections.templateControls.pageLimitPages": "{count} pages",
+  "sections.hidden.title": "Hidden sections",
+  "sections.hidden.hint":
+    "Hidden sections are omitted from preview, PDF, Word and plain-text exports.",
+  "sections.hidden.show": "Show {label}",
+  "sections.hidden.hide": "Hide {label}",
+  "sections.hidden.keepOne": "Keep at least one section visible",
+  "sections.hidden.count": "{hidden}/{total} hidden",
 } as const;
 
 export default sections;

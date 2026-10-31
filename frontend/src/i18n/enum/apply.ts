@@ -74,6 +74,7 @@ export const BROWSER_STATE_LABEL_KEYS: Record<BrowserState, MessageKey> = {
  */
 export const BROWSER_CHOICE_LABEL_KEYS: Partial<Record<BrowserChoice, MessageKey>> = {
   auto: "enumsApply.browserChoice.auto.label",
+  ego: "enumsApply.browserChoice.ego.label",
   custom: "enumsApply.browserChoice.custom.label",
 };
 
@@ -82,6 +83,7 @@ export const BROWSER_CHOICE_HINT_KEYS: Record<BrowserChoice, MessageKey> = {
   auto: "enumsApply.browserChoice.auto.hint",
   chrome: "enumsApply.browserChoice.chrome.hint",
   edge: "enumsApply.browserChoice.edge.hint",
+  ego: "enumsApply.browserChoice.ego.hint",
   custom: "enumsApply.browserChoice.custom.hint",
 };
 

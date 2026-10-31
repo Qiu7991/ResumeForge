@@ -67,6 +67,7 @@ from ..services.tracker import (
     list_track_deliveries as list_track_delivery_records,
 )
 from ..services.tracker_extract import extract_tracker_records, local_tracker_records
+from ..services.vision_fallback import run_with_vision_fallback
 from ._disconnect import client_gone, run_until_disconnect
 
 router = APIRouter(prefix="/api/tracker", tags=["tracker"])
@@ -232,12 +233,24 @@ async def parse_tracks(payload: TrackParseRequest, request: Request, db: Session
     # 模型调用可能持续几十秒：先释放请求会话，避免 await 期间一直占着连接池。
     db.close()
     try:
-        parsed = await run_until_disconnect(
-            request, extract_tracker_records(provider, source_text, urls), what="求职进度识别"
+        async def _run(active):
+            return await run_until_disconnect(
+                request,
+                extract_tracker_records(active, source_text, urls),
+                what="求职进度识别",
+            )
+
+        parsed, vision_note = await run_with_vision_fallback(
+            config,
+            _run,
+            has_images=bool(urls),
+            make_provider=create_provider,
         )
         if parsed is None:  # 客户端断开：不落任何预览，也没必要回退本地规则
             raise client_gone("求职进度识别")
         records, extra = parsed
+        if vision_note:
+            extra = [*extra, vision_note]
         engine = "ai"
     except HTTPException:  # 499 原样上抛，别被下面的兜底改写成"识别失败"
         raise

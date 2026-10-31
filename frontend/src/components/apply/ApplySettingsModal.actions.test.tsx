@@ -43,6 +43,7 @@ const CONFIG: ApplyConfig = {
   per_task_limit: 20,
   breaker_threshold: 5,
   default_greeting: "您好，我想应聘这个岗位。",
+  require_greeting_review: true,
   skip_same_company: true,
   confirm_real_gap: false,
   site_key: "boss",

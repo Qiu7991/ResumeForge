@@ -32,6 +32,7 @@ import { useJobQueue } from "./jobs/useJobQueue";
 import { useJobsPageState } from "./jobs/useJobsPageState";
 import { useSelectAllJobs } from "./jobs/useSelectAllJobs";
 import { useJobBatchActions } from "./jobs/useJobBatchActions";
+import JobUrlImportButton from "./jobs/JobUrlImportButton";
 import { useDeleteUndo } from "../features/trash/useDeleteUndo";
 import { registerJobCreateHandler } from "../features/shortcuts/runtimeTargets";
 import { t } from "../i18n";
@@ -344,6 +345,16 @@ export default function JobsPage() {
         setCandidatesOpen={setCandidatesOpen}
         setFormOpen={setFormOpen}
         onImportCsv={() => setImportCsvOpen(true)}
+        importUrlEntry={
+          <JobUrlImportButton
+            disabled={batchAction !== null}
+            onPageReload={() => void reload()}
+            onImported={(job) => {
+              void reload();
+              navigate(`/jobs?job_id=${job.id}`, { replace: true });
+            }}
+          />
+        }
         sortState={sortState}
         applySort={applySort}
         selectionMode={selectionMode}

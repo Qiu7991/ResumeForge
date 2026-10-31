@@ -70,6 +70,7 @@ export default function BrowserSettingsModal({ open, onClose, onSaved }: Props) 
         per_task_limit: current.per_task_limit,
         breaker_threshold: current.breaker_threshold,
         default_greeting: current.default_greeting,
+        require_greeting_review: current.require_greeting_review,
         skip_same_company: current.skip_same_company,
         confirm_real_gap: current.confirm_real_gap,
         browser_port: current.browser_port,
