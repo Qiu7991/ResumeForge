@@ -69,7 +69,7 @@ from .resume.resume_contact import (
 )
 from .resume.resume_labels import DEFAULT_RESUME_LANGUAGE, field_labels
 from .resume.resume_render_overrides import resolve_render_overrides
-from .resume.resume_sections import resolved_section_order
+from .resume.resume_sections import resolved_visible_sections
 from .resume.resume_visibility import visible_resume
 
 logger = logging.getLogger(__name__)
@@ -387,7 +387,7 @@ def build_resume_docx(
         accent_soft=accent_soft,
         layout=layout,
         include_photo=include_photo,
-        section_order=resolved_section_order(overrides),
+        section_order=resolved_visible_sections(overrides),
         language=language,
         theme=theme,
         overrides=render_overrides,

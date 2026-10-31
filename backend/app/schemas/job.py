@@ -103,12 +103,26 @@ class SkillTag(BaseModel):
     category: str = Field(max_length=64)
 
 
+class JobImportUrlIn(BaseModel):
+    """按招聘网站链接导入岗位：只需一条岗位详情页地址。"""
+
+    url: str = Field(min_length=8, max_length=512)
+
+    @field_validator("url")
+    @classmethod
+    def url_must_be_http(cls, value: str) -> str:
+        text = value.strip()
+        if not text.startswith(("http://", "https://")):
+            raise ValueError("请输入以 http:// 或 https:// 开头的岗位链接")
+        return text
+
+
 class JobCreate(BaseModel):
     title: str = Field(min_length=1, max_length=128)
     company: str = Field(default="", max_length=128)
     location: str = Field(default="", max_length=64)
     salary: str = Field(default="", max_length=64)
-    job_type: str = Field(default="校招", max_length=32)
+    job_type: str = Field(default="社招", max_length=32)
     description: str = Field(default="", max_length=MAX_JOB_TEXT_CHARS)
     requirements: str = Field(default="", max_length=MAX_JOB_TEXT_CHARS)
     additional_info: str = Field(default="", max_length=MAX_JOB_TEXT_CHARS)

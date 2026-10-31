@@ -25,7 +25,7 @@ from .resume_layout_overrides import (
 )
 from .resume_pagination import validate_pagination_domain
 from .resume_photo_crop import validate_photo_crop_domain
-from .resume_sections import normalized_section_order
+from .resume_sections import normalized_hidden_sections, normalized_section_order
 from .resume_style_schema import (
     validate_object_roles_domain,
     validate_objects_domain,
@@ -174,6 +174,12 @@ def validated_format_config(raw: dict | None) -> dict:
         if str(key) == "section_order":
             if isinstance(value, (list, tuple)) and value:
                 result["section_order"] = normalized_section_order(value)
+            continue
+        if str(key) == "hidden_sections":
+            # 空列表 = 明确"恢复默认"：不落键；有值时才保留（与本地二开口径一致）。
+            hidden = normalized_hidden_sections(value)
+            if hidden:
+                result["hidden_sections"] = hidden
             continue
         if str(key) == FONT_KEY:
             font_name = _validated_font_name(value)

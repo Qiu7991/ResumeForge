@@ -34,6 +34,12 @@ import httpx
 from ...config import DATA_DIR, DEFAULT_BROWSER_PORT
 from ...schemas.apply.base import BrowserState
 from .browser_inputs import BrowserError, validated_browser_url
+from .browser_locator import (
+    CHROME_RELATIVE,
+    EDGE_RELATIVE,
+    EGO_RELATIVE,
+    browser_display_name,
+)
 from .cdp_client import DEFAULT_HOST, WebsocketCdpClient
 
 logger = logging.getLogger(__name__)
@@ -50,12 +56,12 @@ PROFILE_DIR_NAME = "browser-profile"
 
 # 常见安装位置（按"优先 Chrome、其次 Edge"的顺序排列）。用环境变量拼，避免把某个
 # 用户的绝对路径写死；Windows 之外的平台退回 PATH 查找。
-_CHROME_RELATIVE = (
+CHROME_RELATIVE = (
     ("PROGRAMFILES", r"Google\Chrome\Application\chrome.exe"),
     ("PROGRAMFILES(X86)", r"Google\Chrome\Application\chrome.exe"),
     ("LOCALAPPDATA", r"Google\Chrome\Application\chrome.exe"),
 )
-_EDGE_RELATIVE = (
+EDGE_RELATIVE = (
     ("PROGRAMFILES(X86)", r"Microsoft\Edge\Application\msedge.exe"),
     ("PROGRAMFILES", r"Microsoft\Edge\Application\msedge.exe"),
     ("LOCALAPPDATA", r"Microsoft\Edge\Application\msedge.exe"),
@@ -66,31 +72,15 @@ _LOGIN_HINT = "首次使用请在弹出的浏览器窗口里扫码登录一次�
 BROWSER_CHOICE_AUTO = "auto"
 BROWSER_CHOICE_CHROME = "chrome"
 BROWSER_CHOICE_EDGE = "edge"
+BROWSER_CHOICE_EGO = "ego"
 BROWSER_CHOICE_CUSTOM = "custom"
 BROWSER_CHOICES = (
     BROWSER_CHOICE_AUTO,
     BROWSER_CHOICE_CHROME,
     BROWSER_CHOICE_EDGE,
+    BROWSER_CHOICE_EGO,
     BROWSER_CHOICE_CUSTOM,
 )
-
-# 中文名，供界面展示"实际用的是哪个浏览器"（别只给路径）。
-_CHROME_NAME = "Google Chrome"
-_EDGE_NAME = "Microsoft Edge"
-_CUSTOM_NAME = "自定义浏览器"
-
-
-def browser_display_name(path: str | Path | None) -> str:
-    """由可执行文件路径推断人类可读的浏览器名。"""
-    if not path:
-        return ""
-    name = Path(path).name.casefold()
-    if "msedge" in name or "edge" in name:
-        return _EDGE_NAME
-    if "chrome" in name:
-        return _CHROME_NAME
-    return _CUSTOM_NAME
-
 
 # ``BrowserStatus.state`` 的取值之一：调试端口在答，采集/投递都能用。
 # 定义成常量是因为调用方要拿它做判断（例如"浏览器在跑才去读登录态清单"），
@@ -218,7 +208,7 @@ class BrowserManager:
             return path
 
         if self._browser_choice == BROWSER_CHOICE_CHROME:
-            located = self._find_one(_CHROME_RELATIVE, ("chrome", "google-chrome"))
+            located = self._find_one(CHROME_RELATIVE, ("chrome", "google-chrome"))
             if located is None:
                 raise BrowserError(
                     "没有找到 Google Chrome：请先安装 Chrome，或在投递设置里改用「自动」"
@@ -227,7 +217,7 @@ class BrowserManager:
             return located
 
         if self._browser_choice == BROWSER_CHOICE_EDGE:
-            located = self._find_one(_EDGE_RELATIVE, ("msedge",))
+            located = self._find_one(EDGE_RELATIVE, ("msedge",))
             if located is None:
                 raise BrowserError(
                     "没有找到 Microsoft Edge：请先安装 Edge，或在投递设置里改用「自动」或"
@@ -235,9 +225,18 @@ class BrowserManager:
                 )
             return located
 
-        located = self._find_one(_CHROME_RELATIVE, ("chrome", "google-chrome"))
+        if self._browser_choice == BROWSER_CHOICE_EGO:
+            located = self._find_one(EGO_RELATIVE, ("ego",))
+            if located is None:
+                raise BrowserError(
+                    "没有找到 Ego Lite：请先安装 Ego Lite，或在投递设置里改用「自动」或"
+                    "「自定义路径」（直接填 ego.exe 的完整路径也可以）。"
+                )
+            return located
+
+        located = self._find_one(CHROME_RELATIVE, ("chrome", "google-chrome"))
         if located is None:
-            located = self._find_one(_EDGE_RELATIVE, ("msedge",))
+            located = self._find_one(EDGE_RELATIVE, ("msedge",))
         if located is None:
             raise BrowserError(
                 "未找到可用的浏览器，请先安装 Google Chrome 或 Microsoft Edge 后重试"
@@ -323,6 +322,29 @@ class BrowserManager:
 
     # ===== 启动 / 停止 =====
 
+    def _start_arguments(self, browser: Path) -> list[str]:
+        """拉起浏览器用的参数列表（纯函数便于单测，不含任何进程操作）。"""
+        args = [
+            str(browser),
+            f"--remote-debugging-port={self._port}",
+            "--remote-debugging-address=127.0.0.1",
+            f"--user-data-dir={self._profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ]
+        # 随应用分发的「收录当前岗位」扩展：浏览器由应用拉起，直接挂载即可。
+        extension_dir = Path(__file__).resolve().parent / "extension"
+        if (extension_dir / "manifest.json").is_file():
+            args.extend(
+                [
+                    f"--load-extension={extension_dir}",
+                    f"--disable-extensions-except={extension_dir}",
+                    "--disable-features=DisableLoadExtensionCommandLineSwitch",
+                ]
+            )
+        args.extend(["--new-window", "about:blank"])
+        return args
+
     def start(self, url: str | None = None) -> BrowserStatus:
         """拉起专用浏览器。
 
@@ -341,17 +363,7 @@ class BrowserManager:
             return self.status()
         browser = self._locate_browser()
         self._profile_dir.mkdir(parents=True, exist_ok=True)
-        # 参数用列表传递、shell=False：不经过 shell，路径含空格也不会被拆开。
-        args = [
-            str(browser),
-            f"--remote-debugging-port={self._port}",
-            "--remote-debugging-address=127.0.0.1",
-            f"--user-data-dir={self._profile_dir}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--new-window",
-            "about:blank",
-        ]
+        args = self._start_arguments(browser)
         try:
             self._process = self._popen(args, shell=False)
         except OSError as exc:

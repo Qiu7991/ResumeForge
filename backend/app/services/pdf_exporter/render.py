@@ -30,7 +30,7 @@ from ..resume.resume_labels import (
     section_titles,
 )
 from ..resume.resume_pagination import PaginationPlan
-from ..resume.resume_sections import resolved_section_order
+from ..resume.resume_sections import resolved_visible_sections
 from .canvas import _ResumePDF
 from .columns import SectionDrawer, render_sections
 from .custom_sections import draw_custom
@@ -450,7 +450,7 @@ def _draw_resume(
         "awards": brief(draw_awards),
     }
     section_keys = [
-        key for key in resolved_section_order(format_config) if section_has_content(resume, key)
+        key for key in resolved_visible_sections(format_config) if section_has_content(resume, key)
     ]
 
     if layout.column_count > 1:

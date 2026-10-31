@@ -24,7 +24,7 @@ from .exporter import build_filename, export_json, export_markdown, render_html
 from .pdf_exporter import build_resume_pdf
 from .privacy import RedactionOptions, redact
 from .resume.resume_labels import DEFAULT_RESUME_LANGUAGE
-from .resume.resume_sections import resolved_section_order
+from .resume.resume_sections import resolved_visible_sections
 from .resume.resume_template_format import validated_format_config
 from .txt_exporter import export_txt
 from .watermark import apply_watermark
@@ -119,7 +119,7 @@ def _render_markdown(resume: ResumeContent, context: RenderContext) -> RenderedA
     return RenderedArtifact(
         content=export_markdown(
             resume,
-            section_order=resolved_section_order(context.format_config),
+            section_order=resolved_visible_sections(context.format_config),
             language=context.language,
             format_config=context.format_config,
         ).encode("utf-8"),
@@ -188,7 +188,7 @@ def _render_txt(resume: ResumeContent, context: RenderContext) -> RenderedArtifa
     return RenderedArtifact(
         content=export_txt(
             resume,
-            section_order=resolved_section_order(context.format_config),
+            section_order=resolved_visible_sections(context.format_config),
             language=context.language,
             format_config=context.format_config,
         ).encode("utf-8"),

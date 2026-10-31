@@ -47,7 +47,7 @@ from .resume.resume_labels import (
 )
 from .resume.resume_render_overrides import render_overrides_css, resolve_render_overrides
 from .resume.resume_rich_text import apply_rich_html, strip_markers
-from .resume.resume_sections import resolved_section_order
+from .resume.resume_sections import resolved_visible_sections
 from .resume.resume_template_format import FONT_KEY
 from .resume.resume_template_style import style_css, validated_style_config
 from .resume.resume_templates import (
@@ -234,7 +234,7 @@ def render_html(
         # 产物与今天逐字一致（`lang` 不属于提取文本，黄金基线的指纹不受影响）。
         "language": normalize_language(language),
         # 正文分区顺序（页眉不参与）。模板里有页码、A4 适配脚本等同样读这个上下文。
-        "resume_section_order": resolved_section_order(overrides),
+        "resume_section_order": resolved_visible_sections(overrides),
         "template_config": style_values,
         # 纸面固定文案（分区标题 / 字段前缀 / 分隔符 / 等级括号）。**任何分支都要有**：
         # 模板里写的是 `{{ section_titles.summary }}`，缺了这个键 Jinja 会渲染成空串——

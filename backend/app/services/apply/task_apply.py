@@ -11,6 +11,7 @@ from typing import Any
 
 from ...models.apply import (
     FAILURE_CAPTCHA_REQUIRED,
+    FAILURE_GREETING_MISSING,
     FAILURE_NETWORK_TIMEOUT,
     FAILURE_PROFILE_INSUFFICIENT,
     FAILURE_SITE_UNSUPPORTED,
@@ -387,7 +388,16 @@ def execute_item(
             category=FAILURE_PROFILE_INSUFFICIENT,
         )
     data = apply_service.build_apply_data(session, resume)
-    greeting = (item.greeting or "").strip() or config.default_greeting
+    # 招呼语闸门：开启「发送前必须确认」时，queue item 里那段文字就是"用户已确认"的唯一凭据。
+    # 没有就跳过——绝不拿默认招呼语悄悄替用户发出去（那正是他要避免的机器人式群发）。
+    greeting = (item.greeting or "").strip()
+    if not greeting:
+        if config.require_greeting_review:
+            raise ItemSkip(
+                "招呼语未确认：请先在投递队列里为这个岗位生成或填写招呼语",
+                category=FAILURE_GREETING_MISSING,
+            )
+        greeting = config.default_greeting
 
     step_started = time.monotonic()
     task.current_step = STEP_FILLING

@@ -124,6 +124,43 @@ def resolved_section_order(format_config: dict | None) -> list[str]:
     return normalized_section_order(format_config.get("section_order"))
 
 
+def normalized_hidden_sections(raw: object) -> list[str]:
+    """把任意输入归一化成"只含已知分区键、无重复"的隐藏列表。
+
+    与顺序不同，这个列表**允许为空**（= 一个都不藏），也允许不完整——没提到的分区
+    就是显示的。未知键直接丢弃：它来自 JSON 字段，抛异常会让整份版式失效。
+    """
+    if isinstance(raw, (list, tuple)):
+        candidates = raw
+    elif isinstance(raw, str):
+        candidates = raw.split(",")
+    else:
+        return []
+
+    hidden: list[str] = []
+    for item in candidates:
+        key = str(item).strip()
+        if key in SECTION_LABELS and key not in hidden:
+            hidden.append(key)
+    return hidden
+
+
+def resolved_hidden_sections(format_config: dict | None) -> list[str]:
+    """从版式覆盖里取被隐藏的分区；没设过就是一个都不藏。"""
+    if not isinstance(format_config, dict):
+        return []
+    return normalized_hidden_sections(format_config.get("hidden_sections"))
+
+
+def resolved_visible_sections(format_config: dict | None) -> list[str]:
+    """渲染器真正应该输出的分区：顺序里去掉被隐藏的那些。
+
+    四个渲染器（HTML/PDF/Word/Markdown）都从这里取，避免"预览里藏了、导出的还在"。
+    """
+    hidden = set(resolved_hidden_sections(format_config))
+    return [key for key in resolved_section_order(format_config) if key not in hidden]
+
+
 def profile_order_to_section_order(profile_keys: list[str]) -> list[str]:
     """把「我的资料」的分区键表翻译成简历正文的分区顺序（七个键的完整排列）。
 
@@ -212,6 +249,9 @@ def profile_to_resume_order(raw: object) -> list[str]:
 
 __all__ = [
     "DEFAULT_SECTION_ORDER",
+    "normalized_hidden_sections",
+    "resolved_hidden_sections",
+    "resolved_visible_sections",
     "PROFILE_SECTION_TO_RESUME",
     "SECTION_LABELS",
     "default_section_order_config",

@@ -63,7 +63,11 @@ from ..services.text_extraction import (
 )
 from ..services.user_files import save_from_data_url
 
+from .job_import import router as job_import_router
+
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+# 按链接/当前页导入是岗位域的两个字面量端点；子路由必须挂在 /{job_id} 参数段之前。
+router.include_router(job_import_router)
 logger = logging.getLogger(__name__)
 
 
