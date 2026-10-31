@@ -15,6 +15,12 @@
 - `scripts/migrate_local_db_to_upstream.py`：把本地 0046→0047/0048 分叉对齐到上游
   0046 共同祖先，再跑上游 0047→0068；实测业务表行数不变、integrity ok、上游应用可启动。
 
+### 旧资料迁移（新增）
+- 上游 R-46 决定"旧资料不自动显示"；本地用户需要原资料，因此新增一次性脚本
+  `scripts/import_legacy_profile_to_new_model.py`：读取旧 `user_profile` + 教育/经历/项目/技能/校园/奖项，
+  映射到新版 `profile_entry` 默认组（基本信息、总结、教育、经历、项目、技能、语言证书）。
+  脚本先复制数据库备份，旧表不删，可回滚。真实库已执行（19 个条目）。
+
 ### 后端回放（已回放）
 - 隐藏板块：`resume_sections.py` 增加 `normalized_hidden_sections` /
   `resolved_hidden_sections` / `resolved_visible_sections`；HTML / PDF / Word /
