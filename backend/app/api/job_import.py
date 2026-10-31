@@ -55,7 +55,7 @@ def _import_from_url(db: Session, url: str) -> Job:
     if status.state != BROWSER_STATE_RUNNING:
         raise HTTPException(
             status_code=409,
-            detail="请先在「投递台」启动专用浏览器并登录该招聘网站，再按链接导入",
+            detail="专用浏览器尚未启动，或未登录该招聘网站",
         )
 
     manager = get_browser_manager(db)
@@ -127,7 +127,7 @@ def import_current_page(db: Session = Depends(get_db)):
     if status.state != BROWSER_STATE_RUNNING:
         raise HTTPException(
             status_code=409,
-            detail="请先在「投递台」启动专用浏览器并登录招聘网站，再导入当前页面",
+            detail="专用浏览器尚未启动，或未登录招聘网站",
         )
 
     manager = get_browser_manager(db)

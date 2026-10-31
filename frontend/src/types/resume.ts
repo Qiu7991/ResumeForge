@@ -39,18 +39,11 @@ export interface ResumeTemplateOption {
   name: string;
   label: string;
   description: string;
-  /** 展示分组（本地 17 套模板的分类；上游新模板/自制模板可能没有）。 */
-  category?: string;
+  /** 展示分组（本地 17 套模板的分类；上游新模板/自制模板可能没有）。 */ category?: string;
   /** 用户自制的模板；内置模板为 false。 */
   custom?: boolean;
   id?: number | null;
-  /**
-   * 这个模板的**标题字族是衬线**（当前 `elegant` / `editorial` 为 true，自制模板恒 false）。
-   *
-   * 精确预览用的是嵌入 PDF 的那一款中文字体（本机黑体），而草稿里的衬线标题是 CSS 字族，
-   * 两条链路在这里**必然不同**。有了这个标志，精确模式才能只在"真的不一样"时给一句说明，
-   * 而不是对所有模板都摆一条与事实无关的提示。旧后端不下发时按 `false`（不提示）。
-   */
+  /** 标题字族是否衬线：精确预览据此只在"真的不一样"时提示；缺省 false。 */
   serif_heading?: boolean;
 }
 

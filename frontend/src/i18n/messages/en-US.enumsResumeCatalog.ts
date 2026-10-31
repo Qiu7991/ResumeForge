@@ -47,6 +47,24 @@ const enumsResumeCatalog = {
     "Serif type with hairline dividers; suits humanities, content and management roles",
   "enumsResumeCatalog.templateDescription.split":
     "Two-column body with high density; for resumes with many roles and skills",
+  "enumsResumeCatalog.template.php": "PHP backend",
+  "enumsResumeCatalog.template.java": "Java",
+  "enumsResumeCatalog.template.node": "Node.js",
+  "enumsResumeCatalog.template.web": "Web frontend",
+  "enumsResumeCatalog.template.ios": "iOS",
+  "enumsResumeCatalog.template.android": "Android",
+  "enumsResumeCatalog.template.cpp": "C/C++ systems",
+  "enumsResumeCatalog.template.architect": "Architect",
+  "enumsResumeCatalog.template.dev": "General tech",
+  "enumsResumeCatalog.templateDescription.php": "Violet accents and soft section titles for PHP and backend roles",
+  "enumsResumeCatalog.templateDescription.java": "Brick-red accents and a left bar, a steady enterprise look for Java and server roles",
+  "enumsResumeCatalog.templateDescription.node": "Grass-green accents, underline titles and monospace details for Node.js and full-stack roles",
+  "enumsResumeCatalog.templateDescription.web": "Indigo accents and a left bar, clean and versatile for web frontend roles",
+  "enumsResumeCatalog.templateDescription.ios": "Graphite minimalism with generous whitespace and plain skill lists for iOS roles",
+  "enumsResumeCatalog.templateDescription.android": "Android-green filled section titles and a tinted header for mobile roles",
+  "enumsResumeCatalog.templateDescription.cpp": "Steel-blue accents, monospace details and filled titles for C/C++, embedded and systems roles",
+  "enumsResumeCatalog.templateDescription.architect": "Deep purple accents and centered serif titles for architects and tech leads",
+  "enumsResumeCatalog.templateDescription.dev": "Neutral blue-grey and soft section titles, a direction-neutral technical layout",
 } as const;
 
 export default enumsResumeCatalog;

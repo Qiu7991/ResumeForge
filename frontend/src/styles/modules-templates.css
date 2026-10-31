@@ -477,3 +477,13 @@
   margin: 8px 0 0;
   color: var(--rf-text-secondary, #6b7280);
 }
+
+/* 模板卡片按分类分组：首张卡顶部显示分类名（用属性而非额外 DOM，保持既有文案 AST 不变）。 */
+.template-gallery-card[data-category-first]::before {
+  content: attr(data-category);
+  display: block;
+  margin-bottom: 6px;
+  color: var(--rf-text-secondary, #6b7280);
+  font-size: 12px;
+  font-weight: 600;
+}

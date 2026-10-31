@@ -110,6 +110,7 @@ def _runner(adapter: SiteAdapter) -> TaskRunner:
 
 def _config() -> ApplyConfigIn:
     return ApplyConfigIn(
+        require_greeting_review=False,
         interval_seconds=1,
         interval_jitter_seconds=0,
         breaker_threshold=3,

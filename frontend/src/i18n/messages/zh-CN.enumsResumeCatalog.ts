@@ -44,6 +44,24 @@ const enumsResumeCatalog = {
   "enumsResumeCatalog.templateDescription.editorial":
     "衬线字体与细线分隔，适合文商科、内容与管理岗位",
   "enumsResumeCatalog.templateDescription.split": "正文双栏、信息密度高，适合经历与技能较多的简历",
+  "enumsResumeCatalog.template.php": "PHP 后端",
+  "enumsResumeCatalog.template.java": "Java 开发",
+  "enumsResumeCatalog.template.node": "Node.js 开发",
+  "enumsResumeCatalog.template.web": "Web 前端",
+  "enumsResumeCatalog.template.ios": "iOS 开发",
+  "enumsResumeCatalog.template.android": "Android 开发",
+  "enumsResumeCatalog.template.cpp": "C/C++ 系统",
+  "enumsResumeCatalog.template.architect": "架构师",
+  "enumsResumeCatalog.template.dev": "通用技术",
+  "enumsResumeCatalog.templateDescription.php": "紫罗兰强调色与浅色块标题，适合 PHP / 后端开发岗位",
+  "enumsResumeCatalog.templateDescription.java": "砖红强调色与左侧色条标题，稳重的企业级风格，适合 Java / 服务端岗位",
+  "enumsResumeCatalog.templateDescription.node": "草绿强调色与下划线标题，等宽辅助信息，适合 Node.js / 全栈岗位",
+  "enumsResumeCatalog.templateDescription.web": "靛蓝强调色与左侧色条标题，清爽通用，适合 Web 前端 / 客户端岗位",
+  "enumsResumeCatalog.templateDescription.ios": "石墨灰极简风、留白舒展，纯文字技能清单，适合 iOS / 移动端岗位",
+  "enumsResumeCatalog.templateDescription.android": "安卓绿实心色块标题与浅绿页头，适合 Android / 移动端岗位",
+  "enumsResumeCatalog.templateDescription.cpp": "钢青强调色、等宽辅助信息与实心色块标题，信息密度高，适合 C/C++ / 嵌入式 / 系统岗位",
+  "enumsResumeCatalog.templateDescription.architect": "深紫强调色、居中衬线标题，稳重舒展，适合架构师与技术管理岗位",
+  "enumsResumeCatalog.templateDescription.dev": "中性蓝灰、浅色块标题，不挑方向的通用技术岗款式，适合转岗与技术通用投递",
 } as const;
 
 export default enumsResumeCatalog;

@@ -83,6 +83,15 @@ export const RESUME_CATALOG_TEMPLATE_LABEL_KEYS: Record<string, MessageKey> = {
   scholar: "enumsResumeCatalog.template.scholar",
   editorial: "enumsResumeCatalog.template.editorial",
   split: "enumsResumeCatalog.template.split",
+  php: "enumsResumeCatalog.template.php",
+  java: "enumsResumeCatalog.template.java",
+  node: "enumsResumeCatalog.template.node",
+  web: "enumsResumeCatalog.template.web",
+  ios: "enumsResumeCatalog.template.ios",
+  android: "enumsResumeCatalog.template.android",
+  cpp: "enumsResumeCatalog.template.cpp",
+  architect: "enumsResumeCatalog.template.architect",
+  dev: "enumsResumeCatalog.template.dev",
 };
 
 /** 内置简历模板 `name` → 说明文字 key（后端 `RESUME_TEMPLATES[].description` 的稳定 name 映射）。 */
@@ -96,6 +105,15 @@ export const RESUME_CATALOG_TEMPLATE_DESCRIPTION_KEYS: Record<string, MessageKey
   scholar: "enumsResumeCatalog.templateDescription.scholar",
   editorial: "enumsResumeCatalog.templateDescription.editorial",
   split: "enumsResumeCatalog.templateDescription.split",
+  php: "enumsResumeCatalog.templateDescription.php",
+  java: "enumsResumeCatalog.templateDescription.java",
+  node: "enumsResumeCatalog.templateDescription.node",
+  web: "enumsResumeCatalog.templateDescription.web",
+  ios: "enumsResumeCatalog.templateDescription.ios",
+  android: "enumsResumeCatalog.templateDescription.android",
+  cpp: "enumsResumeCatalog.templateDescription.cpp",
+  architect: "enumsResumeCatalog.templateDescription.architect",
+  dev: "enumsResumeCatalog.templateDescription.dev",
 };
 
 /**

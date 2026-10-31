@@ -15,6 +15,7 @@ from app.services.data_backup import (
     BackupError,
     inspect_archive,
 )
+from app.services.resume.resume_template_catalog import VISIBLE_TEMPLATE_NAMES
 from app.services.resume.resume_templates import FONT_SCALES
 from app.services.update_check import _is_newer
 
@@ -242,9 +243,9 @@ def test_resume_template_catalog_and_layout_update(client):
     assert catalog.status_code == 200
     body = catalog.json()
     names = {item["name"] for item in body["templates"]}
-    # 内置模板只列 6 套（2026-11 收敛到 5 套后，2026-10 补回第 6 套 scholar）；
-    # technical / editorial / split 不再出现在可选清单里，但仍留在 catalog 中供老简历按原模板渲染。
-    assert names == {"classic", "modern", "compact", "elegant", "minimal", "scholar"}
+    # 本地二开保留 17 套模板 + 上游 scholar，共 18 套全部在可选清单里。
+    assert names == set(VISIBLE_TEMPLATE_NAMES)
+    assert len(names) == 18
     assert [item for item in body["templates"] if item["custom"]] == []
     assert {item["name"] for item in body["font_scales"]} == {"small", "standard", "large"}
     # 每个档位都必须带 `base_px`，且**与后端唯一的档位表 FONT_SCALES 完全一致**：

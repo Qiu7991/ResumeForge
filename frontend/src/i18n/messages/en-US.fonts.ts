@@ -53,7 +53,7 @@ const fonts = {
   "fonts.control.system-short": "System font",
   "fonts.control.current-global": "{name} (current global font)",
   "fonts.control.aria": "Resume font",
-  "skills.tab.layout": "Layout presets",
+  "skills.tab.layout": "Templates & presets",
   "skills.page.subtitle":
     "Skills control how the assistant responds; layout presets control Resume typography. Manage both here.",
   "layout.intro.title": "Using layout presets",

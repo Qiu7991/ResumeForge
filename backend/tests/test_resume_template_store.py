@@ -46,26 +46,22 @@ def test_resolve_format_preset(db_session):
     assert resolve_format_config(db_session, "standard") == {}
 
 
-def test_style_template_is_offline_for_writes(client, db_session):
-    """自制样式模板已下线：写路径一律 400，错误文案只说原因。"""
+def test_style_template_is_supported_again(client, db_session):
+    """本地二开保留自制样式模板：可创建、可被解析、出现在可选清单。"""
     created = client.post(
         "/api/resume-templates",
         json={"name": "自定义A", "kind": "style", "html": STYLE_HTML},
     )
-    assert created.status_code == 400
-    assert created.json()["detail"] == "自制模板已下线，只能创建版式"
+    assert created.status_code == 201, created.text
 
-    # 读不到也不该抛异常：记录里可能还存着这个名字。
-    assert resolve_style_template(db_session, "自定义A") == ("classic", "")
-    assert custom_template_options(db_session) == []
+    template, html = resolve_style_template(db_session, "自定义A")
+    assert template == "classic"
+    assert "evil.example" not in html  # 消毒后才有资格入库
+    assert [item["name"] for item in custom_template_options(db_session)] == ["自定义A"]
 
 
-def test_existing_style_rows_are_not_read_anymore(client, db_session):
-    """DB 里存量的 style 行**不删**，但读路径必须彻底不认它。
-
-    这是"零迁移"下线的关键：老记录里的模板名还在，导出时不能拿到用户模板 HTML
-    （那会把一条已经下线的渲染路径重新激活），只能安静地退回默认内置模板。
-    """
+def test_existing_style_rows_are_still_read(client, db_session):
+    """存量 style 行继续参与渲染与清单，用户已有的自制模板不会消失。"""
     from app.models.resume_template import TEMPLATE_KIND_STYLE, ResumeTemplate
 
     row = ResumeTemplate(
@@ -80,13 +76,13 @@ def test_existing_style_rows_are_not_read_anymore(client, db_session):
     db_session.add(row)
     db_session.commit()
 
-    assert resolve_style_template(db_session, "存量样式") == ("classic", "")
-    assert custom_template_options(db_session) == []
-    # 行还在（用户能在列表里看到并删除），只是不再参与渲染。
+    template, html = resolve_style_template(db_session, "存量样式")
+    assert template == "classic"
+    assert html
+    assert [item["name"] for item in custom_template_options(db_session)] == ["存量样式"]
     assert client.get("/api/resume-templates", params={"kind": "style"}).json()[0]["name"] == "存量样式"
-    # 编辑同样被拒：能改只会让人以为"改了有用"。
     edited = client.put(f"/api/resume-templates/{row.id}", json={"name": "改名试试"})
-    assert edited.status_code == 400
+    assert edited.status_code == 200
 
 
 def test_format_template_requires_a_real_setting(client, db_session):

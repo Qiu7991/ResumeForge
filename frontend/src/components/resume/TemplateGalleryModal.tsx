@@ -288,9 +288,14 @@ export default function TemplateGalleryModal({
           </Button>
         </div>
         <div className="template-gallery-grid">
-          {templates.map((item) => (
+          {templates.map((item, index) => {
+            const previousCategory = index > 0 ? templates[index - 1].category : undefined;
+            const firstInCategory = Boolean(item.category) && item.category !== previousCategory;
+            return (
             <div
               key={item.name}
+              data-category={item.category}
+              data-category-first={firstInCategory ? "1" : undefined}
               className={`template-gallery-card${item.name === selectedName ? " is-active" : ""}`}
             >
               <div
@@ -372,7 +377,8 @@ export default function TemplateGalleryModal({
                 </Space>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     );

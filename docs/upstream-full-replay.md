@@ -15,7 +15,7 @@
 - `scripts/migrate_local_db_to_upstream.py`：把本地 0046→0047/0048 分叉对齐到上游
   0046 共同祖先，再跑上游 0047→0068；实测业务表行数不变、integrity ok、上游应用可启动。
 
-### 后端回放（第一批）
+### 后端回放（已回放）
 - 隐藏板块：`resume_sections.py` 增加 `normalized_hidden_sections` /
   `resolved_hidden_sections` / `resolved_visible_sections`；HTML / PDF / Word /
   Markdown/txt 四个渲染器统一使用可见列表；`validated_format_config` 保留非空
@@ -33,24 +33,31 @@
 ## 待回放
 
 ### 后端
-- [ ] 看图模型兜底（`vision_fallback` + 四个带图识别端点；需保留上游 `run_until_disconnect` 语义）
-- [ ] 17 套模板合并（catalog + layout + tag/column/list 三张附表 + 9 套 j2 rebase）
-- [ ] 自制模板 `custom_template_options` 保留（上游已返回空）
-- [ ] API Key 编辑态可替换/可清除（上游设置页结构已变）
-- [ ] 岗位排序/类型/批量选择等本地 UX（先核对上游是否已有）
+- [x] 看图模型兜底（`vision_fallback`；岗位/资料/进度四个带图入口，保留 `run_until_disconnect`）
+- [x] 17 套模板合并（catalog + layout + tag/column/list；9 套 j2 去 fit-scale、补语言与缩放变量）
+- [x] 自制样式模板恢复（创建/编辑/预览/出现在可选清单）
+- [x] 岗位类型默认社招、按 JD 推断
+- [x] API Key 编辑：上游新设置页已是「留空保持不变 + 可重输」，无需回放旧控件
+- [x] 岗位排序/批量选择：上游已有，采用上游实现
 
 ### 前端
-- [ ] i18n：直接采用上游运行时 + zh-CN 语言包；本地新增文案进 zh-CN（不复制守卫）
-- [ ] 三栏制作台、revision/冲突、版本、大纲、来源、模板试用、精确 PDF 预览：采用上游
-- [ ] 模板画廊：上游画廊 + 恢复 `category` 分组 + 本地缩略图参数（resumeId/format_config）
-- [ ] `/skills` 模板管理：恢复本地导入/复制/自制模板 UI，迁移到 i18n，并接入上游试用
-- [ ] 17 套模板在画廊/管理页的 label/description/category key
-- [ ] 隐藏板块控件、招呼语确认、链接导入、Ego 选项、看图提示等本地 UI 回放
+- [x] i18n：采用上游运行时 + zh-CN/en-US；本地新增文案全部进语言包
+- [x] 三栏制作台、revision/冲突、版本、大纲、来源、模板试用、精确 PDF 预览：采用上游
+- [x] 模板画廊：上游画廊 + `category` 分组（用 CSS 属性显示分类，避免改变既有 DOM/文案 AST）
+- [x] `/skills` 模板管理：恢复内置样式画廊、复制内置、导入 HTML、导入参考、自制样式模板，全部 i18n
+- [x] 隐藏板块控件（制作台左栏）、招呼语确认开关、按链接导入、Ego Lite 选项
+- [ ] 模板画廊的“真实页数/试用”仍需用真实模板逐套点一遍（自动化已覆盖组件）
+- [ ] 9 套本地模板的中英文 label/description 仍回退后端中文（英文界面待补）
 
 ## 决策记录
 - 模板：保留本地 17 套；上游 `scholar` 作为新增可选模板保留（合计 18，待最终确认）。
 - `/skills`：保留模板创作/导入/自制模板管理，并整合上游模板试用/对比。
 - 本地重复功能（批量导出/对比选岗/用量/AI 任务）：改用上游实现，不保留本地代码。
+
+## 验收进度
+- 后端全量测试：运行中（最近一次完整上游基线 6887 passed；回放后待记录）。
+- 前端全量：683 文件 / 4783 用例通过；`tsc` / `build` 通过。
+- 模板：18 套 HTML 全部渲染成功；cpp PDF 冒烟 1 页 / 103KB；布局/标签/颜色守卫通过。
 
 ## 验收闸门
 1. 后端全量测试通过；前端全量 vitest / tsc / build 通过。

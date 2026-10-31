@@ -133,6 +133,8 @@ def _config(**overrides) -> ApplyConfigIn:
         "breaker_threshold": 3,
         "daily_limit": 60,
         "per_task_limit": 20,
+        # 招呼语闸门默认开启；这些用例测投递编排而非闸门，显式关闭。
+        "require_greeting_review": False,
     }
     data.update(overrides)
     return ApplyConfigIn(**data)
