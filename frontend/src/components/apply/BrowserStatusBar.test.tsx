@@ -25,6 +25,12 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock("../../api/apply", () => ({ ...apiMocks }));
 
+// 「导入当前页」成功后跳岗位广场；这里只需要一个可调用的 navigate，不测路由本身。
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router-dom")>()),
+  useNavigate: () => vi.fn(),
+}));
+
 const apiState = vi.hoisted(() => ({
   data: null as BrowserStatus | null,
   loading: false,

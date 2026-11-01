@@ -57,6 +57,8 @@ const applyQueue = {
   "applyQueue.detail.updatedAt": "最近更新",
   "applyQueue.detail.greeting": "招呼语",
   "applyQueue.detail.defaultGreeting": "默认招呼语",
+  "applyQueue.greeting.unconfirmed": "招呼语未确认",
+  "applyQueue.greeting.unconfirmedHint": "还没确认招呼语：开始投递时会被跳过。点行末「更多操作 → 编辑」，按岗位生成并保存即可。",
 
   // 准入徽标自己的两枚固定标签（准入结论的展示名仍来自 types 的 ADMISSION_META）。
   "applyQueue.admission.needsConfirm": "需逐条确认",

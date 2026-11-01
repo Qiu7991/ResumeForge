@@ -22,6 +22,7 @@ from ..schemas.job import RECOGNITION_SOURCE_OFFICIAL, JobCreate
 from ..schemas.material import CandidateJobCreate, CandidateJobUpdate
 from .job.job_service import create_job_record, find_by_job_identity, find_job_by_identity
 from .job_parser.metadata import job_type_from_title
+from .job.job_type_infer import infer_job_type
 from .trash import get_live, is_deleted, live_only, soft_delete
 
 logger = logging.getLogger(__name__)
@@ -335,7 +336,15 @@ def import_candidates(db: Session, candidate_ids: list[int]) -> dict:
                 # 岗位类型：标题推断最优先（采集卡片不带类型字段，「实习生」字样是
                 # 最强证据，不能让默认值把实习岗标成校招）；推断不出再信采集任务
                 # 的透传标注，最后回落「校招」。
-                job_type=(job_type_from_title(candidate.title) or candidate.job_type or "校招"),
+                job_type=(
+                    job_type_from_title(candidate.title)
+                    or candidate.job_type
+                    or infer_job_type(
+                        candidate.title,
+                        candidate.description or candidate.raw_text,
+                        candidate.requirements,
+                    )
+                ),
                 source_url=candidate.source_url,
                 # 采集回来的 JD 已经按小标题切成两段，直接各归各位；
                 # 手动粘贴的候选没有这两段，退回用原文填描述（与以前的导入行为一致）。

@@ -205,16 +205,18 @@ async def greeting_preview(
         raise HTTPException(status_code=404, detail="岗位不存在或已被删除")
     config = apply_service.get_apply_config(db)
 
-    if payload.item_id is not None:
-        item = db.get(ApplyQueueItem, payload.item_id)
-        if item is not None and item.greeting.strip():
-            return GreetingPreviewOut(greeting=item.greeting.strip(), source="queue")
+    queue_item = db.get(ApplyQueueItem, payload.item_id) if payload.item_id is not None else None
+    if queue_item is not None and queue_item.greeting.strip():
+        return GreetingPreviewOut(greeting=queue_item.greeting.strip(), source="queue")
 
     llm = get_llm_config(db)
     if not (llm.base_url.strip() and llm.model.strip()):
         return GreetingPreviewOut(greeting=config.default_greeting.strip(), source="default")
 
-    resume = apply_service.resolve_resume(db, job.id, None)
+    # 队列条目指定了"投这份岗位用哪份简历"时，招呼语就按那份简历写——否则会出现
+    # "招呼语里说 A 项目、实际投的简历是 B 版本"的割裂。
+    chosen_resume_id = queue_item.resume_id if queue_item is not None else None
+    resume = apply_service.resolve_resume(db, job.id, chosen_resume_id)
     resume_text = ""
     if resume is not None:
         resume_text = json.dumps(

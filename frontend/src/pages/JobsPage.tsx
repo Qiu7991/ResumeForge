@@ -321,7 +321,12 @@ export default function JobsPage() {
     selectedRowKeys: selectedJobIds,
     preserveSelectedRowKeys: true,
     // 选择不设条数上限：批量端点已放宽到 5000，勾选时不再拦（超出由动作时报错兜底）。
-    onChange: (keys) => setSelectedJobIds(keys.map(Number)),
+    onChange: (keys) => {
+      setSelectedJobIds(keys.map(Number));
+      // 复选框常驻后不再要求先点「批量选择」：第一次勾选就进入选择态，
+      // 让批量工具条出现（与本地二开的老交互一致）。
+      if (keys.length > 0) setSelectionMode(true);
+    },
     getCheckboxProps: () => ({ disabled: batchAction !== null }),
   };
 

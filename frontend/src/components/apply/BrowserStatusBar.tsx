@@ -9,6 +9,7 @@
  */
 import {
   ChromeOutlined,
+  InboxOutlined,
   LinkOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
@@ -16,6 +17,8 @@ import {
 } from "@ant-design/icons";
 import { Alert, App, Button, Space, Tag, Tooltip, Typography } from "antd";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { importCurrentJobPage } from "../../api/jobs";
 import { getBrowserStatus, openBrowserSite, startBrowser, stopBrowser } from "../../api/apply";
 import { BROWSER_STATUS_POLL_INTERVAL_MS, useBrowserStatus } from "../../hooks/useBrowserStatus";
 import { BROWSER_STATE_META } from "../../types";
@@ -27,8 +30,10 @@ export default function BrowserStatusBar() {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后这一块不重渲染。
   useLocale();
   const { message } = App.useApp();
+  const navigate = useNavigate();
   const { data, loading, error, reload, setData } = useBrowserStatus(getBrowserStatus);
   const [busy, setBusy] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const handleStart = async () => {
     setBusy(true);
@@ -53,6 +58,21 @@ export default function BrowserStatusBar() {
       message.error(err instanceof Error ? err.message : t("browserStatus.error.openSiteFailed"));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // 「导入当前页」：把专用浏览器里正开着的岗位 JD 收进岗位广场（后端解析 + 去重），
+  // 成功后直接跳到该岗位。只在浏览器运行时可用——没有页面可读时按钮是灰的。
+  const handleImportCurrent = async () => {
+    setImporting(true);
+    try {
+      const job = await importCurrentJobPage();
+      message.success(t("browserStatus.toast.imported", { title: job.title }));
+      navigate(`/jobs?job_id=${job.id}`);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : t("browserStatus.error.importFailed"));
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -118,6 +138,22 @@ export default function BrowserStatusBar() {
               onClick={() => void handleOpenSite()}
             >
               {t("browserStatus.action.openSite")}
+            </Button>
+          </Tooltip>
+          <Tooltip
+            title={
+              running
+                ? t("browserStatus.tooltip.importCurrent")
+                : t("browserStatus.tooltip.importCurrentDisabled")
+            }
+          >
+            <Button
+              icon={<InboxOutlined />}
+              loading={importing}
+              disabled={!running || busy || importing}
+              onClick={() => void handleImportCurrent()}
+            >
+              {t("browserStatus.action.importCurrent")}
             </Button>
           </Tooltip>
           <Button

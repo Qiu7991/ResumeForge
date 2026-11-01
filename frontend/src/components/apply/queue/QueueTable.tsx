@@ -140,12 +140,19 @@ export function QueueTable({
           >
             {item.resume_title || t("applyQueue.detail.defaultResume")}
           </Typography.Text>
-          <Typography.Text
-            type="secondary"
-            ellipsis={{ tooltip: item.greeting || t("applyQueue.detail.defaultGreeting") }}
-          >
-            {item.greeting || t("applyQueue.detail.defaultGreeting")}
-          </Typography.Text>
+          {item.greeting ? (
+            <Typography.Text type="secondary" ellipsis={{ tooltip: item.greeting }}>
+              {item.greeting}
+            </Typography.Text>
+          ) : (
+            // 空招呼语 = 没确认过。开启「发送前必须确认招呼语」时这条会被跳过，
+            // 标签要把话说透，而不是含糊地写「默认招呼语」让人以为会照默认发。
+            <Tooltip title={t("applyQueue.greeting.unconfirmedHint")}>
+              <Tag color="orange" style={{ marginInlineEnd: 0, width: "fit-content" }}>
+                {t("applyQueue.greeting.unconfirmed")}
+              </Tag>
+            </Tooltip>
+          )}
         </Space>
       ),
     },

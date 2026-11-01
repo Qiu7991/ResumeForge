@@ -14,6 +14,7 @@ const browserStatus = {
   "browserStatus.action.start": "启动浏览器",
   "browserStatus.action.openSite": "打开招聘网站",
   "browserStatus.action.stop": "关闭浏览器",
+  "browserStatus.action.importCurrent": "导入当前页到岗位广场",
   "browserStatus.action.reload": "刷新状态",
   "browserStatus.aria.reload": "刷新状态",
   "browserStatus.tooltip.openSite": "在这个窗口里重新打开招聘网站首页",
@@ -30,9 +31,13 @@ const browserStatus = {
   "browserStatus.toast.started": "投递专用浏览器已启动，请在弹出的窗口里扫码登录一次",
   "browserStatus.toast.siteOpened": "已在该窗口里打开招聘网站，请在里面扫码登录",
   "browserStatus.toast.stopped": "已关闭投递专用浏览器",
+  "browserStatus.toast.imported": "已收录「{title}」到岗位广场",
+  "browserStatus.tooltip.importCurrent": "把浏览器里当前打开的岗位 JD 收进岗位广场",
+  "browserStatus.tooltip.importCurrentDisabled": "先启动浏览器并打开一个岗位页",
   "browserStatus.error.startFailed": "启动投递专用浏览器失败",
   "browserStatus.error.openSiteFailed": "打开招聘网站失败",
   "browserStatus.error.stopFailed": "关闭投递专用浏览器失败",
+  "browserStatus.error.importFailed": "导入当前页失败",
 } as const;
 
 export default browserStatus;

@@ -17,6 +17,7 @@ const browserStatus = {
   "browserStatus.action.start": "Start browser",
   "browserStatus.action.openSite": "Open job site",
   "browserStatus.action.stop": "Close browser",
+  "browserStatus.action.importCurrent": "Import current page",
   "browserStatus.action.reload": "Refresh status",
   "browserStatus.aria.reload": "Refresh status",
   "browserStatus.tooltip.openSite": "Reopen the job site home page in this window",
@@ -35,9 +36,13 @@ const browserStatus = {
     "The apply-only browser started - scan the QR code in the window that popped up",
   "browserStatus.toast.siteOpened": "Opened the job site in that window - scan the QR code there",
   "browserStatus.toast.stopped": "Closed the apply-only browser",
+  "browserStatus.toast.imported": "Imported \"{title}\" to the job board",
+  "browserStatus.tooltip.importCurrent": "Import the job currently open in the browser into the job board",
+  "browserStatus.tooltip.importCurrentDisabled": "Start the browser and open a job page first",
   "browserStatus.error.startFailed": "Could not start the apply-only browser",
   "browserStatus.error.openSiteFailed": "Could not open the job site",
   "browserStatus.error.stopFailed": "Could not close the apply-only browser",
+  "browserStatus.error.importFailed": "Could not import the current page",
 } as const;
 
 export default browserStatus;

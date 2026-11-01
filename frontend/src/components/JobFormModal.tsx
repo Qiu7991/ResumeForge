@@ -399,7 +399,7 @@ export default function JobFormModal({
           layout="vertical"
           disabled={submitting}
           initialValues={{
-            job_type: "校招", // i18n-ok: 岗位类型是落库的数据值（types/job.ts）
+            job_type: "社招", // i18n-ok: 岗位类型是落库的数据值（types/job.ts）
             status: "开放中", // i18n-ok: 岗位状态是落库的数据值（types/job.ts）
           }}
         >

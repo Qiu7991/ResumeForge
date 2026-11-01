@@ -292,7 +292,7 @@ export default function JobTable({
     <Table
       className="jobs-table"
       rowKey="id"
-      rowSelection={selectionMode ? rowSelection : undefined}
+      rowSelection={rowSelection}
       columns={columns}
       dataSource={jobs?.items ?? []}
       loading={loading}

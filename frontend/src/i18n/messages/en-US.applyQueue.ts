@@ -53,6 +53,8 @@ const applyQueue = {
   "applyQueue.detail.updatedAt": "Last updated",
   "applyQueue.detail.greeting": "Greeting",
   "applyQueue.detail.defaultGreeting": "Default greeting",
+  "applyQueue.greeting.unconfirmed": "Greeting not confirmed",
+  "applyQueue.greeting.unconfirmedHint": "No greeting saved yet: this item is skipped when sending. Use “More → Edit” on the row to generate and save one.",
 
   "applyQueue.admission.needsConfirm": "Confirm each one",
   "applyQueue.admission.unanalyzed": "Not analyzed",

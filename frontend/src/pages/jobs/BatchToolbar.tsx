@@ -57,7 +57,8 @@ export function BatchToolbar({
     value,
     label: t(key),
   }));
-  if (!selectionMode) return null;
+  // 复选框常驻：只要有勾选就显示工具条，不再依赖先进入选择模式。
+  if (!selectionMode && selectedJobIds.length === 0) return null;
   const busy = batchAction !== null || bulkAi.running;
   return (
     <Space orientation="vertical" size={8} style={{ width: "100%", marginBottom: 12 }}>
