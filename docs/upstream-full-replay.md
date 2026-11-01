@@ -55,6 +55,20 @@
 - [ ] 模板画廊的“真实页数/试用”仍需用真实模板逐套点一遍（自动化已覆盖组件）
 - [ ] 9 套本地模板的中英文 label/description 仍回退后端中文（英文界面待补）
 
+## 本地刻意偏离（可回退）
+
+### 资料页日期：直接输入，而不是上游的三联动下拉
+- 上游实现：`frontend/src/components/profile/PartialDateSelect.tsx` 用「年/月/日」三个
+  Select，年份约 130 项并启用虚拟列表、`popupMatchSelectWidth={false}`。
+- 实测问题：点年份弹层时整页抖动；Ego Lite（Chromium 156）里甚至不显示选项。该组件
+  在最新上游（`97c2118a`）中仍未改动，所以问题不是本地改出来的。
+- 本地替换：新增 `PartialDateInput.tsx`（单输入框，`2022` / `2022-09` /
+  `2022-09-15` / 中文日期均可，失焦归一化），只在**新资料库**的
+  `ProfileFieldInputs.tsx` 使用；旧的 `PartialDateSelect` 保持上游原样，供旧资料组件使用。
+- 回退方式：把 `ProfileFieldInputs.tsx` 的 import 换回 `PartialDateSelect` 即可；新组件
+  与 i18n key 可一并删除。合并上游时若上游修复了日期弹层，优先切回上游实现。
+- 代价：与上游 UI 不同（打字 vs 选择），但改动面仅 1 个新组件 + 1 行 import + 4 条文案。
+
 ## 决策记录
 - 模板：保留本地 17 套；上游 `scholar` 作为新增可选模板保留（合计 18，待最终确认）。
 - `/skills`：保留模板创作/导入/自制模板管理，并整合上游模板试用/对比。
