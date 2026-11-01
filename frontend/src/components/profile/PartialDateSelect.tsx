@@ -96,9 +96,13 @@ function PartialDateSelectImpl({
           // 弹层高度给足：过去一组（今年 → 1900）很长，"未来年份"在它后面。320px 大致能
           // 一屏看到当前年附近十几项，滚一下就能摸到未来 5 年，不必盲滚。
           listHeight={320}
-          // 弹出层按选项内容自适应，不跟随被压窄的控件：否则「2024」会被控件宽度
-          // 截成「20」，用户看不出自己选的是哪一年。
-          popupMatchSelectWidth={false}
+          // 年份只有 ~130 项：关掉虚拟列表，弹层高度一次算准，避免滚动容器里
+          // 反复测量/重排（用户实测点开年份时整页抖动）。
+          virtual={false}
+          // 固定弹出层宽度（不跟随被压窄的控件，也不做内容自适应测量）：
+          // 「2024」不会被截成「20」；同时避免自适应测量在滚动容器边缘反复
+          // 触发定位重排（用户实测点开年份时整页抖动）。
+          popupMatchSelectWidth={140}
           // antd 6 起 popupClassName 已废弃，改走 classNames.popup.root
           // （样式在 styles/partialDate.css，给年份弹层一个最小宽度兜底）。
           classNames={{ popup: { root: "profile-year-select-popup" } }}
@@ -122,7 +126,7 @@ function PartialDateSelectImpl({
               allowClear
               placeholder={t("dateFields.placeholder.month")}
               options={MONTH_OPTIONS}
-              popupMatchSelectWidth={false}
+              popupMatchSelectWidth={80}
               onChange={(month?: string) => {
                 const nextMonth = month ?? "";
                 const nextDay =
@@ -139,7 +143,7 @@ function PartialDateSelectImpl({
               allowClear
               placeholder={t("dateFields.placeholder.day")}
               options={dayOptions}
-              popupMatchSelectWidth={false}
+              popupMatchSelectWidth={80}
               onChange={(day?: string) => commit(selected.year, selected.month, day ?? "")}
             />
           </>
