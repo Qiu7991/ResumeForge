@@ -21,7 +21,7 @@ import {
   ThunderboltOutlined,
   ZoomInOutlined,
 } from "@ant-design/icons";
-import { Button } from "antd";
+import { Button, Tooltip } from "antd";
 import type { ReactNode } from "react";
 import type { ResumeLayout } from "../../types";
 import { t } from "../../i18n";
@@ -88,14 +88,18 @@ export default function ResumeDetailFooter({
           {t("resume.footer.revise")}
         </Button>
       )}
-      <Button block icon={<BulbOutlined />} disabled={jobId === null} onClick={onOpenSuggestions}>
-        {suggestionsGenerated
-          ? t("resume.footer.suggestionsView")
-          : t("resume.footer.suggestionsGenerate")}
-      </Button>
-      <Button block icon={<FolderOpenOutlined />} disabled={jobId === null} onClick={onOpenJob}>
-        {t("resume.footer.openJob")}
-      </Button>
+      <Tooltip title={jobId === null ? t("resume.footer.jobRequired") : undefined}>
+        <Button block icon={<BulbOutlined />} disabled={jobId === null} onClick={onOpenSuggestions}>
+          {suggestionsGenerated
+            ? t("resume.footer.suggestionsView")
+            : t("resume.footer.suggestionsGenerate")}
+        </Button>
+      </Tooltip>
+      <Tooltip title={jobId === null ? t("resume.footer.jobRequired") : undefined}>
+        <Button block icon={<FolderOpenOutlined />} disabled={jobId === null} onClick={onOpenJob}>
+          {t("resume.footer.openJob")}
+        </Button>
+      </Tooltip>
       {/* 「咨询求职助手」上提到**主网格**（2026-11 用户要求）：第一行排满 5 个动作，
           第二行只留「质量检测 / 离线分享」+ 右侧导出，页脚从"4 + 3 + 导出"收成"5 + 2 + 导出"。
           它本来就是和上面四个同级的动作（都是"针对这份简历做点什么"），落在主网格里

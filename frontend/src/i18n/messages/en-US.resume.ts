@@ -98,6 +98,8 @@ const resume = {
   "resume.fontScale.small": "Small",
   "resume.fontScale.standard": "Standard",
   "resume.fontScale.large": "Large",
+  "resume.footer.jobRequired":
+    "This resume has no linked job; generate from a job or open it from the job detail first",
 } as const;
 
 export default resume;

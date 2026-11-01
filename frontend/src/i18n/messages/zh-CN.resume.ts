@@ -182,6 +182,7 @@ const resume = {
   "resume.fontScale.standard": "标准字号",
   /** 内置最大档的名字。 */
   "resume.fontScale.large": "大字号",
+  "resume.footer.jobRequired": "这份简历没有关联岗位；按岗位生成或从岗位详情打开后才能用",
 } as const;
 
 export default resume;
