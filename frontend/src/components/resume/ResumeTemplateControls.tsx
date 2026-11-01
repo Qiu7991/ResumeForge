@@ -94,6 +94,10 @@ export default function ResumeTemplateControls({
   // 版式下拉是点击触发的：选定后提示就该收掉，而不是等鼠标移开（受控开关）。
   // 注意下拉选项在 portal 里渲染，点击不会冒泡到触发器，所以 onChange 里也要关。
   const [formatTipOpen, setFormatTipOpen] = useState(false);
+  // 「模板」「版式」这两个文字标签也当触发器用：用户点标签和点控件应该得到同一个结果。
+  // 字体/行距的标签一直只是说明文字，唯独这两个最常点（现场反馈：点在「模板」两个字上
+  // 完全没反应，被当成控件坏了）。版式用受控 open：`focus()` 在 antd v6 只移焦点、不展开。
+  const [formatOpen, setFormatOpen] = useState(false);
   const { t } = useI18n();
   const templates = catalog?.templates ?? [];
   const formatPresets = catalog?.format_presets ?? [];
@@ -226,7 +230,13 @@ export default function ResumeTemplateControls({
     <Space size={compact ? 8 : 16} wrap className="resume-template-controls">
       <Space size={6}>
         {!compact && (
-          <Typography.Text type="secondary">
+          <Typography.Text
+            type="secondary"
+            onClick={() => {
+              if (!disabled && templates.length > 0) setGalleryOpen(true);
+            }}
+            style={{ cursor: disabled || templates.length === 0 ? "default" : "pointer" }}
+          >
             {t("sections.templateControls.templateLabel")}
           </Typography.Text>
         )}
@@ -257,7 +267,13 @@ export default function ResumeTemplateControls({
       {showFormat && (
         <Space size={6}>
           {!compact && (
-            <Typography.Text type="secondary">
+            <Typography.Text
+              type="secondary"
+              onClick={() => {
+                if (!disabled) setFormatOpen(true);
+              }}
+              style={{ cursor: disabled ? "default" : "pointer" }}
+            >
               {t("sections.templateControls.formatLabel")}
             </Typography.Text>
           )}
@@ -266,8 +282,14 @@ export default function ResumeTemplateControls({
             onOpenChange={setFormatTipOpen}
             title={t("sections.templateControls.formatHint")}
           >
-            <span onClick={() => setFormatTipOpen(false)}>
+            {/* 这里曾经挂 onClick={() => setFormatTipOpen(false)}：每次点下拉都触发一次
+                Tooltip 重渲染。实测在 125% 缩放的机器上偶发「点击后下拉一闪就没」，
+                而选项本身在 DOM 里已经展开。收提示交给 onChange / onOpenChange 即可，
+                点击路径上不再改状态。 */}
+            <span>
               <Select
+                open={formatOpen}
+                onOpenChange={setFormatOpen}
                 size="small"
                 value={layout.format_name || ""}
                 disabled={disabled}
@@ -313,6 +335,7 @@ export default function ResumeTemplateControls({
                 )}
                 onChange={(value) => {
                   setFormatTipOpen(false);
+                  setFormatOpen(false);
                   onChange(layoutWithFormatPreset(layout, value, formatPresets));
                 }}
               />

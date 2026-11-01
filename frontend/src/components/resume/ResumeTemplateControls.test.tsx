@@ -163,6 +163,24 @@ describe("ResumeTemplateControls · 板块顺序", () => {
   });
 });
 
+describe("ResumeTemplateControls · 点文字标签也打开控件", () => {
+  // 现场反馈：点「模板」两个字完全没反应，被当成控件坏了。标签现在与控件同效。
+  it("点「模板」标签打开模板画廊", async () => {
+    renderGroup();
+
+    fireEvent.click(screen.getByText("模板", { selector: "span.ant-typography" }));
+    expect(await screen.findByText("选择简历模板")).toBeTruthy();
+  });
+
+  it("点「版式」标签展开下拉", async () => {
+    renderGroup();
+
+    fireEvent.click(screen.getByText("版式", { selector: "span.ant-typography" }));
+    // 下拉选项在 portal 里；能读到选项即说明 open 已被标签打开。
+    expect(await screen.findByText("紧凑")).toBeTruthy();
+  });
+});
+
 describe("ResumeTemplateControls · 版式下拉的弹层", () => {
   it("弹层带专属收窄类（6 个汉字宽）而不是按内容撑开；每个选项带全名 title", async () => {
     renderGroup();
