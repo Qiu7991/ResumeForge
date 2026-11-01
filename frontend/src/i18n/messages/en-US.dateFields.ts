@@ -15,10 +15,6 @@ const dateFields = {
     "This date format isn't recognized; choose a date and save. The previous value is kept for now.",
   "dateFields.yearGroup.past": "This year and earlier",
   "dateFields.yearGroup.future": "Future years",
-  "dateFields.aria.input": "{label} (YYYY-MM or YYYY-MM-DD)",
-  "dateFields.aria.inputYear": "{label} (year)",
-  "dateFields.placeholder.input": "e.g. 2022-09; a year alone also works",
-  "dateFields.placeholder.inputYear": "e.g. 2022",
 } as const;
 
 export default dateFields;

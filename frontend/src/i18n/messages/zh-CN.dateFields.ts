@@ -13,10 +13,6 @@ const dateFields = {
   "dateFields.parseUnsupported": "当前日期格式无法识别；请选择日期后保存，旧值暂时保留。",
   "dateFields.yearGroup.past": "今年及以前",
   "dateFields.yearGroup.future": "未来年份",
-  "dateFields.aria.input": "{label}（年-月 或 年-月-日）",
-  "dateFields.aria.inputYear": "{label}（年份）",
-  "dateFields.placeholder.input": "如 2022-09，也可只填年份",
-  "dateFields.placeholder.inputYear": "如 2022",
 } as const;
 
 export default dateFields;

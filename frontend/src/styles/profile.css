@@ -179,6 +179,17 @@
 }
 
 /*
+ * 编辑态整页关闭 content-visibility：日期下拉/输入框获得焦点时，浏览器会把附近的
+ * 分区"渲染出来"，`contain-intrinsic-size` 的占位高度与真实高度不同，滚动锚定会
+ * 反复补偿 scrollTop，表现为点日期时整页抖动（Ego Lite / Chromium 156 实测）。
+ * 编辑态本来就要频繁操作表单，13 个分区全渲染的代价远小于版面跳动。
+ */
+.profile-page.is-editing .profile-section-sortable {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
+}
+
+/*
  * 拖动激活期「全部大卡片折叠成紧凑条」（P3）。
  *
  * 开关只有一个：store 的 `compact`（由 useProfileSectionReorder 在拖动激活那一帧
