@@ -20,6 +20,8 @@ export function rewriteStar(
 ): Promise<StarRewriteResult> {
   return request(`/resumes/${id}/writing/star`, {
     method: "POST",
+    // 写作增强是同步等模型：本地二开给 180s；合并上游后落回 default 15s，稍长就会超时。
+    budget: "analysis",
     body: JSON.stringify({ text, claim_id: claimId }),
     signal,
   });
@@ -33,6 +35,8 @@ export function generatePhrases(
 ): Promise<PhrasesResult> {
   return request(`/resumes/${id}/writing/phrases`, {
     method: "POST",
+    // 写作增强是同步等模型：本地二开给 180s；合并上游后落回 default 15s，稍长就会超时。
+    budget: "analysis",
     body: JSON.stringify({ text, modes }),
     signal,
   });
@@ -46,6 +50,8 @@ export function polishResumeText(
 ): Promise<PolishResult> {
   return request(`/resumes/${id}/writing/polish`, {
     method: "POST",
+    // 写作增强是同步等模型：本地二开给 180s；合并上游后落回 default 15s，稍长就会超时。
+    budget: "analysis",
     body: JSON.stringify({ text, style }),
     signal,
   });
@@ -59,6 +65,8 @@ export function translateResumeText(
 ): Promise<TranslateResult> {
   return request(`/resumes/${id}/writing/translate`, {
     method: "POST",
+    // 写作增强是同步等模型：本地二开给 180s；合并上游后落回 default 15s，稍长就会超时。
+    budget: "analysis",
     body: JSON.stringify({ text, direction }),
     signal,
   });
@@ -88,6 +96,8 @@ export function rewriteResumeField(
 }> {
   return request(`/resumes/${id}/writing/rewrite-field`, {
     method: "POST",
+    // 写作增强是同步等模型：本地二开给 180s；合并上游后落回 default 15s，稍长就会超时。
+    budget: "analysis",
     body: JSON.stringify({ path, instruction }),
   });
 }

@@ -139,7 +139,8 @@ export function generateResumeSuggestions(
 ): Promise<ResumeSuggestions> {
   return request(`/resumes/${id}/suggestions`, {
     method: "POST",
-    budget: "recognition",
+    // 岗位建议要读完整份简历 + JD，10–60s 是常态；recognition 的 90s 仍会误超时。
+    budget: "analysis",
     signal,
   });
 }
@@ -153,6 +154,8 @@ export function generateResumeSuggestions(
 export function reviseResume(id: number, instructions: string): Promise<ResumeDetail> {
   return request(`/resumes/${id}/revise`, {
     method: "POST",
+    // 同步等模型改写整份简历：本地二开给的是 180s，合并上游后落回 default 15s 会直接超时。
+    budget: "analysis",
     body: JSON.stringify({ instructions }),
   });
 }
