@@ -69,6 +69,18 @@
 - 取舍：与上游 UI 不同（打字 vs 选择），但改动仅 1 个新组件 + 1 行 import + 4 条文案；
   Ego Lite 实测可正常输入，不再触发弹层。
 
+### 减少动效：不再全局压缩动画时长（上游缺陷修复，可回退）
+- 上游 `frontend/src/styles/foundation.css` 在 `prefers-reduced-motion: reduce` 下对
+  `*, *::before, *::after` 强制 `animation-duration: 0.01ms` /
+  `transition-duration: 0.01ms`。
+- 后果：antd 弹层（Select 下拉 / Popover / Dropdown）由 rc-motion 驱动，**定位写在过渡
+  结束回调里**；全局压缩时长后过渡事件不触发，弹层停在初始 `left/top: -1000vw`
+  （屏幕外约 18000px），表现为「所有下拉都点不出来」。Windows 关闭「动画效果」的用户
+  100% 命中，且这是系统级设置——换浏览器同样复现（2026-11-01 现场日志坐标
+  `-18143 / -11907`，正是 1814×1191 视口的 -1000%）。
+- 处理：保留 `scroll-behavior: auto`，删掉两条时长覆盖，动画偏好交给组件自己处理。
+- 回退：把两条 `!important` 加回即可。
+
 ## 决策记录
 - 模板：保留本地 17 套；上游 `scholar` 作为新增可选模板保留（合计 18，待最终确认）。
 - `/skills`：保留模板创作/导入/自制模板管理，并整合上游模板试用/对比。

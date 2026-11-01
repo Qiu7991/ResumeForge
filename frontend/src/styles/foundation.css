@@ -160,13 +160,17 @@
   max-width: 100%;
 }
 
+/* 减少动效（2026-11-01 实测修复）：**只收缩滚动，不再把全局动画/过渡时长压到 0.01ms**。
+ *
+ * 原因：antd 的弹层（Select 下拉 / Popover / Dropdown）由 rc-motion 驱动，定位发生在
+ * 过渡结束回调里；把 `transition-duration`/`animation-duration` 全局压成 0.01ms 后，
+ * 过渡事件在部分机器上不再触发，弹层停在初始的 `left/top: -1000vw` 位置——表现就是
+ * 「所有下拉都不显示」。Windows 关闭「动画效果」的用户 100% 命中。
+ * 动画偏好交给组件自己处理（antd 对按钮等已有 no-motion 规则），这里只管滚动。 */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
   }
 }
