@@ -57,16 +57,17 @@
 
 ## 本地刻意偏离（可回退）
 
-### 资料页日期弹层在 Ego Lite 下的抖动修复
-- 上游控件保持不变：`PartialDateSelect` 仍是「年/月/日」三个联动 Select。
-- 问题：编辑资料时点日期（尤其年份）会整页抖动；Ego Lite / Chromium 156 下更明显。
-  根因与资料卡片的 `content-visibility: auto` + `contain-intrinsic-size: 420px` 有关：
-  弹出层让浏览器聚焦/滚动，附近分区被现场渲染，占位高度与真实高度不同，滚动锚定反复
-  补偿 scrollTop，表现为抖动。
-- 本地修复：只在**编辑态**关闭该优化——
-  `.profile-page.is-editing .profile-section-sortable { content-visibility: visible;
-  contain-intrinsic-size: none; }`。不改变上游组件、不改数据与交互，只让编辑时整页先布局稳定。
-- 回退：删掉这条 CSS 即回到上游行为。
+### 资料页日期：直接输入（刻意偏离，已实测）
+- 上游实现：`PartialDateSelect` 的「年/月/日」三个联动 Select；年份约 130 项、虚拟列表。
+- 实测问题：在 Windows 125% 缩放 / Ego Lite（Chromium 156）下点年份会整页抖动；
+  固定宽度、关闭虚拟列表、编辑态关闭 `content-visibility` 都试过，仍不能稳定复现/根治。
+- 最终方案：**新版资料库的日期改为单输入框** `PartialDateInput`（`2022` /
+  `2022-09` / `2022-09-15` / 中文日期，失焦归一化），彻底移除弹层、虚拟列表与
+  定位重排；旧的 `PartialDateSelect` 保持上游原样，供旧资料组件使用。
+- 回退：`ProfileFieldInputs.tsx` 的 import 换回 `PartialDateSelect`，删除
+  `PartialDateInput.tsx` 与 4 条 `dateFields.*.input*` 文案即可。
+- 取舍：与上游 UI 不同（打字 vs 选择），但改动仅 1 个新组件 + 1 行 import + 4 条文案；
+  Ego Lite 实测可正常输入，不再触发弹层。
 
 ## 决策记录
 - 模板：保留本地 17 套；上游 `scholar` 作为新增可选模板保留（合计 18，待最终确认）。

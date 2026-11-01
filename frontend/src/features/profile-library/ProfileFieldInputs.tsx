@@ -11,7 +11,7 @@
 import { AutoComplete, Button, Form, Input, Popover, Typography } from "antd";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
-import PartialDateSelect from "../../components/profile/PartialDateSelect";
+import PartialDateInput from "../../components/profile/PartialDateInput";
 import { asFieldText } from "../profile/profileFormData";
 import { useProfileBaselineLookup } from "../profile/profileBaselineContext";
 import type { FieldOut, SectionOut } from "./types";
@@ -90,7 +90,7 @@ function InputForField({
   }
   if (field.field_type === "date_text") {
     return (
-      <PartialDateSelect
+      <PartialDateInput
         id={id}
         value={value}
         onChange={onChange}
