@@ -35,6 +35,7 @@ import { buildSectionOrderConfig, DEFAULT_RESUME_SECTION_ORDER } from "../utils/
 import { useResumeRelayout } from "../features/resume/useResumeRelayout";
 import type { ResumePreviewHandle } from "./ResumePreview";
 import GenerationConfigStage from "./generate-resume/GenerationConfigStage";
+import { useBaseResumeOptions } from "./generate-resume/useBaseResumeOptions";
 import GenerationProgressStage from "./generate-resume/GenerationProgressStage";
 import GenerationErrorStage from "./generate-resume/GenerationErrorStage";
 import GenerationPreviewStage from "./generate-resume/GenerationPreviewStage";
@@ -59,6 +60,8 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
   const [stage, setStage] = useState<Stage>("config");
   const [title, setTitle] = useState("");
   const [enhance, setEnhance] = useState(false);
+  // 底稿模式：选一份已有简历，复制正文后按 JD 修订（不重新抽取事实）。
+  const { baseResumeId, setBaseResumeId, baseResumeOptions, resetBaseResume } = useBaseResumeOptions(open);
   const [enhancementLevel, setEnhancementLevel] = useState<EnhancementLevel>("balanced");
   // 默认 1 页 A4 + 标准字号：绝大多数简历就该是一页。
   const [layout, setLayout] = useState<ResumeLayout>(newResumeLayout);
@@ -207,8 +210,9 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
     setLayoutStatus(null);
     setMeasure(null);
     setCustomInstruction("");
+    resetBaseResume();
     generation.resetExtras();
-  }, [generation, initialTitle]);
+  }, [generation, initialTitle, resetBaseResume]);
 
   const loadPreview = useCallback(async (resumeId: number) => {
     try {
@@ -238,7 +242,8 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
         job_id: job?.id ?? null,
         title: job ? "" : title.trim(),
         options: {
-          enhance,
+          // 底稿模式不再"美化拓展"：底稿的措辞正是要保留的东西。
+          enhance: baseResumeId ? false : enhance,
           enhancement_level: enhancementLevel,
           page_limit: layout.page_limit,
           font_scale: layout.font_scale,
@@ -249,6 +254,8 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
           // 只影响"这次预览"，关掉弹窗再从简历中心打开就变回去了。
           format_config: layout.format_config ?? {},
           custom_instruction: customInstruction.trim(),
+          // 只有选了底稿才带这个键：不选时请求体与旧版逐字节相同。
+          ...(baseResumeId ? { base_resume_id: baseResumeId } : {}),
           // 默认不发送新字段：两个条件展开保证"未启用场景 + 普通简历"的请求体与旧版逐字节相同。
           ...(generation.documentMode === "long_cv" ? { document_mode: "long_cv" as const } : {}),
           ...(generation.careerContext ? { career_context: generation.careerContext } : {}),
@@ -446,6 +453,9 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
           setLayout={setLayout}
           customInstruction={customInstruction}
           setCustomInstruction={setCustomInstruction}
+          baseResumeId={baseResumeId}
+          setBaseResumeId={setBaseResumeId}
+          baseResumeOptions={baseResumeOptions}
           llmReady={llmReady}
           modelName={modelName}
           onClose={handleClose}

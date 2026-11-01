@@ -209,6 +209,17 @@ class ResumeGenerateRunner:
             session.commit()
 
             options = GenerateOptions.model_validate(task.options or {})
+            # 底稿模式：先把底稿读出来并校验可用，之后再决定走"按 JD 修订"而不是"从资料生成"。
+            # 这一步放在生成循环之前，底稿不存在时任务立刻 failed，不会白跑一次模型。
+            base_record = None
+            if options.base_resume_id is not None:
+                try:
+                    base_record = load_base_resume(
+                        session, options.base_resume_id, is_deleted=trash.is_deleted
+                    )
+                except BaseResumeMissing as exc:
+                    self._finalize(session, task, GENERATE_STATUS_FAILED, error=str(exc))
+                    return
             # A5：只读创建任务时冻结的快照；运行中不查当前场景（改名/归档/切窗口均不影响）。
             try:
                 career_block = build_scenario_prompt_block(task.context_snapshot)
@@ -231,6 +242,21 @@ class ResumeGenerateRunner:
                 async def consume() -> None:
                     nonlocal resume, warnings, coverage_notes, rationale, fact_annotations
                     nonlocal last_char_commit, received_chars_total, estimated_prompt_tokens
+                    if base_record is not None:
+                        # 底稿模式：复制底稿后按 JD 修订（细节见 resume_base_derive）。
+                        def _progress(message: str) -> None:
+                            task.message = message
+                            session.commit()
+
+                        resume, warnings = await derive_from_base(
+                            provider,
+                            base_record,
+                            job_out,
+                            options.custom_instruction,
+                            budget=budget,
+                            on_progress=_progress,
+                        )
+                        return
                     # aclosing 纪律（PR-07-4）：取消/超时/异常路径也显式关闭生成器，让
                     # GeneratorExit 逐层展开、各层 finally（段复位/usage/response）执行。
                     stream = generator.generate(
@@ -389,6 +415,10 @@ class ResumeGenerateRunner:
                     context_snapshot=task.context_snapshot,
                     commit=False,
                 )
+                # 底稿来源记在记录上（parent_revision_id 本来就是"由谁派生"的意思）：
+                # 之后能追溯这份岗位简历是从哪份母版改出来的。
+                if base_record is not None:
+                    record.parent_revision_id = base_record.id
                 if self._snapshot_id is not None:
                     # F3 §1：resume_id 与简历记录同事务回写到创建态快照行。
                     attach_snapshot_resume(

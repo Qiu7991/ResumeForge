@@ -96,6 +96,10 @@ class GenerateOptions(BaseModel):
     format_config: dict = Field(default_factory=dict)
     # 用户自己补充的生成要求；只作为附加上下文，不会覆盖系统提示里的防虚构规则。
     custom_instruction: str = Field(default="", max_length=MAX_CUSTOM_INSTRUCTION_CHARS)
+    # 以某份已有简历为底稿：生成时复制它的正文，再按岗位 JD 修订表达与取舍。
+    # None = 沿用原行为（从完整资料重新生成）。底稿模式不重新抽取事实——底稿里的事实
+    # 是用户已经确认过的口径，交给模型重新"生成"只会把润色过的措辞冲掉。
+    base_resume_id: int | None = Field(default=None, ge=1)
     # 本次显式选用的职业场景（A5）。**缺省/null = 不启用**：请求与提示词保持旧行为；
     # 实际解析与冻结由服务端 resolver 完成，客户端不能上传快照/系统指南正文。
     career_context: CareerContextRequest | None = None

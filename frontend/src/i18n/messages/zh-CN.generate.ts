@@ -21,6 +21,15 @@ const generate = {
   "generate.config.titlePlaceholder": "留空则自动命名为「姓名-通用简历-时间」",
 
   // ── 内容美化 ──────────────────────────────────────────────────
+  "generate.base.title": "底稿",
+  "generate.base.placeholder": "选择底稿简历",
+  "generate.base.useProfile": "不使用底稿（从「我的资料」重新生成）",
+  "generate.base.hintSelected":
+    "将以这份简历为底稿：复制它的正文，再按岗位 JD 调整取舍与表达；底稿本身不会被修改，生成结果是一条新记录。",
+  "generate.base.hintNone":
+    "选一份已生成的简历当底稿，比「从资料重写」更能保住你已经改好的措辞；不选则按原来的方式从资料生成。",
+  "generate.base.enhanceDisabledHint":
+    "已选底稿：不再做「美化拓展」，模型只在底稿上按岗位做取舍与表达调整。",
   "generate.config.headingJob": "岗位适配与内容美化",
   "generate.config.headingGeneral": "内容美化",
   "generate.config.enhanceJob": "根据岗位要求美化拓展经历",

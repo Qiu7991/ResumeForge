@@ -4,7 +4,7 @@
  * 纯展示受控组件——全部配置状态与开始动作由 GenerateResumeModal 持有，经 props 回传；
  * 零 api 导入（职业场景区块自己加载目录，失败只降级不阻断）。
  */
-import { Alert, Button, Input, Segmented, Space, Switch, Tooltip, Typography } from "antd";
+import { Alert, Button, Input, Segmented, Select, Space, Switch, Tooltip, Typography } from "antd";
 import type { EnhancementLevel, Job, ResumeLayout } from "../../types";
 import { RESUME_ENHANCEMENT_LEVELS, enhancementLevelDescriptionKey } from "../../config";
 import { t } from "../../i18n";
@@ -25,6 +25,11 @@ import ResumeLayoutControls from "../ResumeLayoutControls";
 /** 自定义提示词上限，与后端 GenerateOptions.custom_instruction 一致。 */
 export const MAX_CUSTOM_INSTRUCTION = 2000;
 
+export interface BaseResumeOption {
+  value: number;
+  label: string;
+}
+
 interface Props {
   job: Job | null;
   title: string;
@@ -39,6 +44,10 @@ interface Props {
   setLayout: (next: ResumeLayout) => void;
   customInstruction: string;
   setCustomInstruction: (value: string) => void;
+  /** 以哪份已有简历为底稿；null = 从「我的资料」重新生成（缺省 = 不启用）。 */
+  baseResumeId?: number | null;
+  setBaseResumeId?: (value: number | null) => void;
+  baseResumeOptions?: BaseResumeOption[];
   llmReady: boolean;
   modelName: string;
   onClose: () => void;
@@ -58,6 +67,9 @@ export default function GenerationConfigStage({
   setLayout,
   customInstruction,
   setCustomInstruction,
+  baseResumeId = null,
+  setBaseResumeId,
+  baseResumeOptions = [],
   llmReady,
   modelName,
   onClose,
@@ -107,22 +119,44 @@ export default function GenerationConfigStage({
           />
         </div>
       )}
+      <Typography.Title level={5}>{t("generate.base.title")}</Typography.Title>
+      <Space orientation="vertical" size={8} style={{ width: "100%", marginBottom: 8 }}>
+        <Select
+          style={{ width: "100%" }}
+          aria-label={t("generate.base.placeholder")}
+          value={baseResumeId ?? 0}
+          options={[
+            { value: 0, label: t("generate.base.useProfile") },
+            ...baseResumeOptions,
+          ]}
+          onChange={(value) => setBaseResumeId?.(value === 0 ? null : Number(value))}
+        />
+        <Typography.Text type="secondary">
+          {baseResumeId ? t("generate.base.hintSelected") : t("generate.base.hintNone")}
+        </Typography.Text>
+      </Space>
+
       <Typography.Title level={5}>
         {job ? t("generate.config.headingJob") : t("generate.config.headingGeneral")}
       </Typography.Title>
       <Space orientation="vertical" size={14} style={{ width: "100%" }}>
         <Space size={10}>
-          <Switch checked={enhance} onChange={setEnhance} />
+          {/* 底稿模式下不再"美化拓展"：底稿的措辞正是要保留的东西，再去拓展会把它冲掉。 */}
+          <Switch checked={enhance} disabled={Boolean(baseResumeId)} onChange={setEnhance} />
           <Typography.Text strong>
             {job ? t("generate.config.enhanceJob") : t("generate.config.enhanceGeneral")}
           </Typography.Text>
         </Space>
         <Typography.Text type="secondary">
-          {job ? t("generate.config.enhanceJobHint") : t("generate.config.enhanceGeneralHint")}
+          {baseResumeId
+            ? t("generate.base.enhanceDisabledHint")
+            : job
+              ? t("generate.config.enhanceJobHint")
+              : t("generate.config.enhanceGeneralHint")}
         </Typography.Text>
         <Segmented
           block
-          disabled={!enhance}
+          disabled={!enhance || Boolean(baseResumeId)}
           value={enhancementLevel}
           // 下面的说明只讲当前选中的那一档，得先点一下才知道别的档是什么；
           // 每一档自己带上悬停说明，生成前可以先把三档比一遍。

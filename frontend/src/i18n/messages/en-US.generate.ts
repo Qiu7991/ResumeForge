@@ -17,6 +17,15 @@ const generate = {
     "A general Resume targets no specific Job: the system uses the Sections included in the current Plan (constrained only by the page budget) and keeps experience and skills from every direction; your original materials are not modified.",
   "generate.config.titleName": "Resume name",
   "generate.config.titlePlaceholder": "Leave blank to auto-name it “Name - General Resume - Time”",
+  "generate.base.title": "Base draft",
+  "generate.base.placeholder": "Choose a base draft",
+  "generate.base.useProfile": "No base draft (generate from My Profile)",
+  "generate.base.hintSelected":
+    "This resume becomes the base: its content is copied and tailored to the job. The draft itself is not modified; the result is a new record.",
+  "generate.base.hintNone":
+    "Picking an existing resume as the base preserves wording you already polished better than regenerating from your profile. Leave empty to generate from the profile.",
+  "generate.base.enhanceDisabledHint":
+    "Base draft selected: content enhancement is skipped; the model only tailors the draft to the job.",
   "generate.config.headingJob": "Job tailoring and content enhancement",
   "generate.config.headingGeneral": "Content enhancement",
   "generate.config.enhanceJob": "Enhance and expand experience to match the Job requirements",

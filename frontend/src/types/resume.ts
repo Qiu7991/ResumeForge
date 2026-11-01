@@ -442,6 +442,8 @@ export interface GenerateOptions {
   format_config?: ResumeFormatConfig;
   /** 用户自己补充的生成要求（≤2000 字），作为附加上下文交给模型。 */
   custom_instruction: string;
+  /** 以某份已有简历为底稿生成岗位版；缺省 = 从「我的资料」重新生成。 */
+  base_resume_id?: number | null;
   /**
    * 长 CV 文档模式（契约 §5）：`resume`（默认）/ `long_cv`。
    *
