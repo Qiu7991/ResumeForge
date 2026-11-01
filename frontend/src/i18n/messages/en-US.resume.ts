@@ -86,6 +86,10 @@ const resume = {
     "Optional. Example: make the summary highlight data analysis; add quantified results to projects. Leave empty to regenerate the whole Resume. Up to {max} characters.",
   "resume.revise.successTargeted": "Resume updated as requested",
   "resume.revise.successFull": "Resume regenerated",
+  "resume.revise.successTargetedSeconds": "Resume updated as requested ({seconds}s)",
+  "resume.revise.successFullSeconds": "Resume regenerated ({seconds}s)",
+  "resume.revise.submitting": "Generating… ({seconds}s)",
+  "resume.revise.waiting": "The model is generating. {seconds}s elapsed; this usually takes 20–60s",
   "resume.revise.failed": "Could not revise the Resume. Try again later",
 
   "resume.fieldDiff.photoPlaceholder": "[Photo]",

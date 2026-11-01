@@ -158,6 +158,10 @@ const resume = {
   "resume.revise.successTargeted": "已按你的要求修改简历",
   /** 整体重写成功的 Toast。 */
   "resume.revise.successFull": "已重新生成简历内容",
+  "resume.revise.successTargetedSeconds": "已按你的要求修改简历（用时 {seconds} 秒）",
+  "resume.revise.successFullSeconds": "已重新生成简历内容（用时 {seconds} 秒）",
+  "resume.revise.submitting": "生成中…（{seconds} 秒）",
+  "resume.revise.waiting": "模型正在生成，已等待 {seconds} 秒；通常需要 20–60 秒",
   /** 修订失败的兜底（后端报错优先）。 */
   "resume.revise.failed": "修订简历失败，请稍后重试",
 
