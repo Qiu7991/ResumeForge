@@ -181,6 +181,46 @@ describe("ResumeTemplateControls · 点文字标签也打开控件", () => {
   });
 });
 
+describe("ResumeTemplateControls · 板块显示/隐藏", () => {
+  // 本地二开的老交互：顺序面板每行一个眼睛开关。合并上游后这块在预览里丢过，现补回。
+  it("点眼睛把板块写进 hidden_sections", async () => {
+    const onChange = renderGroup();
+
+    fireEvent.click(await screen.findByRole("button", { name: "调整简历板块顺序" }));
+    fireEvent.click(await screen.findByRole("button", { name: "隐藏项目经历" }));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    expect(lastLayout(onChange).format_config?.hidden_sections).toEqual(["projects"]);
+    expect(lastLayout(onChange).format_config?.accent).toBe("#123456");
+  });
+
+  it("再点一次从 hidden_sections 里移除，空了就把键删掉", async () => {
+    const onChange = renderGroup({
+      layout: { ...BASE, format_config: { hidden_sections: ["projects"] } },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "调整简历板块顺序" }));
+    fireEvent.click(await screen.findByRole("button", { name: "显示项目经历" }));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    expect(lastLayout(onChange).format_config?.hidden_sections).toBeUndefined();
+  });
+
+  it("只剩一个可见板块时，隐藏按钮禁用", async () => {
+    renderGroup({
+      layout: {
+        ...BASE,
+        format_config: {
+          hidden_sections: ["education", "experience", "skills", "campus_experience", "awards", "summary"],
+        },
+      },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "调整简历板块顺序" }));
+    expect(await screen.findByRole("button", { name: "隐藏项目经历" })).toBeDisabled();
+  });
+});
+
 describe("ResumeTemplateControls · 版式下拉的弹层", () => {
   it("弹层带专属收窄类（6 个汉字宽）而不是按内容撑开；每个选项带全名 title", async () => {
     renderGroup();

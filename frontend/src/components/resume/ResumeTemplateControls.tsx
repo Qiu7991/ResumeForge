@@ -7,8 +7,14 @@
  * 本组只管**结构**（长什么样、板块怎么排、最多几页）；字号/行距/页边距在
  * `ResumeMeasureControls`，两者共用壳里取到的那一份模板目录。
  */
-import { ArrowDownOutlined, ArrowUpOutlined, PictureOutlined } from "@ant-design/icons";
-import { Button, Popover, Segmented, Select, Space, Tooltip, Typography } from "antd";
+import {
+  ArrowDownOutlined,
+  ArrowUpOutlined,
+  EyeInvisibleOutlined,
+  EyeOutlined,
+  PictureOutlined,
+} from "@ant-design/icons";
+import { App, Button, Popover, Segmented, Select, Space, Tooltip, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { RESUME_PAGE_LIMITS } from "../../types";
 import type {
@@ -99,6 +105,7 @@ export default function ResumeTemplateControls({
   // 完全没反应，被当成控件坏了）。版式用受控 open：`focus()` 在 antd v6 只移焦点、不展开。
   const [formatOpen, setFormatOpen] = useState(false);
   const { t } = useI18n();
+  const { message } = App.useApp();
   const templates = catalog?.templates ?? [];
   const formatPresets = catalog?.format_presets ?? [];
   /**
@@ -147,6 +154,46 @@ export default function ResumeTemplateControls({
   // 自建板块固定排在系统板块之后（渲染器口径），只列出有内容的，不给上下移。
   const customSectionRows = useMemo(() => collectCustomSectionRows(content), [content]);
   /**
+   * 隐藏板块（本地二开，2026-11-01 补回）：顺序面板里每一行都有眼睛开关。
+   *
+   * 上游把「隐藏板块」单独做成制作台左栏的一块面板，**预览弹窗的板块面板只剩上下移**；
+   * 本地的老版本是在同一个面板里「排序 + 显示/隐藏」一起做的，合并上游后这个入口在预览里
+   * 消失了（用户 2026-11-01 现场反馈）。这里按本地旧交互补回，写入的仍是同一个
+   * `format_config.hidden_sections`，四个导出渲染器已经同源读取，不需要额外改后端。
+   */
+  const knownSectionKeys = useMemo(
+    () => new Set([...builtInSectionOrder, ...sectionOptions.map((item) => item.key)]),
+    [builtInSectionOrder, sectionOptions],
+  );
+  const hiddenSections = useMemo(() => {
+    const value = layout.format_config?.hidden_sections;
+    if (!Array.isArray(value)) return [];
+    const result: string[] = [];
+    for (const item of value) {
+      const key = typeof item === "string" ? item.trim() : "";
+      if (key && knownSectionKeys.has(key) && !result.includes(key)) result.push(key);
+    }
+    return result;
+  }, [layout.format_config?.hidden_sections, knownSectionKeys]);
+  // 至少留一个板块可见：全部藏掉会让预览与导出都变成空白页，没有任何提示。
+  const visibleSectionCount = sectionOrder.length - hiddenSections.length;
+
+  const handleSectionToggle = (key: string) => {
+    const hidden = hiddenSections.includes(key);
+    if (!hidden && visibleSectionCount <= 1) {
+      message.warning(t("sections.hidden.keepOne"));
+      return;
+    }
+    const next = hidden
+      ? hiddenSections.filter((item) => item !== key)
+      : [...hiddenSections, key];
+    const formatConfig = { ...(layout.format_config ?? {}) };
+    // 一个都不藏时把键删掉："没设过"与"设成空数组"在存储里应当是同一种形态。
+    if (next.length > 0) formatConfig.hidden_sections = next;
+    else delete formatConfig.hidden_sections;
+    onChange({ ...layout, format_config: formatConfig });
+  };
+  /**
    * 「顺序·已调整」的判据 = **`section_order` 这个键在不在**（P0-5），不是"和默认顺序比"。
    *
    * 两者只在"用户把顺序调成了恰好等于默认"时给出不同答案，而那时键还在存储里——它确实是
@@ -154,6 +201,8 @@ export default function ResumeTemplateControls({
    * 用的同一个判据**（`resolved_section_order`），显示与渲染从此看同一件事。
    */
   const isCustomOrder = "section_order" in (layout.format_config ?? {});
+  // 顺序或隐藏任一被改过，「恢复默认」就该出现（两个键都要能一起清掉）。
+  const hasCustomSections = isCustomOrder || hiddenSections.length > 0;
 
   /**
    * 在**可见列表**里上下移一格：只交换当前简历里有的那两个板块在完整 `section_order`
@@ -208,18 +257,18 @@ export default function ResumeTemplateControls({
   };
 
   const handleSectionOrderReset = () => {
-    if (!isCustomOrder) return;
+    if (!hasCustomSections) return;
     // 「默认」在生成场景下就是资料顺序：写回它，用户才真的回到他看到的那一版；
     // 与内置默认相同时 helper 会把这个键删掉——"没调过"与"调成和默认一样"在存储里
     // 应当是同一种形态。非生成场景传内置默认，因此等于删除这个键（保持原行为）。
-    onChange({
-      ...layout,
-      format_config: buildSectionOrderConfig(
-        preferProfileOrder ? defaultSectionOrder : builtInSectionOrder,
-        builtInSectionOrder,
-        layout.format_config ?? {},
-      ),
-    });
+    const nextFormatConfig = buildSectionOrderConfig(
+      preferProfileOrder ? defaultSectionOrder : builtInSectionOrder,
+      builtInSectionOrder,
+      layout.format_config ?? {},
+    );
+    // 恢复默认也要把「隐藏板块」一起清掉：否则用户点了恢复默认，顺序回来了、板块仍然缺着。
+    delete nextFormatConfig.hidden_sections;
+    onChange({ ...layout, format_config: nextFormatConfig });
   };
 
   return (
@@ -382,7 +431,7 @@ export default function ResumeTemplateControls({
                     </Button>
                   </span>
                 </Tooltip>
-                {isCustomOrder && (
+                {hasCustomSections && (
                   <Button size="small" type="link" onClick={handleSectionOrderReset}>
                     {t("sections.templateControls.orderReset")}
                   </Button>
@@ -404,11 +453,39 @@ export default function ResumeTemplateControls({
                     (labelKey ? t(labelKey) : undefined) ??
                     sectionOptions.find((item) => item.key === key)?.label ??
                     (fallbackLabelKey ? t(fallbackLabelKey) : key);
+                  const hidden = hiddenSections.includes(key);
                   return (
                     <div className="resume-section-order-row" role="listitem" key={key}>
                       <span className="resume-section-order-index">{index + 1}</span>
-                      <span className="resume-section-order-label">{label}</span>
+                      <span
+                        className="resume-section-order-label"
+                        style={{
+                          textDecoration: hidden ? "line-through" : undefined,
+                          opacity: hidden ? 0.55 : 1,
+                        }}
+                      >
+                        {label}
+                      </span>
                       <Space size={0}>
+                        <Tooltip
+                          title={t(
+                            hidden ? "sections.hidden.show" : "sections.hidden.hide",
+                            { label },
+                          )}
+                        >
+                          <Button
+                            size="small"
+                            type="text"
+                            icon={hidden ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                            aria-label={t(
+                              hidden ? "sections.hidden.show" : "sections.hidden.hide",
+                              { label },
+                            )}
+                            aria-pressed={hidden}
+                            disabled={disabled || (!hidden && visibleSectionCount <= 1)}
+                            onClick={() => handleSectionToggle(key)}
+                          />
+                        </Tooltip>
                         <Tooltip title={t("sections.templateControls.orderMoveUp")}>
                           <Button
                             size="small"

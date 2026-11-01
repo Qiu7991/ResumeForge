@@ -33,7 +33,7 @@ const sections = {
   /** 分组标签。 */
   "sections.templateControls.sectionsLabel": "板块",
   /** 顺序弹层的标题。 */
-  "sections.templateControls.orderTitle": "调整板块顺序",
+  "sections.templateControls.orderTitle": "调整板块顺序与显示",
   /** 弹层里的链接按钮：清掉自定义顺序，回到默认排列。 */
   "sections.templateControls.orderReset": "恢复默认",
   /** 顺序列表的无障碍名。 */
@@ -57,7 +57,7 @@ const sections = {
   "sections.templateControls.orderMoveDownAria": "把{label}下移",
   /** 列表底部的常驻说明：顺序影响哪些产物、页眉为什么不在排序范围内。 */
   "sections.templateControls.orderHint":
-    "顺序对预览、PDF、Word 与文本导出同时生效；页眉（姓名、求职意向、联系方式）固定在最前。",
+    "顺序对预览、PDF、Word 与文本导出同时生效；页眉（姓名、求职意向、联系方式）固定在最前。隐藏的板块不会出现在预览与任何导出里。",
   /** 自建板块行的固定位置标签（渲染器固定排在系统板块之后）。 */
   "sections.templateControls.customFixedTag": "固定末尾",
   "sections.templateControls.customFixedHint": "自建板块固定排在系统板块之后",

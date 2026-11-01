@@ -16,7 +16,7 @@ const sections = {
     "Layout presets control line height, page margins and accent color; you can create more in the Resume Workbench",
   "sections.templateControls.followTemplate": "Follow template",
   "sections.templateControls.sectionsLabel": "Sections",
-  "sections.templateControls.orderTitle": "Reorder sections",
+  "sections.templateControls.orderTitle": "Reorder & show/hide sections",
   "sections.templateControls.orderReset": "Restore default order",
   "sections.templateControls.orderListAriaLabel": "Resume section order",
   "sections.templateControls.orderTriggerAriaLabel": "Reorder Resume sections",
@@ -29,7 +29,7 @@ const sections = {
   "sections.templateControls.orderMoveDown": "Move down",
   "sections.templateControls.orderMoveDownAria": "Move {label} down",
   "sections.templateControls.orderHint":
-    "The order applies to the preview, PDF, Word and text export; the header (name, target role, contact information) always stays first.",
+    "The order applies to the preview, PDF, Word and text export; the header (name, target role, contact information) always stays first. Hidden sections are excluded from the preview and every export.",
   "sections.templateControls.customFixedTag": "Fixed at end",
   "sections.templateControls.customFixedHint":
     "Custom sections always render after system sections",
