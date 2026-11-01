@@ -29,6 +29,9 @@ const llmRecord = {
   "llmRecord.hint.apiKeyEdit":
     "出于脱敏考虑，已保存的密钥不会显示出来（记录里只保存脱敏引用）；留空即沿用原密钥，输入新值则整体替换。",
   "llmRecord.placeholder.apiKeyKeep": "已配置，留空保持不变",
+  "llmRecord.action.clearSavedKey": "清除已保存密钥",
+  "llmRecord.action.cancelClearKey": "取消清除",
+  "llmRecord.hint.willClearKey": "保存后这条记录的密钥会被清空（适用于本地无需鉴权的服务）。",
   "llmRecord.field.temperature": "创意度 temperature",
   "llmRecord.hint.temperature":
     "控制输出的随机性。值越低越稳定，适合事实型简历；值越高表达更发散，也会增加内容不一致或虚构风险。",

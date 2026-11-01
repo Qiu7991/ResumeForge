@@ -314,6 +314,7 @@ export default function LLMConfigCard({
         open={recordModalOpen}
         mode={editingRecord ? "edit" : "create"}
         recordName={editingRecord?.name ?? ""}
+        hasSavedKey={Boolean(editingRecord?.api_key)}
         recordId={editingRecord?.id}
         form={recordForm}
         saving={recordSaving}

@@ -24,6 +24,7 @@ import {
   Slider,
   Space,
   Tooltip,
+  Typography,
 } from "antd";
 import type { FormInstance } from "antd";
 import { useState } from "react";
@@ -46,6 +47,8 @@ interface Props {
   mode: "create" | "edit";
   /** 编辑态用于标题展示的记录名。 */
   recordName: string;
+  /** 编辑态：这条记录当前存着密钥（才有「清除已保存密钥」这个入口）。 */
+  hasSavedKey?: boolean;
   /** 编辑态的记录 id（草稿作用域用它区分"哪一条记录"；新建态不传）。 */
   recordId?: string;
   form: FormInstance<RecordFormValues>;
@@ -86,6 +89,7 @@ export default function LLMRecordModal({
   open,
   mode,
   recordName,
+  hasSavedKey = false,
   recordId,
   form,
   saving,
@@ -111,6 +115,10 @@ export default function LLMRecordModal({
   const nameValue = Form.useWatch("name", form);
   const thinkingEnabled = Form.useWatch("thinking_enabled", form);
   const thinkingEffort = Form.useWatch("thinking_effort", form) ?? "";
+  // 「清除已保存密钥」用后端约定的哨兵值走同一条保存链路：`__clear__` 在保存时被后端
+  // 翻译成"清空密钥"，不必为一个按钮单开接口。
+  const apiKeyValue = Form.useWatch("api_key", form);
+  const clearingKey = mode === "edit" && apiKeyValue === "__clear__";
   const { unlimitedTokens, setUnlimitedTokens } = useUnlimitedTokens(form);
   // 草稿接线（与 TrackFormModal / ClaimFormModal 同一形状）：作用域按"哪一条记录"分，
   // 新建态固定 `new`。api_key 不额外 omit：`stripSensitive` 的字段名正则
@@ -306,6 +314,27 @@ export default function LLMRecordModal({
             autoComplete="new-password"
           />
         </Form.Item>
+        {mode === "edit" && hasSavedKey ? (
+          <div style={{ marginTop: -8, marginBottom: 8 }}>
+            <Button
+              type="link"
+              size="small"
+              style={{ paddingInline: 0 }}
+              onClick={() => form.setFieldValue("api_key", clearingKey ? "" : "__clear__")}
+            >
+              {t(
+                clearingKey
+                  ? "llmRecord.action.cancelClearKey"
+                  : "llmRecord.action.clearSavedKey",
+              )}
+            </Button>
+            {clearingKey ? (
+              <Typography.Text type="warning" style={{ marginInlineStart: 8 }}>
+                {t("llmRecord.hint.willClearKey")}
+              </Typography.Text>
+            ) : null}
+          </div>
+        ) : null}
         <Row gutter={[16, 0]}>
           <Col xs={24} md={8}>
             <Form.Item

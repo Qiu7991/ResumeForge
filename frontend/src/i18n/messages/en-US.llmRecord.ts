@@ -29,6 +29,9 @@ const llmRecord = {
   "llmRecord.field.apiKeyKeep": "API key (leave blank to keep)",
   "llmRecord.hint.apiKeyCreate":
     "Most cloud providers require one; local compatible services such as Ollama need none. The key is stored in the local database and only this machine can read it.",
+  "llmRecord.action.clearSavedKey": "Clear saved key",
+  "llmRecord.action.cancelClearKey": "Cancel clearing",
+  "llmRecord.hint.willClearKey": "Saving will clear this record's key (useful for local services without auth).",
   "llmRecord.hint.apiKeyEdit":
     "For safety the saved key is never shown (only a masked reference is stored). Leave blank to keep it, or enter a new value to replace it entirely.",
   "llmRecord.placeholder.apiKeyKeep": "Configured; leave blank to keep",
