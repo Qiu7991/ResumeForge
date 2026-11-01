@@ -18,6 +18,8 @@ const jobTable = {
   "jobTable.column.jobType": "Type",
   "jobTable.column.status": "Status",
   "jobTable.column.note": "Note",
+  "jobTable.column.createdAt": "Collected",
+  "jobTable.sort.createdAt": "Sort by collection time (newest first by default)",
   "jobTable.column.postedAt": "Posted",
   "jobTable.column.actions": "Actions",
   "jobTable.action.favorite": "Favorite this job",

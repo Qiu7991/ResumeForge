@@ -25,7 +25,11 @@ from ...models.job import Job
 # `posted_desc`（E）按**发布时间**排：``posted_at`` 是自由文本（"2026-10-01"、
 # "3 天前"、空串都有），能解析成日期的按日期，解析不出来的回落到导入日期——
 # 否则点一次排序就会出现"没有发布时间的岗位全跑到最前面/最后面"。
-JobSort = Literal["created_desc", "updated_desc", "title_asc", "company_asc", "posted_desc"]
+# `created_asc` 兼容本地二开时期的旧链接（当时下拉里有「收录时间正序」）；
+# 现在的 UI 用 `created_desc` + `order=asc` 表达同一件事，但旧链接不能 422。
+JobSort = Literal[
+    "created_desc", "created_asc", "updated_desc", "title_asc", "company_asc", "posted_desc"
+]
 # 方向覆盖：只在需要"逆着某列的默认方向"时传。
 JobSortOrder = Literal["asc", "desc"]
 
@@ -36,6 +40,7 @@ _PINYIN = "rf_pinyin"
 # sort 键 → (排序列, 该键自带的方向)。
 _SORT_COLUMNS: dict[str, tuple[Any, str]] = {
     "created_desc": (Job.created_at, "desc"),
+    "created_asc": (Job.created_at, "asc"),
     "updated_desc": (Job.updated_at, "desc"),
     "title_asc": (Job.title.collate(_PINYIN), "asc"),
     "company_asc": (Job.company.collate(_PINYIN), "asc"),

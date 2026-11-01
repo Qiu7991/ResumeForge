@@ -24,6 +24,8 @@ export const DEFAULT_JOB_SORT_STATE: JobSortState = { sort: DEFAULT_JOB_SORT, or
 
 /** 可排序列（antd 列 key）→ 后端 sort 键 + 该列默认方向。三列与 fixlist 一致。 */
 const JOB_SORT_COLUMNS = {
+  // 「收录时间」列：默认排序就是它倒序；第一次点击切正序（ascend），再点回默认。
+  created_at: { sort: "created_desc", direction: "desc" },
   title: { sort: "title_asc", direction: "asc" },
   company: { sort: "company_asc", direction: "asc" },
   // 「发布时间」列展示 posted_at，后端 `posted_desc` 按 date(posted_at) 排序、

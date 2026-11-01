@@ -26,6 +26,14 @@ describe("岗位排序映射（R14/E）", () => {
     expect(sortOrderFor("posted_at", postedAsc)).toBe("ascend");
   });
 
+  it("收录时间列：第一次点击切正序，再点回默认倒序", () => {
+    expect(sortOrderFor("created_at", DEFAULT_JOB_SORT_STATE)).toBeNull();
+    const asc = nextSortState("created_at", "ascend");
+    expect(asc).toEqual({ sort: "created_desc", order: "asc" });
+    expect(sortOrderFor("created_at", asc)).toBe("ascend");
+    expect(nextSortState("created_at", "descend")).toEqual(DEFAULT_JOB_SORT_STATE);
+  });
+
   it("取消排序或点到不支持的列时回到默认排序", () => {
     expect(nextSortState("title", null)).toEqual(DEFAULT_JOB_SORT_STATE);
     expect(nextSortState("actions", "ascend")).toEqual(DEFAULT_JOB_SORT_STATE);

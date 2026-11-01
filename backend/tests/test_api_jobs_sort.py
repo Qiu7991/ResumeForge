@@ -37,6 +37,8 @@ def test_job_list_sorts_by_the_five_keys_and_honours_order(client, db_session):
 
     assert titles() == ["Beta", "Alpha", "Gamma"]  # 默认 created_desc（不传参数也不变）
     assert titles(sort="created_desc") == ["Beta", "Alpha", "Gamma"]
+    # 本地二开时期的「收录时间正序」旧链接仍可用（现在也可用 created_desc + order=asc）。
+    assert titles(sort="created_asc") == ["Gamma", "Alpha", "Beta"]
     assert titles(sort="updated_desc") == ["Gamma", "Alpha", "Beta"]
     assert titles(sort="title_asc") == ["Alpha", "Beta", "Gamma"]
     assert titles(sort="company_asc") == ["Alpha", "Gamma", "Beta"]

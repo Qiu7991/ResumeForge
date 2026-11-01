@@ -223,6 +223,18 @@ export default function JobTable({
       },
     },
     {
+      title: t("jobTable.column.createdAt"),
+      dataIndex: "created_at",
+      key: "created_at",
+      width: 120,
+      sorter: true,
+      sortOrder: sortOrderFor("created_at", sortState),
+      // 默认排序就是收录时间倒序：第一次点击切正序，再点回默认（避免"点了没反应"）。
+      sortDirections: ["ascend", "descend"],
+      showSorterTooltip: { title: t("jobTable.sort.createdAt") },
+      render: (value: string) => (value ? value.slice(0, 10) : "-"),
+    },
+    {
       title: t("jobTable.column.postedAt"),
       dataIndex: "posted_at",
       // 列里展示招聘信息自己写的 posted_at；排序键 `posted_desc` 也按它排——

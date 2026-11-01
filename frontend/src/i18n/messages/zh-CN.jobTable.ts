@@ -16,6 +16,8 @@ const jobTable = {
   "jobTable.column.jobType": "类型",
   "jobTable.column.status": "状态",
   "jobTable.column.note": "备注",
+  "jobTable.column.createdAt": "收录时间",
+  "jobTable.sort.createdAt": "按收录时间排序（默认最近导入在前）",
   "jobTable.column.postedAt": "发布时间",
   "jobTable.column.actions": "操作",
   "jobTable.action.favorite": "收藏岗位",
