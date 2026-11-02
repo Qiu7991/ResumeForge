@@ -3,7 +3,7 @@
 
 export type PlanRequirementType = "hard_skill" | "responsibility" | "domain" | "soft";
 export type PlanMatch = "direct" | "transferable" | "none";
-export type PlanRefType = "project" | "experience" | "claim";
+export type PlanRefType = "project" | "experience" | "education" | "claim";
 
 export interface GenerationPlanRequirement {
   id: string;

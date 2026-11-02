@@ -80,6 +80,7 @@ const generate = {
   "generate.plan.match.none": "无证据",
   "generate.plan.ref.project": "项目",
   "generate.plan.ref.experience": "经历",
+  "generate.plan.ref.education": "教育",
   "generate.plan.ref.claim": "事实",
   "generate.plan.selectedCount": "已选 {count} 条证据",
   "generate.plan.quotes": "可引用原文",

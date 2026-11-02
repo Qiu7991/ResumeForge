@@ -70,6 +70,7 @@ const generate = {
   "generate.plan.match.none": "No evidence",
   "generate.plan.ref.project": "Project",
   "generate.plan.ref.experience": "Experience",
+  "generate.plan.ref.education": "Education",
   "generate.plan.ref.claim": "Fact",
   "generate.plan.selectedCount": "{count} evidence selected",
   "generate.plan.quotes": "Quotable source",

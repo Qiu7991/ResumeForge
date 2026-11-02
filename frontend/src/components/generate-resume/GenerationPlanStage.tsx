@@ -34,6 +34,7 @@ function matchLabel(match: PlanMatch): string {
 function refLabel(refType: GenerationPlanEvidence["ref_type"]): string {
   if (refType === "project") return t("generate.plan.ref.project");
   if (refType === "experience") return t("generate.plan.ref.experience");
+  if (refType === "education") return t("generate.plan.ref.education");
   return t("generate.plan.ref.claim");
 }
 

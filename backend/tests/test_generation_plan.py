@@ -7,7 +7,6 @@ import json
 from types import SimpleNamespace
 
 import pytest
-
 from app.models.claim import (
     CLAIM_CATEGORY_PROJECT,
     VERIFICATION_CONFIRMED,
@@ -52,6 +51,14 @@ def _seed(db):
                 },
             },
             {
+                "section_key": "educations",
+                "values": {
+                    "educations.school": "哈尔滨信息工程学院",
+                    "educations.major": "计算机科学与技术",
+                    "educations.degree": "本科",
+                },
+            },
+            {
                 "section_key": "skills",
                 "values": {"skills.name": "Python", "skills.level": "熟练"},
             },
@@ -90,6 +97,7 @@ def test_candidates_include_entries_skills_and_linked_claims(db_session):
     assert ("project", by_section["projects"].entry_id) in refs
     assert ("experience", by_section["experiences"].entry_id) in refs
     assert ("claim", str(claim.id)) in refs
+    assert ("education", by_section["educations"].entry_id) in refs
     assert ("claim", f"skill:{by_section['skills'].entry_id}") in refs
     claim_candidate = next(item for item in candidates if item["ref_id"] == str(claim.id))
     assert "树莓派" in claim_candidate["source_text"]

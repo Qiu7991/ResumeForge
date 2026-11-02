@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 RequirementType = Literal["hard_skill", "responsibility", "domain", "soft"]
 MatchType = Literal["direct", "transferable", "none"]
-RefType = Literal["project", "experience", "claim"]
+RefType = Literal["project", "experience", "education", "claim"]
 
 
 class PlanRequirement(BaseModel):

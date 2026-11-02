@@ -119,6 +119,26 @@ def build_candidates(db: Session, consumed: ConsumedProfile) -> list[dict[str, A
                 }
             )
 
+    education = consumed.section("educations")
+    if education is not None:
+        for entry in education.entries:
+            values = dict(entry.values or {})
+            source_text = _entry_source_text(values)
+            if not source_text:
+                continue
+            school = _text(values.get("educations.school"))
+            major = _text(values.get("educations.major"))
+            degree = _text(values.get("educations.degree"))
+            label = " · ".join(part for part in (school, major, degree) if part) or "教育经历"
+            candidates.append(
+                {
+                    "ref_type": "education",
+                    "ref_id": entry.entry_id,
+                    "ref_name": _clip(label, 200),
+                    "source_text": source_text,
+                }
+            )
+
     skills = consumed.section("skills")
     if skills is not None:
         for entry in skills.entries:
@@ -425,7 +445,7 @@ def build_plan_coverage_note(
     body = _norm(_resume_text(resume))
     missing: list[str] = []
     for item in selected:
-        if item.ref_type not in {"project", "experience"}:
+        if item.ref_type not in {"project", "experience", "education"}:
             continue
         name = _norm(item.ref_name)
         if name and name not in body and item.ref_name not in missing:
@@ -505,7 +525,7 @@ def build_plan_block(plan: ResumeGenerationPlan, *, page_limit: int | None = Non
             lines.append(
                 f"  - {label}｜{item.ref_type}「{item.ref_name}」：{quotes}"
             )
-            if item.ref_type in {"project", "experience"} and item.source_text:
+            if item.ref_type in {"project", "experience", "education"} and item.source_text:
                 lines.append(f"    资料原文：{_clip(item.source_text, 500)}")
     max_projects = None
     if page_limit is not None:
