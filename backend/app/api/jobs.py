@@ -54,6 +54,7 @@ from ..services.job.job_service import (
     update_job_record,
 )
 from ..services.job.job_sorting import JobSort, JobSortOrder, job_order_by
+from ..services.job.platform import detect_platform, platform_sql_condition
 from ..services.job_text_parser import parse_job_text
 from ..services.llm import create_provider
 from ..services.llm.base import LLMError
@@ -128,6 +129,7 @@ def _filtered_query(
     favorite: bool | None,
     source_kind: str,
     city: str = "",
+    platform: str = "",
 ):
     """列表页的共用筛选器：``/jobs``（分页列表）与 ``/jobs/ids``（跨页全选）同吃这一份，
     保证"看到的筛选结果"和"一键全选拿到的 id"永远是对同一批岗位的两种视图。"""
@@ -147,6 +149,8 @@ def _filtered_query(
     if city:
         # 城市是 location 的第一段（「广州·天河区」）；前缀匹配同时兼容只写「广州」的记录。
         query = query.filter(Job.location.startswith(city, autoescape=True))
+    if platform:
+        query = query.filter(platform_sql_condition(Job, platform))
     if job_type:
         query = query.filter(Job.job_type == job_type)
     if status:
@@ -183,6 +187,8 @@ def list_jobs(
     source_kind: str = Query(default=""),
     # 城市：只匹配 location 的第一段（「广州·天河区」按「广州」筛）。
     city: str = Query(default=""),
+    # 招聘平台：由来源 URL / 来源字段 / 备注派生（BOSS直聘、智联招聘、猎聘…）。
+    platform: str = Query(default=""),
     # 排序（R14）：键自带方向（created_desc / title_asc…），``order`` 只用于覆盖方向。
     # 非法值由 Literal 拦成 422（不静默回落默认值——"改了参数却毫无变化"更难排查）。
     sort: JobSort = Query(
@@ -194,7 +200,9 @@ def list_jobs(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
-    query = _filtered_query(db, keyword, job_type, status, favorite, source_kind, city)
+    query = _filtered_query(
+        db, keyword, job_type, status, favorite, source_kind, city, platform
+    )
     total = query.count()
     jobs = (
         query.order_by(*job_order_by(sort, order))
@@ -214,6 +222,7 @@ def list_job_ids(
     favorite: bool | None = Query(default=None),
     source_kind: str = Query(default=""),
     city: str = Query(default=""),
+    platform: str = Query(default=""),
     sort: JobSort = Query(default="created_desc"),
     order: JobSortOrder | None = Query(default=None),
 ):
@@ -228,7 +237,7 @@ def list_job_ids(
     return [
         job_id
         for (job_id,) in _filtered_query(
-            db, keyword, job_type, status, favorite, source_kind, city
+            db, keyword, job_type, status, favorite, source_kind, city, platform
         )
         .order_by(*job_order_by(sort, order))
         .with_entities(Job.id)
@@ -256,6 +265,45 @@ def list_job_cities(db: Session = Depends(get_db)):
         if city:
             counts[city] += int(count or 0)
     return [city for city, _ in counts.most_common()]
+
+
+@router.get("/platforms", response_model=list[str])
+def list_job_platforms(db: Session = Depends(get_db)):
+    """岗位广场「招聘平台」筛选项：按岗位数从多到少；没识别出的归「其他平台」。"""
+    rows = (
+        db.query(
+            Job.source_url,
+            Job.source,
+            Job.origin_source,
+            Job.recognition_source,
+            Job.note,
+        )
+        .filter(trash.live_only(Job))
+        .all()
+    )
+    counts: Counter[str] = Counter()
+    for source_url, source, origin_source, recognition_source, note in rows:
+        counts[
+            detect_platform(
+                source_url=source_url or "",
+                source=source or "",
+                origin_source=origin_source or "",
+                recognition_source=recognition_source or "",
+                note=note or "",
+            )
+        ] += 1
+    order = {
+        name: index
+        for index, name in enumerate(
+            ("BOSS直聘", "智联招聘", "猎聘", "前程无忧", "拉勾", "脉脉", "LinkedIn", "手动添加", "其他平台")
+        )
+    }
+    return [
+        name
+        for name, _count in sorted(
+            counts.items(), key=lambda item: (-item[1], order.get(item[0], 99))
+        )
+    ]
 
 
 @router.post("", response_model=JobOut, status_code=201)

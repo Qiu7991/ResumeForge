@@ -13,6 +13,7 @@ export function useSelectAllJobs({
   status,
   sourceKind,
   city,
+  platform,
   sortState,
   setSelectedJobIds,
 }: {
@@ -21,6 +22,7 @@ export function useSelectAllJobs({
   status: string;
   sourceKind: "" | "collected" | "manual";
   city: string;
+  platform: string;
   /** 排序必须与列表同源：全选拿到的 id 顺序要和用户看到的顺序一致（R14）。 */
   sortState: JobSortState;
   setSelectedJobIds: (updater: (current: number[]) => number[]) => void;
@@ -36,7 +38,7 @@ export function useSelectAllJobs({
   useEffect(() => {
     generationRef.current += 1;
     setSelectAllPagesLoading(false);
-  }, [keyword, jobType, status, sourceKind, city, sortState]);
+  }, [keyword, jobType, status, sourceKind, city, platform, sortState]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // 跨页全选：按**当前筛选**向后端要全部 id（与列表同一份筛选器），拿到后整体勾选。
@@ -53,6 +55,7 @@ export function useSelectAllJobs({
         status,
         source_kind: sourceKind || undefined,
         city: city || undefined,
+        platform: platform || undefined,
         sort: sortState.sort,
         order: sortState.order ?? undefined,
       });

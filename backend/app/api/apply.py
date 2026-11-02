@@ -29,6 +29,7 @@ from ..schemas.apply import (
     ApplyTaskDetailOut,
     ApplyTaskItemOut,
     ApplyTaskOut,
+    BrowserOpenUrlIn,
     BrowserStatusOut,
     CollectBackfillIn,
     CollectConfigIn,
@@ -159,6 +160,15 @@ def browser_open(db: Session = Depends(get_db)):
     """在已启动的专用浏览器里重新打开招聘网站入口（标签页被关掉或跳走后使用）。"""
     try:
         return apply_service.open_browser_url(db)
+    except apply_service.ApplyServiceError as exc:
+        _raise(exc)
+
+
+@router.post("/browser/open-url", response_model=BrowserStatusOut)
+def browser_open_url(payload: BrowserOpenUrlIn, db: Session = Depends(get_db)):
+    """在**投递专用浏览器**里打开具体岗位页（「前往投递」与投递台共用登录态）。"""
+    try:
+        return apply_service.open_browser_at(db, payload.url)
     except apply_service.ApplyServiceError as exc:
         _raise(exc)
 

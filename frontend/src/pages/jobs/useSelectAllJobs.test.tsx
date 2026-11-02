@@ -26,6 +26,7 @@ function Harness({
     status: "",
     sourceKind: "",
     city: "",
+    platform: "",
     sortState,
     setSelectedJobIds: (updater) => setSelected((prev) => updater(prev)),
   });

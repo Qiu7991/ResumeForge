@@ -201,6 +201,7 @@ export default function JobDetailDrawer({
                 icon={<LinkOutlined />}
                 loading={webFormLoading}
                 disabled={webFormLoading}
+                title={t("jobDetail.tooltip.goApply")}
                 onClick={() => onOpenWebForm(job)}
               >
                 {t("jobDetail.action.goApply")}
@@ -212,6 +213,11 @@ export default function JobDetailDrawer({
     >
       {job && (
         <>
+          {job.source_url ? (
+            <Typography.Paragraph type="secondary" style={{ margin: "0 0 8px", fontSize: 12 }}>
+              {t("jobDetail.hint.goApplyBrowser")}
+            </Typography.Paragraph>
+          ) : null}
           <div className="job-detail-title-row">
             <Typography.Title level={4} style={{ margin: 0 }}>
               {job.title}

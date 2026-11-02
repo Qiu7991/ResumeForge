@@ -3,7 +3,7 @@
 import { App } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { getJob, listJobCities, listJobs } from "../../api/jobs";
+import { getJob, listJobCities, listJobPlatforms, listJobs } from "../../api/jobs";
 import { useApi } from "../../hooks/useApi";
 import { t } from "../../i18n";
 import type { Job, JobList } from "../../types";
@@ -23,6 +23,7 @@ export function useJobsPageState() {
     return raw === "collected" || raw === "manual" ? raw : "";
   });
   const [city, setCity] = useState(searchParams.get("city") ?? "");
+  const [platform, setPlatform] = useState(searchParams.get("platform") ?? "");
   const [page, setPage] = useState(Number(searchParams.get("page")) || 1);
   const [pageSize, setPageSize] = useState(Number(searchParams.get("page_size")) || 10);
   // 排序（E）：**只存在组件状态里**，不进 URL。离开岗位广场（组件卸载）即恢复默认，
@@ -75,18 +76,21 @@ export function useJobsPageState() {
         status,
         source_kind: sourceKind || undefined,
         city: city || undefined,
+        platform: platform || undefined,
         sort: sortState.sort,
         order: sortState.order ?? undefined,
         page,
         page_size: pageSize,
       }),
-    [keyword, jobType, status, sourceKind, city, sortState, page, pageSize],
+    [keyword, jobType, status, sourceKind, city, platform, sortState, page, pageSize],
   );
 
   // 城市选项来自后端（按岗位数排序）；岗位总数变化时顺带刷新，新导入的城市才会出现。
   const { data: cityOptionsData } = useApi(() => listJobCities(), [jobs?.total]);
   // 测试里 useApi 被整体打桩、返回值不区分调用点；这里按数组收窄，避免把对象当选项 map。
   const cityOptions = Array.isArray(cityOptionsData) ? cityOptionsData : [];
+  const { data: platformOptionsData } = useApi(() => listJobPlatforms(), [jobs?.total]);
+  const platformOptions = Array.isArray(platformOptionsData) ? platformOptionsData : [];
 
   // 筛选 / 分页写回 URL（replace 语义）。effect 只依赖这些状态本身，不依赖 searchParams：
   // 写回触发的重渲染里 deps 没变、不会再写，因此不会形成循环重渲染。
@@ -101,6 +105,7 @@ export function useJobsPageState() {
           ["status", status],
           ["source_kind", sourceKind],
           ["city", city],
+          ["platform", platform],
           ["page", page > 1 ? String(page) : ""],
           ["page_size", pageSize !== 10 ? String(pageSize) : ""],
           // 排序不进 URL（E）：显式删除，清掉旧链接里残留的 sort/order。
@@ -115,7 +120,7 @@ export function useJobsPageState() {
       },
       { replace: true },
     );
-  }, [keyword, jobType, status, sourceKind, city, page, pageSize, setSearchParams]);
+  }, [keyword, jobType, status, sourceKind, city, platform, page, pageSize, setSearchParams]);
 
   // 详情与 ?job_id= 同步：打开详情只写 URL（可分享/刷新后恢复），岗位本体由下面的
   // effect 统一经 getJob 拉全量——列表项已瘦身（JobList），这里不再直接复用。
@@ -187,6 +192,9 @@ export function useJobsPageState() {
     city,
     setCity,
     cityOptions,
+    platform,
+    setPlatform,
+    platformOptions,
     sortState,
     applySort,
     page,

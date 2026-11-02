@@ -202,12 +202,12 @@ describe("JobTable 空表可访问性", () => {
     expect(container.querySelector<HTMLElement>("table")?.style.width).toBe("");
   });
 
-  it("有数据时保持原行为：列宽固定 1385px + 横向滚动", () => {
+  it("有数据时保持原行为：列宽固定 1485px + 横向滚动", () => {
     const { container } = renderTable([makeJob()]);
 
     const content = container.querySelector<HTMLElement>(".ant-table-content");
     expect(content?.style.overflowX).toBe("auto");
-    expect(container.querySelector<HTMLElement>("table")?.style.width).toBe("1385px");
+    expect(container.querySelector<HTMLElement>("table")?.style.width).toBe("1485px");
   });
 });
 

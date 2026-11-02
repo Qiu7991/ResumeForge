@@ -5,7 +5,7 @@ import type { TableRowSelection } from "antd/es/table/interface";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { markCandidateJobImported } from "../api/candidateJob";
-import { openWebFormUrl } from "../api/webform";
+import { openBrowserUrl } from "../api/apply";
 import { deleteJob, getJob, updateJob } from "../api/jobs";
 import GenerateResumeModal from "../components/GenerateResumeModal";
 import JobAnalysisModal from "../components/JobAnalysisModal";
@@ -57,6 +57,9 @@ export default function JobsPage() {
     city,
     setCity,
     cityOptions,
+    platform,
+    setPlatform,
+    platformOptions,
     sortState,
     applySort,
     page,
@@ -216,8 +219,8 @@ export default function JobsPage() {
       if (!job.source_url || webFormJobId !== null) return;
       setWebFormJobId(job.id);
       try {
-        await openWebFormUrl(job.source_url);
-        message.success(t("pagesMisc.jobsPage.toast.webFormOpened"));
+        await openBrowserUrl(job.source_url);
+        message.success(t("pagesMisc.jobsPage.toast.applyBrowserOpened"), 8);
       } catch (error) {
         message.error(
           error instanceof Error ? error.message : t("pagesMisc.jobsPage.error.webFormFailed"),
@@ -265,6 +268,7 @@ export default function JobsPage() {
     status,
     sourceKind,
     city,
+    platform,
     sortState,
     setSelectedJobIds,
   });
@@ -349,6 +353,9 @@ export default function JobsPage() {
         city={city}
         setCity={setCity}
         cityOptions={cityOptions}
+        platform={platform}
+        setPlatform={setPlatform}
+        platformOptions={platformOptions}
         batchAction={batchAction}
         openMatchBatch={openMatchBatch}
         emptyDescriptionJobIds={emptyDescriptionJobIds}

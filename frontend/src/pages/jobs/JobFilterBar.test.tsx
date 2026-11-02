@@ -47,6 +47,9 @@ function StatefulHarness({
       city=""
       setCity={vi.fn()}
       cityOptions={[]}
+      platform=""
+      setPlatform={vi.fn()}
+      platformOptions={[]}
       batchAction={null}
       openMatchBatch={onOpenMatchBatch ?? vi.fn()}
       emptyDescriptionJobIds={[]}
@@ -77,6 +80,9 @@ function ControlledHarness({ keyword }: { keyword: string }) {
       city=""
       setCity={vi.fn()}
       cityOptions={[]}
+      platform=""
+      setPlatform={vi.fn()}
+      platformOptions={[]}
       batchAction={null}
       openMatchBatch={vi.fn()}
       emptyDescriptionJobIds={[]}

@@ -17,6 +17,7 @@ const jobTable = {
   "jobTable.column.salary": "Salary",
   "jobTable.column.jobType": "Type",
   "jobTable.column.status": "Status",
+  "jobTable.column.platform": "Platform",
   "jobTable.column.note": "Note",
   "jobTable.column.createdAt": "Collected",
   "jobTable.sort.createdAt": "Sort by collection time (newest first by default)",

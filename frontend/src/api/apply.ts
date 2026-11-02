@@ -96,6 +96,16 @@ export function openBrowserSite(): Promise<BrowserStatus> {
   return request("/apply/browser/open", { method: "POST" });
 }
 
+/** 在**投递专用浏览器**里打开具体岗位页；未启动时会直接以该地址启动。 */
+export function openBrowserUrl(url: string): Promise<BrowserStatus> {
+  return request("/apply/browser/open-url", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+    // 未启动时要真拉一个浏览器进程，15s 默认预算不够。
+    budget: "recognition",
+  });
+}
+
 export function refreshBrowser(): Promise<BrowserStatus> {
   return request("/apply/browser/refresh", { method: "POST" });
 }

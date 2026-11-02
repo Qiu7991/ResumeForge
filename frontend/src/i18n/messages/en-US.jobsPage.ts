@@ -48,6 +48,8 @@ const jobsPage = {
   "jobsPage.filter.sourcePlaceholder": "Source",
   "jobsPage.filter.cityPlaceholder": "City",
   "jobsPage.filter.cityAria": "Filter by city",
+  "jobsPage.filter.platformAria": "Filter by job platform",
+  "jobsPage.filter.platformPlaceholder": "Platform",
   "jobsPage.filter.analyzeMatch": "AI job comparison",
   "jobsPage.filter.matchAnalysis": "Match analysis",
   "jobsPage.filter.matchHistory": "Analysis history",

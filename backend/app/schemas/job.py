@@ -379,6 +379,24 @@ class JobOut(JobCreate):
 
         return get_registry().resolve_for_job(self) is not None
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def platform(self) -> str:
+        """招聘平台展示名（BOSS直聘 / 智联招聘 / 猎聘 / 手动添加…）。
+
+        平台不单独存列：来源 URL、来源字段与备注里已经有足够信息，历史岗位也能直接
+        推导；列表筛选使用同一个纯函数，避免"显示叫 BOSS、筛选却按另一套规则"。
+        """
+        from ..services.job.platform import detect_platform
+
+        return detect_platform(
+            source_url=self.source_url,
+            source=self.source,
+            origin_source=self.origin_source,
+            recognition_source=self.recognition_source,
+            note=self.note,
+        )
+
 
 class JobListOut(JobOut):
     """岗位列表的读取模型：与 `JobOut` 字段一致，但**不带 JD 全文**。

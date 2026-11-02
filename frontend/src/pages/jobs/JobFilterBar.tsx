@@ -36,6 +36,9 @@ export function JobFilterBar({
   city,
   setCity,
   cityOptions,
+  platform,
+  setPlatform,
+  platformOptions,
   batchAction,
   openMatchBatch,
   emptyDescriptionJobIds,
@@ -62,6 +65,10 @@ export function JobFilterBar({
   setCity: (value: string) => void;
   /** 城市选项由页面从后端取，筛选条本身不 import api。 */
   cityOptions: string[];
+  platform: string;
+  setPlatform: (value: string) => void;
+  /** 招聘平台选项由后端按岗位数聚合（BOSS直聘 / 智联招聘 / 手动添加…）。 */
+  platformOptions: string[];
   batchAction: BatchAction;
   /** `mode` 缺省是 compare（AI 对比选岗）；match 是逐岗位匹配度分析。 */
   openMatchBatch: (view?: "setup" | "history", mode?: "match" | "compare") => void;
@@ -186,6 +193,21 @@ export function JobFilterBar({
             setPage(1);
           }}
           options={cityOptions.map((name) => ({ value: name, label: name }))}
+        />
+        {/* 招聘平台：从来源 URL / 来源字段 / 备注派生，历史岗位也能区分。 */}
+        <Select
+          aria-label={t("jobsPage.filter.platformAria")}
+          placeholder={t("jobsPage.filter.platformPlaceholder")}
+          allowClear
+          showSearch
+          disabled={batchAction !== null}
+          style={{ width: 130 }}
+          value={platform || undefined}
+          onChange={(value) => {
+            setPlatform(value ?? "");
+            setPage(1);
+          }}
+          options={platformOptions.map((name) => ({ value: name, label: name }))}
         />
         {/* 进入选择模式的入口在行右键菜单的「批量选择」（R8）；退出选择已挪到
             BatchToolbar 的「全选全部岗位」右侧（用户要求，两行各归其位）。 */}

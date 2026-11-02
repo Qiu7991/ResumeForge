@@ -40,6 +40,8 @@ export interface JobListParams {
   source_kind?: "collected" | "manual";
   /** 城市：匹配 location 的第一段（「广州·天河区」按「广州」筛）。 */
   city?: string;
+  /** 招聘平台：后端从来源 URL / 来源字段 / 备注派生。 */
+  platform?: string;
   /** 排序键（R14）；不传 = 后端默认 `created_desc`。 */
   sort?: JobSort;
   /** 方向覆盖；不传则用 sort 自带方向。 */
@@ -61,6 +63,11 @@ export function listJobIds(params: JobListParams = {}): Promise<number[]> {
 /** 城市筛选项：后端按岗位数从多到少返回去重后的城市名。 */
 export function listJobCities(): Promise<string[]> {
   return request("/jobs/cities");
+}
+
+/** 岗位广场「招聘平台」筛选项：后端按岗位数排序。 */
+export function listJobPlatforms(): Promise<string[]> {
+  return request("/jobs/platforms");
 }
 
 export function getJob(id: number): Promise<Job> {

@@ -21,6 +21,9 @@ const jobDetail = {
   "jobDetail.action.askAssistant": "咨询求职助手",
   "jobDetail.section.progress": "该岗位的投递进度",
   "jobDetail.action.interview": "模拟面试",
+  "jobDetail.hint.goApplyBrowser":
+    "「前往投递」在投递台专用浏览器中打开；如果那个窗口显示登录，请在该窗口扫码登录一次，之后会自动沿用。",
+  "jobDetail.tooltip.goApply": "在投递专用浏览器中打开，和投递台共用登录态",
   "jobDetail.action.goApply": "前往投递",
   "jobDetail.action.favorite": "收藏岗位",
   "jobDetail.action.unfavorite": "取消收藏",

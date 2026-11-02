@@ -48,6 +48,7 @@ const pagesMisc = {
   "pagesMisc.jobsPage.error.deleteFailed": "删除失败",
   "pagesMisc.jobsPage.error.favoriteFailed": "更新收藏状态失败",
   "pagesMisc.jobsPage.toast.webFormOpened": "已在网申专用浏览器中打开投递页面",
+  "pagesMisc.jobsPage.toast.applyBrowserOpened": "已在投递专用浏览器中打开岗位页面；若窗口仍显示登录，请在该窗口扫码登录一次",
   "pagesMisc.jobsPage.error.webFormFailed": "打开网申页面失败",
   "pagesMisc.jobsPage.backfill.none": "当前页没有需要补齐详情的岗位",
   /** `{count}` 是本次补详情的岗位数。 */

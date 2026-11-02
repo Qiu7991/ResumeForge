@@ -196,6 +196,19 @@ export default function JobTable({
       },
     },
     {
+      title: t("jobTable.column.platform"),
+      dataIndex: "platform",
+      width: 100,
+      render: (value: string) =>
+        value ? (
+          <Tag color={value === "BOSS直聘" ? "blue" : value === "智联招聘" ? "cyan" : "default"}>
+            {value}
+          </Tag>
+        ) : (
+          "-"
+        ),
+    },
+    {
       title: t("jobTable.column.note"),
       dataIndex: "note",
       width: 180,
@@ -312,7 +325,7 @@ export default function JobTable({
       // 空表（无当前页行）时不启用横向滚动：否则 `.ant-table-content` 会变成
       // "可横滚、区域内却没有任何可聚焦元素"的容器，命中 axe 的
       // `scrollable-region-focusable`（serious）。有数据时照旧按列宽固定横滚。
-      scroll={jobs?.items?.length ? { x: 1385 } : undefined}
+      scroll={jobs?.items?.length ? { x: 1485 } : undefined}
       components={{
         body: {
           // 整行右键即可编辑/删除；批量模式下不拦截右键，避免和选择操作打架。

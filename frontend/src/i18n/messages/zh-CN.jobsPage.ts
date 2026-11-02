@@ -50,6 +50,8 @@ const jobsPage = {
   "jobsPage.filter.sourcePlaceholder": "来源",
   "jobsPage.filter.cityPlaceholder": "城市",
   "jobsPage.filter.cityAria": "城市筛选",
+  "jobsPage.filter.platformAria": "招聘平台筛选",
+  "jobsPage.filter.platformPlaceholder": "招聘平台",
   "jobsPage.filter.analyzeMatch": "AI 对比选岗",
   "jobsPage.filter.matchAnalysis": "匹配度分析",
   "jobsPage.filter.matchHistory": "分析记录",

@@ -52,6 +52,8 @@ const pagesMisc = {
   // ── Job board (JobsPage) ──────────────────────────────────────
   "pagesMisc.jobsPage.error.deleteFailed": "Delete failed",
   "pagesMisc.jobsPage.error.favoriteFailed": "Could not update the favorite",
+  "pagesMisc.jobsPage.toast.applyBrowserOpened":
+    "Opened the job page in the apply browser; if it still shows sign-in, scan the code once in that window",
   "pagesMisc.jobsPage.toast.webFormOpened":
     "Opened the application page in the dedicated web-form browser",
   "pagesMisc.jobsPage.error.webFormFailed": "Could not open the web form page",

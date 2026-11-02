@@ -269,3 +269,51 @@ def test_browser_start_can_skip_the_site_entry(client, fake_runner, monkeypatch)
 
     assert response.status_code == 200
     assert manager.started_with is None
+
+
+def test_browser_open_url_uses_the_apply_browser_environment(client, monkeypatch):
+    """「前往投递」必须落到投递专用浏览器：没启动就以岗位地址启动，已启动就复用导航。"""
+    from app.services.apply import _site_browser
+    from app.services.browser.browser_manager import BrowserStatus
+
+    class FakeManager:
+        def __init__(self) -> None:
+            self.active = False
+            self.started: str | None = None
+            self.opened: str | None = None
+
+        def is_active(self) -> bool:
+            return self.active
+
+        def start(self, url: str | None = None) -> BrowserStatus:
+            self.started = url
+            self.active = True
+            return BrowserStatus(
+                state="running", port=9333, profile_dir="", browser_path=""
+            )
+
+        def open_url(self, url: str) -> None:
+            if not self.active:
+                raise _site_browser.BrowserError("请先启动投递专用浏览器")
+            self.opened = url
+
+        def status(self) -> BrowserStatus:
+            return BrowserStatus(
+                state="running" if self.active else "stopped",
+                port=9333,
+                profile_dir="",
+                browser_path="",
+            )
+
+    manager = FakeManager()
+    monkeypatch.setattr(_site_browser, "get_browser_manager", lambda db: manager)
+
+    url = "https://www.zhipin.com/job_detail/abc.html?securityId=1"
+    first = client.post("/api/apply/browser/open-url", json={"url": url})
+    assert first.status_code == 200
+    assert manager.started == url
+    assert first.json()["state"] == "running"
+
+    second = client.post("/api/apply/browser/open-url", json={"url": url + "2"})
+    assert second.status_code == 200
+    assert manager.opened == url + "2"

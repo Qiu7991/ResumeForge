@@ -260,6 +260,39 @@ def open_browser_url(db: Session) -> BrowserStatusOut:
         return _browser_status_out(manager.status(), db)
 
 
+def open_browser_at(db: Session, url: str) -> BrowserStatusOut:
+    """在**投递专用浏览器**里打开一个具体岗位页。
+
+    与 ``open_browser_url`` 的区别：那个只回到站点首页，这里尊重调用方给的岗位地址。
+    浏览器没启动时直接用它作为启动地址（不会先闪一个空白页/站点首页）；已经在跑时
+    复用当前标签页导航。登录态与投递台完全同源，所以「前往投递」不会再落到一个
+    未登录的日常浏览器里。
+    """
+    from ..browser.browser_inputs import validated_browser_url
+
+    target = validated_browser_url(str(url or "").strip())
+    with _browser_operation_lock:
+        manager = get_browser_manager(db)
+        try:
+            if manager.is_active():
+                manager.open_url(target)
+                status = manager.status()
+            else:
+                # 端口探测偶尔会漏掉刚启动/被别的进程占用的实例；先按"已在跑"导航，
+                # 只有明确报未启动时才拉起新窗口，避免同一 profile 被重复打开。
+                try:
+                    manager.open_url(target)
+                except BrowserError as exc:
+                    if "请先启动" not in str(exc):
+                        raise
+                    status = manager.start(url=target)
+                else:
+                    status = manager.status()
+        except (BrowserError, CdpError) as exc:
+            raise ApplyConflict(str(exc)) from exc
+        return _browser_status_out(status, db)
+
+
 def refresh_browser(db: Session) -> BrowserStatusOut:
     """刷新专用浏览器当前标签页，不导航到招聘网站入口。"""
     with _browser_operation_lock:
@@ -314,6 +347,20 @@ def reset_browser_manager() -> None:
     with _browser_lock:
         if _browser_manager is not None:
             _browser_manager.stop()
+        _browser_manager = None
+        _browser_manager_key = None
+
+
+def detach_browser_manager() -> None:
+    """退出应用时放开进程内句柄，但**不关闭**投递专用浏览器。
+
+    浏览器的登录态属于用户（BOSS 等站点的会话常常是 session cookie），应用重启时把
+    浏览器一起关掉会让用户"明明刚扫码登录过，下一次又要重新登录"。这里只丢掉本进程的
+    句柄：浏览器继续运行，下次启动通过调试端口重新接上（``owned=false``，界面会如实
+    说明它关不掉，需要用户自己关）。测试仍用 ``reset_browser_manager`` 的停止语义。
+    """
+    global _browser_manager, _browser_manager_key
+    with _browser_lock:
         _browser_manager = None
         _browser_manager_key = None
 
