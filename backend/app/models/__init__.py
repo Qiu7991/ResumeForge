@@ -152,6 +152,7 @@ from .tracker import (
 from .usage_pricing import UsagePricingRecord
 from .user_file import UserFile
 from .versions import (
+    VERSION_SOURCE_ASSISTANT,
     VERSION_SOURCE_MANUAL,
     VERSION_SOURCE_RESTORE,
     VERSION_SOURCES,
@@ -292,6 +293,7 @@ __all__ = [
     "ResumeVersion",
     "ResumeVariant",
     "VERSION_SOURCES",
+    "VERSION_SOURCE_ASSISTANT",
     "VERSION_SOURCE_MANUAL",
     "VERSION_SOURCE_RESTORE",
     "ResumePhrase",

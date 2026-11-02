@@ -50,6 +50,10 @@ const workbench = {
   "workbench.note.zoomInline": "缩放用下方按钮或按住 Ctrl 滚滚轮",
 
   // ── 左栏分组标题 ───────────────────────────────────────────
+  /** T7d：v2 制作台左栏收成三组（旧 key 保留给其它宿主/生成配置，不删）。 */
+  "workbench.group.template": "模板",
+  "workbench.group.page": "版面",
+  "workbench.group.style": "样式",
   /** 第一组：模板与版式（L1 / L2，既有控件）。 */
   "workbench.group.layout": "模板与版式",
   /** 第二组：排版参数（L3，既有 `ResumeMeasureControls`）。 */
@@ -92,6 +96,8 @@ const workbench = {
   "workbench.color.navy": "深蓝",
   "workbench.color.forest": "墨绿",
   "workbench.color.wine": "暗红",
+  "workbench.color.followTemplate": "跟随模板",
+  "workbench.param.paletteAria": "展开{label}的色板",
 
   // ── 编辑器（中栏与弹窗共用）────────────────────────────────
   /** 中栏标题。 */
@@ -244,6 +250,11 @@ const workbench = {
   "resume.manual.load-failed": "读取当前方案资料失败",
   "resume.manual.retry": "重新读取",
   "resume.manual.close": "关闭",
+  "resume.manual.clearAll": "清空所有内容",
+  "resume.manual.clearConfirm": "清空所有内容？板块结构会保留，字段值会清空",
+  "resume.manual.unsaved": "有未保存的修改，关闭后会丢失",
+  "resume.manual.keep-editing": "继续编辑",
+  "resume.manual.discard-close": "关闭不保存",
   "resume.generate.group-title": "本次使用",
   "resume.generate.group-members": "{count} 个板块",
   "resume.generate.group-failed": "当前方案信息读取失败",
@@ -312,6 +323,30 @@ const workbench = {
   "generate.cancelFailed": "取消失败，请重试",
   "generate.recordNotSaved": "简历记录尚未保存完成，请稍后再试",
   "generate.changesSaved": "简历修改已保存",
+
+  // ── 历史每一步的变更摘要（R-17）──────────────────────────────
+  "workbench.history.change.untitledSection": "未命名板块",
+  "workbench.history.change.untitledEntry": "未命名条目",
+  "workbench.history.change.untitledField": "未命名字段",
+  "workbench.history.change.more": "{main} 等 {count} 项",
+  "workbench.history.change.sectionAdd": "新增板块「{section}」",
+  "workbench.history.change.sectionRemove": "删除板块「{section}」",
+  "workbench.history.change.sectionMove": "板块「{section}」移到第 {index} 位",
+  "workbench.history.change.entryAdd": "「{section}」新增条目「{entry}」",
+  "workbench.history.change.entryRemove": "「{section}」删除条目「{entry}」",
+  "workbench.history.change.entryMove": "「{section}」条目「{entry}」移到第 {index} 位",
+  "workbench.history.change.entryHide": "「{section}」隐藏条目「{entry}」",
+  "workbench.history.change.entryShow": "「{section}」显示条目「{entry}」",
+  "workbench.history.change.entryLayout": "「{section}」调整条目「{entry}」的排版",
+  "workbench.history.change.fieldAdd": "「{entry}」新增字段「{field}」",
+  "workbench.history.change.fieldRemove": "「{entry}」删除字段「{field}」",
+  "workbench.history.change.fieldMove": "「{entry}」字段「{field}」移到第 {index} 位",
+  "workbench.history.change.valueOne": "「{entry}」修改「{field}」",
+  "workbench.history.change.valueMany": "「{entry}」正文 {count} 处修改（首个：「{field}」）",
+  "workbench.history.change.layoutPages": "页数上限改为 {pages} 页",
+  "workbench.history.change.layoutFont": "字号改为 {scale}",
+  "workbench.history.change.layoutTemplate": "模板改为 {template}",
+  "workbench.history.change.layoutFormat": "版式参数 {count} 项修改",
 } as const;
 
 export default workbench;

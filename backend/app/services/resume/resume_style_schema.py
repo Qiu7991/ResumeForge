@@ -17,19 +17,21 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .resume_config_domains import HEX_COLOR_RE, is_object_id
 from .resume_template_scalars import template_float
 
-# 六个固定角色。顺序就是契约 §2.2 的顺序，也是 catalog role_fields 的下发顺序。
+# 五个固定角色。顺序就是契约 §2.2 的顺序，也是 catalog role_fields 的下发顺序。
+# 「重点文字」（emphasis）在 Q15 删除：planner 从不产出该角色、模板也没有对应
+# data-role，PDF/Word 从不查询它——留着只会让用户在面板里调一个永不生效的项。
 ROLES: tuple[str, ...] = (
     "name",
     "section_title",
     "entry_title",
     "body",
     "meta",
-    "emphasis",
 )
 
 # 属性表：key → 类型 + 区间/枚举 + 可用角色。前端同名表必须逐键相等（测试钉住）。
@@ -37,14 +39,15 @@ STYLE_PROPS: tuple[dict[str, Any], ...] = (
     {"key": "font_scale", "type": "number", "min": 0.70, "max": 2.40, "step": 0.02, "roles": ROLES},
     {"key": "color", "type": "color", "roles": ROLES},
     {"key": "bold", "type": "bool", "roles": ROLES},
-    {"key": "italic", "type": "bool", "roles": ROLES},
+    # #5d：italic 已整体移除（PDF 无斜体字形、Word/HTML 行为不一，详见 CHANGELOG）；
+    # 旧数据里的 italic 键留在库中不清洗，但下一次保存版式时会被这里过滤掉。
     {
         "key": "space_before",
         "type": "number",
         "min": 0.0,
         "max": 3.0,
         "step": 0.05,
-        "roles": ("section_title", "entry_title", "body", "emphasis"),
+        "roles": ("section_title", "entry_title", "body"),
     },
     {
         "key": "space_after",
@@ -52,7 +55,7 @@ STYLE_PROPS: tuple[dict[str, Any], ...] = (
         "min": 0.0,
         "max": 3.0,
         "step": 0.05,
-        "roles": ("section_title", "entry_title", "body", "emphasis"),
+        "roles": ("section_title", "entry_title", "body"),
     },
     {
         "key": "line_height",
@@ -60,7 +63,7 @@ STYLE_PROPS: tuple[dict[str, Any], ...] = (
         "min": 1.0,
         "max": 2.6,
         "step": 0.01,
-        "roles": ("body", "entry_title", "emphasis"),
+        "roles": ("body", "entry_title"),
     },
     {"key": "indent", "type": "number", "min": 0.0, "max": 4.0, "step": 0.05, "roles": ("body",)},
     {
@@ -87,7 +90,9 @@ STYLE_PROPS: tuple[dict[str, Any], ...] = (
         "min": -0.10,
         "max": 0.30,
         "step": 0.01,
-        "roles": ("name", "section_title"),
+        # Q11：字距放开到正文 / 条目头——四出口都能表达（HTML letter-spacing / Word
+        # w:spacing / PDF set_char_spacing）；此前只允许姓名与板块标题，用户调不到。
+        "roles": ("name", "section_title", "body", "entry_title"),
     },
 )
 
@@ -228,26 +233,71 @@ def validate_object_roles_domain(raw: object) -> dict | None:
     return {"version": 1, **result}
 
 
+def _list_indent_ratio(template_file: str) -> float | None:
+    """从模板 CSS 读 `ul { padding-left: calc(var(--fs) * X) }` 里的 X（审计 R-34A）。
+
+    为什么不把它抄成一张常量表：模板一改缩进，常量表就悄悄漂移，而面板上的"模板基准"
+    会指着一个纸面上已经不存在的值。解析源文件是唯一不会漂移的来源（先例：
+    `pdf_exporter/layout.py` 读 `entry_gap`、`test_resume_layout.py` 用同一手法核对注册表）。
+
+    读不到就返回 None（调用方不写这个键）：宁可让面板显示中性值，也不要编一个数。
+    """
+    from .resume_template_catalog import TEMPLATES_DIR, template_spec
+
+    path = TEMPLATES_DIR / template_spec(template_file)["file"]
+    try:
+        css = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = _LIST_INDENT_RE.search(css)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+_LIST_INDENT_RE = re.compile(
+    r"ul\s*\{\s*padding-left:\s*calc\(\s*var\(--fs\)\s*\*\s*([0-9.]+)\s*\)"
+)
+
+
 def template_role_defaults(template: str) -> dict[str, dict[str, float]]:
     """模板的角色基准值（从 ``TEMPLATE_LAYOUT_DEFAULTS`` 既有比例字段投影，不新增数字）。
 
     投影关系（契约 §2.8）：``name_ratio → name.font_scale``、``section_title_ratio →
     section_title.font_scale``、``entry_title_ratio → entry_title.font_scale``、
     ``entry_meta_ratio → meta.font_scale``、``line_height → body.line_height``；
-    body/emphasis 的基准字号是 1.0（正文就是基准）。
+    body 的基准字号是 1.0（正文就是基准）。
+
+    R-34A 追加两项**间距基准**（只有这两项在模板 CSS 里有独立来源，其余不编）：
+    · ``body.indent`` ← 模板 ``ul`` 的 ``padding-left`` 系数（解析 .j2 的 CSS）；
+    · ``section_title.space_after`` ← 注册表里的 ``section_title_gap``（块标题与正文的留白）。
+      `space_before` 没有对应来源：模板用 `.section` 的**下**外边距表达板块之间的间隔，
+      没有"段前"这个概念，所以不写这个键（缺键 = 面板显示中性值，不是假的 0）。
     """
     from .resume_template_layout import template_layout_defaults
     from .resume_templates import template_spec
 
-    defaults = template_layout_defaults(template_spec(template)["name"])
-    return {
+    spec = template_spec(template)
+    defaults = template_layout_defaults(spec["name"])
+    # 五个角色的 font_scale 一律写成**一行字面量**：`styleParity.test.ts` 用源码文本
+    # 断言"每个角色都投影出了 font_scale"（它拿不到 Python 运行时），多行展开会让那条
+    # 判据失效。新增的间距基准在下面单独补键，不挤进这一行。
+    result: dict[str, dict[str, float]] = {
         "name": {"font_scale": template_float(defaults["name_ratio"])},
         "section_title": {"font_scale": template_float(defaults["section_title_ratio"])},
         "entry_title": {"font_scale": template_float(defaults["entry_title_ratio"])},
         "body": {"font_scale": 1.0, "line_height": template_float(defaults["line_height"])},
         "meta": {"font_scale": template_float(defaults["entry_meta_ratio"])},
-        "emphasis": {"font_scale": 1.0},
     }
+    # R-34A：两项有模板来源的间距基准（其余不编，见函数 docstring）。
+    result["section_title"]["space_after"] = template_float(defaults["section_title_gap"])
+    indent = _list_indent_ratio(spec["name"])
+    if indent is not None:
+        result["body"]["indent"] = indent
+    return result
 
 
 def role_fields_catalog() -> list[dict]:

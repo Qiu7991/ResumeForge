@@ -158,7 +158,6 @@ def test_text_overrides_reach_inner_roles_with_classic_base_ratios():
                     "font_scale": 1.4,
                     "bold": True,
                     "color": "#123c69",
-                    "italic": True,
                     "line_height": 1.5,
                 }
             }
@@ -180,15 +179,15 @@ def test_text_overrides_reach_inner_roles_with_classic_base_ratios():
     shared = _shared_rule(css, f'[data-object-id="{ENTRY_ID}"]')
     assert "color: #123c69;" in shared
     assert "font-weight: 700;" in shared
-    assert "font-style: italic;" in shared
     assert "line-height: 1.5;" in shared
+    # #5d：斜体整体移除——任何输入都不再产出 font-style。
+    assert "font-style" not in css
 
 
-def test_font_weight_and_italic_are_forwarded_as_concrete_values():
-    css = entry_style_css(_style({ENTRY_ID: {"bold": False, "italic": False}}))
+def test_font_weight_is_forwarded_as_concrete_value():
+    css = entry_style_css(_style({ENTRY_ID: {"bold": False}}))
     shared = _shared_rule(css, f'[data-object-id="{ENTRY_ID}"]')
     assert "font-weight: 400;" in shared
-    assert "font-style: normal;" in shared
     assert "font-size" not in css
 
 
@@ -215,7 +214,12 @@ def test_each_template_expands_font_scale_with_its_own_role_ratios(template: str
 # ===== 3. 空间属性只落在对象根 =====
 
 
-def test_spatial_props_stay_on_the_object_root_only():
+def test_spatial_props_target_the_elements_that_carry_them():
+    """Q11 契约：项目符号 / 缩进 / 日期位置必须写到真正承载它们的元素上。
+
+    写在对象根上时 list-style-type 被模板 ul 的 UA disc 覆盖、padding-left 只平移文字
+    （outside marker 不动）、justify-content 对非 flex 容器无效——用户看到"调了没反应"。
+    """
     css = entry_style_css(
         _style(
             {
@@ -232,26 +236,45 @@ def test_spatial_props_stay_on_the_object_root_only():
             }
         )
     )
-    root = next(
-        declarations
-        for selector, declarations in _rules(css)
-        if selector == f'[data-object-id="{ENTRY_ID}"]'
-    )
+    rules = dict(_rules(css))
+    root = rules[f'[data-object-id="{ENTRY_ID}"]']
+    # 文字元素属性仍落在根节点（靠继承对整条生效）。
     for expected in (
+        "font-size: calc(var(--fs) * 1.2 * 1);",
         "margin-top: calc(var(--fs) * 0.3);",
         "margin-bottom: calc(var(--fs) * 0.2);",
-        "padding-left: calc(var(--fs) * 0.5);",
-        "list-style-type: '–';",
         "text-align: center;",
-        "justify-content: flex-start;",
         "letter-spacing: calc(var(--fs) * 0.02);",
     ):
         assert expected in root
+    # 三个"换目标元素才生效"的属性不在根节点上。
+    for token in ("padding-left", "list-style-type", "justify-content"):
+        assert token not in root
+    assert rules[f'[data-object-id="{ENTRY_ID}"] ul'] == "list-style-type: '–';"
+    assert (
+        rules[f'[data-object-id="{ENTRY_ID}"] ul, [data-object-id="{ENTRY_ID}"] .body-paragraph']
+        == "padding-left: calc(var(--fs) * 0.5);"
+    )
+    assert (
+        rules[f'[data-object-id="{ENTRY_ID}"] .entry-head'] == "justify-content: flex-start;"
+    )
+    # 子元素规则（文字外观）仍然不带空间属性。
     for selector, declarations in _rules(css):
         if "[data-role=" not in selector:
             continue
         for token in _SPATIAL_TOKENS:
             assert token not in declarations, (selector, token)
+
+
+def test_bullet_glyph_matches_pdf_and_word():
+    """圆点在三个出口都是**实心圆**：HTML `disc` ↔ PDF 画的实心圆（审计 R-20）。
+
+    上一版这里断的是「HTML 用 `'·'` 字形、与 PDF/Word 逐字一致」。R-20 把 PDF 改成
+    画圆之后，字形的「·」反而与纸面不一致了（草稿的点儿明显更小），所以口径反过来。
+    """
+    css = entry_style_css(_style({ENTRY_ID: {"bullet": "dot"}}))
+    assert "list-style-type: disc;" in css
+    assert "list-style-type: '·';" not in css
 
 
 def test_spatial_only_override_keeps_a_single_root_rule():
@@ -298,7 +321,8 @@ def test_multiple_objects_are_sorted_and_isolated():
 # ===== 5. 既有角色规则不受本改动影响 =====
 
 
-def test_role_css_output_is_unchanged_by_the_shared_declaration_helper():
+def test_role_css_splits_text_rules_from_targeted_rules():
+    """角色级同样按目标元素拆规则（Q11）：一条角色可能产出多条 CSS 规则。"""
     style = resolve_style(
         template="classic",
         format_config={
@@ -310,8 +334,15 @@ def test_role_css_output_is_unchanged_by_the_shared_declaration_helper():
         },
     )
     css = role_style_css(style)
-    assert len(css.splitlines()) == 2  # 一个角色一行
-    assert '[data-role="body"] {' in css
-    assert '[data-role="section_title"] {' in css
-    assert "font-size: calc(var(--fs) * 1.2 * 1);" in css
-    assert "margin-bottom: calc(var(--fs) * 0.8);" in css
+    rules = dict(_rules(css))
+    body = rules['[data-role="body"]']
+    assert "font-size: calc(var(--fs) * 1.2 * 1);" in body
+    assert "line-height: 1.55;" in body
+    # 缩进/符号换到定向选择器：li 上的 padding-left 移不动 outside marker。
+    assert "padding-left" not in body
+    assert "list-style-type" not in body
+    assert rules["ul"] == "list-style-type: '–';"
+    assert rules["ul, .body-paragraph"] == "padding-left: calc(var(--fs) * 1.6);"
+    assert rules['[data-role="section_title"]'] == (
+        "color: #123c69; margin-bottom: calc(var(--fs) * 0.8);"
+    )

@@ -36,7 +36,9 @@ from ...services import trash
 from ...services.career_scenarios.resolve import CareerContextError, resolve_context
 from ...services.claims import build_baseline
 from ...services.llm.base import LLMError
+from ...services.llm.usage_tasks import set_ambient_scope
 from ...services.profile.generation_preferences import get_generation_preferences
+from ...services.resume import document_io
 from ...services.resume.generate_snapshot import (
     consumed_has_content,
     delete_generation_snapshot,
@@ -55,10 +57,14 @@ from ...services.resume.resume_generate_runner import (
     ResumeGenerateRunnerError,
     get_resume_generate_runner,
 )
+from ...services.resume.resume_generation_levels import generation_token_budget
 from ...services.resume.resume_generator import ResumeGenerator
 from ...services.resume.resume_record import save_record
 from ...services.resume.resume_tech_stack import strip_resume_tech_stack
-from ...services.resume.scenario_context import build_scenario_prompt_block
+from ...services.resume.scenario_context import (
+    build_scenario_prompt_block,
+    scenario_section_order,
+)
 from ._shared import _format_sse
 
 logger = logging.getLogger(__name__)
@@ -129,6 +135,15 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
     F3：当前组消费快照在本请求内冻结（租约内），生成器与保存段都只消费这份内存快照；
     快照追溯行在本请求内写入，保存成功时同事务回写 resume_id。
     """
+    # #35/A1：生成入口的数据边界——喂的是简历 + 资料投影 + 目标岗位（脱敏视图）；
+    # 目标语言取本次文档的语言，token 预算与篇幅上限挂钩（见 generation_token_budget）。
+    # 后台任务线程会复制本请求的 contextvars，因此这里声明一次即覆盖整条生成链路。
+    set_ambient_scope(
+        input_scope="resume+profile+job",
+        masked=True,
+        language=payload.options.language,
+        budget=generation_token_budget(payload.options),
+    )
     try:
         lease = dataset_scope.acquire_lease("resume-generate-sse")
     except DatasetScopeError as exc:
@@ -179,6 +194,19 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
         _log_frozen_context(snapshot, transport="sse")
         career_block = build_scenario_prompt_block(snapshot)
         context_snapshot = snapshot.model_dump() if snapshot is not None else None
+        # #30：场景 preferred_sections → 板块顺序（用户显式拖过顺序时不覆盖）；
+        # 与后台 runner 同一语义（resume_generate_runner 的 save_format_config）。
+        scenario_order = None
+        if career_block and not (payload.options.format_config or {}).get("section_order"):
+            try:
+                scenario_order = scenario_section_order(snapshot)
+            except Exception:  # noqa: BLE001 - 顺序推导失败按未用场景继续
+                logger.warning("SSE 生成场景板块顺序推导失败")
+        save_format_config = (
+            {**(payload.options.format_config or {}), **scenario_order}
+            if scenario_order
+            else payload.options.format_config
+        )
 
         # F3 §1：冻结当前组消费快照（租约内、db 仍打开）；随后立即写追溯行，
         # 生成段不再读"当前组"。
@@ -222,6 +250,7 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
     async def event_stream():
         raw_parts: list[str] = []
         parsed: dict | None = None
+        document: dict | None = None
         warnings: list[str] = []
         done_event: dict | None = None
         try:
@@ -259,6 +288,14 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
                     else None
                 )
                 with factory() as save_db:
+                    # SSE 的 done.resume 与详情/保存接口必须同一种形状（v2）：
+                    # 在保存同一事务的快照里取自定义字段定义，转换一次供事件使用。
+                    document = document_io.ensure_document_version(
+                        parsed,
+                        language=payload.options.language,
+                        format_config=save_format_config,
+                        custom_fields=document_io.custom_field_definitions(save_db),
+                    )
                     record = save_record(
                         save_db,
                         parsed,
@@ -274,7 +311,7 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
                         page_limit=payload.options.page_limit,
                         font_scale=payload.options.font_scale,
                         language=payload.options.language,
-                        format_config=payload.options.format_config,
+                        format_config=save_format_config,
                         custom_instruction=payload.options.custom_instruction,
                         coverage_notes=[
                             *(done_event.get("coverage_notes") or []),
@@ -284,6 +321,8 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
                         fact_annotations=done_event.get("fact_annotations") or [],
                         document_mode=payload.options.document_mode,
                         context_snapshot=context_snapshot,
+                        # 与 SSE done.resume 复用同一份转换结果（只转一次，id 一致）。
+                        document=document,
                         commit=False,
                     )
                     # F3 §1：简历记录与快照行同事务提交（resume_id 回写）。
@@ -299,6 +338,8 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
                     save_db.refresh(record)
                 # 只有持久化成功后才宣布完成；断流不会留下“成功但无历史记录”的状态。
                 yield _format_sse({"type": "saved", "record_id": record.id})
+                if document is not None:
+                    done_event = {**done_event, "resume": document}
                 yield _format_sse(done_event)
         except LLMError:
             logger.warning("简历生成失败（模型错误，用户可见错误已固定脱敏）")
@@ -336,6 +377,13 @@ def start_resume_generation(payload: GenerateRequest, db: Session = Depends(get_
     profile_usage_snapshot（task_id）——worker 不再读当前组；排队/运行中切组、删组
     不改变任务来源（R-24/R-33）。
     """
+    # #35/A1：后台生成入口同样在入队前声明边界（runner.start 复制本请求 contextvars）。
+    set_ambient_scope(
+        input_scope="resume+profile+job",
+        masked=True,
+        language=payload.options.language,
+        budget=generation_token_budget(payload.options),
+    )
     job = db.get(Job, payload.job_id) if payload.job_id is not None else None
     if payload.job_id is not None and (job is None or trash.is_deleted(job)):
         raise HTTPException(status_code=404, detail="岗位不存在或已被删除")

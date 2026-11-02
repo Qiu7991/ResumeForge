@@ -133,7 +133,7 @@ def _resume_prompt_json(resume: ResumeContent) -> str:
 
 async def revise_resume(
     provider: BaseLLMProvider,
-    resume: ResumeContent,
+    resume: ResumeContent | dict,
     job: JobOut | None,
     instructions: str,
     *,
@@ -141,7 +141,7 @@ async def revise_resume(
     jd: str = "",
     evidence_plan_block: str = "",
     include_tech_stack: bool = True,
-) -> ResumeContent:
+) -> ResumeContent | dict:
     """按用户指令修订简历；``instructions`` 为空表示整体重新生成。
 
     ``jd`` 是目标岗位的完整 JD 文本（description/requirements/additional_info）。
@@ -151,6 +151,17 @@ async def revise_resume(
     返回修订后的完整内容：身份字段取自原简历，其余来自模型输出（解析失败抛
     :class:`LLMError` 或 ``ValueError``，由 API 层转成用户可读的提示）。
     """
+    if isinstance(resume, dict):
+        from .document_revision import revise_document
+
+        return await revise_document(
+            provider,
+            resume,
+            job,
+            instructions,
+            career_context_block=career_context_block,
+            max_chars=MAX_RESUME_CHARS,
+        )
     trimmed = instructions.strip()[:MAX_INSTRUCTION_CHARS]
     full_regenerate = not instructions.strip()
     # 渲染会吃掉模板文件末尾的换行，补回来保持与生成器一致的行为。

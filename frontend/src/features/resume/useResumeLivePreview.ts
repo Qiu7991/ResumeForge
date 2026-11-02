@@ -31,14 +31,14 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
-import type { ResumeContent, ResumeLayout } from "../../types";
+import type { ResumeDocument, ResumeLayout } from "../../types";
 
 /** 状态机：空闲 / 正在输入（防抖中）/ 正在渲染 / 上一次失败。 */
 export type ResumeLivePreviewState = "idle" | "typing" | "rendering" | "error";
 
 /** 一次待渲染的"内容 + 版式"快照。 */
 export interface ResumeLivePreviewJob {
-  content: ResumeContent;
+  content: ResumeDocument;
   layout: ResumeLayout;
 }
 
@@ -48,14 +48,31 @@ const BURST_BUDGET = 2;
 /** 与 `ResumeLayoutControls` 的"拖完就重排"体感一致：短到不像卡顿，长到能合并一次输入。 */
 const DEFAULT_DEBOUNCE_MS = 600;
 
+/**
+ * 从节点向上找真正的滚动容器（overflow-y 可滚且内容超出）。
+ *
+ * 制作台传给 hook 的 scrollRef 指向 .resume-wb-canvas-scroll——它自己 overflow:hidden，
+ * 真正滚的是外层弹窗正文（.ant-modal-body）。找不到时退回传进来的节点，保持旧行为。
+ */
+export function nearestScrollableAncestor(node: HTMLElement | null): HTMLElement | null {
+  let element: HTMLElement | null = node;
+  while (element) {
+    const style = window.getComputedStyle(element);
+    const scrollable = style.overflowY === "auto" || style.overflowY === "scroll";
+    if (scrollable && element.scrollHeight > element.clientHeight) return element;
+    element = element.parentElement;
+  }
+  return node;
+}
+
 export interface UseResumeLivePreviewOptions {
   /** 制作台打开且中栏可见时为真；为假时一次请求都不发。 */
   enabled: boolean;
   /** 合并 overlay 之后的整份内容。 */
-  content: ResumeContent | null;
+  content: ResumeDocument | null;
   layout?: ResumeLayout;
   /** 注入 `api/renderResume`：保留 `signal` 才能真的取消在飞请求。 */
-  render: (content: ResumeContent, layout: ResumeLayout, signal: AbortSignal) => Promise<string>;
+  render: (content: ResumeDocument, layout: ResumeLayout, signal: AbortSignal) => Promise<string>;
   onHtml: (html: string) => void;
   onStateChange?: (state: ResumeLivePreviewState) => void;
   /** 滚动容器：替换 html 后按它恢复滚动位置。 */
@@ -107,7 +124,6 @@ export function useResumeLivePreview({
   useEffect(() => {
     debounceRef.current = debounceMs;
   }, [debounceMs]);
-
   // ── 状态机（全部是 ref：它们描述"这一帧之外"的事实，不该触发渲染）──
   const pendingRef = useRef<ResumeLivePreviewJob | null>(null);
   const lastJobRef = useRef<ResumeLivePreviewJob | null>(null);
@@ -119,8 +135,16 @@ export function useResumeLivePreview({
   const suspendedRef = useRef(false);
   const disposedRef = useRef(false);
   /** 首帧基线：内容引用 + 版式签名。 */
-  const lastContentRef = useRef<ResumeContent | null>(null);
+  const lastContentRef = useRef<ResumeDocument | null>(null);
   const lastLayoutRef = useRef<string | null>(null);
+  /** 最近一次渲染的入参：`resume()` 用它判断"挂起期间内容是否变过"。 */
+  const latestJobRef = useRef<{ content: ResumeDocument | null; layout?: ResumeLayout }>({
+    content: null,
+  });
+  // 最新入参跟着渲染走：`resume()` 是命令式回调，读不到渲染作用域的 props。
+  useEffect(() => {
+    latestJobRef.current = { content, layout };
+  }, [content, layout]);
   /** `pump` / `rearm` 互相调用（完成后再跑末版 / 预算用完就重新防抖），只能靠 ref 打破环。 */
   const pumpRef = useRef<() => void>(() => undefined);
   const rearmRef = useRef<(job: ResumeLivePreviewJob | null) => void>(() => undefined);
@@ -133,13 +157,15 @@ export function useResumeLivePreview({
 
   /** 写入 html，并把滚动位置按"高度没变就还原、变了按比例"放回去。 */
   const applyHtml = useCallback((html: string) => {
-    const node = scrollRefOf.current?.current ?? null;
+    // 制作台传进来的 ref 是 flex 布局层（本身 overflow:hidden），真正滚的是弹窗正文；
+    // 必须向上找到真正的滚动容器，否则每次刷新都只"恢复"一个永远为 0 的 scrollTop。
+    const node = nearestScrollableAncestor(scrollRefOf.current?.current ?? null);
     const previousTop = node ? node.scrollTop : 0;
     const previousHeight = node ? node.scrollHeight : 0;
     htmlRef.current(html);
     if (!node) return;
     const restore = () => {
-      const target = scrollRefOf.current?.current ?? null;
+      const target = nearestScrollableAncestor(scrollRefOf.current?.current ?? null);
       if (!target) return;
       const nextHeight = target.scrollHeight;
       if (nextHeight <= 0) return;
@@ -150,6 +176,8 @@ export function useResumeLivePreview({
     };
     if (typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(restore);
     else restore();
+    // iframe 重排会把高度再撑一次并触发滚动锚定；分几拍再写回同一位置，末次写回赢。
+    for (const delay of [120, 400, 1200]) window.setTimeout(restore, delay);
   }, []);
 
   const pump = useCallback(() => {
@@ -226,12 +254,14 @@ export function useResumeLivePreview({
     const signature = JSON.stringify(layout);
     const first = lastContentRef.current === null && lastLayoutRef.current === null;
     if (lastContentRef.current === content && lastLayoutRef.current === signature) return;
+    // R-32：**挂起期间不记基线**。以前这里先写 `lastContentRef/lastLayoutRef` 再 return，
+    // 保存期间隐藏/删除字段的改动被记成"已渲染过"，`resume()` 回来一比对就认为没变化，
+    // 纸面于是停在旧一版（用户看到"隐藏了但纸面还在"）。基线只描述"真的排过的那一版"。
+    if (suspendedRef.current) return;
     lastContentRef.current = content;
     lastLayoutRef.current = signature;
     // 首帧只记基线：宿主刚渲染过同一份内容，再发一次只是让 iframe 白屏一下。
-    // 保存期间（`suspend` 过）也只记基线：宿主保存完会把权威 html 写回来，此刻发请求既多余，
-    // 又会让状态条卡在「预览更新中…」（挂起时 `pump` 不跑，攒下的 pending 没人接）。
-    if (first || suspendedRef.current) return;
+    if (first) return;
     schedule({ content, layout });
   }, [enabled, content, layout, schedule]);
 
@@ -252,9 +282,24 @@ export function useResumeLivePreview({
     setState("idle");
   }, [clearTimer]);
 
+  /**
+   * 保存结束：交还控制权。
+   *
+   * R-32：挂起期间的内容变化没有记基线（见上面那条 effect），所以这里必须**主动比一次**——
+   * 否则"保存期间改内容"永远等不到下一次 effect（依赖没变），纸面就一直是保存那一刻的版本。
+   * 补排程走 `schedule`（同一套 budget/rearm），不直接 `pump()`：保存刚结束就撞上一次渲染，
+   * `pump` 会绕过防抖把还没敲完的字也排进去。
+   */
   const resume = useCallback(() => {
     suspendedRef.current = false;
-  }, []);
+    const latest = latestJobRef.current;
+    if (!latest.content || !latest.layout) return;
+    const signature = JSON.stringify(latest.layout);
+    if (lastContentRef.current === latest.content && lastLayoutRef.current === signature) return;
+    lastContentRef.current = latest.content;
+    lastLayoutRef.current = signature;
+    schedule({ content: latest.content, layout: latest.layout });
+  }, [schedule]);
 
   // ── 关闭 / 卸载：abort + 清定时器 + 清 pending ──────────────────
   useEffect(() => {

@@ -19,7 +19,7 @@ const provenance = {
   "provenance.chain.unlink": "Unlink source",
   "provenance.chain.relink": "Adopt latest source",
   "provenance.chain.link": "Link to source",
-  "provenance.chain.fingerprint": "Fingerprint {value}",
+  "provenance.chain.fingerprint": "Version fingerprint {value}",
   "provenance.coverage": "Linked: {linked} / {total}",
   "provenance.coverage.unlinked": "{count} items unlinked",
   "provenance.source.kind.claim": "Fact ledger",
@@ -174,6 +174,29 @@ const provenance = {
   "provenance.usage.finishReason.budget": "Budget exhausted",
   "provenance.usage.finishReason.toolCalls": "Tool calls",
   "provenance.usage.finishReason.unknown": "Unknown",
+
+  // ── R40: task type → English labels (raw codes never reach the UI) ──
+  "provenance.usage.task.resumeGenerate": "Resume generation",
+  "provenance.usage.task.resumeRevise": "Resume revision",
+  "provenance.usage.task.resumeSuggestions": "Improvement suggestions",
+  "provenance.usage.task.resumeTranslate": "Resume translation",
+  "provenance.usage.task.resumeOptimize": "Resume optimization",
+  "provenance.usage.task.assistant": "Job assistant",
+  "provenance.usage.task.resumeWriting": "Writing enhancement",
+  "provenance.usage.task.resumeRisk": "Risk scan",
+  "provenance.usage.task.resumeScenario": "Scenario variants",
+  "provenance.usage.task.jobParse": "Job parsing",
+  "provenance.usage.task.jobAnalysis": "Job analysis",
+  "provenance.usage.task.jobMatch": "Job match",
+  "provenance.usage.task.interview": "Mock interview",
+  "provenance.usage.task.webform": "Web form filling",
+  "provenance.usage.task.claims": "Claim ledger",
+  "provenance.usage.task.tracker": "Progress tracker",
+  "provenance.usage.task.profileParse": "Profile parsing",
+  "provenance.usage.task.drill": "Interview drill",
+  "provenance.usage.task.apply": "Job application",
+  "provenance.usage.task.resumeTemplate": "Resume template",
+  "provenance.usage.task.settingsProbe": "Settings self-check",
   "settings.provenance.pricing.title": "Prices for cost estimates",
   "settings.provenance.pricing.hint":
     "Use your provider's list price **per 1M tokens**. Input is split into cache-hit and cache-miss (hits are usually much cheaper); output is a separate tier. This only affects estimates, not billing.",
@@ -194,7 +217,8 @@ const provenance = {
   "provenance.link.kind": "Source type",
   "provenance.link.sourceTitle": "Source title",
   "provenance.link.sourceTitlePlaceholder":
-    "Create a manual source, e.g. the original project description from your supervisor",
+    "e.g. the original project description from your supervisor",
+  "provenance.link.newSourceHeading": "New source details",
   "provenance.link.externalRef": "Source reference",
   "provenance.link.externalRefHint":
     "Optional: a stable fact ledger or resource box identifier, e.g. claim_record:12",
@@ -212,9 +236,28 @@ const provenance = {
   "provenance.link.cancel": "Cancel",
   "provenance.link.success": "Source link established",
   "provenance.link.failed": "Could not link the source",
-  "provenance.link.noSources": "No reusable sources yet; create a manual source",
+  "provenance.link.noSources": "No reusable sources yet; create a source below",
   "provenance.link.kindRequired": "Choose a source type first",
   "provenance.link.titleRequired": "Enter a source title first",
+
+  // P5-2: old source links that cannot be located (read-only exposure; no migration, no guessing)
+  "provenance.unresolved.title": "{count} old links cannot be located",
+  "provenance.unresolved.hint":
+    "These old links only store a legacy path that no longer matches the document; nothing is guessed. Delete them or link again",
+  "provenance.unresolved.reason.targetMissing": "This location no longer exists in the document",
+  "provenance.unresolved.reason.objectIdInvalid": "The old link has an invalid object identifier",
+  "provenance.unresolved.reason.noLocator": "The old link has no locator",
+  "provenance.unresolved.reason.unknown": "The old link cannot be located (unknown reason)",
+  "provenance.unresolved.delete": "Delete old link",
+  "provenance.unresolved.deleteConfirmTitle": "Delete this old link",
+  "provenance.unresolved.deleteConfirmBody": "This cannot be undone",
+  "provenance.unresolved.deleted": "Old link deleted",
+  "provenance.unresolved.relink": "Link again",
+  "provenance.unresolved.relinkHint":
+    "Select the block to link in the list first, then choose Link again",
+  "provenance.unresolved.relinked": "Linked to the selected block",
+  "provenance.unresolved.removeOldFailed":
+    "New link created, but the old link could not be removed; delete it manually",
   "provenance.candidate.needPoint":
     "Select a bullet in the outline or a text passage on the page first",
   "provenance.candidate.needPointHint":
@@ -255,6 +298,12 @@ const provenance = {
     "Historical revisions do not retain original text; only the latest version can be adopted",
   "provenance.adopt.reason.none": "No readable revision is available",
   "provenance.adopt.reason.unknown": "The original source text is unavailable",
+  "provenance.adopt.dirty": "Save or discard unsaved changes before adopting a source",
+  "provenance.source.details": "View source details",
+  "provenance.source.hideDetails": "Hide source details",
+  "provenance.source.impact": "Affects {count} content blocks",
+  "provenance.source.noImpact": "No other resumes are affected",
+  "provenance.source.revisions": "Source revisions",
   "settings.provenance.pricing.inputLabel": "Input price (per 1K tokens)",
   "settings.provenance.pricing.example":
     "Copy the list price from your model provider. For example, input 0.002 and output 0.006 (CNY per 1K tokens): a call with 3K input + 1K output costs about 0.012.",

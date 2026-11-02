@@ -27,37 +27,48 @@
 import { Button, Segmented, Space, Typography } from "antd";
 import { useState } from "react";
 import type { ResumeLayout } from "../../../types";
+import type { ResumeDocument } from "../../../types/resumeDocument";
 import { t } from "../../../i18n";
 import { useLocale } from "../../../i18n/i18nContext";
 import {
   TEXT_LEVEL_LABELS,
   TEXT_LEVEL_SCOPES,
+  TEXT_LEVEL_SCOPE_HINTS,
   TEXT_LEVEL_SCOPE_LABELS,
   TEXT_LEVELS,
   applyTextLevelToScope,
   clearTextLevelScope,
   readTextLevelState,
-  scopeForFieldPath,
   textLevelScopeRole,
   type TextLevelId,
   type TextLevelScope,
   type TextLevelState,
 } from "../../../features/resume-layout/textLevels";
 import { readStyleDomains } from "../../../features/resume-layout/styleOverrides";
-import { isObjectId } from "../../../features/resume-document/identity";
+import { OBJECT_ID_PATTERN } from "../../../features/resume-document/normalize";
+import { scopeForDocumentPath } from "./v2Selection";
 import StyleSourceTag from "./StyleSourceTag";
 
 interface Props {
   layout: ResumeLayout;
-  /** 大纲多选集合（批量目标）；空 = 用 `selectedObjectId`。 */
-  selected: readonly { id: string }[];
+  /** v2 文档：只用来把纸面路径（`section.entryId.itemId`）换成条目 id 与作用范围。 */
+  document: ResumeDocument;
+  /** 大纲多选集合（批量目标）；空 = 用 `selectedObjectId`。label 用于状态行指名片条目。 */
+  selected: readonly { id: string; label?: string }[];
   /** 大纲/纸面单选的那一条。 */
   selectedObjectId: string | null;
+  /** 单选条目的显示名（多选为空时也能在状态行指名）。 */
+  selectedLabel?: string;
   disabled?: boolean;
   /** 一次应用 = 一次提交（宿主负责历史与保存）。 */
   onChange: (layout: ResumeLayout) => void;
   /** 应用/恢复成功（宿主据此播 Toast）；level=null 表示恢复跟随模板。 */
   onApplied?: (result: { level: TextLevelId | null; count: number }) => void;
+  /**
+   * 批量目标 > 1 时提供"只改当前条目"：清空多选、只留聚焦条目。
+   * 不传 = 不给这条出口（无聚焦条目时也无从"只改当前"）。
+   */
+  onClearBatch?: () => void;
   /**
    * 纸面上最后点中的字段路径（`data-resume-path`）。
    *
@@ -77,11 +88,14 @@ function currentLevelText(state: TextLevelState): string {
 
 export default function TextLevelBar({
   layout,
+  document,
   selected,
   selectedObjectId,
+  selectedLabel,
   disabled = false,
   onChange,
   onApplied,
+  onClearBatch,
   pickedPath = null,
 }: Props) {
   useLocale();
@@ -89,7 +103,8 @@ export default function TextLevelBar({
   // "整个条目"。用户的**手动选择**记在 `manual` 里并带上当时那条路径：路径一变就自动
   // 失效、回到新字段推出的范围（不用 effect 同步，也就不存在"渲染后改 state"的抖动）。
   const [manual, setManual] = useState<{ path: string | null; scope: TextLevelScope } | null>(null);
-  const scope = manual && manual.path === pickedPath ? manual.scope : scopeForFieldPath(pickedPath);
+  const defaultScope = scopeForDocumentPath(document, pickedPath);
+  const scope = manual && manual.path === pickedPath ? manual.scope : defaultScope;
   const scopeRole = textLevelScopeRole(scope);
   // 只收合法稳定 id：对象覆盖的键必须是 W00/W01 形状，缺 id 的旧条目写不进去。
   const targets = (
@@ -98,7 +113,7 @@ export default function TextLevelBar({
       : selectedObjectId
         ? [selectedObjectId]
         : []
-  ).filter(isObjectId);
+  ).filter((id) => OBJECT_ID_PATTERN.test(id));
   const domains = readStyleDomains(layout.format_config);
   const state = readTextLevelState(domains, targets, scopeRole);
   // 显式覆盖（某个级别或手改过）才挂来源胶囊：跟随模板时那句"当前：跟随模板"已经说清来源。
@@ -107,6 +122,13 @@ export default function TextLevelBar({
   if (targets.length === 0) {
     return <Typography.Text type="secondary">{t("typography.level.empty")}</Typography.Text>;
   }
+
+  // Q13：状态行先说"在改哪一条/哪几条"，再说级别；「作用于 1 条」不指名会被误读。
+  const singleLabel = targets.length === 1 ? (selected[0]?.label ?? selectedLabel)?.trim() : "";
+  const targetName =
+    singleLabel && singleLabel.length > 0
+      ? singleLabel
+      : t("typography.level.statusMany", { count: targets.length });
 
   const apply = (level: TextLevelId) => {
     if (disabled) return;
@@ -134,29 +156,47 @@ export default function TextLevelBar({
       aria-label={t("typography.level.groupAria")}
       data-text-level-bar="1"
     >
-      <Space size={6} wrap>
-        <Typography.Text strong>{t("typography.level.title")}</Typography.Text>
-        <Typography.Text type="secondary">
-          {t("typography.level.count", { count: targets.length })}
-        </Typography.Text>
+      {/* Q13：外层分组标题已经叫「文字级别」，这里不再重复一个同名标题；改成状态行：
+          在改哪一条（目标）+ 当前级别 + 来源胶囊。 */}
+      <Space size={6} wrap data-text-level-status="1">
+        {/* R-18：批量目标是"改哪几条"的独立语义，不能塞进「正在调整：…」的句式里
+            （"正在调整：2 条内容"读不出是批量）。有聚焦条目时再给一条退回单条的出口。 */}
+        {targets.length > 1 ? (
+          <Typography.Text strong>
+            {t("typography.level.statusBatch", { count: targets.length })}
+          </Typography.Text>
+        ) : (
+          <Typography.Text strong>
+            {t("typography.level.status", { name: targetName })}
+          </Typography.Text>
+        )}
+        {targets.length > 1 && onClearBatch ? (
+          <Typography.Link role="button" tabIndex={0} onClick={onClearBatch}>
+            {t("typography.level.clearBatch")}
+          </Typography.Link>
+        ) : null}
         <Typography.Text type="secondary">
           {t("typography.level.current", { level: currentLevelText(state) })}
         </Typography.Text>
         {explicit ? <StyleSourceTag source="object" /> : null}
       </Space>
-      <Space size={6} wrap data-text-level-scope="1">
-        <Typography.Text type="secondary">{t("typography.level.scope.label")}</Typography.Text>
-        <Segmented
-          size="small"
-          value={scope}
-          disabled={disabled}
-          aria-label={t("typography.level.scope.aria")}
-          options={TEXT_LEVEL_SCOPES.map((value) => ({
-            value,
-            label: t(TEXT_LEVEL_SCOPE_LABELS[value]),
-          }))}
-          onChange={(value) => setManual({ path: pickedPath, scope: value as TextLevelScope })}
-        />
+      <Space orientation="vertical" size={2} style={{ width: "100%" }} data-text-level-scope="1">
+        <Space size={6} wrap>
+          <Typography.Text type="secondary">{t("typography.level.scope.label")}</Typography.Text>
+          <Segmented
+            size="small"
+            value={scope}
+            disabled={disabled}
+            aria-label={t("typography.level.scope.aria")}
+            options={TEXT_LEVEL_SCOPES.map((value) => ({
+              value,
+              label: t(TEXT_LEVEL_SCOPE_LABELS[value]),
+            }))}
+            onChange={(value) => setManual({ path: pickedPath, scope: value as TextLevelScope })}
+          />
+        </Space>
+        {/* 段控下方常驻一句范围说明：只靠标签解释不了"这次到底动了哪些字"。 */}
+        <Typography.Text type="secondary">{t(TEXT_LEVEL_SCOPE_HINTS[scope])}</Typography.Text>
       </Space>
       <Space size={6} wrap role="group" aria-label={t("typography.level.title")}>
         {TEXT_LEVELS.map((level) => {

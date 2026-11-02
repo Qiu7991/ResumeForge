@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from .resume_config_domains import DOMAIN_KEYS, HEX_COLOR_RE, domain_version, is_supported
 from .resume_contact import CONTACT_BREAKS_KEY, validate_contact_breaks
-from .resume_field_layout import validate_field_layout_domain
 from .resume_layout_overrides import (
     EXTRA_FORMAT_KEYS,
     PAGE_MARGIN_KEYS,
@@ -47,9 +46,9 @@ SYSTEM_FONT = "__system__"
 
 FORMAT_FIELDS: tuple[dict, ...] = (
     {"key": "accent", "label": "强调色", "type": "color", "css": "--accent"},
-    {"key": "text_color", "label": "正文颜色", "type": "color", "css": "--text"},
-    {"key": "muted_color", "label": "辅助文字颜色", "type": "color", "css": "--muted"},
-    {"key": "line_color", "label": "分隔线颜色", "type": "color", "css": "--line"},
+    {"key": "text_color", "label": "正文", "type": "color", "css": "--text"},
+    {"key": "muted_color", "label": "次要文字", "type": "color", "css": "--muted"},
+    {"key": "line_color", "label": "分隔线", "type": "color", "css": "--line"},
     {
         "key": "font_scale_adjust",
         "label": "字号系数",
@@ -119,7 +118,6 @@ _DOMAIN_VALIDATORS: dict[str, object] = {
     "pagination": validate_pagination_domain,
     "photo_crop": validate_photo_crop_domain,
     "object_roles": validate_object_roles_domain,
-    "field_layout": validate_field_layout_domain,
 }
 
 

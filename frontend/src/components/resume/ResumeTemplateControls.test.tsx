@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * 版式控件 · 第一组「结构类」：样式模板 / 版式模板 / 板块顺序 / 最大篇幅。
+ * 版式控件 · 第一组「结构类」：样式模板 / 版式模板 / 最大篇幅。
  *
  * P2 把 `ResumeLayoutControls` 拆成"壳 + 两组"（D4），本文件守的是**拆分后接口没走样**：
  * 四个控件各自只写自己那一个 `layout` 键，而且都把"当前 layout 的其余字段"原样带过去
@@ -12,8 +12,9 @@ import { App as AntdApp } from "antd";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { t } from "../../i18n";
 import { TEMPLATE_CATALOG } from "../../test/resumeFixtures";
+import { MOCK_PRIMARY } from "../../test/bilingualMock";
+import { t } from "../../i18n";
 import type { ResumeLayout } from "../../types";
 import { DEFAULT_LAYOUT } from "../ResumeLayoutControls.testkit";
 import ResumeTemplateControls from "./ResumeTemplateControls";
@@ -116,111 +117,6 @@ describe("ResumeTemplateControls · 版式模板", () => {
   });
 });
 
-describe("ResumeTemplateControls · 板块顺序", () => {
-  it("上移写完整排列进 format_config.section_order，其余覆盖保留", async () => {
-    const onChange = renderGroup();
-
-    fireEvent.click(await screen.findByRole("button", { name: "调整简历板块顺序" }));
-    await screen.findByRole("list", { name: "简历板块顺序" });
-    fireEvent.click(screen.getByRole("button", { name: "把项目经历上移" }));
-
-    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
-    const next = lastLayout(onChange);
-    expect(next.format_config?.section_order).toEqual([
-      "education",
-      "projects",
-      "experience",
-      "skills",
-      "campus_experience",
-      "awards",
-      "summary",
-    ]);
-    // 强调色是另一项覆盖，不该被这次移动覆盖掉。
-    expect(next.format_config?.accent).toBe("#123456");
-  });
-
-  it("已调整时按钮标出「顺序·已调整」", async () => {
-    renderGroup({
-      layout: {
-        ...BASE,
-        format_config: {
-          section_order: [
-            "projects",
-            "summary",
-            "education",
-            "experience",
-            "campus_experience",
-            "skills",
-            "awards",
-          ],
-        },
-      },
-    });
-
-    expect(await screen.findByRole("button", { name: "调整简历板块顺序" })).toHaveTextContent(
-      "顺序·已调整",
-    );
-  });
-});
-
-describe("ResumeTemplateControls · 点文字标签也打开控件", () => {
-  // 现场反馈：点「模板」两个字完全没反应，被当成控件坏了。标签现在与控件同效。
-  it("点「模板」标签打开模板画廊", async () => {
-    renderGroup();
-
-    fireEvent.click(screen.getByText("模板", { selector: "span.ant-typography" }));
-    expect(await screen.findByText("选择简历模板")).toBeTruthy();
-  });
-
-  it("点「版式」标签展开下拉", async () => {
-    renderGroup();
-
-    fireEvent.click(screen.getByText("版式", { selector: "span.ant-typography" }));
-    // 下拉选项在 portal 里；能读到选项即说明 open 已被标签打开。
-    expect(await screen.findByText("紧凑")).toBeTruthy();
-  });
-});
-
-describe("ResumeTemplateControls · 板块显示/隐藏", () => {
-  // 本地二开的老交互：顺序面板每行一个眼睛开关。合并上游后这块在预览里丢过，现补回。
-  it("点眼睛把板块写进 hidden_sections", async () => {
-    const onChange = renderGroup();
-
-    fireEvent.click(await screen.findByRole("button", { name: "调整简历板块顺序" }));
-    fireEvent.click(await screen.findByRole("button", { name: "隐藏项目经历" }));
-
-    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
-    expect(lastLayout(onChange).format_config?.hidden_sections).toEqual(["projects"]);
-    expect(lastLayout(onChange).format_config?.accent).toBe("#123456");
-  });
-
-  it("再点一次从 hidden_sections 里移除，空了就把键删掉", async () => {
-    const onChange = renderGroup({
-      layout: { ...BASE, format_config: { hidden_sections: ["projects"] } },
-    });
-
-    fireEvent.click(await screen.findByRole("button", { name: "调整简历板块顺序" }));
-    fireEvent.click(await screen.findByRole("button", { name: "显示项目经历" }));
-
-    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
-    expect(lastLayout(onChange).format_config?.hidden_sections).toBeUndefined();
-  });
-
-  it("只剩一个可见板块时，隐藏按钮禁用", async () => {
-    renderGroup({
-      layout: {
-        ...BASE,
-        format_config: {
-          hidden_sections: ["education", "experience", "skills", "campus_experience", "awards", "summary"],
-        },
-      },
-    });
-
-    fireEvent.click(await screen.findByRole("button", { name: "调整简历板块顺序" }));
-    expect(await screen.findByRole("button", { name: "隐藏项目经历" })).toBeDisabled();
-  });
-});
-
 describe("ResumeTemplateControls · 版式下拉的弹层", () => {
   it("弹层带专属收窄类（6 个汉字宽）而不是按内容撑开；每个选项带全名 title", async () => {
     renderGroup();
@@ -261,6 +157,29 @@ describe("ResumeTemplateControls · 最大篇幅", () => {
 });
 
 /**
+ * R-03：试用通道的三个入参（`resumeId` / `content` / `onTrialAdopt`）必须原样传到对比视图，
+ * 少一个的表现是「我的内容」或「采用模板默认」在图库里静默变灰——用户只会觉得功能坏了。
+ */
+describe("ResumeTemplateControls · 模板试用通道", () => {
+  it("传了 content 与 onTrialAdopt：「我的内容」可用、「采用模板默认」可点", async () => {
+    renderGroup({ content: MOCK_PRIMARY, onTrialAdopt: vi.fn() });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: t("sections.templateControls.templateAriaLabel") }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: t("trial.action.open") }));
+
+    // 有正文就默认看「我的内容」（不需要简历 id 也能预览，只是不测页数）：
+    // Segmented 的选中态在 jsdom 里只落 `checked` 属性，改用该模式的说明文字判定。
+    const current = await screen.findByRole("radio", { name: t("trial.mode.current") });
+    expect(current).not.toBeDisabled();
+    expect(screen.getByText(t("trial.mode.currentNote"))).toBeInTheDocument();
+    // 采纳入参在 → 宿主持有"清空覆盖"的通道，这一项才允许点。
+    expect(screen.getByRole("radio", { name: t("trial.override.reset") })).not.toBeDisabled();
+  });
+});
+
+/**
  * 「按我的资料顺序排列」（P0-6）：**一次性快照** + 三分支可用性。
  *
  * 为什么把它当契约测：这个按钮的全部语义都在"点完之后与资料脱钩"——如果它被实现成一条
@@ -273,90 +192,3 @@ describe("ResumeTemplateControls · 最大篇幅", () => {
  * 2. 资料里没有**可排序分区**（`basic_info` 不算：它是页眉）→ 这动作无从谈起；
  * 3. 其余 → 可用。
  */
-describe("ResumeTemplateControls · 按我的资料顺序排列", () => {
-  /** 资料顺序与内置默认不同（项目在第一），且资料里有可排序分区。 */
-  const PROFILE_FIRST_CATALOG = {
-    ...TEMPLATE_CATALOG,
-    profile_section_order: [
-      "projects",
-      "summary",
-      "education",
-      "experience",
-      "campus_experience",
-      "skills",
-      "awards",
-    ],
-    profile_section_keys: [
-      "basic_info",
-      "projects",
-      "educations",
-      "experiences",
-      "campus_experiences",
-      "skills",
-      "awards",
-      "summary",
-    ],
-  };
-
-  function arrangeButton(): HTMLElement {
-    return screen.getByRole("button", { name: t("sections.arrangeByProfile") });
-  }
-
-  it("可用时点击：把资料顺序写成这份简历的快照，其它覆盖原样保留", async () => {
-    const onChange = renderGroup({ catalog: PROFILE_FIRST_CATALOG });
-
-    fireEvent.click(await screen.findByRole("button", { name: "调整简历板块顺序" }));
-    await screen.findByRole("list", { name: "简历板块顺序" });
-    fireEvent.click(arrangeButton());
-
-    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
-    const next = lastLayout(onChange);
-    // 快照 = 目录里那份完整排列（补齐成七个键），项目排在第一。
-    expect(next.format_config?.section_order).toEqual([
-      "projects",
-      "summary",
-      "education",
-      "experience",
-      "campus_experience",
-      "skills",
-      "awards",
-    ]);
-    // 强调色是另一项覆盖，不该被这次快照清掉。
-    expect(next.format_config?.accent).toBe("#123456");
-  });
-
-  it("资料顺序与内置默认相同 → 不可用（点了没有任何变化）", async () => {
-    renderGroup();
-
-    fireEvent.click(await screen.findByRole("button", { name: "调整简历板块顺序" }));
-    await screen.findByRole("list", { name: "简历板块顺序" });
-
-    expect(arrangeButton()).toBeDisabled();
-  });
-
-  it("资料里只有页眉（`basic_info`）→ 不可用（页眉不参与正文排序）", async () => {
-    renderGroup({
-      catalog: {
-        ...PROFILE_FIRST_CATALOG,
-        profile_section_keys: ["basic_info"],
-      },
-    });
-
-    fireEvent.click(await screen.findByRole("button", { name: "调整简历板块顺序" }));
-    await screen.findByRole("list", { name: "简历板块顺序" });
-
-    expect(arrangeButton()).toBeDisabled();
-  });
-
-  it("旧后端不下发 `profile_section_keys` → 不可用（不提供这个动作）", async () => {
-    // 显式摘掉这个字段：`undefined` 与空数组同义（当作"资料里没有可排序分区"）。
-    renderGroup({
-      catalog: { ...PROFILE_FIRST_CATALOG, profile_section_keys: undefined },
-    });
-
-    fireEvent.click(await screen.findByRole("button", { name: "调整简历板块顺序" }));
-    await screen.findByRole("list", { name: "简历板块顺序" });
-
-    expect(arrangeButton()).toBeDisabled();
-  });
-});

@@ -1,0 +1,485 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* v2 三区卡编辑器（2026-10-30）。只新增自定义类，不改 `.ant-*` 外观。 */
+
+.document-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.document-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.document-tabs .resume-wb-tabstrip {
+  flex: 1;
+  min-width: 0;
+}
+
+.document-tabs-add {
+  flex: none;
+}
+
+.document-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.document-section-hint {
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+/* ── 条目三区卡 ───────────────────────────────────────────── */
+
+.document-entry {
+  /* R-14：纸面/结构树选中的条目滚到顶部时留 8px，避免卡贴上沿。 */
+  scroll-margin-top: 8px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 8px;
+  background: var(--rf-surface-elevated);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.document-entry.is-selected {
+  border-color: var(--rf-brand);
+}
+
+.document-entry.is-hidden {
+  opacity: 0.62;
+}
+
+.document-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.document-entry-index {
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  min-width: 28px;
+}
+
+/* R-05 ⑤：三种标题布局改图标按钮（原 Segmented 占 180px，窄中栏被挤到换行）。 */
+.document-entry-head-layout {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex: none;
+}
+
+.document-entry-layout-btn.is-active {
+  color: var(--rf-brand);
+  background: var(--rf-brand-tint);
+}
+
+.document-entry-more {
+  flex: none;
+}
+
+.document-entry-actions {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+
+.document-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-radius: 6px;
+  padding: 6px;
+  transition: background-color 0.15s ease;
+}
+
+/* R-05 ②：三个域（标题与元信息 / 灰色短字段 / 正文）用左侧竖线分段，
+   区内不再套容器，靠标题 + 竖直基准线读出"这属于同一块"。 */
+.document-zone-head,
+.document-zone-detail,
+.document-zone-body {
+  gap: 4px;
+  border-radius: 0;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--rf-border-strong);
+}
+
+.document-zone-head {
+  padding-top: 0;
+}
+
+.document-zone-body {
+  padding-bottom: 0;
+}
+
+.document-zone-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.document-zone-label {
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+/* 域标题：13px + 计数（R-05 ②）。 */
+.document-zone-title {
+  color: var(--rf-text-body);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.document-zone-count {
+  margin-left: 4px;
+  color: var(--rf-text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.document-zone.is-dragover {
+  background: var(--rf-brand-tint);
+  outline: 1px dashed var(--rf-brand);
+}
+
+.document-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+/* R-05 ④：title / meta / body 三组等宽自适应网格（同组 chip 等宽）。 */
+.document-group-cells {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 6px;
+  align-items: center;
+}
+
+/* 灰色短字段按列排布预览：分区/条目的 columns 走行内 style，这里只给最小宽度。 */
+.document-group-lead,
+.document-group-trail {
+  display: grid;
+  grid-template-columns: repeat(var(--document-columns, 1), minmax(0, 1fr));
+  gap: 6px;
+}
+
+/* ── 位置组（R-05：无容器）──────────────────────────────────
+   组 = 11px 标签 + chips 网格，没有边框与内边距；只有域有竖线。 */
+.document-group-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  border-radius: 4px;
+}
+
+.document-group-block.is-dragover {
+  background: var(--rf-brand-tint);
+  outline: 1px dashed var(--rf-brand);
+}
+
+.document-group-block-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 一组 chips = 等宽网格 + 右侧一枚虚线「+」格：网格独立成 flex 子项，
+   「+」不再挤进网格里抢格子（否则 2 列时每组多一行）。 */
+.document-group-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.document-group-row > .document-group {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.document-group-block-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--rf-text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.document-group-block-count {
+  color: var(--rf-text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.document-group-empty {
+  color: var(--rf-text-tertiary);
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+/* chips 网格末尾的虚线 «+» 格（R-05 ③）：与 chip 同高、等宽占一格。 */
+.document-add-cell {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: none;
+  width: 26px;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 1px 6px;
+  border: 1px dashed var(--rf-border-strong);
+  border-radius: 6px;
+  background: none;
+  color: var(--rf-text-secondary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-add-cell.is-wide {
+  width: 100%;
+}
+
+.document-add-cell:hover {
+  border-color: var(--rf-brand);
+  color: var(--rf-brand);
+}
+
+.document-add-cell:focus-visible {
+  outline: 2px solid var(--rf-focus-ring);
+  outline-offset: 1px;
+}
+
+.document-body-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── item chip ────────────────────────────────────────────── */
+
+.document-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  /* 本仓没有全局 box-sizing 重置：不写它，100% + padding/border 会超出格子 14px。 */
+  box-sizing: border-box;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 6px;
+  background: var(--rf-surface);
+  padding: 2px 6px;
+  cursor: grab;
+  user-select: none;
+}
+
+.document-chip.is-selected {
+  border-color: var(--rf-brand);
+  box-shadow: 0 0 0 1px var(--rf-brand-tint);
+}
+
+.document-chip.is-dragging {
+  opacity: 0.5;
+}
+
+.document-chip.is-grabbed {
+  outline: 2px solid var(--rf-brand);
+}
+
+.document-chip.is-hidden {
+  border-style: dashed;
+}
+
+.document-chip:focus-visible {
+  outline: 2px solid var(--rf-brand);
+  outline-offset: 1px;
+}
+
+.document-chip-label {
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.document-chip-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.document-chip-placeholder {
+  color: var(--rf-text-tertiary);
+}
+
+.document-chip-badge {
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid var(--rf-border-subtle);
+  color: var(--rf-text-secondary);
+  white-space: nowrap;
+}
+
+.document-chip-badge.is-material {
+  color: var(--rf-danger);
+  border-color: var(--rf-danger);
+}
+
+.document-chip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  cursor: grab;
+  text-align: left;
+}
+
+.document-chip-main:focus-visible {
+  outline: 2px solid var(--rf-brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Q16：字段 chip 溢出 ─────────────────────────────────────
+   长字段值不能撑出格子、也不能让删除按钮压到相邻 chip 上；中栏底部不允许出现
+   横向滚动条。只修溢出，不做降列重排。 */
+.document-chip-slot {
+  min-width: 0;
+}
+
+/* R-05 ④：网格里 chip 撑满自己的格子（同组 chip 因此等宽；lead/trail 的列数不变）。 */
+.document-group > .document-chip-slot > .document-chip {
+  width: 100%;
+}
+
+.document-chip {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.document-chip-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.document-chip-value {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.document-chip-label,
+.document-chip-drag,
+.document-chip-badge {
+  flex: none;
+}
+
+.document-drag-hint {
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+.document-live-region {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 页眉（基本信息）的样式在 document-header.css（#10 chip 化后单独一份）。 */
+
+.document-inline-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/* ── 行内板块：一条 entry 一行（Q06）─────────────────────────
+   与纸面"一行一条技能/语言"对齐。行首是序号 + 行操作，下面按位置分组的 chip 行；
+   只有选中这一行时才展开行内「添加字段」，否则 14 条技能会挂出二十多个按钮。 */
+.document-inline-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 8px;
+  background: var(--rf-surface-elevated);
+  padding: 8px 10px;
+}
+
+.document-inline-entry.is-selected {
+  border-color: var(--rf-brand);
+}
+
+.document-inline-entry.is-hidden {
+  opacity: 0.62;
+}
+
+.document-inline-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.document-inline-entry-head .document-entry-actions {
+  margin-left: auto;
+}
+
+.document-inline-entry-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.document-add-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* F1-b：通知条排在字段区之后、**在正常布局流里**——所以它出现/消失不会改变任何元素的
+   流内位置（那正是"快速双击第二下落空"的成因），也不会像浮层那样整条盖住页签条
+   （`position:absolute` 版本实测与 `.document-tabs` 相交 412×28）。别改回浮层。 */
+.document-editor-notice {
+  margin-top: 12px;
+}

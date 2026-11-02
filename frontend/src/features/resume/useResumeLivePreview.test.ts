@@ -19,8 +19,9 @@
  */
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ResumeContent, ResumeLayout } from "../../types";
-import { useResumeLivePreview } from "./useResumeLivePreview";
+import type { ResumeDocument, ResumeLayout } from "../../types";
+import { makeResumeDocument } from "../../test/documentHarness";
+import { nearestScrollableAncestor, useResumeLivePreview } from "./useResumeLivePreview";
 import type { UseResumeLivePreviewOptions } from "./useResumeLivePreview";
 
 const LAYOUT: ResumeLayout = {
@@ -31,26 +32,41 @@ const LAYOUT: ResumeLayout = {
   language: "zh-CN",
 };
 
-function makeContent(summary: string): ResumeContent {
+/**
+ * 用"个人总结"板块唯一的正文块标识这一版内容（v2 里内容身份是 item，不再是标量字段）。
+ * 其余板块用 documentHarness 的默认值：本文件测的是节流/竞态，不是内容结构。
+ */
+function makeContent(summary: string): ResumeDocument {
+  const document = makeResumeDocument();
   return {
-    photo: "",
-    name: "AL",
-    gender: "",
-    birth_year: "",
-    phone: "",
-    email: "",
-    city: "",
-    personal_website: "",
-    github: "",
-    job_intent: "",
-    summary,
-    education: [],
-    experience: [],
-    campus_experience: [],
-    projects: [],
-    skills: [],
-    awards: [],
+    ...document,
+    sections: document.sections.map((section) =>
+      section.key === "summary"
+        ? {
+            ...section,
+            entries: section.entries.map((entry) => ({
+              ...entry,
+              items: [
+                {
+                  kind: "text" as const,
+                  id: "live_preview_summary",
+                  style: "paragraph" as const,
+                  text: summary,
+                  hidden: false,
+                },
+              ],
+            })),
+          }
+        : section,
+    ),
   };
+}
+
+/** 反过来读那一版内容的标识，供"发的是最后那一版"这类断言使用。 */
+function summaryOf(document: ResumeDocument): string {
+  const section = document.sections.find((candidate) => candidate.key === "summary");
+  const item = section?.entries[0]?.items[0];
+  return item?.kind === "text" ? item.text : "";
 }
 
 const A = makeContent("a");
@@ -63,7 +79,7 @@ const F = makeContent("f");
 interface PendingCall {
   resolve: (html: string) => void;
   reject: (error: unknown) => void;
-  content: ResumeContent;
+  content: ResumeDocument;
   signal: AbortSignal;
 }
 
@@ -71,7 +87,7 @@ interface PendingCall {
 function manualRender() {
   const calls: PendingCall[] = [];
   const render = vi.fn(
-    (content: ResumeContent, _layout: ResumeLayout, signal: AbortSignal) =>
+    (content: ResumeDocument, _layout: ResumeLayout, signal: AbortSignal) =>
       new Promise<string>((resolve, reject) => {
         calls.push({ resolve, reject, content, signal });
       }),
@@ -137,7 +153,7 @@ describe("制作台实时预览 · 请求节流", () => {
 
     expect(render).toHaveBeenCalledTimes(1);
     expect(calls).toHaveLength(1);
-    expect(calls[0].content.summary).toBe("f");
+    expect(summaryOf(calls[0].content)).toBe("f");
   });
 
   it("状态依次是 typing → rendering → idle", async () => {
@@ -178,7 +194,7 @@ describe("制作台实时预览 · 请求节流", () => {
 
     await settle(() => calls[0].resolve("<html>b</html>"));
     expect(render).toHaveBeenCalledTimes(2);
-    expect(calls[1].content.summary).toBe("d");
+    expect(summaryOf(calls[1].content)).toBe("d");
   });
 
   it("这一轮两次用完之后，新的变化重新走防抖（不会无限追）", async () => {
@@ -200,7 +216,7 @@ describe("制作台实时预览 · 请求节流", () => {
     await advance(600);
     // 又开了一轮：这才允许第三次。
     expect(render).toHaveBeenCalledTimes(3);
-    expect(calls[2].content.summary).toBe("d");
+    expect(summaryOf(calls[2].content)).toBe("d");
   });
 });
 
@@ -290,7 +306,7 @@ describe("制作台实时预览 · 结果与失败", () => {
     expect(onHtml).not.toHaveBeenCalled();
   });
 
-  it("保存期间（挂起）的变化不发请求，恢复后也不补发（宿主写的 html 是权威的）", async () => {
+  it("保存期间（挂起）的变化不在挂起期发请求，恢复后补排一次（R-32）", async () => {
     const { render } = manualRender();
     const onHtml = vi.fn();
     const { rerender, result } = renderHook(
@@ -299,21 +315,35 @@ describe("制作台实时预览 · 结果与失败", () => {
     );
     act(() => result.current.suspend());
 
-    // 保存期间内容会变（宿主 setDetail / overlay 清空）：只更新基线，不发请求。
+    // 保存期间内容会变（宿主 setDetail / overlay 清空）：挂起期一次请求都不发。
     rerender(base({ render, onHtml, content: B }));
     await advance(600);
     expect(render).not.toHaveBeenCalled();
     // 挂起时状态必须归 idle，否则状态条会一直写着「预览更新中…」。
     expect(result.current.state).toBe("idle");
 
+    // R-32：挂起期不记基线，恢复时发现内容比"真排过的那一版"新 → 补排一次。
+    // 旧实现把变化记成"已渲染过"，恢复后纸面永远停在保存那一刻（隐藏/删除字段不生效）。
     act(() => result.current.resume());
     await advance(600);
-    expect(render).not.toHaveBeenCalled();
+    expect(render).toHaveBeenCalledTimes(1);
 
-    // 恢复之后的**新**变化照常触发。
+    // 恢复之后的**新**变化照常触发（上一次请求还在飞：这一版只排队，仍只发过 1 次）。
     rerender(base({ render, onHtml, content: C }));
     await advance(600);
     expect(render).toHaveBeenCalledTimes(1);
+  });
+
+  it("挂起期间内容没变：恢复后不补排（不制造多余重排）", async () => {
+    const { render } = manualRender();
+    const { result } = renderHook(
+      (props: UseResumeLivePreviewOptions) => useResumeLivePreview(props),
+      { initialProps: base({ render }) },
+    );
+    act(() => result.current.suspend());
+    act(() => result.current.resume());
+    await advance(600);
+    expect(render).not.toHaveBeenCalled();
   });
 
   it("enabled=false 时一个请求都不发", async () => {
@@ -325,5 +355,48 @@ describe("制作台实时预览 · 结果与失败", () => {
     rerender(base({ render, enabled: false, content: B }));
     await advance(2000);
     expect(render).not.toHaveBeenCalled();
+  });
+});
+
+describe("预览刷新后的滚动位置", () => {
+  function makeScrollHost(): { host: HTMLDivElement; layout: HTMLDivElement } {
+    const host = document.createElement("div");
+    host.style.overflowY = "auto";
+    Object.defineProperty(host, "scrollHeight", { configurable: true, get: () => 2000 });
+    Object.defineProperty(host, "clientHeight", { configurable: true, get: () => 500 });
+    const layout = document.createElement("div");
+    host.appendChild(layout);
+    document.body.appendChild(host);
+    return { host, layout };
+  }
+
+  it("向上找到真正滚动的祖先；找不到时退回原节点", () => {
+    const { host, layout } = makeScrollHost();
+    expect(nearestScrollableAncestor(layout)).toBe(host);
+    expect(nearestScrollableAncestor(host)).toBe(host);
+    const orphan = document.createElement("div");
+    expect(nearestScrollableAncestor(orphan)).toBe(orphan);
+    host.remove();
+  });
+
+  it("ref 指向布局层时，刷新仍把外层滚动容器的位置写回", async () => {
+    const { host, layout } = makeScrollHost();
+    host.scrollTop = 300;
+    const onHtml = vi.fn();
+    const options = base({
+      render: async () => "<html/>",
+      onHtml,
+      scrollRef: { current: layout },
+    });
+    const { rerender } = renderHook(
+      (props: UseResumeLivePreviewOptions) => useResumeLivePreview(props),
+      { initialProps: options },
+    );
+    rerender({ ...options, content: B });
+    await advance(600);
+    await advance(600);
+    expect(onHtml).toHaveBeenCalled();
+    expect(host.scrollTop).toBe(300);
+    host.remove();
   });
 });

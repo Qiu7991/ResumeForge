@@ -1,27 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * W07 格式刷 / 多选批量调整的**宿主集成契约**（跨域挂载规格的可执行版本）：
- * 外壳按这里的方式持有 layout 状态并把它交给两个组件；每次动作只产生**一次** onCommit
- * （= 宿主历史栈的一步），规则层分别走 painterPatch/applyPainterPatch/freezeObjectStyle。
+ * W07 多选批量调整的**宿主集成契约**（跨域挂载规格的可执行版本）：
+ * 外壳按这里的方式持有 layout 状态并把它交给 MultiStyleBar；每次动作只产生**一次**
+ * onCommit（= 宿主历史栈的一步）。
  *
- * 这个文件同时是给 fe-shell 的挂载样板：WorkbenchParamsColumn 只需把本文件里的
- * HostHarness 逻辑搬进 shell（多选来源 = 大纲 multiSelectedEntries）。
+ * R-19：格式刷已删除，本文件只保留「多选批量调整」的宿主口径。「固定这条的当前样式」
+ * 走 `features/resume-layout/styleFreeze`，它的宿主接线不再是这里的职责。
  */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { t } from "../../../i18n";
 import type { ResumeLayout } from "../../../types";
-import {
-  readStyleDomains,
-  type ResumeRoleStyle,
-} from "../../../features/resume-layout/styleOverrides";
-import {
-  applyPainterPatch,
-  freezeObjectStyle,
-  painterPatch,
-} from "../../../features/resume-layout/stylePainter";
-import FormatPainterButton from "./FormatPainterButton";
 import MultiStyleBar from "./MultiStyleBar";
 
 const SOURCE = "exp_source01";
@@ -47,13 +37,10 @@ interface HarnessProps {
   onCommitSpy?: (next: ResumeLayout) => void;
 }
 
-/** 模拟 WorkbenchParamsColumn 的宿主：layout 状态 + 多选 + 格式刷状态机。 */
+/** 模拟 WorkbenchParamsColumn 的宿主：layout 状态 + 多选。 */
 function HostHarness({ onCommitSpy }: HarnessProps) {
   const [layout, setLayout] = useState<ResumeLayout>(baseLayout);
-  const [armed, setArmed] = useState<ResumeRoleStyle | null>(null);
   const [commits, setCommits] = useState(0);
-  const domains = readStyleDomains(layout.format_config);
-  const patch = painterPatch(domains, SOURCE);
   const commit = (next: ResumeLayout) => {
     setCommits((count) => count + 1);
     onCommitSpy?.(next);
@@ -68,31 +55,6 @@ function HostHarness({ onCommitSpy }: HarnessProps) {
         selected={TARGETS}
         onChange={commit}
         onClearSelection={() => undefined}
-      />
-      <FormatPainterButton
-        sourceName="甲公司"
-        hasSource
-        hasDiff={patch !== null}
-        armed={armed !== null}
-        targetCount={TARGETS.length}
-        onArm={() => setArmed(patch)}
-        onCancel={() => setArmed(null)}
-        onApply={() => {
-          commit({
-            ...layout,
-            format_config: applyPainterPatch(layout.format_config, [TARGETS[0].id], armed),
-          });
-          setArmed(null);
-        }}
-        onFreeze={() =>
-          commit({
-            ...layout,
-            format_config: freezeObjectStyle(layout.format_config, SOURCE, {
-              space_before: 0.2,
-              line_height: 1.8,
-            }),
-          })
-        }
       />
     </div>
   );
@@ -110,29 +72,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("格式刷 / 多选宿主集成", () => {
-  it("复制源差异 → 应用到目标：一次提交，目标自己的覆盖保留", () => {
-    const onCommit = vi.fn();
-    render(<HostHarness onCommitSpy={onCommit} />);
-    fireEvent.click(screen.getByRole("button", { name: t("typography.painter.copy") }));
-    expect(screen.getByText(t("typography.painter.armed"))).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: t("typography.painter.apply") }));
-    expect(onCommit).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("commits").textContent).toBe("1");
-    expect(objectsOf().exp_target01).toEqual({ line_height: 1.5, space_after: 0.4 });
-    // 源对象不被写坏。
-    expect(objectsOf()[SOURCE]).toEqual({ space_after: 0.4 });
-  });
-
-  it("固化把当前生效值写成源对象的显式覆盖：同样只提交一次", () => {
-    const onCommit = vi.fn();
-    render(<HostHarness onCommitSpy={onCommit} />);
-    fireEvent.click(screen.getByRole("button", { name: t("typography.painter.freeze") }));
-    expect(onCommit).toHaveBeenCalledTimes(1);
-    expect(objectsOf()[SOURCE]).toEqual({ space_after: 0.4, space_before: 0.2, line_height: 1.8 });
-  });
-
-  it("多选批量调整与格式刷共用同一份宿主 layout：每次动作各一次提交", () => {
+describe("多选宿主集成", () => {
+  it("多选批量调整只产生一次宿主提交", () => {
     const onCommit = vi.fn();
     render(<HostHarness onCommitSpy={onCommit} />);
     const input = screen.getByRole("spinbutton", { name: t("typography.prop.line_height") });
@@ -141,10 +82,6 @@ describe("格式刷 / 多选宿主集成", () => {
     fireEvent.click(screen.getByRole("button", { name: t("typography.multi.apply") }));
     expect(onCommit).toHaveBeenCalledTimes(1);
     expect(objectsOf().exp_target01).toMatchObject({ line_height: 1.6 });
-    // 再复制一条源对象的差异应用到同一目标：第二次提交只补格式刷的键。
-    fireEvent.click(screen.getByRole("button", { name: t("typography.painter.copy") }));
-    fireEvent.click(screen.getByRole("button", { name: t("typography.painter.apply") }));
-    expect(onCommit).toHaveBeenCalledTimes(2);
-    expect(objectsOf().exp_target01).toEqual({ line_height: 1.6, space_after: 0.4 });
+    expect(screen.getByTestId("commits").textContent).toBe("1");
   });
 });

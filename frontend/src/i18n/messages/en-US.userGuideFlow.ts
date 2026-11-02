@@ -28,7 +28,7 @@ const userGuideFlow = {
     "For when the direction is not settled yet: it is not tied to a Job — the entry is “New Resume” in this page's header (titled “Write a general Resume from scratch”), pre-filled from the Current Plan; tabs, tab names and visible fields are frozen from the Plan at creation, so later Plan changes do not affect this Resume. Another window changing the Profile or switching Plan refreshes it automatically; unsaved changes trigger a keep-or-overwrite question first. Saving writes only this Resume and leaves the Profile alone.",
   "userGuideFlow.resume.step1.point5.lead": "Fill from the Profile",
   "userGuideFlow.resume.step1.point5.text":
-    "When writing a Resume yourself, every entry (including custom sections) has “Fill this entry from Profile”: pick one and click “Fill” to fill only the empty fields of the current entry; candidates already used in another entry are marked “In another entry”, the entry itself is marked “This entry”, and both are disabled — nothing is duplicated or overwritten. Candidates follow the Current Plan and refresh after Profile changes or a Plan switch.",
+    "At the top of the middle column, the “Fill from my Profile” button only fetches the Current Plan projection when opened: once an entry is selected the menu lists only candidates that can fill it (de-duplicated by source) and the button shows that entry name; with nothing selected it reads “Add from my Profile” and lists everything. Picking one fills only the empty fields of its entry — nothing is duplicated or overwritten. Reopen it after Profile changes or a Plan switch to get fresh candidates.",
   "userGuideFlow.resume.step1.point6.lead": "Generation runs in the background",
   "userGuideFlow.resume.step1.point6.text":
     "The dialog shows a stage bar — “Organize material → Select material → Call the model → Validate and repair → Done” — and a live “N characters received” count. There is no percentage, because the model emits text token by token and the total length is unknown.",
@@ -38,9 +38,9 @@ const userGuideFlow = {
   "userGuideFlow.resume.step1.point8.lead": "Length and font size",
   "userGuideFlow.resume.step1.point8.text":
     "Before generating you can pick a maximum length (1–3 A4 pages) and a font size (5–18px in 0.1px steps; below 8px you are warned it may not print legibly), defaulting to one page at the standard size; “Font” next to it picks a downloaded or imported font for this Resume (the built-in Source Han Sans must be downloaded in Settings first).",
-  "userGuideFlow.resume.step1.point9.lead": "Resume language",
+  "userGuideFlow.resume.step1.point9.lead": "Field language",
   "userGuideFlow.resume.step1.point9.text":
-    "Before exporting, “Resume language” in the typography settings changes only section headings and field names (such as Education / Skills) — it never translates what you wrote.",
+    "Before exporting, “Field language” in the typography settings changes only section headings and field names (such as Education / Skills) — it never translates what you wrote (use the bilingual view for that).",
   "userGuideFlow.resume.step1.point10.lead": "Layout diagnosis",
   "userGuideFlow.resume.step1.point10.text":
     "Above the preview you see what percentage of the page the body **takes up**, plus the order in which to fix things; for a multi-page Resume, check whether the last page is too empty.",
@@ -52,7 +52,7 @@ const userGuideFlow = {
     "**Fit to one page** shrinks the font to 11px at most (the slider can go smaller, down to 5px); if the typography settings are already at their tightest and it still does not fit, it says so instead of pretending to succeed.",
   "userGuideFlow.resume.step1.point13.lead": "Research Resume",
   "userGuideFlow.resume.step1.point13.text":
-    "The middle column of the Workbench has Academic output, Research projects and Intellectual property: title, author order and your own marker, publication status (under review is never written as published), DOI / link. “Document mode” in the settings column switches to “Long CV” (up to 10 pages; a standard Resume is 1–3).",
+    "The middle column of the Workbench has Academic output, Research projects and Intellectual property: title, author order and your own marker, publication status (under review is never written as published), DOI / link. “Document mode” in the left column switches Long CV (up to 10 pages; a standard Resume is 1–3).",
   "userGuideFlow.resume.step1.point14.lead": "Languages are their own section",
   "userGuideFlow.resume.step1.point14.text":
     "Languages are a separate section in the Resume (the Workbench's left column has its own “Languages” tab too), shown per language (level · certificate · score) with the date obtained as a trailing note, no longer folded into Skills; if the model omits it, the backend restores it from the Profile.",
@@ -64,46 +64,46 @@ const userGuideFlow = {
     "Besides tightening typography, layout optimization offers content-level candidates: merge duplicate entries, delete duplicate bullets, merge short bullets, and trim low-relevance bullets when there is a Job signal; each candidate lists its changes, you review the diff and only confirm writes it (undoable), and when there is no plan it explains why.",
   "userGuideFlow.resume.step1.point17.lead": "Source and fact lock",
   "userGuideFlow.resume.step1.point17.text":
-    "“Source” in the Workbench's left column shows which Profile entry the selected content came from and, when linked, which version; it does not guess when unlinked. You can create links (including manual sources) and, after the source updates, confirm to write the update back. The fact lock pins key facts: AI rewrites are rejected with the values listed, while manual editing is unrestricted.",
+    "“Source check” in the Workbench's left column shows the source chain, link coverage and whether links are stale; you can also create or remove source links for the selected content, add a manual source, inspect impact and revisions, and “Adopt latest source” writes the updated text back into the Resume (with a revision conflict check). The fact lock still applies: AI rewrites that touch locked values are rejected with the values listed, while manual editing is unrestricted.",
   "userGuideFlow.resume.step1.point18.lead": "Outbound preview and usage",
   "userGuideFlow.resume.step1.point18.text":
     "Settings shows “Preview before sending” (what goes out this time: target service, material categories, attachments, excluded fields and the text) and “Model usage” (calls and tokens per task / model; unknown tokens are not counted as 0); the preview text lives in memory only and never touches disk.",
-  "userGuideFlow.resume.step1.point19.lead": "Document outline",
+  "userGuideFlow.resume.step1.point19.lead": "Resume structure",
   "userGuideFlow.resume.step1.point19.text":
-    "“Document outline” in the Workbench's left column lists entries and bullets by section: reorder, copy, hide, lock content or lock typography; the top can search the outline and restore scrolling from a position on the page, and bullets can be hidden or copied individually; hidden content goes into no export. During drag reordering the outline tree and the preview follow live (also when the screen is narrow and editing is folded into a drawer, and the change counts as unsaved edits), and a history step is recorded only on release; entry and bullet handles look different.",
+    "“Resume structure” in the Workbench's left column lists content as page / column → section → entry → placement group (Title line, Metadata, Gray fields before body, Body, Gray fields after body, Hidden): drag to reorder, drop a field into another placement group to change where it appears on paper, and copy, hide, lock content or lock layout. The top can search, and it is linked to the preview (clicking on paper selects the matching row); “Locate on paper” scrolls the preview to it. Hidden content goes into no export; the same tab also holds “Entry field layout” (columns, alignment, column gap, gray-field order), and it follows the entry selected in the structure tree. During drag the tree and the preview follow live, and a history step is recorded only on release. The top bar can collapse all entries, reorder sections via “Order”, or sync that order with your Profile.",
   "userGuideFlow.resume.step1.point20.lead": "Save conflicts",
   "userGuideFlow.resume.step1.point20.text":
     "When saving in the “Resume Workbench”, if the same Resume has been changed in another window you are first asked to choose “use the newest / compare differences / save a copy” — it **never overwrites** someone else's changes.",
-  "userGuideFlow.resume.step1.point21.lead": "Check Resume",
+  "userGuideFlow.resume.step1.point21.lead": "Check",
   "userGuideFlow.resume.step1.point21.text":
-    "“Check Resume” in the Workbench action bar checks content, typography and the export output on three levels, grades problems and offers a way to fix each, and can re-check afterwards; it also checks key links and export redaction, and verifies before export against the same snapshot digest the server uses.",
+    "“Check” in the Workbench action bar checks content, typography and the export output on three levels, grades problems and offers a way to fix each, and can re-check afterwards; it also checks key links and export redaction, and verifies before export against the same snapshot digest the server uses.",
   "userGuideFlow.resume.step1.point22.lead": "Pro view",
   "userGuideFlow.resume.step1.point22.text":
     "The canvas toolbar offers full page / fit width / 100% zoom, paging, guides and a grayscale proof; “Commands” or Cmd/Ctrl+Shift+P opens the command palette, and workspace presets only toggle panel visibility; “Photo crop” changes framing only — the original is untouched and can be restored, and the parameters are saved with this Resume; an uncropped photo keeps its aspect ratio instead of being forced into a square.",
   "userGuideFlow.resume.step1.point23.lead": "Undo and redo",
   "userGuideFlow.resume.step1.point23.text":
-    "“History” in the Workbench's left column undoes or redoes step by step: content, typography and structural actions each record a step (consecutive typing is merged into one); clicking a step shows the summary at that point, and the actual rollback is “Undo”.",
+    "“History” in the Workbench's left column undoes or redoes step by step: content, typography and structural actions each record a step (consecutive typing is merged into one); clicking a step shows the summary at that point, and the actual rollback is “Undo”. ⌘/Ctrl+Z and ⇧⌘/Ctrl+Z work as well (one step per press); inside inputs the browser's native undo is kept.",
   "userGuideFlow.resume.step1.point24.lead": "Local typography",
   "userGuideFlow.resume.step1.point24.text":
-    "“Local typography” in the Workbench's left column fine-tunes font size, color, line height and indentation for six paragraph kinds; properties you never set follow the template and can each be reset to inherit again. The format painter copies one entry's typography to another, and selected body text can use the italic and link buttons.",
-  "userGuideFlow.resume.step1.point45.lead": "Text levels",
+    "The Workbench's left column is grouped by the v2 model into “Template / Page setup / Styles”: the “Styles” group sets font family and size, letter and line spacing, page margins and appearance colors; properties you never set follow the template and can each be reset to inherit again. Selected body text can use the link button (italic has been removed), and the open/closed state is remembered.",
+  "userGuideFlow.resume.step1.point45.lead": "Field-level typography",
   "userGuideFlow.resume.step1.point45.text":
-    "With content selected you can apply one of five fixed text levels (“Heading 1 / Heading 2 / Heading 3 / Body / Secondary note”); multi-select is supported and applied levels can be reset to follow the template. Outline entries can also be multi-selected and styled in bulk.",
-  "userGuideFlow.resume.step1.point46.lead": "Entry field layout",
+    "Right-click any field chip in the middle column and choose “Adjust typography” to change color, line height, indent, bullet, alignment and letter spacing in place; the scope is inferred from the selected field. Font size, bold and paragraph spacing stay under the “Styles” group's font-size and spacing controls.",
+  "userGuideFlow.resume.step1.point46.lead": "Entry field positions",
   "userGuideFlow.resume.step1.point46.text":
-    "Text levels can also be applied by scope (whole entry / entry title / body / note); “Entry field layout” under Typography parameters tunes fields individually, and supplemental fields can flow into 1–3 columns.",
+    "Each entry in the Workbench's middle column is a three-zone card: title and metadata / gray short fields (before and after the body) / body. Drag a field anywhere: Title line, Metadata, Gray fields before body, Gray fields after body, Body, or Hidden (data kept, not printed); you can also pick it from the field position dropdown. The entry head has three layouts: Side by side / Stacked / Metadata first. Gray fields can be tuned per section or per entry with 1–3 columns, alignment and column gap; a field set to “Full row” takes a row of its own. Click a field to open its editor and click it again to close (Esc works too); fields no longer show visible hide/delete buttons—their actions live in the field context menu (Shift+F10); an entry's hide/remove actions live in the entry head's context menu, and a hidden field returns to its previous position when shown again.",
   "userGuideFlow.resume.step1.point25.lead": "Pagination",
   "userGuideFlow.resume.step1.point25.text":
-    "“Pagination” in the Workbench's left column can set “start on a new page” per section and repeat name and page number on continuation pages; page thumbnails show the real page count and how full the last page is, and PDF/Word avoid orphaned headings or bullets; drafts do not show real pagination, so switch to Exact or check on export. The section pagination mode can be switched for the whole Resume between natural flow and a new page per section; inserted breaks are visible and can be reset to natural pagination in one click.",
+    'Set section-level "Start on new page" in the Layout group; entry-level breaks live in the Structure tab with a summary you can clear. Breaks apply only in exact preview and exports; the pagination report measures real PDF pages.',
   "userGuideFlow.resume.step1.point26.lead": "Expression library",
   "userGuideFlow.resume.step1.point26.text":
-    "“Expression library” in the Workbench's left column keeps reusable wording, searchable by keyword / type / language / Job tag; select where to insert and insert in one click (it creates a new object); deleting it moves it to Trash with an undo in the Toast.",
+    "The Workbench's left column has an “Expression library” tab: save reusable wording, search by keyword / type / language / Job tag, and insert it where you choose (it creates a new object, which is selected automatically so you can keep editing); deleting moves it to Trash with an undo in the Toast.",
   "userGuideFlow.resume.step1.point27.lead": "Named versions",
   "userGuideFlow.resume.step1.point27.text":
     "“Versions” at the top of the Workbench saves immutable named versions: freeze, compare, restore — restoring creates a new current version while history and applied records stay unchanged. “Job variants” are edited independently with optional path syncing; a variant can also keep its own typography and be exported as a variant. To adjust expression for a career scenario, derive a scenario variant on the “Job variants” page first, then generate candidates, review the differences and adopt — the source Resume is never rewritten.",
   "userGuideFlow.resume.step1.point28.lead": "Bilingual versions",
   "userGuideFlow.resume.step1.point28.text":
-    "“Bilingual versions” in the Workbench's left column translates the body: compare the two columns, click “Generate translation candidates”, tick “Adopt selected” item by item and only that language variant is written — the current Resume stays as it is; fixed renderings such as names and companies go into the “Glossary” first (dataset-wide, lockable), and deleting them moves them to Trash where they can be restored. Generation waits for the whole Resume to be translated (usually tens of seconds) — do not click again while waiting.",
+    "The Workbench's left column has a “Bilingual versions” tab: compare columns, click “Generate translation candidates”, tick and adopt — only that language variant is written, the main Resume is not replaced; fixed renderings go into the “Glossary”. “Open this translation in the workbench” opens a read-only preview with the effective layout; closing it touches neither the main Resume nor unsaved state.",
   "userGuideFlow.resume.step1.point29.lead": "Rewrite a passage",
   "userGuideFlow.resume.step1.point29.text":
     "In “Manual editing”, **select the text to change → right-click → “AI polish”**: write the instruction → generate → the result is shown first, and only “Replace selection” writes it back; only the selected passage is sent to the model. Close it if you do not like the result — the original text stays untouched.",
@@ -127,16 +127,16 @@ const userGuideFlow = {
     "“Quality check” runs only after you click “Start scan”: repetition, sensitive words, exaggeration risk, deep-dive risk points, compliance and local ATS checks; a scan can be cancelled, and closing the window still finishes it in the background with a notification. ATS reports sub-scores, coverage and item-by-item advice, and when a Job is linked it loads the JD on open (fills it only; no check runs).",
   "userGuideFlow.resume.step1.point36.lead": "Templates",
   "userGuideFlow.resume.step1.point36.text":
-    "The five templates also have layout presets that only change parameters, switchable before generating and in the preview; click a thumbnail in the template overview for a large image; “Try and compare” puts your current content side by side under two templates (showing real page counts and overflow) and takes effect only after you adopt one. The same toolbar reorders sections and can force line breaks for contact details (each field stays whole, so long URLs are not cut). Technical / editorial / columns no longer appear.",
+    "The five templates also have layout presets that only change parameters, switchable before generating and in the preview; click a thumbnail in the template overview for a large image; “Try and compare” puts your current content side by side under two templates (showing real page counts and overflow) and takes effect only after you adopt one; “Use template defaults” clears every typography override (size, line height, colors, margins, local typography) and asks for confirmation first — you can undo once before saving. The same toolbar reorders sections and can force line breaks for contact details (each field stays whole, so long URLs are not cut). Technical / editorial / columns no longer appear.",
   "userGuideFlow.resume.step1.point37.lead": "Export formats",
   "userGuideFlow.resume.step1.point37.text":
-    "PDF downloads directly (generated by the server), and browser printing works too (layout matches the preview); Word, plain text, Markdown and JSON are also available.",
+    "PDF downloads directly (generated by the server), and browser printing works too (layout matches the preview); Word, HTML, plain text, Markdown and JSON are also available. The four layout-bearing formats — HTML / PDF / Word / Markdown — render from the same server-side layout result, so fields and their order match; JSON outputs the new document structure (including each item's paper placement and layout). Switching the preview to “Exact” shows the same PDF the export engine produced.",
   "userGuideFlow.resume.step1.point38.lead": "Watermark and redaction",
   "userGuideFlow.resume.step1.point38.text":
     "When exporting you can add a custom watermark (**HTML / PDF / Word only** — plain text, Markdown and JSON do not support it, and ticking both together is an error), or run one-click privacy redaction (name / phone / email / company / school and so on).",
   "userGuideFlow.resume.step1.point39.lead": "Delivery package",
   "userGuideFlow.resume.step1.point39.text":
-    "The export dialog of a saved Resume can store export settings (format, naming rule, watermark/redaction), and watermark/redaction can be previewed on the real PDF first; you can also export a zip of several files (hashed item by item) and optionally archive the delivered originals (hashes plus font/render version list).",
+    "The export dialog of a saved Resume can store export settings (format, naming rule, watermark/redaction), and watermark/redaction can be previewed on the real PDF first; you can also export a zip of several files (hashed item by item) and optionally archive the delivered originals (hashes plus font/render version list). The dialog first asks for an **export mode**: *bundle* (the zip flow above) or *separate files* (multi-select formats, exported one by one with “exporting 2/3” progress; a failure reports how many finished).",
   "userGuideFlow.resume.step1.point40.lead": "Sharing",
   "userGuideFlow.resume.step1.point40.text":
     "Use an “Offline share package”: redacted HTML/PDF + a read-only snapshot + a comment return file, either read-only or commentable. A commentable package shows “Object annotations” in its details afterwards: import the annotations.json a reviewer returns and “Mark resolved” or “Ignore this one” item by item; annotations on a changed object must be “Re-link”ed and never attach themselves to a different entry — annotations live only in the share package and never enter the Resume you apply with.",

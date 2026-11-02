@@ -29,9 +29,10 @@ const zhCN = {
   /** 版式下拉的无障碍名（视觉标签是同一句，见 `ResumeTemplateControls`）。 */
   "resume.format.label": "版式",
   /** 排版栏里那个下拉框的标题（也是它的无障碍名）。 */
-  "resume.language.label": "简历语言",
+  "resume.language.label": "字段语言",
   /** 下拉框旁的说明：讲清"它只改纸面固定文案，不翻译正文"。 */
-  "resume.language.hint": "决定导出文件里的小节标题与字段名用哪种语言；正文内容不会被翻译。",
+  "resume.language.hint":
+    "只影响导出文件里的小节标题与字段名，正文内容不会被翻译——要翻译正文请用双语版。",
   /** 中文选项。 */
   "resume.language.zh-CN": "中文",
   /** 英文选项（英文语言名按惯例用英文本身，不译成「英文」）。 */
@@ -419,6 +420,8 @@ const zhCN = {
   "toast.restore.failed": "恢复失败，请到回收站重试",
   /** 撤销按钮上的字。 */
   "toast.undo.label": "撤销",
+  /** Q09：本会话第一次拨动断页开关时说明生效范围（≤20 字，popupCopy 守卫）。 */
+  "toast.pageBreakApplied": "断页将在精确预览与导出生效",
 
   // ── 公告条 ─────────────────────────────────────────────────
   /** 公告条这个区域的无障碍名。 */

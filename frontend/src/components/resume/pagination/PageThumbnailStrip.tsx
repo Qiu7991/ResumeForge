@@ -58,6 +58,14 @@ function summary(model: PageThumbnailModel): string {
   if (model.pageLimit === null) {
     return t("pagination.thumbnails.summaryNoLimit", { pages: model.totalPages });
   }
+  // #2：页数正好用满上限时说「已达上限」，比重复两个相同数字有用。
+  if (
+    model.pagesNeeded !== null &&
+    model.pageLimit !== null &&
+    model.pagesNeeded === model.pageLimit
+  ) {
+    return t("pagination.thumbnails.limitReached", { limit: model.pageLimit });
+  }
   return t("pagination.thumbnails.summary", {
     pages: model.totalPages,
     limit: model.pageLimit,
@@ -67,9 +75,15 @@ function summary(model: PageThumbnailModel): string {
 export interface PageThumbnailStripProps {
   /** 测试/宿主显式传入的报告；缺省订阅模块级快照（应用内的真实来源）。 */
   report?: PaginationReport | null;
+  loading?: boolean;
+  hasError?: boolean;
 }
 
-export default function PageThumbnailStrip({ report }: PageThumbnailStripProps) {
+export default function PageThumbnailStrip({
+  report,
+  loading = false,
+  hasError = false,
+}: PageThumbnailStripProps) {
   useLocale();
   const stored = usePaginationReportSnapshot();
   const model = useMemo(() => buildPageThumbnails(report ?? stored), [report, stored]);
@@ -87,7 +101,8 @@ export default function PageThumbnailStrip({ report }: PageThumbnailStripProps) 
             <Button
               size="small"
               type="link"
-              disabled={!refresh}
+              loading={loading}
+              disabled={!refresh || undefined}
               onClick={triggerPaginationReportRefresh}
             >
               {t("pagination.thumbnails.refresh")}
@@ -100,7 +115,8 @@ export default function PageThumbnailStrip({ report }: PageThumbnailStripProps) 
           <span>{t("pagination.thumbnails.empty")}</span>
           <Button
             size="small"
-            disabled={!refresh}
+            loading={loading}
+            disabled={!refresh || undefined}
             onClick={triggerPaginationReportRefresh}
           >
             {t("pagination.thumbnails.refresh")}
@@ -169,6 +185,11 @@ export default function PageThumbnailStrip({ report }: PageThumbnailStripProps) 
           ) : null}
         </>
       )}
+      {hasError ? (
+        <span className="resume-page-thumbnails-hint" role="status">
+          {t("pagination.report.failed")}
+        </span>
+      ) : null}
     </section>
   );
 }

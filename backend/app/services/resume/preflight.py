@@ -32,7 +32,8 @@ from ...schemas.preflight import (
     TextOrderDiff,
 )
 from ...schemas.resume import ResumeContent
-from .format_capabilities import matrix
+from . import document_io
+from .format_capabilities import capability_notes, matrix
 from .preflight_rules_content import content_issues
 from .preflight_rules_layout import layout_issues
 from .preflight_rules_product import product_issues
@@ -61,7 +62,7 @@ def _finalize(issues: list[CheckIssue]) -> list[CheckIssue]:
 
 
 def run_preflight(
-    content: ResumeContent,
+    content: ResumeContent | dict,
     *,
     request: PreflightRequest,
     snapshot: PreflightSnapshot,
@@ -81,6 +82,11 @@ def run_preflight(
     "联系方式脱敏未开启"；编辑态检查保持原样。
     """
     started = time.perf_counter()
+    analyzed_content = (
+        document_io.ensure_document_version(content)
+        if isinstance(content, dict) and content.get("version") != 2
+        else content
+    )
     layers = set(request.layers)
     issues: list[CheckIssue] = []
     # 规则层产出的是松散 dict（PreflightOut 构造时由 pydantic 统一校验成模型），
@@ -93,7 +99,7 @@ def run_preflight(
     if "content" in layers:
         issues.extend(
             content_issues(
-                content,
+                analyzed_content,
                 jd_text=request.jd_text,
                 claims=claims,
                 include_risk="risk" in layers,
@@ -121,7 +127,7 @@ def run_preflight(
 
     if "layout" in layers:
         layout_list, raw_font_coverage = layout_issues(
-            content,
+            analyzed_content,
             page_limit=page_limit,
             measure=request.measure.model_dump() if request.measure else None,
             font_name=format_config.get(FONT_KEY),
@@ -132,13 +138,15 @@ def run_preflight(
 
     if "product" in layers:
         product_list, raw_machine_text, raw_order_diffs = product_issues(
-            content,
+            analyzed_content,
             template=template,
             page_limit=page_limit,
             font_scale=font_scale,
             format_config=format_config,
             language=language,
             formats=list(request.product_formats),
+            # R-24 D：字体覆盖是版面层的结果，产物层用它区分"纸面缺字"与"文本层抽不出"。
+            font_coverage=font_coverage if isinstance(font_coverage, dict) else None,
         )
         issues.extend(product_list)
         machine_text = cast("list[MachineTextPage]", raw_machine_text)
@@ -150,11 +158,14 @@ def run_preflight(
     for issue in finalized:
         summary[issue.severity] = summary.get(issue.severity, 0) + 1
     capabilities = matrix()
+    # R-26：近似/不支持格子的「为什么」以原因码下发（前端查 i18n，不在这里写中文）。
+    notes = capability_notes()
     return PreflightOut(
         snapshot=snapshot,
         issues=finalized[:200],
         summary=summary,
         capabilities=capabilities,
+        capability_notes=notes,
         disclaimer=ATS_DISCLAIMER,
         layers_run=layers_run,
         elapsed_ms=int((time.perf_counter() - started) * 1000),

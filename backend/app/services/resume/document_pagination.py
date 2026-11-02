@@ -11,6 +11,8 @@ from __future__ import annotations
 from typing import Any
 
 from ..pdf_exporter import build_resume_pdf
+from .document_html import coerce_document
+from .document_plan import build_document_plan
 from .resume_labels import DEFAULT_RESUME_LANGUAGE
 from .resume_pagination import resolve_pagination
 
@@ -54,6 +56,46 @@ def _manual_breaks(plan, spans: tuple) -> list[dict]:
     return breaks
 
 
+def _document_manual_breaks(plan, spans: tuple) -> list[dict]:
+    """v2 文档布局显式设置的分区/条目断页（HTML/PDF/Word 同源 planner）。"""
+    entry_pages = {
+        span.object_id: span.page
+        for span in spans
+        if span.kind == "entry" and span.object_id and span.page > 1
+    }
+    section_pages = {
+        span.section: span.page for span in spans if span.kind == "section" and span.page > 1
+    }
+    breaks = [
+        {"kind": "entry", "object_id": entry.id, "page": entry_pages[entry.id]}
+        for section in plan.sections
+        for entry in section.entries
+        if entry.layout.start_on_new_page and entry.id in entry_pages
+    ]
+    breaks.extend(
+        {"kind": "section", "section": section.key, "page": section_pages[section.key]}
+        for section in plan.sections
+        if section.layout.start_on_new_page and section.key in section_pages
+    )
+    return breaks
+
+
+def _last_page_fill(pdf, layout) -> float | None:
+    """#2：末页内容占用比例（0-1）= 末页内容底部 / 可用内容高度。
+
+    末页没有绘制内容（空简历）或版心不可用时返回 None——「未测量」胜过伪造 0。
+    顶格/超版心都夹到 [0, 1]：这是给用户看的占用参考，不是渲染断言。
+    """
+    bottoms = [span.y_bottom for span in pdf.spans if span.page == pdf.pages]
+    if not bottoms:
+        return None
+    usable = layout.usable_height_per_page
+    if usable <= 0:
+        return None
+    fill = (max(bottoms) - layout.margin_top) / usable
+    return round(min(1.0, max(0.0, fill)), 3)
+
+
 def _warnings(plan, layout) -> list[dict]:
     warnings: list[dict] = []
     if plan.repeat_name and layout.margin_top < REPEAT_NAME_MIN_MARGIN:
@@ -92,7 +134,9 @@ def build_pagination_report(
         include_photo=include_photo,
         language=language,
     )
-    plan = resolve_pagination(format_config)
+    document_model = coerce_document(resume, language=language, format_config=format_config)
+    document_plan = build_document_plan(document_model, format_config, language)
+    legacy_plan = resolve_pagination(format_config)
     from ..pdf_exporter import resolve_layout
 
     layout = resolve_layout(
@@ -104,12 +148,30 @@ def build_pagination_report(
         "pages": pdf.pages,
         "pages_needed": pdf.pages_needed if pdf.pages_needed is not None else pdf.pages,
         "overflow": pdf.overflow,
+        # #2：末页占用（0-1）。页数正好用满上限时，前端把「实际 N 页（上限 N 页）」
+        # 换成「已达上限」——占用数字比重复页数更有信息量。
+        "last_page_fill": _last_page_fill(pdf, layout),
         "page_limit": page_limit,
         "truncated_at": _truncated_at(pdf.spans, page_limit),
-        "manual_breaks": _manual_breaks(plan, pdf.spans),
-        "warnings": _warnings(plan, layout),
+        "manual_breaks": _merge_manual_breaks(
+            _manual_breaks(legacy_plan, pdf.spans),
+            _document_manual_breaks(document_plan, pdf.spans),
+        ),
+        "warnings": _warnings(legacy_plan, layout),
         "snapshot": snapshot or {},
     }
+
+
+def _merge_manual_breaks(*groups: list[dict]) -> list[dict]:
+    """兼容旧 format_config 分页标记，同时保留 v2 文档的显式断页。"""
+    merged: list[dict] = []
+    seen: set[tuple[object, object, object]] = set()
+    for item in (entry for group in groups for entry in group):
+        key = (item.get("kind"), item.get("section") or item.get("object_id"), item.get("page"))
+        if key not in seen:
+            seen.add(key)
+            merged.append(item)
+    return merged
 
 
 __all__ = ["REPEAT_NAME_MIN_MARGIN", "build_pagination_report"]

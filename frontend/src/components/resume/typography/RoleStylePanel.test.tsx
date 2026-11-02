@@ -55,6 +55,7 @@ function lastLayout(onChange: ReturnType<typeof vi.fn>): ResumeLayout {
 afterEach(() => {
   cleanup();
   document.body.innerHTML = "";
+  window.localStorage.clear();
   vi.restoreAllMocks();
 });
 
@@ -64,8 +65,28 @@ describe("RoleStylePanel", () => {
     // 每个属性行都有一枚来源胶囊：至少出现一次即可（数量随属性表变化）。
     expect(screen.getAllByText(t("typography.source.template")).length).toBeGreaterThan(0);
     // classic 的姓名基准 1.86 来自 template_role_defaults，不是前端写死的数字。
+    // R-34B 起未覆盖 = 继承态：输入框留空、尾部写「继承模板」，基准值落在滑杆的停靠位置。
     const row = screen.getByTestId("style-row-name-font_scale");
-    expect(within(row).getByText(/1\.86×/)).toBeInTheDocument();
+    expect(within(row).getByRole("slider")).toHaveAttribute("aria-valuenow", "1.86");
+    expect(within(row).getByText(t("typography.row.inherited"))).toBeInTheDocument();
+  });
+
+  it("记住上次展开的角色：重新打开时不回到默认的姓名+正文", () => {
+    // 直接写一份"上次只开着正文"的偏好：模拟用户上次点到这儿就关了制作台。
+    window.localStorage.setItem("resumeforge.typography.openRoles.v1", JSON.stringify(["body"]));
+    renderPanel({ defaultOpenRoles: ["name", "body"] });
+    expect(screen.queryByTestId("style-row-name-font_scale")).toBeNull();
+    expect(screen.getByTestId("style-row-body-line_height")).toBeInTheDocument();
+  });
+
+  it("点角色标题会改写偏好（写给下次打开）", () => {
+    renderPanel({ defaultOpenRoles: ["name"] });
+    const header = screen.getByText(t("typography.role.name")).closest(".ant-collapse-header");
+    if (!header) throw new Error("role header not found");
+    fireEvent.click(header);
+    const stored = window.localStorage.getItem("resumeforge.typography.openRoles.v1");
+    expect(stored).not.toBeNull();
+    expect(JSON.parse(stored as string)).not.toContain("name");
   });
 
   it("改一个角色属性只写 roles 域，其它覆盖原样保留", async () => {

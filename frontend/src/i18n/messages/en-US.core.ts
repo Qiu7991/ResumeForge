@@ -2,9 +2,9 @@
 // Local keys from zh-CN.ts; domain namespaces are aggregated separately.
 const core = {
   "resume.format.label": "Layout preset",
-  "resume.language.label": "Resume language",
+  "resume.language.label": "Field language",
   "resume.language.hint":
-    "Controls the language of Section headings and Field labels in exported files. Body content is not translated.",
+    "Only changes Section headings and Field labels in exported files; body content is not translated (use the bilingual view to translate it).",
   "resume.language.zh-CN": "Chinese",
   "resume.language.en-US": "English",
   "update.method.desktop":
@@ -206,6 +206,7 @@ const core = {
   "toast.restored.batch": "Restored {count} items",
   "toast.restore.failed": "Could not restore; retry in Trash",
   "toast.undo.label": "Undo",
+  "toast.pageBreakApplied": "Page breaks apply in exact preview and exports",
   "announcement.region": "App announcements",
   "announcement.dismiss": "Dismiss this announcement",
   "announcement.update.ready": "A new version is available",

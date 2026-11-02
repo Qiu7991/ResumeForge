@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.models.provenance import ResumeBlockSource, ResumeSource, ResumeSourceRevision
 from app.services.resume.document_provenance import canonical_fingerprint
+from app.services.resume.document_provenance_nodes import native_objects
 
 
 def _content() -> dict:
@@ -65,7 +66,7 @@ def test_link_creates_source_with_first_revision_and_coverage(client):
     link = response.json()
     assert link["status"] == "linked"
     assert link["object_id"] == "expobj0001"
-    assert link["path"] == "experience.0"
+    assert link["path"] == "experience.expobj0001"
     assert len(link["source_fingerprint"]) == 64
 
     view = client.get(f"/api/provenance/resumes/{resume_id}").json()
@@ -79,10 +80,10 @@ def test_link_creates_source_with_first_revision_and_coverage(client):
     assert len(source["blocks"]) == 1
     # 共 3 个可关联块：实习条目 + 它的 1 个要点 + 教育条目。
     assert view["coverage"] == {"total": 3, "linked": 1, "unlinked": 2}
-    experience_entry = _object(view, "experience.0")
+    experience_entry = _object(view, "experience.expobj0001")
     assert experience_entry["label"] == "示例科技有限公司"
     assert experience_entry["link"] is not None
-    point = _object(view, "experience.0.description.0")
+    point = _object(view, "experience.expobj0001.pnt0000001")
     assert point["point_id"] == "pnt0000001"
     assert experience_entry["link"]["status"] == "linked"
 
@@ -120,8 +121,8 @@ def test_source_change_appends_revision_and_marks_impact_stale(client):
     source = view["sources"][0]
     assert source["latest_revision_no"] == 2
     assert [item["revision_no"] for item in source["revisions"]] == [1, 2]
-    assert _object(view, "experience.0")["link"]["status"] == "stale"
-    assert _object(view, "education.0")["link"]["status"] == "linked"
+    assert _object(view, "experience.expobj0001")["link"]["status"] == "stale"
+    assert _object(view, "education.eduobj0001")["link"]["status"] == "linked"
 
     impact = client.get(f"/api/provenance/sources/{source_id}/impact")
     assert impact.status_code == 200
@@ -146,6 +147,69 @@ def test_legacy_resume_without_links_is_reported_unlinked_without_guessing(clien
     assert db_session.query(ResumeBlockSource).count() == 0
 
 
+def test_objects_carry_field_label_instead_of_internal_ids(client):
+    """R-16：下拉的"字段"那一截必须是可读字段名，不能是 `ob_…` / `it_…`。
+
+    条目块 `field_label` 为空串（它的标题就是几个字段拼的，再挂字段名只重复一遍）；
+    要点块带字段 key（自定义字段带用户写的字段名），由前端字段目录翻中文。
+    这条同时钉住"path 末段是内部标识"这个事实——前端正是靠它决定什么时候不显示后缀。
+    """
+    resume_id = _create_resume(client)
+
+    view = client.get(f"/api/provenance/resumes/{resume_id}").json()
+    objects = view["objects"]
+    assert objects, "视图里应当有可核对的块"
+
+    entry_blocks = [item for item in objects if item["point_id"] is None]
+    point_blocks = [item for item in objects if item["point_id"] is not None]
+    assert entry_blocks and point_blocks
+
+    # 每个块都带这个键（旧客户端忽略即可；缺键会让前端读到 undefined）。
+    assert all("field_label" in item for item in objects)
+    assert all(item["field_label"] == "" for item in entry_blocks)
+    # 自由文本要点（kind=text）本身没有"字段"，空串是对的；有字段的要点见下面的单元断言。
+    assert all(not item["field_label"].startswith(("it_", "ob_")) for item in objects)
+    # 条目块的 path 末段就是 object_id —— 这是"下拉里出现 ob_…"的根因。
+    for item in entry_blocks:
+        assert item["path"].endswith(item["object_id"])
+    for item in point_blocks:
+        assert item["path"].endswith(item["point_id"])
+
+
+def test_native_objects_field_label_prefers_item_label_then_key():
+    """R-16 的取值规则（单元层）：自定义字段名 > 字段 key；条目块恒为空串。
+
+    自定义字段的 key 是从 `it_…` 派生的，没有可读性——所以 `label` 优先。这一层不翻中文：
+    后端只回 key / 用户原文，中文由前端字段目录给（否则英文界面会漏出中文）。
+    """
+    document = {
+        "sections": [
+            {
+                "key": "education",
+                "kind": "entries",
+                "entries": [
+                    {
+                        "id": "ob_test0001",
+                        "items": [
+                            {"id": "it_a", "kind": "field", "key": "school", "value": "示例大学"},
+                            {"id": "it_b", "kind": "field", "key": "courses", "label": "核心课程",
+                             "placement": "body", "value": "线性代数"},
+                            {"id": "it_c", "kind": "field", "key": "gpa", "placement": "body",
+                             "value": "3.9/4.0"},
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+    objects = {item["point_id"] or item["object_id"]: item for item in native_objects(document)}
+
+    assert objects["ob_test0001"]["field_label"] == ""
+    assert objects["it_b"]["field_label"] == "核心课程"  # 自定义字段名优先
+    assert objects["it_c"]["field_label"] == "gpa"  # 否则退回 key（前端负责翻中文）
+
+
 def test_impact_lists_affected_resumes_across_resumes(client):
     first = _create_resume(client, "来源测试-A")
     second = _create_resume(client, "来源测试-B")
@@ -155,6 +219,13 @@ def test_impact_lists_affected_resumes_across_resumes(client):
     impact = client.get(f"/api/provenance/sources/{link['source_id']}/impact").json()
     assert {item["resume_id"] for item in impact["affected"]} == {first, second}
     assert impact["stale_count"] == 0
+    # #20a：影响行带可读标签（条目名），内部 path 不再是唯一展示。
+    by_resume = {item["resume_id"]: item for item in impact["affected"]}
+    assert by_resume[first]["target_label"] == "示例科技有限公司"
+    assert by_resume[first]["field_label"] == ""
+    assert by_resume[second]["target_label"] == "示例大学"
+    # 路径本身仍下发（tooltip/调试用），但不再是界面的主文案。
+    assert by_resume[first]["path"] == "experience.expobj0001"
 
 
 def test_chain_returns_sources_and_revisions(client):
@@ -167,7 +238,7 @@ def test_chain_returns_sources_and_revisions(client):
 
     assert response.status_code == 200
     chain = response.json()
-    assert chain["path"] == "experience.0"
+    assert chain["path"] == "experience.expobj0001"
     assert len(chain["sources"]) == 1
     assert len(chain["sources"][0]["revisions"]) == 1
     # 缺少目标定位参数：400（不是静默返回空链）。
@@ -207,7 +278,7 @@ def test_source_detail_and_404(client):
 
     detail = client.get(f"/api/provenance/sources/{source_id}")
     assert detail.status_code == 200
-    assert detail.json()["blocks"][0]["path"] == "experience.0"
+    assert detail.json()["blocks"][0]["path"] == "experience.expobj0001"
     assert client.get("/api/provenance/sources/999999").status_code == 404
     assert client.get("/api/provenance/sources/999999/impact").status_code == 404
 

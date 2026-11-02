@@ -1,13 +1,32 @@
 # SPDX-License-Identifier: Apache-2.0
-"""W16 语言变体：翻译候选不落库、批量翻译与回退、术语锁定、事实锁、逐项采纳、独立排版。"""
+"""W16 语言变体：翻译候选不落库、术语锁定、事实锁、逐项采纳、独立排版。
+
+（批量翻译主题拆在 test_bilingual_batch_translation.py，2026-11-01 守 500 行预算。）
+"""
 
 from __future__ import annotations
 
 import json
-import logging
 
-import pytest
 from app.schemas.setting import LLMConfig
+from tests.document_test_support import body_texts, entries_of
+
+
+def _summary(content: dict) -> str:
+    """v2 content 的个人总结文本（summary 是 text 分区里的 TextItem）。"""
+    texts = body_texts(content, "summary")
+    assert texts, "v2 content 里没有 summary 文本"
+    return texts[0]
+
+
+def _experience_texts(content: dict) -> list[str]:
+    return body_texts(content, "experience")
+
+
+def _summary_path(content: dict) -> str:
+    entry = entries_of(content, "summary")[0]
+    item = next(item for item in entry["items"] if item["kind"] == "text")
+    return f"summary.{entry['id']}.{item['id']}"
 
 
 def _content() -> dict:
@@ -32,6 +51,10 @@ def _create_resume(client, content: dict | None = None) -> int:
     )
     assert response.status_code in (200, 201), response.text
     return int(response.json()["id"])
+
+
+def _var_url(resume_id: int, variant_id: int, action: str = "") -> str:
+    return f"/api/resumes/{resume_id}/variants/{variant_id}{action}"
 
 
 def _create_variant(client, resume_id: int, *, language: str = "") -> dict:
@@ -86,10 +109,10 @@ def test_variant_carries_language_and_independent_layout(client):
     resume_id = _create_resume(client)
     variant = _create_variant(client, resume_id, language="en-US")
     assert variant["language"] == "en-US"
-    detail = client.get(f"/api/resumes/{resume_id}/variants/{variant['id']}").json()
+    detail = client.get(_var_url(resume_id, variant["id"])).json()
     assert detail["render_context"]["page_limit"] >= 1
     patched = client.patch(
-        f"/api/resumes/{resume_id}/variants/{variant['id']}",
+        _var_url(resume_id, variant["id"]),
         json={"language": "zh-CN"},
     )
     assert patched.status_code == 200 and patched.json()["language"] == "zh-CN"
@@ -101,17 +124,17 @@ def test_translate_returns_candidate_without_writing(client, monkeypatch):
     _install(monkeypatch, "Engineer at Example Tech")
 
     response = client.post(
-        f"/api/resumes/{resume_id}/variants/{variant['id']}/translate",
+        _var_url(resume_id, variant["id"], "/translate"),
         json={"target_language": "en-US"},
     )
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["candidate"]["summary"] == "Engineer at Example Tech"
+    assert _summary(body["candidate"]) == "Engineer at Example Tech"
     assert body["diff"]["stats"]["added"] > 0
     # 候选只在响应里：变体内容没变（取消 = 不采纳，不改正文）。
-    detail = client.get(f"/api/resumes/{resume_id}/variants/{variant['id']}").json()
-    assert detail["content"]["summary"] == _content()["summary"]
+    detail = client.get(_var_url(resume_id, variant["id"])).json()
+    assert _summary(detail["content"]) == _content()["summary"]
 
 
 def test_locked_glossary_term_blocks_field(client, monkeypatch):
@@ -129,18 +152,18 @@ def test_locked_glossary_term_blocks_field(client, monkeypatch):
     _install(monkeypatch, "a synthetic company without the fixed name")
 
     blocked = client.post(
-        f"/api/resumes/{resume_id}/variants/{variant['id']}/translate",
+        _var_url(resume_id, variant["id"], "/translate"),
         json={"target_language": "en-US"},
     ).json()
-    assert "summary" in blocked["blocked_fields"]
-    assert blocked["candidate"]["summary"] == _content()["summary"]
+    assert _summary_path(blocked["candidate"]) in blocked["blocked_fields"]
+    assert _summary(blocked["candidate"]) == _content()["summary"]
 
     _install(monkeypatch, "Example Tech builds synthetic data")
     allowed = client.post(
-        f"/api/resumes/{resume_id}/variants/{variant['id']}/translate",
+        _var_url(resume_id, variant["id"], "/translate"),
         json={"target_language": "en-US"},
     ).json()
-    assert "summary" not in allowed["blocked_fields"]
+    assert _summary_path(allowed["candidate"]) not in allowed["blocked_fields"]
     assert allowed["glossary_hits"][0]["target"] == "Example Tech"
 
 
@@ -155,12 +178,72 @@ def test_fact_lock_blocks_translation_of_locked_value(client, monkeypatch):
     _install(monkeypatch, "a totally different fact")
 
     body = client.post(
-        f"/api/resumes/{resume_id}/variants/{variant['id']}/translate",
+        _var_url(resume_id, variant["id"], "/translate"),
         json={"target_language": "en-US"},
     ).json()
 
     assert "summary" in body["blocked_fields"]
-    assert body["candidate"]["summary"] == _content()["summary"]
+    assert _summary(body["candidate"]) == _content()["summary"]
+
+
+def test_adopt_rejects_language_mismatch(client):
+    """#17a：译文只能写进与目标语言一致的变体（在中文版上采纳英文候选被整批拦下）。"""
+    resume_id = _create_resume(client)
+    variant = _create_variant(client, resume_id, language="zh-CN")
+
+    mismatch = client.post(
+        _var_url(resume_id, variant["id"], "/adopt"),
+        json={
+            "items": [{"path": "summary", "text": "Engineer at Example Tech"}],
+            "target_language": "en-US",
+        },
+    )
+    assert mismatch.status_code == 422
+    # 整批不落库：正文保持中文。
+    after = client.get(_var_url(resume_id, variant["id"])).json()
+    assert _summary(after["content"]) == _content()["summary"]
+
+    # 目标语言与变体一致时照常采纳。
+    ok = client.post(
+        _var_url(resume_id, variant["id"], "/adopt"),
+        json={
+            "items": [{"path": "summary", "text": "在示例科技有限公司负责合成数据接口（改）"}],
+            "target_language": "zh-CN",
+        },
+    )
+    assert ok.status_code == 200, ok.text
+    # 旧客户端不传 target_language：保持旧行为（不校验），不破坏兼容。
+    legacy = client.post(
+        _var_url(resume_id, variant["id"], "/adopt"),
+        json={"items": [{"path": "summary", "text": "在示例科技有限公司负责合成数据接口"}]},
+    )
+    assert legacy.status_code == 200, legacy.text
+
+
+def test_overwrite_variant_restores_main_content(client):
+    """#17b：被译文污染的变体可以「用当前简历覆盖」恢复；名称/语言标签/排版不动。"""
+    resume_id = _create_resume(client)
+    variant = _create_variant(client, resume_id, language="zh-CN")
+    # 模拟污染：英文写进中文版。
+    polluted = client.post(
+        _var_url(resume_id, variant["id"], "/adopt"),
+        json={"items": [{"path": "summary", "text": "Engineer at Example Tech"}]},
+    )
+    assert polluted.status_code == 200, polluted.text
+    assert _summary(polluted.json()["variant"]["content"]) == "Engineer at Example Tech"
+
+    restored = client.post(
+        _var_url(resume_id, variant["id"], "/overwrite")
+    )
+    assert restored.status_code == 200, restored.text
+    body = restored.json()
+    assert _summary(body["content"]) == _content()["summary"]
+    assert body["language"] == "zh-CN"
+    assert body["name"] == "英文变体"
+    # 再被污染一次仍能恢复（幂等，不依赖第一次的状态）。
+    again = client.post(_var_url(resume_id, variant["id"], "/overwrite"))
+    assert again.status_code == 200
+    assert _summary(again.json()["content"]) == _content()["summary"]
 
 
 def test_adopt_writes_only_listed_items_to_variant(client):
@@ -168,26 +251,26 @@ def test_adopt_writes_only_listed_items_to_variant(client):
     variant = _create_variant(client, resume_id)
 
     response = client.post(
-        f"/api/resumes/{resume_id}/variants/{variant['id']}/adopt",
+        _var_url(resume_id, variant["id"], "/adopt"),
         json={"items": [{"path": "summary", "text": "Engineer at Example Tech"}]},
     )
 
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["applied_paths"] == ["summary"]
-    assert body["variant"]["content"]["summary"] == "Engineer at Example Tech"
+    assert _summary(body["variant"]["content"]) == "Engineer at Example Tech"
     # 变体的岗位定制字段没被一起改；当前简历正文也不变。
-    assert body["variant"]["content"]["experience"][0]["description"] == ["负责合成数据接口"]
+    assert _experience_texts(body["variant"]["content"]) == ["负责合成数据接口"]
     current = client.get(f"/api/resumes/{resume_id}").json()
-    assert current["content"]["summary"] == _content()["summary"]
+    assert _summary(current["content"]) == _content()["summary"]
 
     bad = client.post(
-        f"/api/resumes/{resume_id}/variants/{variant['id']}/adopt",
+        _var_url(resume_id, variant["id"], "/adopt"),
         json={"items": [{"path": "experience.9.description.0", "text": "x"}]},
     )
     assert bad.status_code == 422
-    after = client.get(f"/api/resumes/{resume_id}/variants/{variant['id']}").json()
-    assert after["content"]["summary"] == "Engineer at Example Tech"
+    after = client.get(_var_url(resume_id, variant["id"])).json()
+    assert _summary(after["content"]) == "Engineer at Example Tech"
 
 
 def test_adopt_respects_fact_locks_and_writes_nothing_on_failure(client):
@@ -199,14 +282,15 @@ def test_adopt_respects_fact_locks_and_writes_nothing_on_failure(client):
     )
 
     response = client.post(
-        f"/api/resumes/{resume_id}/variants/{variant['id']}/adopt",
+        _var_url(resume_id, variant["id"], "/adopt"),
         json={"items": [{"path": "summary", "text": "changed fact"}]},
     )
 
     assert response.status_code == 409
     assert response.json()["code"] == "fact_lock_conflict"
-    detail = client.get(f"/api/resumes/{resume_id}/variants/{variant['id']}").json()
-    assert detail["content"]["summary"] == _content()["summary"]
+    detail = client.get(_var_url(resume_id, variant["id"])).json()
+    assert _summary(detail["content"]) == _content()["summary"]
+
 
 # ===== W06 正文锁：翻译候选/采纳以**变体旧内容**为基准 =====
 
@@ -222,27 +306,28 @@ def test_locked_variant_entry_blocks_translation_candidate_and_adopt(
     variant = _create_variant(client, resume_id)
     row = db_session.get(ResumeVariant, variant["id"])
     locked_content = copy.deepcopy(row.content)
-    locked_content["experience"][0]["lock_content"] = True
+    entries_of(locked_content, "experience")[0]["lock_content"] = True
     row.content = locked_content
     db_session.commit()
     _install(monkeypatch, "Engineer at Example Tech")
 
     preview = client.post(
-        f"/api/resumes/{resume_id}/variants/{variant['id']}/translate",
+        _var_url(resume_id, variant["id"], "/translate"),
         json={"target_language": "en-US"},
     )
     assert preview.status_code == 200, preview.text
     body = preview.json()
     # 锁定条目的候选保留原文，并出现在 blocked_fields（不展示会被拒绝的改写）。
-    assert body["candidate"]["experience"][0]["description"] == ["负责合成数据接口"]
-    assert "experience.0" in body["blocked_fields"]
+    assert _experience_texts(body["candidate"]) == ["负责合成数据接口"]
+    assert (
+        f"experience.{entries_of(body['candidate'], 'experience')[0]['id']}"
+        in body["blocked_fields"]
+    )
 
     adopted = client.post(
-        f"/api/resumes/{resume_id}/variants/{variant['id']}/adopt",
+        _var_url(resume_id, variant["id"], "/adopt"),
         json={
-            "items": [
-                {"path": "experience.0.description.0", "text": "Engineer at Example Tech"}
-            ]
+            "items": [{"path": "experience.0.description.0", "text": "Engineer at Example Tech"}]
         },
     )
     assert adopted.status_code == 409, adopted.text
@@ -251,8 +336,8 @@ def test_locked_variant_entry_blocks_translation_candidate_and_adopt(
     violation = rejected["violations"][0]
     assert violation["kind"] == "lock_content"
     assert violation["path"] == "experience.0"
-    detail = client.get(f"/api/resumes/{resume_id}/variants/{variant['id']}").json()
-    assert detail["content"]["experience"][0]["description"] == ["负责合成数据接口"]
+    detail = client.get(_var_url(resume_id, variant["id"])).json()
+    assert _experience_texts(detail["content"]) == ["负责合成数据接口"]
 
 
 def test_translation_adopt_uses_variant_baseline_not_current_resume(client, db_session):
@@ -262,219 +347,19 @@ def test_translation_adopt_uses_variant_baseline_not_current_resume(client, db_s
     # 变体创建之后再锁当前简历的同一条目（变体内容保持不变、也没有锁标记）。
     record = client.get(f"/api/resumes/{resume_id}").json()
     locked = record["content"]
-    locked["experience"][0]["lock_content"] = True
+    entries_of(locked, "experience")[0]["lock_content"] = True
     saved = client.put(
         f"/api/resumes/{resume_id}/content",
         json={"content": locked, "expected_revision": record["revision"]},
     )
     assert saved.status_code == 200, saved.text
-    assert saved.json()["content"]["experience"][0]["lock_content"] is True
+    assert entries_of(saved.json()["content"], "experience")[0]["lock_content"] is True
 
     adopted = client.post(
-        f"/api/resumes/{resume_id}/variants/{variant['id']}/adopt",
+        _var_url(resume_id, variant["id"], "/adopt"),
         json={
-            "items": [
-                {"path": "experience.0.description.0", "text": "Engineer at Example Tech"}
-            ]
+            "items": [{"path": "experience.0.description.0", "text": "Engineer at Example Tech"}]
         },
     )
     assert adopted.status_code == 200, adopted.text
-    assert adopted.json()["variant"]["content"]["experience"][0]["description"] == [
-        "Engineer at Example Tech"
-    ]
-
-# ===== 批量翻译：多段一次调用，坏响应只回退该块 =====
-
-_MULTI_CONTENT = {
-    "summary": "负责合成数据接口的稳定性",
-    "experience": [
-        {
-            "id": "expobj0001",
-            "company": "示例科技有限公司",
-            "role": "后端实习生",
-            "description": ["把离线评测脚本接入 CI", "维护合成数据接口"],
-            "point_ids": {"description": ["pnt0000001", "pnt0000002"]},
-        }
-    ],
-}
-
-_MULTI_TRANSLATIONS = {
-    "负责合成数据接口的稳定性": "Kept the synthetic data API stable",
-    "后端实习生": "Backend intern",
-    "把离线评测脚本接入 CI": "Wired the offline evaluation scripts into CI",
-    "维护合成数据接口": "Maintained the synthetic data API",
-}
-
-
-def _prompt_segments(prompt: str) -> list[str]:
-    """批量提示词把片段 JSON 放在独立一行；用它确认模型实际收到的段序。"""
-    for line in prompt.splitlines():
-        if line.startswith("["):
-            return json.loads(line)
-    raise AssertionError("批量提示词里没有片段 JSON")
-
-
-def _provider_for(translations: dict[str, str], *, batch_reply: str | None = None):
-    """按"源文 → 译文"查表回复；batch_reply 非空时批量调用直接返回它（回退用例）。"""
-
-    def handler(prompt: str) -> str:
-        if "translations" in prompt:
-            if batch_reply is not None:
-                return batch_reply
-            segments = _prompt_segments(prompt)
-            return json.dumps(
-                {"translations": [translations[text] for text in segments]},
-                ensure_ascii=False,
-            )
-        for source, target in translations.items():
-            if source in prompt:
-                return json.dumps({"result": target}, ensure_ascii=False)
-        raise AssertionError("逐段翻译的提示词里找不到已知原文")
-
-    return _ScriptedProvider(handler)
-
-
-def _translate(client, resume_id: int, variant_id: int) -> dict:
-    response = client.post(
-        f"/api/resumes/{resume_id}/variants/{variant_id}/translate",
-        json={"target_language": "en-US"},
-    )
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
-def _assert_multi_candidate(candidate: dict) -> None:
-    assert candidate["summary"] == _MULTI_TRANSLATIONS["负责合成数据接口的稳定性"]
-    assert candidate["experience"][0]["role"] == _MULTI_TRANSLATIONS["后端实习生"]
-    assert candidate["experience"][0]["description"] == [
-        _MULTI_TRANSLATIONS["把离线评测脚本接入 CI"],
-        _MULTI_TRANSLATIONS["维护合成数据接口"],
-    ]
-
-
-def test_all_fields_are_translated_in_a_single_batch(client, monkeypatch):
-    """字段一多就逐段调模型是这次超时的根因：同一批必须只发一次调用。"""
-    resume_id = _create_resume(client, _MULTI_CONTENT)
-    variant = _create_variant(client, resume_id)
-    provider = _provider_for(_MULTI_TRANSLATIONS)
-    _install_provider(monkeypatch, provider)
-
-    body = _translate(client, resume_id, variant["id"])
-
-    assert len(provider.calls) == 1
-    prompt = provider.prompts[0]
-    assert all(text in prompt for text in _MULTI_TRANSLATIONS)
-    assert "zh2en" in prompt
-    assert body["blocked_fields"] == []
-    _assert_multi_candidate(body["candidate"])
-
-
-def test_long_resume_is_split_into_bounded_batches(client, monkeypatch):
-    """25 段 → 24 段一批 + 1 段走逐段：单块有上限，且跨块顺序不变。"""
-    points = [f"第 {index} 条离线评测脚本说明" for index in range(1, 24)]
-    content = {
-        "summary": "负责合成数据接口的稳定性",
-        "experience": [
-            {
-                "id": "expobj0001",
-                "company": "示例科技有限公司",
-                "role": "后端实习生",
-                "description": points,
-                "point_ids": {"description": [f"pnt{index:07d}" for index in range(1, 24)]},
-            }
-        ],
-    }
-    translations = {
-        "负责合成数据接口的稳定性": "Kept the synthetic data API stable",
-        "后端实习生": "Backend intern",
-    }
-    translations.update({text: f"EN {index}" for index, text in enumerate(points, start=1)})
-    resume_id = _create_resume(client, content)
-    variant = _create_variant(client, resume_id)
-    provider = _provider_for(translations)
-    _install_provider(monkeypatch, provider)
-
-    body = _translate(client, resume_id, variant["id"])
-
-    assert len(provider.calls) == 2
-    assert len(_prompt_segments(provider.prompts[0])) == 24
-    # 剩下的单段走原有 translate()，提示词形状与历史一致（result）。
-    assert "translations" not in provider.prompts[1]
-    assert body["candidate"]["experience"][0]["description"] == [
-        translations[text] for text in points
-    ]
-
-
-@pytest.mark.parametrize(
-    "batch_reply",
-    [
-        "抱歉，我无法完成这次翻译。",
-        '{"translations": ["only one"]}',
-        '{"translations": ["a", 3, "c", "d"]}',
-        '{"result": "wrong schema"}',
-    ],
-)
-def test_broken_batch_response_falls_back_to_per_field(
-    client, monkeypatch, caplog, batch_reply
-):
-    """模型输出不合格时只回退该块逐段翻译：结果仍然正确，不整单失败。"""
-    resume_id = _create_resume(client, _MULTI_CONTENT)
-    variant = _create_variant(client, resume_id)
-    provider = _provider_for(_MULTI_TRANSLATIONS, batch_reply=batch_reply)
-    _install_provider(monkeypatch, provider)
-
-    with caplog.at_level(
-        logging.WARNING, logger="app.services.resume.bilingual_variants"
-    ):
-        body = _translate(client, resume_id, variant["id"])
-
-    # 1 次批量 + 4 次逐段；只有失败的那块回退。
-    assert len(provider.calls) == 5
-    assert "translations" in provider.prompts[0]
-    assert all("translations" not in prompt for prompt in provider.prompts[1:])
-    assert "回退逐段翻译" in caplog.text
-    assert body["blocked_fields"] == []
-    _assert_multi_candidate(body["candidate"])
-
-
-def test_single_translatable_field_skips_the_batch(client, monkeypatch):
-    resume_id = _create_resume(client, {"summary": "负责合成数据接口的稳定性"})
-    variant = _create_variant(client, resume_id)
-    provider = _provider_for({"负责合成数据接口的稳定性": "Kept the synthetic data API stable"})
-    _install_provider(monkeypatch, provider)
-
-    body = _translate(client, resume_id, variant["id"])
-
-    assert len(provider.calls) == 1
-    assert "translations" not in provider.prompts[0]
-    assert body["candidate"]["summary"] == "Kept the synthetic data API stable"
-
-
-def test_batch_translation_still_enforces_locked_glossary_term(client, monkeypatch):
-    """批量路径复用同一套术语锁定：漏掉锁定译名的字段保留原文并记 blocked。"""
-    resume_id = _create_resume(client, _MULTI_CONTENT)
-    variant = _create_variant(client, resume_id)
-    client.post(
-        "/api/glossary-terms",
-        json={
-            "source_term": "合成数据接口",
-            "target_term": "synthetic data API",
-            "language_from": "zh-CN",
-            "language_to": "en-US",
-        },
-    )
-    translations = dict(_MULTI_TRANSLATIONS)
-    # 这一段漏了锁定译名 → 必须 blocked；description 那条带上了 → 正常采纳并记命中。
-    translations["负责合成数据接口的稳定性"] = "Kept the interface stable"
-    provider = _provider_for(translations)
-    _install_provider(monkeypatch, provider)
-
-    body = _translate(client, resume_id, variant["id"])
-
-    assert len(provider.calls) == 1
-    assert "summary" in body["blocked_fields"]
-    assert body["candidate"]["summary"] == "负责合成数据接口的稳定性"
-    assert body["candidate"]["experience"][0]["description"][1] == (
-        "Maintained the synthetic data API"
-    )
-    assert {"source": "合成数据接口", "target": "synthetic data API"} in body["glossary_hits"]
+    assert _experience_texts(adopted.json()["variant"]["content"]) == ["Engineer at Example Tech"]

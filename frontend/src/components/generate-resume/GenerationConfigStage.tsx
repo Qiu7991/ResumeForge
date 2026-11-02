@@ -4,7 +4,7 @@
  * 纯展示受控组件——全部配置状态与开始动作由 GenerateResumeModal 持有，经 props 回传；
  * 零 api 导入（职业场景区块自己加载目录，失败只降级不阻断）。
  */
-import { Alert, Button, Input, Segmented, Select, Space, Switch, Tooltip, Typography } from "antd";
+import { Alert, Input, Segmented, Select, Space, Switch, Tooltip, Typography } from "antd";
 import type { EnhancementLevel, Job, ResumeLayout } from "../../types";
 import { RESUME_ENHANCEMENT_LEVELS, enhancementLevelDescriptionKey } from "../../config";
 import { t } from "../../i18n";
@@ -21,6 +21,8 @@ import type {
 } from "../../features/career-scenarios/useGenerationExtras";
 import { MaxLengthHint } from "../common/MaxLengthHint";
 import ResumeLayoutControls from "../ResumeLayoutControls";
+import SectionOrderControl from "../resume/SectionOrderControl";
+import { buildSectionOrderConfig } from "../../utils/resumeSectionOrder";
 
 /** 自定义提示词上限，与后端 GenerateOptions.custom_instruction 一致。 */
 export const MAX_CUSTOM_INSTRUCTION = 2000;
@@ -49,6 +51,10 @@ interface Props {
   setEnhancementLevel: (value: EnhancementLevel) => void;
   layout: ResumeLayout;
   setLayout: (next: ResumeLayout) => void;
+  /** 目录下发的可选板块与顺序（生成配置页的「顺序」控件）。 */
+  sectionOptions?: { key: string; label: string }[];
+  builtInSectionOrder?: string[];
+  profileSectionOrder?: string[];
   customInstruction: string;
   setCustomInstruction: (value: string) => void;
   /** 以哪份已有简历为底稿；null = 从「我的资料」重新生成（缺省 = 不启用）。 */
@@ -62,9 +68,6 @@ interface Props {
   modelName: string;
   onClose: () => void;
   onStart: () => void;
-  /** 岗位生成先看匹配报告；通用简历/未提供时不显示。 */
-  onAnalyze?: () => void;
-  analyzing?: boolean;
 }
 
 export default function GenerationConfigStage({
@@ -78,6 +81,9 @@ export default function GenerationConfigStage({
   setEnhancementLevel,
   layout,
   setLayout,
+  sectionOptions = [],
+  builtInSectionOrder = [],
+  profileSectionOrder = [],
   customInstruction,
   setCustomInstruction,
   baseResumeId = null,
@@ -87,10 +93,6 @@ export default function GenerationConfigStage({
   setInheritBaseLayout,
   llmReady,
   modelName,
-  onClose,
-  onStart,
-  onAnalyze,
-  analyzing = false,
 }: Props) {
   useLocale();
   const applyBaseLayout = (option: BaseResumeOption | undefined) => {
@@ -195,8 +197,12 @@ export default function GenerationConfigStage({
       </Typography.Title>
       <Space orientation="vertical" size={14} style={{ width: "100%" }}>
         <Space size={10}>
-          {/* 底稿模式下不再"美化拓展"：底稿的措辞正是要保留的东西，再去拓展会把它冲掉。 */}
-          <Switch checked={enhance} disabled={Boolean(baseResumeId)} onChange={setEnhance} />
+          {/* 底稿模式下不再"美化拓展"：底稿的措辞正是要保留的东西。 */}
+          <Switch
+            checked={enhance}
+            disabled={Boolean(baseResumeId)}
+            onChange={setEnhance}
+          />
           <Typography.Text strong>
             {job ? t("generate.config.enhanceJob") : t("generate.config.enhanceGeneral")}
           </Typography.Text>
@@ -256,9 +262,6 @@ export default function GenerationConfigStage({
         layout={layout}
         disabled={!llmReady}
         onChange={setLayout}
-        // 生成场景：默认板块顺序跟随「我的资料」里排好的顺序。预览 / 编辑已保存简历
-        // 时不传（它们读这份简历自己的 section_order，老简历外观因此不被追溯改变）。
-        preferProfileOrder
         // 长 CV 时页数上限放宽到 10（后端按 MODE_PAGE_LIMITS 再校验一次）。
         pageLimitOptions={
           generation.documentMode === "long_cv" ? pageLimitOptions("long_cv") : undefined
@@ -272,6 +275,44 @@ export default function GenerationConfigStage({
       <Typography.Text type="secondary" style={{ display: "block", marginTop: 8 }}>
         {t("generate.config.layoutHintEssential")}
       </Typography.Text>
+      {sectionOptions.length > 0 ? (
+        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
+          <Typography.Text type="secondary">
+            {t("sections.templateControls.orderTitle")}
+          </Typography.Text>
+          <SectionOrderControl
+            items={sectionOptions}
+            order={
+              Array.isArray(layout.format_config?.section_order)
+                ? layout.format_config.section_order
+                : profileSectionOrder
+            }
+            onChange={(next) =>
+              setLayout({
+                ...layout,
+                format_config: buildSectionOrderConfig(
+                  next,
+                  builtInSectionOrder,
+                  layout.format_config ?? {},
+                ),
+              })
+            }
+            onSyncProfile={
+              profileSectionOrder.length
+                ? () =>
+                    setLayout({
+                      ...layout,
+                      format_config: buildSectionOrderConfig(
+                        profileSectionOrder,
+                        builtInSectionOrder,
+                        layout.format_config ?? {},
+                      ),
+                    })
+                : undefined
+            }
+          />
+        </div>
+      ) : null}
 
       <Typography.Title level={5} style={{ marginTop: 20 }}>
         {t("careerScenarios.generate.title")}
@@ -298,30 +339,7 @@ export default function GenerationConfigStage({
         {t("generate.config.extraHint")}
       </Typography.Text>
 
-      <div style={{ marginTop: 24, textAlign: "right" }}>
-        <Space wrap>
-          <Button onClick={onClose}>{t("common.action.cancel")}</Button>
-          {onAnalyze ? (
-            <>
-              <Button disabled={!llmReady || analyzing} onClick={onStart}>
-                {t("generate.config.directStart")}
-              </Button>
-              <Button
-                type="primary"
-                disabled={!llmReady}
-                loading={analyzing}
-                onClick={onAnalyze}
-              >
-                {analyzing ? t("generate.config.analyzing") : t("generate.config.analyze")}
-              </Button>
-            </>
-          ) : (
-            <Button type="primary" disabled={!llmReady} onClick={onStart}>
-              {t("generate.config.start")}
-            </Button>
-          )}
-        </Space>
-      </div>
+      {/* #32：取消/开始按钮已提到 Modal footer（随弹窗固定，不再跟着配置表单滚走）。 */}
     </div>
   );
 }

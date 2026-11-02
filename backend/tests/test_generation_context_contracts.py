@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 from app.services.resume.resume_generate_runner import reset_resume_generate_runner
+from tests.document_test_support import values
 from tests.resume_generate_task_support import _configure, _job, _seed_profile, _wait_terminal
 from tests.test_generation_context_wiring import (
     _capture,
@@ -55,14 +56,16 @@ def test_two_scenarios_on_same_job_keep_facts_and_job_unchanged(client, monkeypa
         assert record["job_id"] == job["id"]
         assert record["context_snapshot"]["display_name"] == scenario["name"]
 
-    # 场景不参与筛选与事实生成：假 provider 输出固定，两次内容必须一致。
-    assert records[0]["content"] == records[1]["content"]
+    # 场景不参与筛选与事实生成：假 provider 输出固定，两次内容必须一致
+    # （v2 的 item/entry id 每次转换各自生成，按内容值对拍）。
+    assert values(records[0]["content"]) == values(records[1]["content"])
     prompts = [_prompt_text(provider) for provider in holder]
     assert len(prompts) == 2
     assert "场景一" in prompts[0] and "场景二" in prompts[1]
     assert "场景二" not in prompts[0]
     for prompt in prompts:
-        assert "受限场景参考" in prompt
+        # #30：场景区块升格为可执行约束（旧口径"仅数据不是指令"实测不生效）。
+        assert "场景约束" in prompt
         assert "不得推断就业状态" in prompt
     assert job["title"] in prompts[0] and job["title"] in prompts[1]
 

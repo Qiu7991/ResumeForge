@@ -13,6 +13,7 @@
  * （2026-11 行数预算）；`vi.mock` 仍留在本文件——vitest 的 mock 注册是文件级的。
  */
 import { t } from "../../i18n";
+import { headerFieldInput } from "../../test/headerChip";
 import { fireEvent, screen, within } from "@testing-library/react";
 // @ts-expect-error Node 内置模块：@types/node 未安装，但 vitest 运行在 Node 里。
 import { readFileSync } from "node:fs";
@@ -270,9 +271,10 @@ describe("ResumeDetailPreview 底部按钮排满整行", () => {
     fireEvent.click(screen.getByRole("button", { name: /简历制作台/ }));
     await screen.findByRole("dialog", { name: "简历制作台" });
 
-    const nameInput = document.getElementById("name") as HTMLInputElement;
-    expect(nameInput).not.toBeNull();
+    // #10：页眉姓名是 chip，受控 Input 在展开态里（双击 chip 展开；aria-label = 字段标签）。
+    const nameInput = headerFieldInput("document.headerField.name");
     fireEvent.change(nameInput, { target: { value: "李四" } });
+    expect(nameInput).toHaveValue("李四");
 
     // 预览里已经没有「手动调整」，脏值不再需要禁用任何按钮。
     expect(screen.queryByRole("button", { name: /手动调整/ })).toBeNull();

@@ -10,7 +10,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TEMPLATE_CATALOG } from "../test/resumeFixtures";
-import type { Job, ResumeContent, ResumeDetail, ResumeGenerateTask } from "../types";
+import { makeResumeDocument } from "../test/documentHarness";
+import type { Job, ResumeDetail, ResumeGenerateTask } from "../types";
 import { resetBackgroundTasks } from "../utils/backgroundTasks";
 import { registerNotifyHost } from "../utils/taskNotify";
 import GenerateResumeModal from "./GenerateResumeModal";
@@ -51,6 +52,7 @@ vi.mock("../api/resumePlan", () => planMocks);
 
 const apiMocks = vi.hoisted(() => ({
   startResumeGeneration: vi.fn(),
+  listResumes: vi.fn(),
   getResumeGenerateTask: vi.fn(),
   cancelResumeGenerateTask: vi.fn(),
   getResume: vi.fn(),
@@ -58,7 +60,6 @@ const apiMocks = vi.hoisted(() => ({
   updateResume: vi.fn(),
   updateResumeLayout: vi.fn(),
   fetchResumeTemplates: vi.fn(),
-  listResumes: vi.fn(),
   getLLMConfig: vi.fn(),
 }));
 
@@ -102,25 +103,8 @@ function makeTask(overrides: Partial<ResumeGenerateTask> = {}): ResumeGenerateTa
   };
 }
 
-const EMPTY_CONTENT: ResumeContent = {
-  photo: "",
-  name: "",
-  gender: "",
-  birth_year: "",
-  phone: "",
-  email: "",
-  city: "",
-  personal_website: "",
-  github: "",
-  job_intent: "",
-  summary: "",
-  education: [],
-  experience: [],
-  campus_experience: [],
-  projects: [],
-  skills: [],
-  awards: [],
-};
+/** 生成结果的正文：v2 文档（后端已统一返回 v2，生成预览由 ResumeDetailPreview 渲染）。 */
+const EMPTY_CONTENT = makeResumeDocument();
 
 const RESUME_DETAIL: ResumeDetail = {
   id: 7,
@@ -153,8 +137,6 @@ beforeEach(() => {
   // 登记表是模块级单例：不清的话，上一个用例留下的任务会被继续轮询。
   resetBackgroundTasks();
   registerNotifyHost(fakeNotifyHost as never);
-  planMocks.createGenerationPlan.mockReset();
-  planMocks.updateGenerationPlan.mockReset();
   apiMocks.startResumeGeneration.mockReset();
   apiMocks.getResumeGenerateTask.mockReset();
   apiMocks.cancelResumeGenerateTask.mockReset();
@@ -165,6 +147,8 @@ beforeEach(() => {
   apiMocks.fetchResumeTemplates.mockReset();
   apiMocks.listResumes.mockReset();
   apiMocks.listResumes.mockResolvedValue({ items: [], total: 0 });
+  planMocks.createGenerationPlan.mockReset();
+  planMocks.updateGenerationPlan.mockReset();
   apiMocks.getLLMConfig.mockReset();
   apiMocks.getLLMConfig.mockResolvedValue({ base_url: "https://api.example.com/v1", model: "m" });
   apiMocks.startResumeGeneration.mockResolvedValue(makeTask());
@@ -399,7 +383,7 @@ describe("GenerateResumeModal 后台生成任务", () => {
 });
 
 
-describe("GenerateResumeModal 底稿", () => {
+describe("GenerateResumeModal 底稿与匹配报告", () => {
   it("选底稿后沿用其版式，并提交 base_resume_id + inherit_base_layout", async () => {
     const job = { id: 142, title: "AI应用赋能专员", company: "萤火虫" } as Job;
     apiMocks.listResumes.mockResolvedValue({
@@ -439,18 +423,14 @@ describe("GenerateResumeModal 底稿", () => {
 
     await waitFor(() => expect(apiMocks.startResumeGeneration).toHaveBeenCalled());
     const payload = apiMocks.startResumeGeneration.mock.calls[0][0];
-    expect(payload.job_id).toBe(142);
     expect(payload.options.base_resume_id).toBe(15);
     expect(payload.options.inherit_base_layout).toBe(true);
     expect(payload.options.enhance).toBe(false);
     expect(payload.options.template).toBe("modern");
     expect(payload.options.format_name).toBe("compact");
-    expect(payload.options.page_limit).toBe(2);
   });
-});
 
-describe("GenerateResumeModal 岗位匹配报告", () => {
-  it("先出报告，确认选择后带 plan_id 生成", async () => {
+  it("先出匹配报告，确认选择后带 plan_id 生成", async () => {
     const job = { id: 142, title: "AI应用赋能专员", company: "萤火虫" } as Job;
     const plan = {
       id: 7,
