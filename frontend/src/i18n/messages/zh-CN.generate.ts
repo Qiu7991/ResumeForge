@@ -24,6 +24,8 @@ const generate = {
   "generate.base.title": "底稿",
   "generate.base.placeholder": "选择底稿简历",
   "generate.base.useProfile": "不使用底稿（从「我的资料」重新生成）",
+  "generate.base.inheritLayout": "沿用底稿的模板与版式",
+  "generate.base.inheritLayoutHint": "关闭后可单独挑模板",
   "generate.base.hintSelected":
     "将以这份简历为底稿：复制它的正文，再按岗位 JD 调整取舍与表达；底稿本身不会被修改，生成结果是一条新记录。",
   "generate.base.hintNone":
@@ -57,6 +59,40 @@ const generate = {
 
   // ── 底部动作 ──────────────────────────────────────────────────
   "generate.config.start": "开始生成",
+  "generate.config.analyze": "先看匹配报告",
+  "generate.config.directStart": "直接生成",
+  "generate.config.analyzing": "正在分析岗位与资料…",
+
+  // ── 岗位匹配报告 ──────────────────────────────────────────────
+  "generate.plan.title": "岗位匹配报告",
+  "generate.plan.subtitle":
+    "先确认每条岗位要求由哪个项目/事实来证明，再按这份计划生成；可迁移的会明确标注，不会写成直接经验。",
+  "generate.plan.analyzingHint": "正在拆解 JD 并核对资料库里的项目与事实，通常需要 20–60 秒。",
+  "generate.plan.analysisFailed": "生成匹配报告失败",
+  "generate.plan.coverage": "覆盖情况",
+  "generate.plan.coverage.direct": "直接证据",
+  "generate.plan.coverage.transferable": "可迁移",
+  "generate.plan.coverage.gap": "缺口",
+  "generate.plan.requirement": "要求",
+  "generate.plan.weight": "权重 {weight}",
+  "generate.plan.match.direct": "直接",
+  "generate.plan.match.transferable": "可迁移",
+  "generate.plan.match.none": "无证据",
+  "generate.plan.ref.project": "项目",
+  "generate.plan.ref.experience": "经历",
+  "generate.plan.ref.claim": "事实",
+  "generate.plan.selectedCount": "已选 {count} 条证据",
+  "generate.plan.quotes": "可引用原文",
+  "generate.plan.noEvidence": "这条要求暂时没有可核对证据，生成时不会硬写。",
+  "generate.plan.gapHint":
+    "缺口不代表不能投；生成时会用相邻能力靠拢，但不会声称你具备这条要求。",
+  "generate.plan.warnings": "需要留意的核对项",
+  "generate.plan.action.back": "返回修改配置",
+  "generate.plan.action.skip": "跳过报告，直接生成",
+  "generate.plan.action.generate": "按此方案生成",
+  "generate.plan.action.saving": "正在保存选择…",
+  "generate.plan.action.reanalyze": "重新分析",
+  "generate.plan.empty": "模型没有拆出可用的岗位要求，请重试或直接生成。",
 } as const;
 
 export default generate;

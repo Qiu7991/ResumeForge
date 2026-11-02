@@ -32,6 +32,8 @@ from .profile_context import (
 )
 from .profile_matching import (
     _FALLBACK_ENTRY_SECTIONS,
+    _MIN_SKILL_CANDIDATES,
+    _SOFT_SKILL_NAMES,
     _contains,
     _item_text,
     _job_text,
@@ -144,18 +146,49 @@ def build_targeted_profile_context(
     selected["skills"] = _select_skills(
         full["skills"], evidence, focus, fallback_allowed=fallback_allowed
     )
+    # **最低内容保障**：严格筛选把所有内容区都清空时（典型是"AI 应用赋能"这类
+    # 非技术岗——JD 只命中「飞书」一个办公工具词，技术项目/技能全部零分），
+    # 不能给模型一份空壳简历。按资料顺序保留真实条目，生成说明会标注为兜底；
+    # 只有在"所有内容区都空"时才触发，不会污染已有匹配内容的简历。
+    minimal_fallbacks: list[str] = []
+    # 只在 JD **没有识别出明确领域、且技能信号全是办公/通用能力**时兜底（如
+    # 「AI 应用赋能」只命中「飞书」一个办公工具词）；Kubernetes/算法这类硬技能
+    # 仍保留"资料没有就是没有"的既有语义，避免把无关技术项目硬塞进去。
+    soft_signals_only = bool(focus.skills) and all(
+        skill.casefold() in _SOFT_SKILL_NAMES for skill in focus.skills
+    )
+    if (
+        not focus.domains
+        and (not focus.skills or soft_signals_only)
+        and not any(selected.get(section) for section in ("experiences", "projects"))
+    ):
+        for section in ("experiences", "projects"):
+            if selected.get(section) or not full.get(section):
+                continue
+            picked = _take_entries(full[section], section)
+            if picked:
+                selected[section] = picked
+                minimal_fallbacks.append(section)
+        if not selected.get("skills") and full.get("skills"):
+            selected["skills"] = _take_entries(full["skills"], "skills")[
+                : _MIN_SKILL_CANDIDATES
+            ]
     selected = build_llm_profile_prompt_data(selected)
     # 出现零分条目 ⇒ 这些条目是"信号不足兜底"保留的（正常路径有匹配时不混入零分条目）。
     # 生成说明据此加一句如实解释，避免用户误以为系统判定它们相关。
-    fallback_sections: tuple[str, ...] = ()
+    fallback_names: list[str] = list(minimal_fallbacks)
     if fallback_allowed:
-        fallback_sections = tuple(
+        fallback_names.extend(
             section
             for section in ("experiences", "projects")
             if any(_score_item(item, section, focus) == 0 for item in selected.get(section) or [])
         )
     return _assemble_selection(
-        full, selected, focus, max_chars, fallback_sections=fallback_sections
+        full,
+        selected,
+        focus,
+        max_chars,
+        fallback_sections=tuple(dict.fromkeys(fallback_names)),
     )
 
 
@@ -365,10 +398,35 @@ def build_targeted_consumed_profile_context(
         selected["skills"] = _select_skills(
             skill_items, evidence, focus, fallback_allowed=fallback_allowed
         )
+    # 与旧 ProfileOut 路径同一套最低内容保障：非技术/软信号岗位不能把简历筛成空壳。
+    minimal_fallbacks: list[str] = []
+    soft_signals_only = bool(focus.skills) and all(
+        skill.casefold() in _SOFT_SKILL_NAMES for skill in focus.skills
+    )
+    if (
+        not focus.domains
+        and (not focus.skills or soft_signals_only)
+        and not any(selected.get(section) for section in ("experiences", "projects"))
+    ):
+        for section in ("experiences", "projects"):
+            if (
+                section not in participating
+                or selected.get(section)
+                or not full.get(section)
+            ):
+                continue
+            picked = _take_entries(full[section], section)
+            if picked:
+                selected[section] = picked
+                minimal_fallbacks.append(section)
+        if "skills" in participating and not selected.get("skills") and full.get("skills"):
+            selected["skills"] = _take_entries(full["skills"], "skills")[
+                : _MIN_SKILL_CANDIDATES
+            ]
     selected = build_llm_profile_prompt_data(selected)
-    fallback_sections: tuple[str, ...] = ()
+    fallback_names: list[str] = list(minimal_fallbacks)
     if fallback_allowed:
-        fallback_sections = tuple(
+        fallback_names.extend(
             section
             for section in _FALLBACK_ENTRY_SECTIONS
             if section in selected
@@ -379,7 +437,7 @@ def build_targeted_consumed_profile_context(
         selected,
         focus,
         max_chars,
-        fallback_sections=fallback_sections,
+        fallback_sections=tuple(dict.fromkeys(fallback_names)),
         counted_sections=participating,
     )
 

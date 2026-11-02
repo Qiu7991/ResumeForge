@@ -48,6 +48,9 @@ async def derive_from_base(
     job: JobOut | None,
     custom_instruction: str,
     *,
+    jd: str = "",
+    evidence_plan_block: str = "",
+    include_tech_stack: bool = True,
     budget: OperationBudget,
     on_progress: Callable[[str], None] | None = None,
 ) -> tuple[dict, list[str]]:
@@ -60,6 +63,9 @@ async def derive_from_base(
         ResumeContent.model_validate(base_record.content),
         job,
         custom_instruction.strip() or BASE_RESUME_INSTRUCTION,
+        jd=jd,
+        evidence_plan_block=evidence_plan_block,
+        include_tech_stack=include_tech_stack,
     )
     budget.raise_if_stopped()
     return revised.model_dump(), [

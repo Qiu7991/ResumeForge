@@ -315,3 +315,20 @@ def test_job_focus_and_prompt_include_additional_recruitment_information():
     assert "Python" in focus.skills
     assert "其他招聘信息" in jd
     assert "面试包含业务案例分析" in jd
+
+
+def test_targeted_context_keeps_real_entries_when_the_strict_filter_would_empty_it():
+    """非技术岗只命中一个办公工具词时，不能把项目/技能/经历全部筛空。"""
+    profile = make_diverse_profile()
+    job = make_job(
+        "AI应用赋能专员",
+        "负责 AI 工具选型与分部门工作流搭建，熟悉飞书、企业微信自动化，组织内部培训。",
+        "有培训经验，懂基础代码逻辑。",
+    )
+
+    selection = build_targeted_profile_context(profile, job, max_chars=9000)
+
+    assert selection.data["projects"], "项目区被筛空时必须有最低内容兜底"
+    assert selection.data["skills"], "技能区被筛空时必须有最低内容兜底"
+    assert "projects" in selection.fallback_sections
+    assert selection.selected_counts["projects"] > 0

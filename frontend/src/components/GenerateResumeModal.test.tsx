@@ -10,7 +10,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TEMPLATE_CATALOG } from "../test/resumeFixtures";
-import type { ResumeContent, ResumeDetail, ResumeGenerateTask } from "../types";
+import type { Job, ResumeContent, ResumeDetail, ResumeGenerateTask } from "../types";
 import { resetBackgroundTasks } from "../utils/backgroundTasks";
 import { registerNotifyHost } from "../utils/taskNotify";
 import GenerateResumeModal from "./GenerateResumeModal";
@@ -42,6 +42,13 @@ const fakeNotifyHost = {
   },
 };
 
+const planMocks = vi.hoisted(() => ({
+  createGenerationPlan: vi.fn(),
+  updateGenerationPlan: vi.fn(),
+}));
+
+vi.mock("../api/resumePlan", () => planMocks);
+
 const apiMocks = vi.hoisted(() => ({
   startResumeGeneration: vi.fn(),
   getResumeGenerateTask: vi.fn(),
@@ -51,6 +58,7 @@ const apiMocks = vi.hoisted(() => ({
   updateResume: vi.fn(),
   updateResumeLayout: vi.fn(),
   fetchResumeTemplates: vi.fn(),
+  listResumes: vi.fn(),
   getLLMConfig: vi.fn(),
 }));
 
@@ -66,6 +74,7 @@ vi.mock("../api/resumes", async (importOriginal) => ({
   updateResume: apiMocks.updateResume,
   updateResumeLayout: apiMocks.updateResumeLayout,
   fetchResumeTemplates: apiMocks.fetchResumeTemplates,
+  listResumes: apiMocks.listResumes,
 }));
 // 版式栏里的「简历字体」（项 14）挂载时会读一次已上传字体清单；本文件关心的是生成流程，
 // 给它一份空清单即可（字体选择本身由 ResumeFontControl.test.tsx 守）。
@@ -144,6 +153,8 @@ beforeEach(() => {
   // 登记表是模块级单例：不清的话，上一个用例留下的任务会被继续轮询。
   resetBackgroundTasks();
   registerNotifyHost(fakeNotifyHost as never);
+  planMocks.createGenerationPlan.mockReset();
+  planMocks.updateGenerationPlan.mockReset();
   apiMocks.startResumeGeneration.mockReset();
   apiMocks.getResumeGenerateTask.mockReset();
   apiMocks.cancelResumeGenerateTask.mockReset();
@@ -152,6 +163,8 @@ beforeEach(() => {
   apiMocks.updateResume.mockReset();
   apiMocks.updateResumeLayout.mockReset();
   apiMocks.fetchResumeTemplates.mockReset();
+  apiMocks.listResumes.mockReset();
+  apiMocks.listResumes.mockResolvedValue({ items: [], total: 0 });
   apiMocks.getLLMConfig.mockReset();
   apiMocks.getLLMConfig.mockResolvedValue({ base_url: "https://api.example.com/v1", model: "m" });
   apiMocks.startResumeGeneration.mockResolvedValue(makeTask());
@@ -382,5 +395,121 @@ describe("GenerateResumeModal 后台生成任务", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     expect(apiMocks.cancelResumeGenerateTask).not.toHaveBeenCalled();
     expect(apiMocks.startResumeGeneration).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe("GenerateResumeModal 底稿", () => {
+  it("选底稿后沿用其版式，并提交 base_resume_id + inherit_base_layout", async () => {
+    const job = { id: 142, title: "AI应用赋能专员", company: "萤火虫" } as Job;
+    apiMocks.listResumes.mockResolvedValue({
+      items: [
+        {
+          id: 15,
+          title: "赵岚柯-通用母版",
+          job_id: null,
+          job_title: "",
+          company: "",
+          source: "manual",
+          favorite: false,
+          note: "",
+          model: "",
+          enhancement_enabled: false,
+          enhancement_level: "balanced",
+          template: "modern",
+          format_name: "compact",
+          format_config: {},
+          page_limit: 2,
+          font_scale: "large",
+          language: "en-US",
+          created_at: "2026-11-01T08:00:00",
+          updated_at: "2026-11-01T08:00:00",
+        },
+      ],
+      total: 1,
+    });
+
+    renderModal({ job });
+
+    const select = await screen.findByRole("combobox", { name: "选择底稿简历" });
+    fireEvent.mouseDown(select);
+    const option = await screen.findByText(/赵岚柯-通用母版/);
+    fireEvent.click(option);
+    fireEvent.click(await screen.findByRole("button", { name: /直接生成/ }));
+
+    await waitFor(() => expect(apiMocks.startResumeGeneration).toHaveBeenCalled());
+    const payload = apiMocks.startResumeGeneration.mock.calls[0][0];
+    expect(payload.job_id).toBe(142);
+    expect(payload.options.base_resume_id).toBe(15);
+    expect(payload.options.inherit_base_layout).toBe(true);
+    expect(payload.options.enhance).toBe(false);
+    expect(payload.options.template).toBe("modern");
+    expect(payload.options.format_name).toBe("compact");
+    expect(payload.options.page_limit).toBe(2);
+  });
+});
+
+describe("GenerateResumeModal 岗位匹配报告", () => {
+  it("先出报告，确认选择后带 plan_id 生成", async () => {
+    const job = { id: 142, title: "AI应用赋能专员", company: "萤火虫" } as Job;
+    const plan = {
+      id: 7,
+      job_id: 142,
+      base_resume_id: null,
+      resume_id: null,
+      requirements: [
+        {
+          id: "R1",
+          text: "熟悉提示词工程",
+          type: "hard_skill" as const,
+          weight: 5,
+          keywords: ["提示词"],
+        },
+      ],
+      evidence: [
+        {
+          id: "R1:project:p1",
+          requirement_id: "R1",
+          ref_type: "project" as const,
+          ref_id: "p1",
+          ref_name: "AI 简历工作台",
+          match: "direct" as const,
+          rationale: "项目里有提示词模板与 JSON 契约",
+          fact_quotes: ["维护 20+ 提示词模板"],
+          selected: true,
+        },
+      ],
+      coverage: {
+        direct: 1,
+        transferable: 0,
+        gaps: [],
+        by_requirement: { R1: { status: "direct" as const, direct: 1, transferable: 0 } },
+      },
+      warnings: [],
+      model: "fake",
+      status: "ready",
+      error: "",
+      created_at: null,
+      updated_at: null,
+    };
+    planMocks.createGenerationPlan.mockResolvedValue(plan);
+    planMocks.updateGenerationPlan.mockResolvedValue(plan);
+
+    renderModal({ job });
+    fireEvent.click(await screen.findByRole("button", { name: /先看匹配报告/ }));
+
+    await waitFor(() =>
+      expect(planMocks.createGenerationPlan).toHaveBeenCalledWith(
+        expect.objectContaining({ job_id: 142 }),
+      ),
+    );
+    expect(await screen.findByText("熟悉提示词工程")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /按此方案生成/ }));
+
+    await waitFor(() =>
+      expect(planMocks.updateGenerationPlan).toHaveBeenCalledWith(7, ["R1:project:p1"]),
+    );
+    await waitFor(() => expect(apiMocks.startResumeGeneration).toHaveBeenCalled());
+    expect(apiMocks.startResumeGeneration.mock.calls[0][0].options.plan_id).toBe(7);
   });
 });

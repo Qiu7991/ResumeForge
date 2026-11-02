@@ -52,13 +52,17 @@ const applyQueue = {
   "applyQueue.detail.queuePosition": "排队序号",
   "applyQueue.detail.position": "第 {index} 位",
   "applyQueue.detail.resume": "使用简历",
-  "applyQueue.detail.defaultResume": "按默认规则解析",
+  "applyQueue.detail.noResume": "还没有岗位版简历",
   "applyQueue.detail.joinedAt": "加入队列",
   "applyQueue.detail.updatedAt": "最近更新",
   "applyQueue.detail.greeting": "招呼语",
   "applyQueue.detail.defaultGreeting": "默认招呼语",
   "applyQueue.greeting.unconfirmed": "招呼语未确认",
-  "applyQueue.greeting.unconfirmedHint": "还没确认招呼语：开始投递时会被跳过。点行末「更多操作 → 编辑」，按岗位生成并保存即可。",
+  "applyQueue.greeting.unconfirmedHint": "还没确认招呼语：开始投递时会被跳过。点这条标签直接编辑，按岗位生成并保存即可。",
+  "applyQueue.greeting.pendingConfirm": "招呼语待确认",
+  "applyQueue.greeting.pendingConfirmHint": "AI 已按岗位生成，但还没经你确认：开始投递时会被跳过。点这条标签直接编辑并保存后才会发送。",
+  "applyQueue.greeting.clickToEdit": "点击编辑",
+  "applyQueue.greeting.editAria": "编辑招呼语：{job}",
 
   // 准入徽标自己的两枚固定标签（准入结论的展示名仍来自 types 的 ADMISSION_META）。
   "applyQueue.admission.needsConfirm": "需逐条确认",
@@ -90,6 +94,10 @@ const applyQueue = {
   "applyQueue.filter.clearSelection": "清空选择",
   "applyQueue.confirm.removeSelectedTitle": "把选中的岗位移出队列？",
   "applyQueue.action.removeSelected": "移出所选",
+  "applyQueue.greeting.batchProgress": "正在生成招呼语：{current}（{done}/{total}）",
+  "applyQueue.greeting.batchStop": "当前岗位完成后停止",
+  "applyQueue.greeting.batchDoneTitle": "招呼语生成完成：成功 {ok} 个，失败 {failed} 个",
+  "applyQueue.greeting.batchSkipped": "另有 {count} 个未处理（已停止）",
   "applyQueue.action.start": "开始投递",
 
   // 条目编辑弹窗。
@@ -101,6 +109,8 @@ const applyQueue = {
   "applyQueue.toast.greetingGenerated": "已按岗位生成招呼语",
   "applyQueue.toast.greetingDefault": "已填入默认招呼语（未配置模型）",
   "applyQueue.toast.greetingFailed": "生成招呼语失败",
+  "applyQueue.toast.greetingNoResume": "这个岗位还没有岗位版简历：请先在岗位广场生成简历",
+  "applyQueue.toast.resumeChangedGreeting": "简历已更换，招呼语需要重新确认",
   "applyQueue.toast.updated": "队列条目已更新",
   "applyQueue.toast.updateFailed": "更新失败",
 } as const;

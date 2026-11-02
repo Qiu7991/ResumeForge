@@ -23,6 +23,11 @@ const profileLibrary = {
 
   "profileLibrary.page.title": "我的资料",
   "profileLibrary.page.subtitle": "简历资料用于生成简历，网申资料用于补充网申填表",
+  "profileLibrary.generationPrefs.title": "简历生成偏好",
+  "profileLibrary.generationPrefs.techStack": "在简历里显示项目技术栈",
+  "profileLibrary.generationPrefs.techStackHint":
+    "关闭后，新生成的简历不显示「技术栈：…」这一行；资料库里仍保留技术栈，用于岗位匹配与检索。已生成的简历不会自动改变。",
+  "profileLibrary.generationPrefs.saveFailed": "生成偏好保存失败，请重试",
 
   "profileLibrary.action.edit": "编辑资料",
   /** 网申资料空态那颗按钮：与页头「编辑资料」作用域不同，必须能靠名字区分。 */

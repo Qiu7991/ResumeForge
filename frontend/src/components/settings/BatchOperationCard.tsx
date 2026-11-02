@@ -7,12 +7,13 @@
  */
 import { Alert, App, Space } from "antd";
 import { useCallback, useEffect, useState } from "react";
-import { fetchResumeTemplates } from "../../api/resumes";
+import { fetchResumeTemplates, listResumes } from "../../api/resumes";
 import { getBatchOperationConfig, type BatchOperationConfigOut } from "../../api/settingsBatch";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
 import type { ResumeFontScaleOption, ResumeTemplateOption } from "../../types";
 import LoadingBlock from "../common/LoadingBlock";
+import type { BaseResumeOption } from "../generate-resume/GenerationConfigStage";
 import BatchExportCard from "./BatchExportCard";
 import BatchGenerationCard from "./BatchGenerationCard";
 
@@ -20,6 +21,7 @@ interface LoadedState {
   config: BatchOperationConfigOut;
   templates: ResumeTemplateOption[];
   fontScales: ResumeFontScaleOption[];
+  baseResumeOptions: BaseResumeOption[];
 }
 
 export default function BatchOperationCard() {
@@ -30,15 +32,30 @@ export default function BatchOperationCard() {
 
   const load = useCallback(async () => {
     try {
-      const [config, catalog] = await Promise.all([
+      const [config, catalog, resumes] = await Promise.all([
         getBatchOperationConfig(),
         // 目录只用来填下拉选项：取不到就退回数值/当前值，不让整张卡打不开。
         fetchResumeTemplates().catch(() => null),
+        // 底稿下拉：拿不到就只留"从资料生成"，不影响批量本身。
+        listResumes({ page_size: 50 }).catch(() => null),
       ]);
       setState({
         config,
         templates: catalog?.templates ?? [],
         fontScales: catalog?.font_scales ?? [],
+        baseResumeOptions:
+          resumes?.items.map((item) => ({
+            value: item.id,
+            label: `${item.title}${item.job_title ? ` · ${item.job_title}` : ""}${
+              item.created_at ? ` · ${item.created_at.slice(0, 10)}` : ""
+            }`,
+            template: item.template,
+            format_name: item.format_name,
+            format_config: item.format_config ?? {},
+            page_limit: item.page_limit,
+            font_scale: item.font_scale,
+            language: item.language,
+          })) ?? [],
       });
     } catch (err) {
       setState(null);
@@ -65,6 +82,7 @@ export default function BatchOperationCard() {
         section={state.config.generation}
         templates={state.templates}
         fontScales={state.fontScales}
+        baseResumeOptions={state.baseResumeOptions}
       />
       <BatchExportCard
         section={state.config.export}

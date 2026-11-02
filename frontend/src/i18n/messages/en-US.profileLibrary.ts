@@ -16,6 +16,12 @@ const profileLibrary = {
   "profileLibrary.page.title": "My Profile",
   "profileLibrary.page.subtitle":
     "Resume Profile feeds Resume generation; web form Profile supplements application forms",
+  "profileLibrary.generationPrefs.title": "Resume generation preferences",
+  "profileLibrary.generationPrefs.techStack": "Show project tech stack in resumes",
+  "profileLibrary.generationPrefs.techStackHint":
+    "When off, newly generated resumes omit the “Tech Stack: …” line. The tech stack stays in your profile for matching and search; existing resumes are not changed.",
+  "profileLibrary.generationPrefs.saveFailed":
+    "Could not save the generation preference. Please retry.",
   "profileLibrary.action.edit": "Edit Profile",
   "profileLibrary.action.fillWebForm": "Fill in Web form",
   "profileLibrary.action.save": "Save all Profile data",

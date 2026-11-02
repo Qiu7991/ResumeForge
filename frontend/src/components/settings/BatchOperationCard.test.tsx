@@ -13,7 +13,10 @@ const settingsMocks = vi.hoisted(() => ({
   saveBatchGenerationConfig: vi.fn(),
   saveBatchExportConfig: vi.fn(),
 }));
-const resumeMocks = vi.hoisted(() => ({ fetchResumeTemplates: vi.fn() }));
+const resumeMocks = vi.hoisted(() => ({
+  fetchResumeTemplates: vi.fn(),
+  listResumes: vi.fn(),
+}));
 
 vi.mock("../../api/settingsBatch", () => settingsMocks);
 vi.mock("../../api/resumes", () => resumeMocks);
@@ -55,6 +58,7 @@ function sections(generationConfigured = true, exportConfigured = true) {
 
 beforeEach(() => {
   resumeMocks.fetchResumeTemplates.mockResolvedValue(TEMPLATE_CATALOG);
+  resumeMocks.listResumes.mockResolvedValue({ items: [], total: 0 });
   settingsMocks.getBatchOperationConfig.mockResolvedValue(sections());
   settingsMocks.saveBatchGenerationConfig.mockImplementation(async (payload) => ({
     ...payload,

@@ -10,6 +10,10 @@ import { App } from "antd";
 import dayjs from "dayjs";
 import { useState } from "react";
 import { exportJobsCsv } from "../../api/jobs";
+import {
+  stopGreetingBatch,
+  useGreetingBatchState,
+} from "../../features/apply/greetingBatchRunner";
 import { startBulkAi, stopBulkAi, useBulkAiState } from "../../features/jobs/jobBulkAiRunner";
 import type { BatchGenerationConfig } from "../../api/settingsBatch";
 import { t } from "../../i18n";
@@ -36,6 +40,8 @@ export function useJobBulkActions({
   const { message } = App.useApp();
   const [exporting, setExporting] = useState(false);
   const bulkAi = useBulkAiState();
+  // 入队后自动生成招呼语的进度：工具栏据此显示进度与停止按钮。
+  const greetingBatch = useGreetingBatchState();
 
   const selectedJobs = () => {
     const byId = new Map((jobs?.items ?? []).map((job) => [job.id, job]));
@@ -92,5 +98,5 @@ export function useJobBulkActions({
     }
   };
 
-  return { handleBulkAction, exporting, bulkAi, stopBulkAi };
+  return { handleBulkAction, exporting, bulkAi, stopBulkAi, greetingBatch, stopGreetingBatch };
 }

@@ -54,6 +54,9 @@ export default function JobsPage() {
     setStatus,
     sourceKind,
     setSourceKind,
+    city,
+    setCity,
+    cityOptions,
     sortState,
     applySort,
     page,
@@ -261,6 +264,7 @@ export default function JobsPage() {
     jobType,
     status,
     sourceKind,
+    city,
     sortState,
     setSelectedJobIds,
   });
@@ -342,6 +346,9 @@ export default function JobsPage() {
         setStatus={setStatus}
         sourceKind={sourceKind}
         setSourceKind={setSourceKind}
+        city={city}
+        setCity={setCity}
+        cityOptions={cityOptions}
         batchAction={batchAction}
         openMatchBatch={openMatchBatch}
         emptyDescriptionJobIds={emptyDescriptionJobIds}
@@ -376,6 +383,8 @@ export default function JobsPage() {
         onBulkAction={bulk.handleBulkAction}
         bulkAi={bulk.bulkAi}
         onStopBulkAi={bulk.stopBulkAi}
+        greetingBatch={bulk.greetingBatch}
+        onStopGreetings={bulk.stopGreetingBatch}
         exitSelectionMode={exitSelectionMode}
         totalCount={jobs?.total ?? 0}
         selectAllPagesLoading={selectAllPagesLoading}

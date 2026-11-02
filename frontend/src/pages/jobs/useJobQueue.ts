@@ -6,6 +6,7 @@
 import { App } from "antd";
 import { useState } from "react";
 import { addToQueue, QueueConflictError } from "../../api/apply";
+import { startGreetingBatch } from "../../features/apply/greetingBatchRunner";
 import { t } from "../../i18n";
 import type { Job } from "../../types";
 
@@ -21,7 +22,7 @@ export function useJobQueue() {
   ) {
     setQueueJobId(job.id);
     try {
-      await addToQueue([
+      const created = await addToQueue([
         {
           job_id: job.id,
           confirm_unanalyzed: confirm.unanalyzed,
@@ -29,6 +30,15 @@ export function useJobQueue() {
         },
       ]);
       message.success(t("jobsPage.queue.added"));
+      // 入队后立刻按这个岗位的简历生成招呼语；没有岗位版简历就不凭空编。
+      const item = created[0];
+      if (item?.resume_id != null) {
+        if (!startGreetingBatch([item])) {
+          message.warning(t("jobsPage.queue.greetingDeferred"));
+        }
+      } else if (item) {
+        message.warning(t("jobsPage.queue.noResumeGreeting"));
+      }
     } catch (err) {
       if (err instanceof QueueConflictError) {
         const detail = err.detail;

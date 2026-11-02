@@ -12,6 +12,24 @@ export function getProfile(): Promise<Profile> {
   return request("/profile");
 }
 
+export interface GenerationPreferences {
+  include_tech_stack: boolean;
+}
+
+/** 我的资料 → 生成偏好：当前只有「简历显示项目技术栈」。 */
+export function getGenerationPreferences(): Promise<GenerationPreferences> {
+  return request("/profile/generation-preferences");
+}
+
+export function saveGenerationPreferences(
+  payload: GenerationPreferences,
+): Promise<GenerationPreferences> {
+  return request("/profile/generation-preferences", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function saveProfile(profile: Omit<Profile, "id" | "updated_at">): Promise<Profile> {
   return request("/profile", { method: "PUT", body: JSON.stringify(profile) });
 }

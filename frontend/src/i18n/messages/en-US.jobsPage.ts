@@ -23,6 +23,8 @@ const jobsPage = {
   "jobsPage.toolbar.exported": "Exported {count} jobs",
   "jobsPage.toolbar.exportFailed": "Export failed",
   "jobsPage.toolbar.delete": "Delete selected",
+  "jobsPage.toolbar.deleteConfirmTitle": "Move the {count} selected jobs to the trash?",
+  "jobsPage.toolbar.deleteConfirmBody": "Jobs go to the trash and can be restored from it.",
   "jobsPage.toolbar.bulkActions": "Bulk actions",
   "jobsPage.toolbar.bulkGenerate": "Generate resumes with AI",
   "jobsPage.toolbar.bulkAnalyze": "Read job requirements",
@@ -32,6 +34,7 @@ const jobsPage = {
   "jobsPage.bulkAi.analysisLabel": "Job requirement analysis",
   "jobsPage.bulkAi.resumeProgress": "Generating resume: {current} ({done}/{total})",
   "jobsPage.bulkAi.analysisProgress": "Reading job: {current} ({done}/{total})",
+  "jobsPage.bulkAi.greetingProgress": "Generating greeting: {current} ({done}/{total})",
   "jobsPage.bulkAi.stop": "Stop after the current job",
   "jobsPage.bulkAi.doneTitle": "{label} finished: {ok} succeeded, {failed} failed",
   "jobsPage.bulkAi.skippedHint": "{count} jobs were not processed (stopped)",
@@ -43,7 +46,10 @@ const jobsPage = {
   "jobsPage.filter.statusPlaceholder": "Status",
   "jobsPage.filter.sourceAria": "Filter by source",
   "jobsPage.filter.sourcePlaceholder": "Source",
+  "jobsPage.filter.cityPlaceholder": "City",
+  "jobsPage.filter.cityAria": "Filter by city",
   "jobsPage.filter.analyzeMatch": "AI job comparison",
+  "jobsPage.filter.matchAnalysis": "Match analysis",
   "jobsPage.filter.matchHistory": "Analysis history",
   "jobsPage.filter.candidates": "Job leads",
   "jobsPage.filter.backfill": "Fill in details",
@@ -79,6 +85,8 @@ const jobsPage = {
   "jobsPage.queue.gapSeparator": ", ",
   "jobsPage.queue.realGapOk": "Apply anyway",
   "jobsPage.queue.addFailed": "Could not add it to the apply queue",
+  "jobsPage.queue.noResumeGreeting": "Added to the queue, but this Job has no tailored Resume yet, so no greeting was generated",
+  "jobsPage.queue.greetingDeferred": "Added to the queue; the previous greeting batch is still running, so generate this one later in the apply desk",
 
   "jobsPage.detail.loadFailed": "This job no longer exists or has been deleted",
 
@@ -98,6 +106,8 @@ const jobsPage = {
   "jobsPage.importUrl.submit": "Import",
   "jobsPage.importUrl.success": "Imported \"{title}\"",
   "jobsPage.importUrl.failed": "Import failed. Please try again.",
+  "jobsPage.importUrl.networkUnavailable":
+    "The local service did not respond (it may be restarting). Please try again.",
   "jobsPage.importUrl.imported": "Job imported",
 } as const;
 

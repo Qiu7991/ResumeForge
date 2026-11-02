@@ -2,6 +2,7 @@
 import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { importJobFromUrl } from "../../api/jobs";
+import { ApiError } from "../../api/client";
 import { t } from "../../i18n";
 
 interface ImportResultMessage {
@@ -11,8 +12,28 @@ interface ImportResultMessage {
   error?: string;
 }
 
+function postToOpener(message: ImportResultMessage | { type: "resumeforge-import-started" }) {
+  window.opener?.postMessage(message, "*");
+}
+
 function replyToOpener(message: ImportResultMessage) {
-  window.opener?.postMessage({ ...message, type: "resumeforge-import-result" }, "*");
+  postToOpener({ ...message, type: "resumeforge-import-result" });
+}
+
+/** 导入接口按 URL 幂等：网络类失败（常见于后端正在重启）等 2 秒重试一次。 */
+async function importWithOneRetry(raw: string) {
+  try {
+    return await importJobFromUrl(raw);
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.code !== "network") throw error;
+    await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    return importJobFromUrl(raw);
+  }
+}
+
+/** 弹窗要等 opener 收完消息再关；立刻 close 可能把 postMessage 一起掐掉。 */
+function closeAfterReply() {
+  window.setTimeout(() => window.close(), 300);
 }
 
 export function useImportUrlParam(onImported: (jobId: number) => void) {
@@ -24,11 +45,14 @@ export function useImportUrlParam(onImported: (jobId: number) => void) {
   useEffect(() => {
     if (!raw || handled.current === raw) return;
     handled.current = raw;
-    void importJobFromUrl(raw)
+    // 先告诉扩展"窗口已连上、开始导入"：BOSS 详情页慢时导入可能要几十秒，
+    // 扩展据此把"没回应"的判定从 12 秒换成 120 秒，而不是提前报错。
+    if (closeAfter) postToOpener({ type: "resumeforge-import-started" });
+    void importWithOneRetry(raw)
       .then((job) => {
         if (closeAfter) {
           replyToOpener({ type: "resumeforge-import-result", ok: true, title: job.title });
-          window.close();
+          closeAfterReply();
           return;
         }
         const next = new URLSearchParams(params);
@@ -39,10 +63,16 @@ export function useImportUrlParam(onImported: (jobId: number) => void) {
         onImported(job.id);
       })
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : t("jobsPage.importUrl.failed");
+        // 网络类错误多半是本地服务正在重启：给一句能指导重试的话，而不是"应用没启动"。
+        const message =
+          error instanceof ApiError && error.code === "network"
+            ? t("jobsPage.importUrl.networkUnavailable")
+            : error instanceof Error
+              ? error.message
+              : t("jobsPage.importUrl.failed");
         if (closeAfter) {
           replyToOpener({ type: "resumeforge-import-result", ok: false, error: message });
-          window.close();
+          closeAfterReply();
           return;
         }
         const next = new URLSearchParams(params);

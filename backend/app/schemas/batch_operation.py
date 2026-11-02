@@ -48,6 +48,9 @@ class BatchGenerationConfig(_BatchLayoutConfig):
     enhance: bool = False
     enhancement_level: BatchEnhancementLevel = "balanced"
     custom_instruction: str = Field(default="", max_length=MAX_BATCH_CUSTOM_INSTRUCTION_CHARS)
+    # 批量时统一用哪份底稿；None = 仍从资料库生成。与单岗位弹窗同一语义。
+    base_resume_id: int | None = Field(default=None, ge=1)
+    inherit_base_layout: bool = True
 
 
 class BatchExportConfig(_BatchLayoutConfig):

@@ -28,6 +28,12 @@ const bulkEnqueue = {
   "bulkEnqueue.summary.unsupported": "{count} 个来源不支持自动投递",
   /** 第四分句：其它失败的条数（为 0 时不出现；明细由调用方按需展开）。 */
   "bulkEnqueue.summary.failed": "{count} 个失败",
+  /** 入队后自动按岗位版简历生成招呼语的条数。 */
+  "bulkEnqueue.summary.greetingsStarted": "正在为 {count} 个岗位生成招呼语",
+  /** 没有岗位版简历、无法生成招呼语的条数——提示用户先生成简历。 */
+  "bulkEnqueue.summary.withoutResume": "{count} 个缺岗位版简历，未生成招呼语",
+  /** 前一批招呼语还在生成，本批没能自动开始。 */
+  "bulkEnqueue.summary.greetingsDeferred": "{count} 个的招呼语等当前生成任务结束后再补",
   /** 分句之间的分隔符（见文件头：标点也是文案）。 */
   "bulkEnqueue.summary.separator": "，",
 

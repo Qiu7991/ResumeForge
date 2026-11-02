@@ -398,3 +398,23 @@ describe("ApplyQueuePanel 分页与刷新", () => {
     await waitFor(() => expect(refresh).not.toHaveClass("ant-btn-loading"));
   });
 });
+
+describe("ApplyQueuePanel 招呼语复核", () => {
+  it("有文案但未确认时标「招呼语待确认」，队列里不再提供批量生成入口", async () => {
+    apiMocks.listQueue.mockResolvedValue(
+      queueList([{ ...BASE_ITEM, greeting: "AI 按岗位生成的草稿", greeting_confirmed: false }]),
+    );
+
+    render(
+      <AntdApp>
+        <ApplyQueuePanel disabled={false} onStarted={vi.fn()} />
+      </AntdApp>,
+    );
+
+    expect(await screen.findByText("招呼语待确认")).toBeInTheDocument();
+    // 生成发生在入队时（岗位广场），投递台只负责复核与发送。
+    expect(
+      screen.queryByRole("button", { name: /批量生成招呼语/ }),
+    ).not.toBeInTheDocument();
+  });
+});

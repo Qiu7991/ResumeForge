@@ -106,7 +106,9 @@ class SkillTag(BaseModel):
 class JobImportUrlIn(BaseModel):
     """按招聘网站链接导入岗位：只需一条岗位详情页地址。"""
 
-    url: str = Field(min_length=8, max_length=512)
+    # 招聘站的详情页链接常带几百字符的跟踪参数（BOSS 的 securityId）；先允许进来，
+    # 入库前由 `_canonical_job_url` 去掉查询串，不把令牌写进库。
+    url: str = Field(min_length=8, max_length=4096)
 
     @field_validator("url")
     @classmethod

@@ -9,6 +9,10 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from ..database import get_db
+from ..schemas.generation_preferences import (
+    GenerationPreferencesIn,
+    GenerationPreferencesOut,
+)
 from ..schemas.photo import ProfilePhotoCreate, ProfilePhotoOut, ProfilePhotoUpdate
 from ..schemas.profile import (
     ProfileOut,
@@ -26,6 +30,10 @@ from ..services.attachments import (
 from ..services.document_text import extract_documents_text
 from ..services.llm import create_provider
 from ..services.llm.base import LLMError
+from ..services.profile.generation_preferences import (
+    get_generation_preferences,
+    save_generation_preferences,
+)
 from ..services.profile.profile_photos import (
     add_photo,
     delete_photo,
@@ -226,7 +234,6 @@ async def parse_profile_text_draft(
                 document_warnings=documents.warnings,
             )
         )
-    provider = create_provider(config)
     db.close()
     try:
         # 一次识别要几十秒：客户端断开就停下（结果没人要，本地兜底也不必算）。
@@ -262,5 +269,23 @@ async def parse_profile_text_draft(
     return _with_catalog_draft(
         finalize_recognition_result(
             result, has_images=has_images, document_warnings=documents.warnings
+        )
+    )
+
+
+@router.get("/generation-preferences", response_model=GenerationPreferencesOut)
+def read_generation_preferences(db: Session = Depends(get_db)):
+    """我的资料 → 简历生成偏好（当前只有「显示技术栈」）。"""
+    return GenerationPreferencesOut(**get_generation_preferences(db))
+
+
+@router.put("/generation-preferences", response_model=GenerationPreferencesOut)
+def write_generation_preferences(
+    payload: GenerationPreferencesIn, db: Session = Depends(get_db)
+):
+    """保存生成偏好；只影响下次生成，不回溯修改已生成简历。"""
+    return GenerationPreferencesOut(
+        **save_generation_preferences(
+            db, include_tech_stack=payload.include_tech_stack
         )
     )

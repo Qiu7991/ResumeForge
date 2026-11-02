@@ -67,6 +67,7 @@ def test_a_confirmed_greeting_is_sent_verbatim(db_session):
     first = _items(db_session, task.id)[0]
     confirmed = "计算机本科，做过 LLM 结构化抽取，想聊下这个岗位的落地场景"
     first.greeting = confirmed
+    first.greeting_confirmed = True
     db_session.commit()
 
     adapter = RecordingAdapter()
@@ -80,6 +81,28 @@ def test_a_confirmed_greeting_is_sent_verbatim(db_session):
     # 确认过的那条发出去了（原文发出，不被改写），没确认的那条仍然跳过
     assert _item_statuses(db_session, task.id) == ["success", "skipped"]
     assert adapter.greetings == [confirmed]
+
+
+def test_a_generated_but_unconfirmed_greeting_is_still_skipped(db_session):
+    """有字不等于确认过：批量生成的草稿没经用户保存，绝不能发出去。"""
+    task = _setup_task(db_session, 1, require_greeting_review=True)
+    item = _items(db_session, task.id)[0]
+    item.greeting = "AI 生成的一段话，用户还没看过"
+    item.greeting_confirmed = False
+    db_session.commit()
+
+    adapter = RecordingAdapter()
+    runner = _runner(adapter)
+
+    runner.start(task.id)
+    _wait(runner)
+    _wait_db(db_session, lambda: _task_status(db_session, task.id), "completed", "任务状态")
+
+    db_session.expire_all()
+    assert _item_statuses(db_session, task.id) == ["skipped"]
+    assert _items(db_session, task.id)[0].failure_category == "greeting_missing"
+    assert "待确认" in (_items(db_session, task.id)[0].failure_detail or "")
+    assert adapter.greetings == []
 
 
 def test_review_off_falls_back_to_the_default_greeting(db_session):

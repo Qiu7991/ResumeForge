@@ -100,9 +100,18 @@ class GenerateOptions(BaseModel):
     # None = 沿用原行为（从完整资料重新生成）。底稿模式不重新抽取事实——底稿里的事实
     # 是用户已经确认过的口径，交给模型重新"生成"只会把润色过的措辞冲掉。
     base_resume_id: int | None = Field(default=None, ge=1)
+    # 底稿模式默认沿用底稿的视觉版式（模板/版式预设/页数/字号/语言/section_order）。
+    # 前端在「沿用底稿版式」开关关闭时传 false，自己显式挑模板。
+    inherit_base_layout: bool = True
     # 本次显式选用的职业场景（A5）。**缺省/null = 不启用**：请求与提示词保持旧行为；
     # 实际解析与冻结由服务端 resolver 完成，客户端不能上传快照/系统指南正文。
     career_context: CareerContextRequest | None = None
+    # 先在「匹配报告」里确认过的岗位生成计划。**缺省/null = 旧链路**：不加载计划、
+    # 不额外渲染证据块，请求与提示词保持原样。
+    plan_id: int | None = Field(default=None, ge=1)
+    # 是否在简历里显示项目技术栈。**缺省/null = 读取「我的资料 → 生成偏好」**；
+    # 显式传值只用于调试/兼容，正常入口不发送。
+    include_tech_stack: bool | None = None
 
     @model_validator(mode="after")
     def _check_page_limit_for_mode(self) -> GenerateOptions:

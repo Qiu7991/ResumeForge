@@ -23,6 +23,13 @@ export function useBaseResumeOptions(open: boolean) {
             label: `${item.title}${item.job_title ? ` · ${item.job_title}` : ""}${
               item.created_at ? ` · ${item.created_at.slice(0, 10)}` : ""
             }`,
+            // 底稿不只是正文：模板/版式/页数/字号/语言也一起带回来，选中后可以沿用。
+            template: item.template,
+            format_name: item.format_name,
+            format_config: item.format_config ?? {},
+            page_limit: item.page_limit,
+            font_scale: item.font_scale,
+            language: item.language,
           })),
         );
       })

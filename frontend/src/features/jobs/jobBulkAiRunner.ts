@@ -112,7 +112,8 @@ async function generateResumeFor(
   const started = await startResumeGeneration({
     job_id: job.id,
     options: {
-      enhance: config?.enhance ?? false,
+      // 底稿模式不再"美化拓展"：底稿的措辞正是要保留的东西。
+      enhance: config?.base_resume_id ? false : (config?.enhance ?? false),
       enhancement_level: config?.enhancement_level ?? "balanced",
       page_limit: config?.page_limit ?? layout.page_limit,
       font_scale: config?.font_scale ?? layout.font_scale,
@@ -121,6 +122,12 @@ async function generateResumeFor(
       format_name: config?.format_name ?? layout.format_name,
       format_config: {},
       custom_instruction: config?.custom_instruction ?? "",
+      ...(config?.base_resume_id
+        ? {
+            base_resume_id: config.base_resume_id,
+            inherit_base_layout: config.inherit_base_layout ?? true,
+          }
+        : {}),
     },
   });
   return waitForResumeTask(started.id);

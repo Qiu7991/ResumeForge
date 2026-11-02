@@ -13,7 +13,12 @@ import { Button, Dropdown, Menu, Space, Table, Tag, Tooltip, Typography } from "
 import type { MenuProps } from "antd";
 import type { TableColumnsType } from "antd";
 import type { TableRowSelection } from "antd/es/table/interface";
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { t } from "../../../i18n";
 import { QUEUE_STATUS_LABEL_KEYS } from "../../../i18n/enum/apply";
 import { useLocale } from "../../../i18n/i18nContext";
@@ -28,6 +33,7 @@ export function QueueTable({
   selectedIds,
   setSelectedIds,
   setDetail,
+  setEditing,
   rowMenuItems,
 }: {
   items: ApplyQueueItem[];
@@ -35,6 +41,8 @@ export function QueueTable({
   selectedIds: number[];
   setSelectedIds: (ids: number[]) => void;
   setDetail: (item: ApplyQueueItem) => void;
+  /** 点招呼语/待确认标签直接打开编辑弹窗（不再要求先走「更多操作」）。 */
+  setEditing: (item: ApplyQueueItem) => void;
   rowMenuItems: (record: ApplyQueueItem) => MenuProps["items"];
 }) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后列头停在旧文案。
@@ -64,6 +72,14 @@ export function QueueTable({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [contextMenu]);
+
+  /** 招呼语/标签是自定义的可点击元素：键盘 Enter / 空格与鼠标单击等价。 */
+  const activateEdit = (event: ReactKeyboardEvent<HTMLElement>, item: ApplyQueueItem) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setEditing(item);
+    }
+  };
 
   /**
    * 列宽全部写死、`tableLayout="fixed"`：
@@ -136,23 +152,61 @@ export function QueueTable({
         <Space orientation="vertical" size={0} style={{ width: "100%" }}>
           <Typography.Text
             type="secondary"
-            ellipsis={{ tooltip: item.resume_title || t("applyQueue.detail.defaultResume") }}
+            ellipsis={{ tooltip: item.resume_title || t("applyQueue.detail.noResume") }}
           >
-            {item.resume_title || t("applyQueue.detail.defaultResume")}
+            {item.resume_title || t("applyQueue.detail.noResume")}
           </Typography.Text>
           {item.greeting ? (
-            <Typography.Text type="secondary" ellipsis={{ tooltip: item.greeting }}>
+            // 招呼语本身就是编辑入口：单击打开编辑弹窗，不再要求先走「更多操作 → 编辑」。
+            <Typography.Text
+              type="secondary"
+              ellipsis={{
+                tooltip: `${item.greeting} · ${t("applyQueue.greeting.clickToEdit")}`,
+              }}
+              className="apply-queue-greeting-edit"
+              role="button"
+              tabIndex={0}
+              aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+              onClick={() => setEditing(item)}
+              onKeyDown={(event) => activateEdit(event, item)}
+            >
               {item.greeting}
             </Typography.Text>
           ) : (
             // 空招呼语 = 没确认过。开启「发送前必须确认招呼语」时这条会被跳过，
             // 标签要把话说透，而不是含糊地写「默认招呼语」让人以为会照默认发。
             <Tooltip title={t("applyQueue.greeting.unconfirmedHint")}>
-              <Tag color="orange" style={{ marginInlineEnd: 0, width: "fit-content" }}>
+              <Tag
+                color="orange"
+                role="button"
+                tabIndex={0}
+                className="apply-queue-greeting-edit"
+                aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+                onClick={() => setEditing(item)}
+                onKeyDown={(event) => activateEdit(event, item)}
+                style={{ marginInlineEnd: 0, width: "fit-content" }}
+              >
                 {t("applyQueue.greeting.unconfirmed")}
               </Tag>
             </Tooltip>
           )}
+          {/* 有字但没人工确认：AI 批量生成的草稿。有字不等于确认过，必须单独标出来。 */}
+          {item.greeting && item.greeting_confirmed !== true ? (
+            <Tooltip title={t("applyQueue.greeting.pendingConfirmHint")}>
+              <Tag
+                color="gold"
+                role="button"
+                tabIndex={0}
+                className="apply-queue-greeting-edit"
+                aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+                onClick={() => setEditing(item)}
+                onKeyDown={(event) => activateEdit(event, item)}
+                style={{ marginInlineEnd: 0, width: "fit-content" }}
+              >
+                {t("applyQueue.greeting.pendingConfirm")}
+              </Tag>
+            </Tooltip>
+          ) : null}
         </Space>
       ),
     },

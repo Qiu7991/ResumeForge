@@ -38,6 +38,8 @@ export interface JobListParams {
   favorite?: boolean;
   /** 按录入方式粗筛：`collected`=投递台自动采集，`manual`=其余（手动填写/粘贴/截图/文档等）。 */
   source_kind?: "collected" | "manual";
+  /** 城市：匹配 location 的第一段（「广州·天河区」按「广州」筛）。 */
+  city?: string;
   /** 排序键（R14）；不传 = 后端默认 `created_desc`。 */
   sort?: JobSort;
   /** 方向覆盖；不传则用 sort 自带方向。 */
@@ -54,6 +56,11 @@ export function listJobs(params: JobListParams = {}): Promise<Page<JobList>> {
 /** 当前筛选下全部岗位的 id（不分页）：批量选择「全选全部岗位」用；上限由调用方裁决。 */
 export function listJobIds(params: JobListParams = {}): Promise<number[]> {
   return request(`/jobs/ids${buildQuery(params)}`);
+}
+
+/** 城市筛选项：后端按岗位数从多到少返回去重后的城市名。 */
+export function listJobCities(): Promise<string[]> {
+  return request("/jobs/cities");
 }
 
 export function getJob(id: number): Promise<Job> {

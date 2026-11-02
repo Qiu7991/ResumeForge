@@ -18,6 +18,7 @@
   // 上游架构由后端直接提供前端页面（8005），不再使用 Vite 的 5173。
   const APP_ORIGIN = "http://127.0.0.1:8005";
 
+  // 原样带上完整地址：BOSS 的 securityId 是打开详情页所必需的；应用负责入库前规范化。
   const resolveJobUrl = () => {
     if (location.pathname.startsWith("/job_detail/")) return location.href;
     const active = document.querySelector(
@@ -84,10 +85,35 @@
     }
   };
 
+  const showWaiting = (text) => {
+    status.textContent = text;
+    status.style.background = "rgba(31,78,121,.92)";
+    status.style.display = "block";
+  };
+
   let pendingTimer = 0;
+  const armTimeout = (ms, text) => {
+    clearTimeout(pendingTimer);
+    pendingTimer = setTimeout(() => {
+      button.disabled = false;
+      button.textContent = "＋ 收录到简历通";
+      showStatus(text, false);
+    }, ms);
+  };
+
   window.addEventListener("message", (event) => {
     const data = event.data;
-    if (!data || data.type !== "resumeforge-import-result") return;
+    if (!data) return;
+    // 应用弹窗一加载就发这个：说明窗口连上了，导入慢是在等招聘站，不是在瞎等。
+    if (data.type === "resumeforge-import-started") {
+      armTimeout(
+        120000,
+        "导入仍在进行：招聘网站响应较慢，请稍后再看结果（" + APP_ORIGIN + "）",
+      );
+      showWaiting("已连接本地服务，正在导入…");
+      return;
+    }
+    if (data.type !== "resumeforge-import-result") return;
     clearTimeout(pendingTimer);
     button.disabled = false;
     if (data.ok) {
@@ -109,20 +135,23 @@
     button.textContent = "收录中…";
     const target =
       APP_ORIGIN + "/jobs?close_after=1&import_url=" + encodeURIComponent(url);
-    const popup = window.open(target, "resumeforge-import", "width=460,height=560");
+    // 每次用唯一窗口名：如果当前页恰好叫 resumeforge-import（上一个弹窗被导航到这里），
+    // 固定名字会让 window.open 把当前页自己导航走，应用回执后的 close 会关掉老板的招聘页。
+    const windowName = "resumeforge-import-" + Date.now();
+    const popup = window.open(target, windowName, "width=460,height=560");
     window.focus();
-    if (!popup) {
+    if (!popup || popup === window) {
       button.disabled = false;
       button.textContent = "＋ 收录到简历通";
       showStatus("浏览器拦截了弹窗：请允许本页弹窗后重试", false);
       return;
     }
-    // 应用最多几秒就回应；超时给个可读原因，别让按钮一直转。
-    pendingTimer = setTimeout(() => {
-      button.disabled = false;
-      button.textContent = "＋ 收录到简历通";
-      showStatus("导入窗口没有回应：请确认简历通页面能打开（" + APP_ORIGIN + "）", false);
-    }, 15000);
+    // 先等两件事之一：窗口连上的 started 回执（12 秒），或最终结果。
+    // 收到 started 后把上限放宽到 120 秒（招聘站慢时导入本身就可能几十秒）。
+    armTimeout(
+      12000,
+      "导入窗口没有回应：请确认简历通已启动，或稍后重试（" + APP_ORIGIN + "）",
+    );
   });
 
   box.append(status, button);

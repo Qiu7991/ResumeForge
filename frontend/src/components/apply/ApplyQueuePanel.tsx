@@ -10,8 +10,12 @@
 import { DeleteOutlined, EditOutlined, EyeOutlined } from "@ant-design/icons";
 import { App, Alert, Button, Empty, Space, Tag, Typography, Popconfirm } from "antd";
 import PageSkeleton from "../common/PageSkeleton";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createApplyTask, getBrowserStatus, listQueue, removeQueueItem } from "../../api/apply";
+import {
+  stopGreetingBatch,
+  useGreetingBatchState,
+} from "../../features/apply/greetingBatchRunner";
 import { useApi } from "../../hooks/useApi";
 import {
   QUEUE_STATUS_META,
@@ -56,6 +60,7 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
     undefined,
   );
   const [batchRemoving, setBatchRemoving] = useState(false);
+  const greetingBatch = useGreetingBatchState();
   const buildMenu = useRowActionMenu();
 
   useEffect(() => {
@@ -75,7 +80,6 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
     () => pendingItems.filter((item) => item.apply_supported === false),
     [pendingItems],
   );
-
   // 筛选只影响表格显示：准入告警、开始投递的可用性判断仍看全量 items。
   const filteredItems = useMemo(
     () =>
@@ -107,6 +111,16 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
     setReloadKey((value) => value + 1);
     onChanged?.();
   };
+
+  // 批量生成结束后拉一次队列：表格里的「待确认」标签与文案要立刻反映落库结果。
+  // 只在 running 由真变假时刷新，避免每条完成都重拉一次整队列。
+  const greetingWasRunning = useRef(false);
+  useEffect(() => {
+    if (greetingWasRunning.current && !greetingBatch.running) refresh();
+    greetingWasRunning.current = greetingBatch.running;
+    // refresh 每次渲染都是新函数，依赖它会让这个效果每渲染都跑；只想盯 running 的边沿。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [greetingBatch.running]);
 
   /**
    * 右键菜单项：与「···」菜单一致（编辑 / 移出队列）。移出队列走 Modal.confirm。
@@ -277,7 +291,9 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
         onClearSelection={() => setSelectedIds([])}
         onRemoveSelected={() => void removeSelected()}
         onReload={() => void reload()}
-        startDisabled={disabled || pendingItems.length === 0}
+        greetingBatch={greetingBatch}
+        onStopGreetings={stopGreetingBatch}
+        startDisabled={disabled || pendingItems.length === 0 || greetingBatch.running}
         onStart={() => void start()}
       />
 
@@ -297,6 +313,7 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
           selectedIds={selectedIds}
           setSelectedIds={setSelectedIds}
           setDetail={setDetail}
+          setEditing={setEditing}
           rowMenuItems={rowMenuItems}
         />
       )}
@@ -335,7 +352,7 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
                 },
                 {
                   label: t("applyQueue.detail.resume"),
-                  value: detail.resume_title || t("applyQueue.detail.defaultResume"),
+                  value: detail.resume_title || t("applyQueue.detail.noResume"),
                 },
                 {
                   label: t("applyQueue.detail.joinedAt"),

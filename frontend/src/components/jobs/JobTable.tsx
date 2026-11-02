@@ -7,7 +7,7 @@ import type { TableColumnsType } from "antd";
 import type { SortOrder, TableRowSelection } from "antd/es/table/interface";
 import type { HTMLAttributes } from "react";
 import { JOB_STATUS_META, type JobList, type Page } from "../../types";
-import { formatDateTime } from "../../utils/format";
+import { formatDateTimeSeconds } from "../../utils/format";
 import { RowActions, RowContextMenu, type RowActionItem } from "../common/RowActions";
 import SkillTags from "../SkillTags";
 import { JOB_SOURCE_LABEL_KEYS, jobSourceKind } from "../../utils/jobSource";
@@ -120,7 +120,7 @@ export default function JobTable({
       // 悬停整格都能看到导入时间：之前 Tooltip 只挂在岗位名那颗链接上，
       // 鼠标停在关键字标签或旁边空白处就没有提示，等于只有一半时候管用。
       render: (_, job) => (
-        <Tooltip title={t("jobTable.tooltip.importedAt", { time: formatDateTime(job.created_at) })}>
+        <Tooltip title={t("jobTable.tooltip.importedAt", { time: formatDateTimeSeconds(job.created_at) })}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <Button
@@ -226,13 +226,14 @@ export default function JobTable({
       title: t("jobTable.column.createdAt"),
       dataIndex: "created_at",
       key: "created_at",
-      width: 120,
+      // 精确到秒：同一批导入的岗位常常只差几秒，只显示日期时分不出先后。
+      width: 175,
       sorter: true,
       sortOrder: sortOrderFor("created_at", sortState),
       // 默认排序就是收录时间倒序：第一次点击切正序，再点回默认（避免"点了没反应"）。
       sortDirections: ["ascend", "descend"],
       showSorterTooltip: { title: t("jobTable.sort.createdAt") },
-      render: (value: string) => (value ? value.slice(0, 10) : "-"),
+      render: (value: string) => (value ? formatDateTimeSeconds(value) : "-"),
     },
     {
       title: t("jobTable.column.postedAt"),
@@ -311,7 +312,7 @@ export default function JobTable({
       // 空表（无当前页行）时不启用横向滚动：否则 `.ant-table-content` 会变成
       // "可横滚、区域内却没有任何可聚焦元素"的容器，命中 axe 的
       // `scrollable-region-focusable`（serious）。有数据时照旧按列宽固定横滚。
-      scroll={jobs?.items?.length ? { x: 1330 } : undefined}
+      scroll={jobs?.items?.length ? { x: 1385 } : undefined}
       components={{
         body: {
           // 整行右键即可编辑/删除；批量模式下不拦截右键，避免和选择操作打架。

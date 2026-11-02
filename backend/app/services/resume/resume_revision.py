@@ -138,8 +138,15 @@ async def revise_resume(
     instructions: str,
     *,
     career_context_block: str = "",
+    jd: str = "",
+    evidence_plan_block: str = "",
+    include_tech_stack: bool = True,
 ) -> ResumeContent:
     """按用户指令修订简历；``instructions`` 为空表示整体重新生成。
+
+    ``jd`` 是目标岗位的完整 JD 文本（description/requirements/additional_info）。
+    底稿模式必须把它传进来：只给公司+职位时模型无法判断"哪些经历与岗位相关"，
+    只能做泛泛的文字润色。JD 只用于取舍与表达，不能作为虚构事实的依据。
 
     返回修订后的完整内容：身份字段取自原简历，其余来自模型输出（解析失败抛
     :class:`LLMError` 或 ``ValueError``，由 API 层转成用户可读的提示）。
@@ -152,12 +159,15 @@ async def revise_resume(
             job=job,
             job_title=job.title if job else "",
             company=(job.company or "-") if job else "",
+            jd=jd.strip(),
             resume_json=_resume_prompt_json(resume),
             locked_entries=locked_entry_locators(resume),
             has_extended_sections=has_extended_sections(resume),
             # A5：按职业场景派生变体时注入受限表达指南；缺省空串时模板整块不渲染，
             # 既有 /revise 端点的提示词逐字节不变。
             career_context_block=career_context_block.strip(),
+            evidence_plan_block=evidence_plan_block.strip(),
+            include_tech_stack=include_tech_stack,
             full_regenerate=full_regenerate,
             instructions=trimmed,
         )

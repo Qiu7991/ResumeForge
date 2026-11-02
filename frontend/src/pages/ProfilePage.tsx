@@ -7,6 +7,7 @@ import ErrorState from "../components/common/ErrorState";
 import PageSkeleton from "../components/common/PageSkeleton";
 import ProfilePageHeader from "../components/profile/ProfilePageHeader";
 import ProfileEditActionBar from "../components/profile/ProfileEditActionBar";
+import ProfileGenerationPreferences from "../components/profile/ProfileGenerationPreferences";
 import ProfileLeaveConfirmModal from "../components/profile/ProfileLeaveConfirmModal";
 import ProfilePageModals from "../components/profile/ProfilePageModals";
 import ProfileSectionStack from "../components/profile/ProfileSectionStack";
@@ -379,6 +380,8 @@ export default function ProfilePage() {
           setManagerOpen(true);
         }}
       />
+
+      <ProfileGenerationPreferences />
 
       {workspace?.pending_notice ? (
         <Alert

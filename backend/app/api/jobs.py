@@ -2,9 +2,10 @@
 """岗位接口：列表、新增、文本解析、AI 解读、编辑与删除。"""
 
 import logging
+from collections import Counter
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
@@ -47,7 +48,11 @@ from ..services.job.job_csv import (
     row_to_payload,
 )
 from ..services.job.job_multi_parser import extract_multiple_jobs, local_multi_drafts
-from ..services.job.job_service import create_job_record, find_job_by_identity, update_job_record
+from ..services.job.job_service import (
+    create_job_record,
+    find_by_job_identity,
+    update_job_record,
+)
 from ..services.job.job_sorting import JobSort, JobSortOrder, job_order_by
 from ..services.job_text_parser import parse_job_text
 from ..services.llm import create_provider
@@ -63,7 +68,6 @@ from ..services.text_extraction import (
 )
 from ..services.user_files import save_from_data_url
 from ..services.vision_fallback import attach_warning, run_with_vision_fallback
-
 from .job_import import router as job_import_router
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -123,6 +127,7 @@ def _filtered_query(
     status: str,
     favorite: bool | None,
     source_kind: str,
+    city: str = "",
 ):
     """列表页的共用筛选器：``/jobs``（分页列表）与 ``/jobs/ids``（跨页全选）同吃这一份，
     保证"看到的筛选结果"和"一键全选拿到的 id"永远是对同一批岗位的两种视图。"""
@@ -139,6 +144,9 @@ def _filtered_query(
                 Job.note.like(like),
             )
         )
+    if city:
+        # 城市是 location 的第一段（「广州·天河区」）；前缀匹配同时兼容只写「广州」的记录。
+        query = query.filter(Job.location.startswith(city, autoescape=True))
     if job_type:
         query = query.filter(Job.job_type == job_type)
     if status:
@@ -173,6 +181,8 @@ def list_jobs(
     # 兼容历史库里的两种来源值，也兼容旧官网导入把 `官网采集` 写进 source、但没有写入
     # recognition_source 的记录。
     source_kind: str = Query(default=""),
+    # 城市：只匹配 location 的第一段（「广州·天河区」按「广州」筛）。
+    city: str = Query(default=""),
     # 排序（R14）：键自带方向（created_desc / title_asc…），``order`` 只用于覆盖方向。
     # 非法值由 Literal 拦成 422（不静默回落默认值——"改了参数却毫无变化"更难排查）。
     sort: JobSort = Query(
@@ -184,7 +194,7 @@ def list_jobs(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
-    query = _filtered_query(db, keyword, job_type, status, favorite, source_kind)
+    query = _filtered_query(db, keyword, job_type, status, favorite, source_kind, city)
     total = query.count()
     jobs = (
         query.order_by(*job_order_by(sort, order))
@@ -203,6 +213,7 @@ def list_job_ids(
     status: str = Query(default=""),
     favorite: bool | None = Query(default=None),
     source_kind: str = Query(default=""),
+    city: str = Query(default=""),
     sort: JobSort = Query(default="created_desc"),
     order: JobSortOrder | None = Query(default=None),
 ):
@@ -216,11 +227,35 @@ def list_job_ids(
     """
     return [
         job_id
-        for (job_id,) in _filtered_query(db, keyword, job_type, status, favorite, source_kind)
+        for (job_id,) in _filtered_query(
+            db, keyword, job_type, status, favorite, source_kind, city
+        )
         .order_by(*job_order_by(sort, order))
         .with_entities(Job.id)
         .all()
     ]
+
+
+@router.get("/cities", response_model=list[str])
+def list_job_cities(db: Session = Depends(get_db)):
+    """岗位广场「城市」筛选项：去重后按岗位数从多到少排。
+
+    城市取 ``location`` 的第一段（「广州·天河区」→「广州」）。用计数排序而不是首字母：
+    用户更可能关心"我投得最多的城市"，且中文拼音排序依赖 collation，不值得为此引入。
+    """
+    rows = (
+        db.query(Job.location, func.count(Job.id))
+        .filter(trash.live_only(Job))
+        .group_by(Job.location)
+        .all()
+    )
+    counts: Counter[str] = Counter()
+    for location, count in rows:
+        text = str(location or "").strip()
+        city = text.replace("・", "·").split("·", 1)[0].strip()
+        if city:
+            counts[city] += int(count or 0)
+    return [city for city, _ in counts.most_common()]
 
 
 @router.post("", response_model=JobOut, status_code=201)
@@ -260,7 +295,6 @@ async def parse_job_text_draft(payload: JobTextParseRequest, db: Session = Depen
             has_images=has_images,
             document_warnings=documents.warnings,
         )
-    provider = create_provider(config)
     db.close()
     try:
         result, vision_note = await run_with_vision_fallback(
@@ -338,7 +372,6 @@ async def parse_job_text_multiple(payload: JobTextParseRequest, db: Session = De
             parse_engine="local",
         )
 
-    provider = create_provider(config)
     db.close()
     try:
         results, vision_note = await run_with_vision_fallback(
@@ -429,7 +462,12 @@ async def preview_job_import(file: UploadFile = File(...)):
 
 @router.post("/import", response_model=JobImportResult)
 def import_jobs_csv(payload: JobImportRequest, db: Session = Depends(get_db)):
-    """提交导入：逐行建岗、逐行容错；与岗位广场已有岗位重复的行跳过并说明。"""
+    """提交导入：逐行建岗、逐行容错；与岗位广场已有岗位重复的行跳过并说明。
+
+    去重判据仍走 :func:`find_by_job_identity`（岗位广场「回收站也算已存在」的口径不变），
+    但命中回收站时**恢复并更新**而不是静默跳过：用户删过再导回来，期望的是这条岗位回到
+    广场，不是一个「已有这个岗位」的假提示——那样既导不进来，也说不清它到底在哪。
+    """
     imported = 0
     failed: list[dict[str, object]] = []
     for item in payload.rows:
@@ -438,9 +476,30 @@ def import_jobs_csv(payload: JobImportRequest, db: Session = Depends(get_db)):
             title = str(clean.get("title") or "")
             company = str(clean.get("company") or "")
             source_url = str(clean.get("source_url") or "")
-            if find_job_by_identity(db, title=title, company=company, source_url=source_url):
+
+            # 先看活跃记录：真重复，跳过并说清楚。
+            live = find_by_job_identity(
+                db, Job, title=title, company=company, source_url=source_url, skip_deleted=True
+            )
+            if live is not None:
                 failed.append({"line": item.line, "message": "岗位广场已有这个岗位，已跳过"})
                 continue
+
+            # 再看回收站：命中即恢复，并用这一行覆盖字段（JD 等），让导入结果与文件一致。
+            trashed = find_by_job_identity(
+                db, Job, title=title, company=company, source_url=source_url
+            )
+            if trashed is not None:
+                trash.restore(db, "job", trashed.id)
+                db.refresh(trashed)
+                update_job_record(
+                    db,
+                    trashed,
+                    JobUpdate(**{k: v for k, v in clean.items() if k in JobUpdate.model_fields}),
+                )
+                imported += 1
+                continue
+
             create_job_record(db, JobCreate(**clean))
             imported += 1
         except Exception as exc:  # noqa: BLE001 - 单行失败不拖垮整批，逐行给原因

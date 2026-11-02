@@ -28,6 +28,13 @@ export const MAX_CUSTOM_INSTRUCTION = 2000;
 export interface BaseResumeOption {
   value: number;
   label: string;
+  /** 底稿的视觉版式：选中后默认沿用，避免新简历又换回默认模板。 */
+  template: ResumeLayout["template"];
+  format_name: ResumeLayout["format_name"];
+  format_config?: ResumeLayout["format_config"];
+  page_limit: ResumeLayout["page_limit"];
+  font_scale: ResumeLayout["font_scale"];
+  language?: ResumeLayout["language"];
 }
 
 interface Props {
@@ -48,10 +55,16 @@ interface Props {
   baseResumeId?: number | null;
   setBaseResumeId?: (value: number | null) => void;
   baseResumeOptions?: BaseResumeOption[];
+  /** 底稿模式默认沿用底稿的模板/版式/页数/字号/语言。 */
+  inheritBaseLayout?: boolean;
+  setInheritBaseLayout?: (value: boolean) => void;
   llmReady: boolean;
   modelName: string;
   onClose: () => void;
   onStart: () => void;
+  /** 岗位生成先看匹配报告；通用简历/未提供时不显示。 */
+  onAnalyze?: () => void;
+  analyzing?: boolean;
 }
 
 export default function GenerationConfigStage({
@@ -70,12 +83,39 @@ export default function GenerationConfigStage({
   baseResumeId = null,
   setBaseResumeId,
   baseResumeOptions = [],
+  inheritBaseLayout = true,
+  setInheritBaseLayout,
   llmReady,
   modelName,
   onClose,
   onStart,
+  onAnalyze,
+  analyzing = false,
 }: Props) {
   useLocale();
+  const applyBaseLayout = (option: BaseResumeOption | undefined) => {
+    if (!option || !inheritBaseLayout) return;
+    setLayout({
+      ...layout,
+      template: option.template,
+      format_name: option.format_name,
+      format_config: option.format_config ?? {},
+      page_limit: option.page_limit,
+      font_scale: option.font_scale,
+      language: option.language ?? layout.language,
+    });
+  };
+  const changeBase = (value: number) => {
+    const id = value === 0 ? null : Number(value);
+    setBaseResumeId?.(id);
+    applyBaseLayout(baseResumeOptions.find((option) => option.value === id));
+  };
+  const toggleInheritLayout = (checked: boolean) => {
+    setInheritBaseLayout?.(checked);
+    if (checked) {
+      applyBaseLayout(baseResumeOptions.find((option) => option.value === baseResumeId));
+    }
+  };
   /** 切换文档模式：只夹紧页数（不转换内容、不改模板），切回普通简历时 >3 页会被夹到 3。 */
   const changeDocumentMode = (next: GenerationDocumentMode) => {
     generation.setDocumentMode(next);
@@ -129,8 +169,22 @@ export default function GenerationConfigStage({
             { value: 0, label: t("generate.base.useProfile") },
             ...baseResumeOptions,
           ]}
-          onChange={(value) => setBaseResumeId?.(value === 0 ? null : Number(value))}
+          onChange={changeBase}
         />
+        <Space size={8} align="center" wrap>
+          <Switch
+            size="small"
+            checked={inheritBaseLayout}
+            disabled={!baseResumeId}
+            onChange={toggleInheritLayout}
+          />
+          <Typography.Text type={baseResumeId ? undefined : "secondary"}>
+            {t("generate.base.inheritLayout")}
+          </Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t("generate.base.inheritLayoutHint")}
+          </Typography.Text>
+        </Space>
         <Typography.Text type="secondary">
           {baseResumeId ? t("generate.base.hintSelected") : t("generate.base.hintNone")}
         </Typography.Text>
@@ -245,11 +299,27 @@ export default function GenerationConfigStage({
       </Typography.Text>
 
       <div style={{ marginTop: 24, textAlign: "right" }}>
-        <Space>
+        <Space wrap>
           <Button onClick={onClose}>{t("common.action.cancel")}</Button>
-          <Button type="primary" disabled={!llmReady} onClick={onStart}>
-            {t("generate.config.start")}
-          </Button>
+          {onAnalyze ? (
+            <>
+              <Button disabled={!llmReady || analyzing} onClick={onStart}>
+                {t("generate.config.directStart")}
+              </Button>
+              <Button
+                type="primary"
+                disabled={!llmReady}
+                loading={analyzing}
+                onClick={onAnalyze}
+              >
+                {analyzing ? t("generate.config.analyzing") : t("generate.config.analyze")}
+              </Button>
+            </>
+          ) : (
+            <Button type="primary" disabled={!llmReady} onClick={onStart}>
+              {t("generate.config.start")}
+            </Button>
+          )}
         </Space>
       </div>
     </div>

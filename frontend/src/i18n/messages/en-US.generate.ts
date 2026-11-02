@@ -20,6 +20,8 @@ const generate = {
   "generate.base.title": "Base draft",
   "generate.base.placeholder": "Choose a base draft",
   "generate.base.useProfile": "No base draft (generate from My Profile)",
+  "generate.base.inheritLayout": "Inherit the base draft's template and layout",
+  "generate.base.inheritLayoutHint": "Turn off to pick a template separately",
   "generate.base.hintSelected":
     "This resume becomes the base: its content is copied and tailored to the job. The draft itself is not modified; the result is a new record.",
   "generate.base.hintNone":
@@ -48,6 +50,40 @@ const generate = {
   "generate.config.extraHint":
     "This requirement is appended to the generation prompt and only steers wording; fact anchoring, the page limit and the no-fabrication rules stay unchanged.",
   "generate.config.start": "Start generating",
+  "generate.config.analyze": "Preview match report",
+  "generate.config.directStart": "Generate directly",
+  "generate.config.analyzing": "Analyzing the job and your profile…",
+  "generate.plan.title": "Job match report",
+  "generate.plan.subtitle":
+    "Confirm which project or fact proves each requirement before generating; transferable evidence is labelled and never presented as direct experience.",
+  "generate.plan.analyzingHint":
+    "Breaking down the JD and checking your projects and facts; usually 20–60 seconds.",
+  "generate.plan.analysisFailed": "Could not build the match report",
+  "generate.plan.coverage": "Coverage",
+  "generate.plan.coverage.direct": "Direct",
+  "generate.plan.coverage.transferable": "Transferable",
+  "generate.plan.coverage.gap": "Gaps",
+  "generate.plan.requirement": "Requirement",
+  "generate.plan.weight": "Weight {weight}",
+  "generate.plan.match.direct": "Direct",
+  "generate.plan.match.transferable": "Transferable",
+  "generate.plan.match.none": "No evidence",
+  "generate.plan.ref.project": "Project",
+  "generate.plan.ref.experience": "Experience",
+  "generate.plan.ref.claim": "Fact",
+  "generate.plan.selectedCount": "{count} evidence selected",
+  "generate.plan.quotes": "Quotable source",
+  "generate.plan.noEvidence":
+    "No verifiable evidence for this requirement; it will not be invented in the resume.",
+  "generate.plan.gapHint":
+    "A gap does not block applying; the resume will lean on adjacent strengths without claiming this requirement.",
+  "generate.plan.warnings": "Items to double-check",
+  "generate.plan.action.back": "Back to settings",
+  "generate.plan.action.skip": "Skip report and generate",
+  "generate.plan.action.generate": "Generate with this plan",
+  "generate.plan.action.saving": "Saving selection…",
+  "generate.plan.action.reanalyze": "Analyze again",
+  "generate.plan.empty": "No usable requirements were found; retry or generate directly.",
 } as const;
 
 export default generate;

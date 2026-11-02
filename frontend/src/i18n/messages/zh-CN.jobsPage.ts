@@ -23,6 +23,8 @@ const jobsPage = {
   "jobsPage.toolbar.exported": "已导出 {count} 个岗位",
   "jobsPage.toolbar.exportFailed": "导出失败",
   "jobsPage.toolbar.delete": "批量删除",
+  "jobsPage.toolbar.deleteConfirmTitle": "把选中的 {count} 个岗位移入回收站？",
+  "jobsPage.toolbar.deleteConfirmBody": "岗位会移入回收站，可在回收站恢复。",
   // 多选态把单项动作收进一个下拉；六项都是"逐个执行原来的动作"。
   "jobsPage.toolbar.bulkActions": "批量操作",
   "jobsPage.toolbar.bulkGenerate": "AI 生成简历",
@@ -33,6 +35,7 @@ const jobsPage = {
   "jobsPage.bulkAi.analysisLabel": "岗位需求解读",
   "jobsPage.bulkAi.resumeProgress": "正在生成简历：{current}（{done}/{total}）",
   "jobsPage.bulkAi.analysisProgress": "正在解读岗位：{current}（{done}/{total}）",
+  "jobsPage.bulkAi.greetingProgress": "正在生成招呼语：{current}（{done}/{total}）",
   "jobsPage.bulkAi.stop": "当前岗位完成后停止",
   "jobsPage.bulkAi.doneTitle": "{label}完成：成功 {ok} 个，失败 {failed} 个",
   "jobsPage.bulkAi.skippedHint": "另有 {count} 个岗位未处理（已停止）",
@@ -45,7 +48,10 @@ const jobsPage = {
   "jobsPage.filter.statusPlaceholder": "状态",
   "jobsPage.filter.sourceAria": "来源筛选",
   "jobsPage.filter.sourcePlaceholder": "来源",
+  "jobsPage.filter.cityPlaceholder": "城市",
+  "jobsPage.filter.cityAria": "城市筛选",
   "jobsPage.filter.analyzeMatch": "AI 对比选岗",
+  "jobsPage.filter.matchAnalysis": "匹配度分析",
   "jobsPage.filter.matchHistory": "分析记录",
   "jobsPage.filter.candidates": "备选岗位",
   "jobsPage.filter.backfill": "补齐详情",
@@ -83,6 +89,8 @@ const jobsPage = {
   "jobsPage.queue.gapSeparator": "、",
   "jobsPage.queue.realGapOk": "确认仍然投递",
   "jobsPage.queue.addFailed": "加入投递台失败",
+  "jobsPage.queue.noResumeGreeting": "已加入队列，但这个岗位还没有岗位版简历，未生成招呼语",
+  "jobsPage.queue.greetingDeferred": "已加入队列；上一批招呼语还在生成，这条稍后请在投递台补生成",
 
   // ── 详情打开失败（useJobsPageState） ────────────────────
   "jobsPage.detail.loadFailed": "岗位不存在或已被删除",
@@ -104,6 +112,8 @@ const jobsPage = {
   "jobsPage.importUrl.submit": "导入",
   "jobsPage.importUrl.success": "已导入「{title}」",
   "jobsPage.importUrl.failed": "导入失败，请稍后重试",
+  "jobsPage.importUrl.networkUnavailable":
+    "本地服务暂时没有响应（可能正在重启），请稍后重试",
   "jobsPage.importUrl.imported": "已导入岗位",
 } as const;
 

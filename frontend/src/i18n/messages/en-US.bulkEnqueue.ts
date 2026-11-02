@@ -5,6 +5,9 @@ const bulkEnqueue = {
   "bulkEnqueue.summary.alreadyQueued": "{count} already in the queue",
   "bulkEnqueue.summary.unsupported": "{count} from unsupported sources",
   "bulkEnqueue.summary.failed": "{count} failed",
+  "bulkEnqueue.summary.greetingsStarted": "generating greetings for {count} Jobs",
+  "bulkEnqueue.summary.withoutResume": "{count} had no tailored Resume, so no greeting was generated",
+  "bulkEnqueue.summary.greetingsDeferred": "{count} will get a greeting after the current batch finishes",
   /** Half-width comma plus the space English uses between clauses. */
   "bulkEnqueue.summary.separator": ", ",
 

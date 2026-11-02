@@ -39,19 +39,23 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function renderTable(items: ApplyQueueItem[]) {
-  return render(
-    <AntdApp>
-      <QueueTable
-        items={items}
-        busy={false}
-        selectedIds={[]}
-        setSelectedIds={vi.fn()}
-        setDetail={vi.fn()}
-        rowMenuItems={() => [{ key: "x", label: "占位项" }]}
-      />
-    </AntdApp>,
-  );
+function renderTable(items: ApplyQueueItem[], onEdit = vi.fn()) {
+  return {
+    ...render(
+      <AntdApp>
+        <QueueTable
+          items={items}
+          busy={false}
+          selectedIds={[]}
+          setSelectedIds={vi.fn()}
+          setDetail={vi.fn()}
+          setEditing={onEdit}
+          rowMenuItems={() => [{ key: "x", label: "占位项" }]}
+        />
+      </AntdApp>,
+    ),
+    onEdit,
+  };
 }
 
 /**
@@ -102,5 +106,25 @@ describe("QueueTable 横向滚动区（a11y）", () => {
     renderTable([BASE_ITEM]);
 
     expect(await screen.findByRole("button", { name: /查看队列条目详情/ })).toBeEnabled();
+  });
+});
+
+describe("QueueTable 招呼语点击编辑", () => {
+  it("点招呼语文本直接打开编辑", () => {
+    const { onEdit } = renderTable([
+      { ...BASE_ITEM, greeting: "一段 AI 草稿", greeting_confirmed: false },
+    ]);
+
+    fireEvent.click(screen.getByText("一段 AI 草稿"));
+
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it("点「招呼语未确认」标签也能打开编辑", () => {
+    const { onEdit } = renderTable([BASE_ITEM]);
+
+    fireEvent.click(screen.getByText("招呼语未确认"));
+
+    expect(onEdit).toHaveBeenCalledTimes(1);
   });
 });

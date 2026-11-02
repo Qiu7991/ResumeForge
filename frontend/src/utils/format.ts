@@ -18,8 +18,7 @@ export function formatRate(value: number | undefined): string {
   return `${Math.round(value * 100)}%`;
 }
 
-/** 后端 UTC 时间戳转本地时间（如 "2026-08-16 14:30"）。 */
-export function formatDateTime(iso: string | undefined): string {
+function formatLocalDateTime(iso: string | undefined, withSeconds: boolean): string {
   if (!iso) return "-";
   // 后端为兼容 SQLite 返回无时区标记的 UTC 时间，解析前补上 Z 才能正确转换到本地时区。
   const hasTime = /[T ]\d/.test(iso);
@@ -27,7 +26,18 @@ export function formatDateTime(iso: string | undefined): string {
   const date = new Date(hasTime && !hasTimezone ? `${iso}Z` : iso);
   if (Number.isNaN(date.getTime())) return iso;
   const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const prefix = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return withSeconds ? `${prefix}:${pad(date.getSeconds())}` : prefix;
+}
+
+/** 后端 UTC 时间戳转本地时间（如 "2026-08-16 14:30"）。 */
+export function formatDateTime(iso: string | undefined): string {
+  return formatLocalDateTime(iso, false);
+}
+
+/** 与 `formatDateTime` 相同，但精确到秒（收录时间/批次记录这类同分钟多条的数据用）。 */
+export function formatDateTimeSeconds(iso: string | undefined): string {
+  return formatLocalDateTime(iso, true);
 }
 
 /** 字节数转可读体积（如 `512 B` / `480 KB` / `1.2 MB`）。

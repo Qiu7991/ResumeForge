@@ -66,6 +66,31 @@ def _candidate_data(selected_data: dict) -> dict:
     return selected_data
 
 
+def _sync_education_fact_fields(resume: ResumeContent, candidate_data: dict) -> None:
+    """教育里的小字段必须逐字来自候选事实，不能由「本科」推断。
+
+    生成模型会把「本科」顺手补成「学位类型：学士」和「学习形式：本科」，而用户在
+    资料页可能根本没填这两项。这里按学校把每条教育经历锚回候选事实：候选有值就
+    原样用，没有就清空。``study_form`` 与 ``degree_type`` 都走同一判据。
+    """
+    sources = [item for item in candidate_data.get("educations") or [] if isinstance(item, dict)]
+    if not sources:
+        return
+    by_school = {
+        str(item.get("school") or "").strip(): item
+        for item in sources
+        if str(item.get("school") or "").strip()
+    }
+    for index, education in enumerate(resume.education):
+        source = by_school.get(str(education.school or "").strip())
+        if source is None and index < len(sources):
+            source = sources[index]
+        if source is None:
+            continue
+        education.study_form = str(source.get("study_form") or "").strip()
+        education.degree_type = str(source.get("degree_type") or "").strip()
+
+
 def restore_selected_sections(
     resume: ResumeContent,
     selected_data: dict,
@@ -114,7 +139,9 @@ def restore_selected_sections(
         for output_field, source_field in sections.items()
         if candidate_data.get(source_field) and not getattr(resume, output_field)
     }
-    return resume.model_copy(update=updates) if updates else resume
+    result = resume.model_copy(update=updates) if updates else resume
+    _sync_education_fact_fields(result, candidate_data)
+    return result
 
 
 def _legacy_ground_with_annotations(

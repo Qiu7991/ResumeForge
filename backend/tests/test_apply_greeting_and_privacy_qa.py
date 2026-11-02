@@ -18,7 +18,12 @@ from app.models.apply import (
 )
 from app.models.job import Job
 from app.models.resume import ResumeRecord
-from app.schemas.apply import GREETING_RECORD_MAX_CHARS, ApplyConfigIn, ApplyQueueAddRequest
+from app.schemas.apply import (
+    GREETING_RECORD_MAX_CHARS,
+    ApplyConfigIn,
+    ApplyQueueAddRequest,
+    ApplyQueueItemUpdate,
+)
 from app.services.apply import apply_service
 from app.services.apply.apply_service import _clip_greeting
 from app.services.browser.cdp_client import CdpClient
@@ -61,6 +66,115 @@ def test_queue_greeting_is_clipped_on_write(db_session):
     )
     stored = db_session.get(ApplyQueueItem, created[0].id)
     assert len(stored.greeting) == GREETING_RECORD_MAX_CHARS
+
+
+def test_queue_greeting_confirmation_follows_the_save_path(db_session):
+    """批量生成只落文案（未确认）；编辑弹窗保存才置为已确认。"""
+    job = Job(title="后端开发", company="A公司", source="BOSS直聘", source_url="u")
+    db_session.add(job)
+    db_session.commit()
+    created = apply_service.add_to_queue(
+        db_session,
+        ApplyQueueAddRequest(items=[{"job_id": job.id, "confirm_unanalyzed": True}]),
+    )
+    item_id = created[0].id
+    assert created[0].greeting_confirmed is False
+
+    generated = apply_service.update_queue_item(
+        db_session, item_id, ApplyQueueItemUpdate(greeting="AI 草稿", confirm_greeting=False)
+    )
+    assert generated.greeting == "AI 草稿"
+    assert generated.greeting_confirmed is False
+
+    # 编辑弹窗保存不显式传 confirm_greeting：默认就是人工确认。
+    saved = apply_service.update_queue_item(
+        db_session, item_id, ApplyQueueItemUpdate(greeting="AI 草稿，我改过")
+    )
+    assert saved.greeting_confirmed is True
+
+    # 清空文案后不能继续算"已确认"。
+    cleared = apply_service.update_queue_item(
+        db_session, item_id, ApplyQueueItemUpdate(greeting="")
+    )
+    assert cleared.greeting_confirmed is False
+
+
+def test_add_to_queue_binds_the_jobs_latest_resume(db_session):
+    """入队即固定"这个岗位用哪份简历"，招呼语才会按对应 JD 的简历来写。"""
+    job = Job(title="后端开发", company="A公司", source="BOSS直聘", source_url="u")
+    db_session.add(job)
+    db_session.flush()
+    older = ResumeRecord(title="旧版", job_id=job.id, content={})
+    db_session.add(older)
+    db_session.flush()
+    latest = ResumeRecord(title="按 JD 改过的那版", job_id=job.id, content={})
+    db_session.add(latest)
+    db_session.commit()
+
+    created = apply_service.add_to_queue(
+        db_session,
+        ApplyQueueAddRequest(items=[{"job_id": job.id, "confirm_unanalyzed": True}]),
+    )
+    stored = db_session.get(ApplyQueueItem, created[0].id)
+    assert stored.resume_id == latest.id
+    assert created[0].resume_title == "按 JD 改过的那版"
+
+
+def test_changing_the_resume_invalidates_greeting_confirmation(db_session):
+    """招呼语是相对某一份简历写的：换简历后不能继续算"已确认"。"""
+    job = Job(title="后端开发", company="A公司", source="BOSS直聘", source_url="u")
+    db_session.add(job)
+    db_session.flush()
+    resume_a = ResumeRecord(title="A 版", job_id=job.id, content={})
+    resume_b = ResumeRecord(title="B 版", job_id=job.id, content={})
+    db_session.add_all([resume_a, resume_b])
+    db_session.commit()
+
+    created = apply_service.add_to_queue(
+        db_session,
+        ApplyQueueAddRequest(
+            items=[
+                {
+                    "job_id": job.id,
+                    "confirm_unanalyzed": True,
+                    "resume_id": resume_a.id,
+                }
+            ]
+        ),
+    )
+    item_id = created[0].id
+    saved = apply_service.update_queue_item(
+        db_session, item_id, ApplyQueueItemUpdate(greeting="对 A 版写的招呼语", confirm_greeting=True)
+    )
+    assert saved.greeting_confirmed is True
+
+    # 编辑弹窗会把整段招呼语一起提交，所以这里模拟"换简历 + 原样提交旧文案"。
+    changed = apply_service.update_queue_item(
+        db_session,
+        item_id,
+        ApplyQueueItemUpdate(greeting="对 A 版写的招呼语", resume_id=resume_b.id),
+    )
+    assert changed.resume_id == resume_b.id
+    assert changed.greeting_confirmed is False
+
+
+def test_greeting_preview_refuses_without_a_resume(client, db_session):
+    """队列条目没有可用简历时，预览直接返回 no_resume，不调模型、不编话术。"""
+    job = Job(title="后端开发", company="A公司", source="BOSS直聘", source_url="u")
+    db_session.add(job)
+    db_session.commit()
+    created = apply_service.add_to_queue(
+        db_session,
+        ApplyQueueAddRequest(items=[{"job_id": job.id, "confirm_unanalyzed": True}]),
+    )
+
+    response = client.post(
+        "/api/apply/greeting/preview",
+        json={"job_id": job.id, "item_id": created[0].id},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"greeting": "", "source": "no_resume"}
 
 
 def test_resolve_greeting_falls_back_to_default_when_item_is_empty():
@@ -199,6 +313,7 @@ def test_apply_tables_match_the_design_contract():
         "resume_id",
         "resume_title",
         "greeting",
+        "greeting_confirmed",
         "status",
         "failure_category",
         "failure_detail",

@@ -153,7 +153,7 @@ export function reorderQueue(order: number[]): Promise<ApplyQueueItem[]> {
 
 export function updateQueueItem(
   itemId: number,
-  payload: { greeting?: string; resume_id?: number },
+  payload: { greeting?: string; resume_id?: number; confirm_greeting?: boolean },
 ): Promise<ApplyQueueItem> {
   return request(`/apply/queue/${itemId}`, { method: "PATCH", body: JSON.stringify(payload) });
 }
@@ -175,6 +175,8 @@ export function previewGreeting(
     method: "POST",
     body: JSON.stringify(payload),
     signal,
+    // 一次真实的模型调用 20–60s，默认 15s 预算必然误超时（批量生成时尤其明显）。
+    budget: "analysis",
   });
 }
 

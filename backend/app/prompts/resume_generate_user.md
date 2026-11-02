@@ -63,6 +63,16 @@
 {{ jd }}
 {%- endif %}
 
+{% if evidence_plan_block %}
+{{ evidence_plan_block }}
+{% endif %}
+
+{% if not include_tech_stack %}
+## 技术栈显示
+
+本次简历**不显示项目技术栈**：`projects[].tech_stack` 一律输出空数组；不要在 description 或 highlights 里单独写「技术栈：...」这一行。必要的技术名词可以自然融进项目描述，但不要单列成技术栈清单。
+{% endif %}
+
 {% if career_context_block %}
 ## 本次职业场景（用户显式选用，仅影响表达方式）
 

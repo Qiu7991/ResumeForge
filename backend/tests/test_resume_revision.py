@@ -291,3 +291,77 @@ def test_revise_updates_the_record_and_clears_warnings(client, _resume_record, m
     # 修订写回的是同一条记录，不新建。
     listing = client.get("/api/resumes").json()
     assert listing["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_job_revision_includes_the_full_jd_text():
+    """底稿模式必须看到 JD 正文：只给公司+职位只能做泛化润色。"""
+    from tests.test_profile_relevance import make_job
+
+    captured: dict[str, str] = {}
+
+    class FakeProvider:
+        async def chat(self, messages, *, thinking: bool = True):
+            captured["prompt"] = messages[-1]["content"]
+            return _revised_payload()
+
+    job = make_job(
+        "AI应用赋能专员",
+        "岗位职责：搭建分部门 AI 工作流，沉淀提示词，组织内部培训。",
+        "熟悉主流 AI 工具与提示词工程，能管控二次元 IP 版权风险。",
+    )
+    await revise_resume(
+        FakeProvider(),
+        _content(),
+        job,
+        "按岗位调整取舍",
+        jd="JD-SENTINEL：分部门 AI 工作流 / 提示词沉淀 / 版权风控",
+    )
+
+    assert "JD-SENTINEL" in captured["prompt"]
+    assert "不得因为 JD 要求而新增" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_evidence_plan_is_a_second_allowed_fact_source_for_base_mode():
+    """底稿 + 证据补全：计划里的 fact_quotes 可以补充，但底稿仍是主要事实来源。"""
+    captured: dict[str, str] = {}
+
+    class FakeProvider:
+        async def chat(self, messages, *, thinking: bool = True):
+            captured["prompt"] = messages[-1]["content"]
+            return _revised_payload()
+
+    await revise_resume(
+        FakeProvider(),
+        _content(),
+        None,
+        "",
+        evidence_plan_block="## 岗位证据计划（必须遵守）\n- R1 端侧部署｜直接｜项目「树莓派跌倒检测」",
+    )
+
+    assert "岗位证据计划" in captured["prompt"]
+    assert "底稿，主要事实来源" in captured["prompt"]
+    assert "第二事实来源" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_tech_stack_switch_is_reflected_in_base_revision_prompt():
+    captured: dict[str, str] = {}
+
+    class FakeProvider:
+        async def chat(self, messages, *, thinking: bool = True):
+            captured["prompt"] = messages[-1]["content"]
+            return _revised_payload()
+
+    await revise_resume(
+        FakeProvider(),
+        _content(),
+        None,
+        "",
+        include_tech_stack=False,
+    )
+
+    assert "技术栈显示" in captured["prompt"]
+    assert "tech_stack" in captured["prompt"]
+    assert "输出空数组" in captured["prompt"]

@@ -44,10 +44,13 @@ def _as_queue_status(value: str) -> QueueStatus:
     return value
 
 
-def _resume_title(db: Session, resume_id: int | None) -> str:
-    if resume_id is None:
-        return ""
-    resume = db.get(ResumeRecord, resume_id)
+def _effective_resume_title(db: Session, item: ApplyQueueItem) -> str:
+    """这个队列条目**实际会投哪份简历**的标题。
+
+    显式 ``resume_id`` 优先；为空时按运行时同一套规则回落到该岗位最近的简历。
+    界面据此显示真实简历名，而不是含糊的「按默认规则解析」。
+    """
+    resume = resolve_resume(db, item.job_id, item.resume_id)
     return resume.title if resume is not None else ""
 
 
@@ -83,8 +86,9 @@ def _queue_out(db: Session, item: ApplyQueueItem, job: Job | None) -> ApplyQueue
         job_title=item.job_title,
         company=item.company,
         resume_id=item.resume_id,
-        resume_title=_resume_title(db, item.resume_id),
+        resume_title=_effective_resume_title(db, item),
         greeting=item.greeting,
+        greeting_confirmed=bool(item.greeting_confirmed),
         sort_order=item.sort_order,
         status=_as_queue_status(item.status),
         admission=admission,
@@ -192,12 +196,21 @@ def add_to_queue(db: Session, request: Any) -> list[ApplyQueueItemOut]:
                 # 未获授权自动投递——`_match_requires_confirm` 会据此算出 requires_confirm=True，
                 # 投递前仍要用户逐条确认。未知/空结论绝不默认放行。
             next_order += 1
+            greeting = _clip_greeting(entry.greeting)
+            # 入队即把「这个岗位用哪份简历」定下来：显式指定优先，否则绑定该岗位最近一份
+            # 岗位版简历。招呼语随后按这份简历生成，避免运行时规则变化导致"说的和投的不是同一份"。
+            resume_id = entry.resume_id
+            if resume_id is None:
+                fallback = resolve_resume(db, job.id, None)
+                resume_id = fallback.id if fallback is not None else None
             queue_item = ApplyQueueItem(
                 job_id=job.id,
                 job_title=job.title,
                 company=job.company,
-                resume_id=entry.resume_id,
-                greeting=_clip_greeting(entry.greeting),
+                resume_id=resume_id,
+                greeting=greeting,
+                # 入队时自带文案 = 调用方已经确认过这段字（界面上没有这条路径，保留给 API）。
+                greeting_confirmed=bool(greeting),
                 sort_order=next_order,
                 status=QUEUE_STATUS_PENDING,
             )
@@ -221,13 +234,23 @@ def update_queue_item(db: Session, item_id: int, payload: Any) -> ApplyQueueItem
     item = db.get(ApplyQueueItem, item_id)
     if item is None:
         raise ApplyNotFound("投递队列条目不存在或已被移除")
+    resume_changed = payload.resume_id is not None and payload.resume_id != item.resume_id
     if payload.greeting is not None:
         item.greeting = _clip_greeting(payload.greeting)
+        # 默认语义：能在编辑弹窗里保存，就说明用户看过这段字。批量生成显式传 False，
+        # 让文案先落库、但不越过"发送前确认"的闸门。
+        item.greeting_confirmed = payload.confirm_greeting is not False and bool(item.greeting)
+    elif payload.confirm_greeting is not None:
+        item.greeting_confirmed = bool(payload.confirm_greeting) and bool(item.greeting.strip())
     if payload.resume_id is not None:
         resume = db.get(ResumeRecord, payload.resume_id)
         if resume is None:
             raise ApplyNotFound("指定的简历不存在")
         item.resume_id = resume.id
+    # 换简历 = 招呼语对不上新简历了。哪怕这次请求里带着旧招呼语（编辑弹窗会整段提交），
+    # 也不能继续算"已确认"——必须重新生成或再保存一次。
+    if resume_changed:
+        item.greeting_confirmed = False
     item.updated_at = utcnow()
     db.commit()
     db.refresh(item)

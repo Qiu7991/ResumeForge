@@ -117,6 +117,7 @@ class ResumeGenerator:
         career_context_block: str = "",
         fact_sections: dict[str, Any] | None = None,
         consumed: ConsumedProfile | None = None,
+        evidence_plan_block: str = "",
     ) -> AsyncGenerator[dict[str, Any], None]:
         """执行生成流程，依次产出进度、增量、完成或错误事件。
 
@@ -182,6 +183,7 @@ class ResumeGenerator:
             career_context_block=career_context_block,
             general=general,
             scoped=scoped,
+            evidence_plan_block=evidence_plan_block,
         )
         # 英文简历的正文必须用英文写：只看 resume.language，界面语言不参与判断。
         messages[0]["content"] = with_output_language(messages[0]["content"], options.language)

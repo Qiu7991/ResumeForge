@@ -33,6 +33,9 @@ export function JobFilterBar({
   setStatus,
   sourceKind,
   setSourceKind,
+  city,
+  setCity,
+  cityOptions,
   batchAction,
   openMatchBatch,
   emptyDescriptionJobIds,
@@ -55,8 +58,13 @@ export function JobFilterBar({
   setStatus: (value: string) => void;
   sourceKind: "" | "collected" | "manual";
   setSourceKind: (value: "" | "collected" | "manual") => void;
+  city: string;
+  setCity: (value: string) => void;
+  /** 城市选项由页面从后端取，筛选条本身不 import api。 */
+  cityOptions: string[];
   batchAction: BatchAction;
-  openMatchBatch: (view?: "setup" | "history") => void;
+  /** `mode` 缺省是 compare（AI 对比选岗）；match 是逐岗位匹配度分析。 */
+  openMatchBatch: (view?: "setup" | "history", mode?: "match" | "compare") => void;
   emptyDescriptionJobIds: number[];
   backfilling: boolean;
   backfillDetails: () => Promise<void>;
@@ -164,6 +172,21 @@ export function JobFilterBar({
             label: t(option.labelKey),
           }))}
         />
+        {/* 城市筛选项来自后端聚合（按岗位数排序）；空选项不出现，选中后与列表/全选共用同一筛选器。 */}
+        <Select
+          aria-label={t("jobsPage.filter.cityAria")}
+          placeholder={t("jobsPage.filter.cityPlaceholder")}
+          allowClear
+          showSearch
+          disabled={batchAction !== null}
+          style={{ width: 120 }}
+          value={city || undefined}
+          onChange={(value) => {
+            setCity(value ?? "");
+            setPage(1);
+          }}
+          options={cityOptions.map((name) => ({ value: name, label: name }))}
+        />
         {/* 进入选择模式的入口在行右键菜单的「批量选择」（R8）；退出选择已挪到
             BatchToolbar 的「全选全部岗位」右侧（用户要求，两行各归其位）。 */}
         {/* 开始分析在面板里确认（设置视图有「开始分析」按钮）；分析一律走后台任务，
@@ -174,6 +197,14 @@ export function JobFilterBar({
           onClick={() => openMatchBatch("setup")}
         >
           {t("jobsPage.filter.analyzeMatch")}
+        </Button>
+        {/* 逐岗位匹配度分析原来只在岗位详情里，选一批岗位要开 N 次详情。放到这里：
+            勾选后一次分析所选（1–50 个），不勾选会先引导进入选择模式。 */}
+        <Button
+          disabled={batchAction !== null}
+          onClick={() => openMatchBatch("setup", "match")}
+        >
+          {t("jobsPage.filter.matchAnalysis")}
         </Button>
         {/* 多选态不渲染「分析记录」（用户要求）：勾选中这一栏只服务批量动作，
             历史记录请到「AI 对比选岗 / 批量匹配分析」界面看。非多选态保留入口（深链也仍然可达）。 */}

@@ -388,16 +388,23 @@ def execute_item(
             category=FAILURE_PROFILE_INSUFFICIENT,
         )
     data = apply_service.build_apply_data(session, resume)
-    # 招呼语闸门：开启「发送前必须确认」时，queue item 里那段文字就是"用户已确认"的唯一凭据。
-    # 没有就跳过——绝不拿默认招呼语悄悄替用户发出去（那正是他要避免的机器人式群发）。
+    # 招呼语闸门：开启「发送前必须确认」时，**用户确认过**的那段文字才是放行凭据。
+    # 只有字还不够——按岗位批量生成的文案在用户保存前同样是未确认状态。
+    # 没有就跳过：绝不拿默认招呼语或 AI 草稿悄悄替用户发出去（那正是他要避免的群发）。
     greeting = (item.greeting or "").strip()
-    if not greeting:
+    confirmed = bool(item.greeting_confirmed)
+    if not greeting or (config.require_greeting_review and not confirmed):
         if config.require_greeting_review:
+            if greeting:
+                raise ItemSkip(
+                    "招呼语待确认：按岗位生成的招呼语需要先在投递队列里编辑并保存",
+                    category=FAILURE_GREETING_MISSING,
+                )
             raise ItemSkip(
                 "招呼语未确认：请先在投递队列里为这个岗位生成或填写招呼语",
                 category=FAILURE_GREETING_MISSING,
             )
-        greeting = config.default_greeting
+        greeting = greeting or config.default_greeting
 
     step_started = time.monotonic()
     task.current_step = STEP_FILLING

@@ -47,6 +47,11 @@ from .drill import (
     DrillSession,
     DrillTurn,
 )
+from .generation_plan import (
+    PLAN_STATUS_FAILED,
+    PLAN_STATUS_READY,
+    ResumeGenerationPlan,
+)
 from .glossary import (
     GLOSSARY_CATEGORIES,
     GLOSSARY_LANGUAGES,
@@ -198,6 +203,9 @@ __all__ = [
     "Award",
     "ResumeRecord",
     "ResumeGenerateTask",
+    "ResumeGenerationPlan",
+    "PLAN_STATUS_READY",
+    "PLAN_STATUS_FAILED",
     "ResumeDeliveryRecord",
     "DELIVERY_SOURCES",
     "DELIVERY_SOURCE_APPLY",

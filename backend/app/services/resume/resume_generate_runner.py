@@ -40,6 +40,7 @@ from ...services.llm import create_provider
 from ...services.llm.base import LLMError
 from ...services.llm.client_pool import aclose_clients_for_current_loop
 from ...services.profile.fact_context import build_fact_sections, load_fact_context
+from ...services.profile.generation_preferences import get_generation_preferences
 from ...services.profile.profile_service import get_profile_detail, to_profile_out
 from ...services.resume.generate_snapshot import (
     GenerationSnapshot,
@@ -47,12 +48,25 @@ from ...services.resume.generate_snapshot import (
     consumed_has_content,
     snapshot_entry_ids,
 )
+from ...services.resume.generation_plan import (
+    build_plan_block,
+    build_plan_coverage_note,
+    link_plan_resume,
+    load_plan,
+)
+from ...services.resume.resume_base_derive import (
+    BaseResumeMissing,
+    derive_from_base,
+    load_base_resume,
+)
 from ...services.resume.resume_generator import ResumeGenerator
+from ...services.resume.resume_generator_prompts import MAX_JD_CHARS, build_job_prompt_text
 from ...services.resume.resume_task_state import (
     claim_completed,
     finalize_task,
     set_cancelled,
 )
+from ...services.resume.resume_tech_stack import strip_resume_tech_stack
 from ...services.resume.scenario_context import build_scenario_prompt_block
 from ...services.settings_service import get_llm_config
 from .resume_generate_support import log_generation_usage, material_only_echo_error
@@ -63,6 +77,33 @@ logger = logging.getLogger(__name__)
 # 已接收字数写库的粒度：没必要每个 chunk 都 commit 一次，但要让前端 1.5s 轮询能看到
 # 进展，所以每累计 200 字符落一次。
 _CHAR_COMMIT_STEP = 200
+
+
+def resolve_record_layout(options: GenerateOptions, base_record: Any | None) -> dict[str, Any]:
+    """新简历最终落库的版式。
+
+    底稿模式且 ``inherit_base_layout`` 为真时沿用底稿的模板/版式/页数/字号/语言/
+    section_order——用户选底稿是为了少改，新简历却换回默认模板会白费这个目的。
+    开关关闭时完全用请求里的版式。底稿的 ``format_name`` 为空是"跟随模板默认"的
+    有效值，不能拿请求值去覆盖。
+    """
+    layout: dict[str, Any] = {
+        "template": options.template,
+        "format_name": options.format_name,
+        "page_limit": options.page_limit,
+        "font_scale": options.font_scale,
+        "language": options.language,
+        "format_config": options.format_config,
+    }
+    if base_record is None or not options.inherit_base_layout:
+        return layout
+    layout["template"] = base_record.template or layout["template"]
+    layout["format_name"] = base_record.format_name
+    layout["page_limit"] = base_record.page_limit or layout["page_limit"]
+    layout["font_scale"] = base_record.font_scale or layout["font_scale"]
+    layout["language"] = base_record.language or layout["language"]
+    layout["format_config"] = dict(base_record.format_config or {})
+    return layout
 
 
 class ResumeGenerateRunnerError(Exception):
@@ -209,6 +250,16 @@ class ResumeGenerateRunner:
             session.commit()
 
             options = GenerateOptions.model_validate(task.options or {})
+            # 资料页的「生成偏好」是全局默认；请求显式带了值才覆盖。读库放在这里，
+            # 生成中途用户改开关不会影响已经排队的任务（以开始生成为准）。
+            if options.include_tech_stack is None:
+                options = options.model_copy(
+                    update={
+                        "include_tech_stack": get_generation_preferences(session)[
+                            "include_tech_stack"
+                        ]
+                    }
+                )
             # 底稿模式：先把底稿读出来并校验可用，之后再决定走"按 JD 修订"而不是"从资料生成"。
             # 这一步放在生成循环之前，底稿不存在时任务立刻 failed，不会白跑一次模型。
             base_record = None
@@ -220,6 +271,29 @@ class ResumeGenerateRunner:
                 except BaseResumeMissing as exc:
                     self._finalize(session, task, GENERATE_STATUS_FAILED, error=str(exc))
                     return
+            # 先看用户确认过的证据计划：没有 plan_id 时保持旧链路；计划必须属于本岗位，
+            # 防止拿 A 岗位的报告去生成 B 岗位的简历。
+            evidence_plan_block = ""
+            plan = None
+            if options.plan_id is not None:
+                plan = load_plan(session, options.plan_id)
+                if plan is None:
+                    self._finalize(
+                        session,
+                        task,
+                        GENERATE_STATUS_FAILED,
+                        error="生成计划不存在，请重新生成匹配报告",
+                    )
+                    return
+                if plan.job_id is not None and plan.job_id != task.job_id:
+                    self._finalize(
+                        session,
+                        task,
+                        GENERATE_STATUS_FAILED,
+                        error="生成计划与当前岗位不一致，请重新生成匹配报告",
+                    )
+                    return
+                evidence_plan_block = build_plan_block(plan, page_limit=options.page_limit)
             # A5：只读创建任务时冻结的快照；运行中不查当前场景（改名/归档/切窗口均不影响）。
             try:
                 career_block = build_scenario_prompt_block(task.context_snapshot)
@@ -227,6 +301,11 @@ class ResumeGenerateRunner:
                 logger.warning("生成任务场景快照无法解释，按未使用场景继续 task_id=%s", task_id)
                 career_block = ""
             generator = ResumeGenerator(provider)
+            # 底稿模式必须看到完整 JD（description/requirements/additional_info），
+            # 只给公司+职位时模型只能做泛化润色。与从资料生成同一份 JD 文本。
+            jd_text = (
+                build_job_prompt_text(job_out, MAX_JD_CHARS) if job_out is not None else ""
+            )
             resume: dict | None = None
             warnings: list[str] = []
             coverage_notes: list[dict] = []
@@ -253,6 +332,9 @@ class ResumeGenerateRunner:
                             base_record,
                             job_out,
                             options.custom_instruction,
+                            jd=jd_text,
+                            evidence_plan_block=evidence_plan_block,
+                            include_tech_stack=bool(options.include_tech_stack),
                             budget=budget,
                             on_progress=_progress,
                         )
@@ -268,6 +350,7 @@ class ResumeGenerateRunner:
                         career_context_block=career_block,
                         fact_sections=fact_sections,
                         consumed=consumed,
+                        evidence_plan_block=evidence_plan_block,
                     )
                     try:
                         async for event in stream:
@@ -366,6 +449,13 @@ class ResumeGenerateRunner:
                 self._finalize(session, task, GENERATE_STATUS_FAILED, error=str(exc))
                 return
 
+            if resume is not None and not options.include_tech_stack:
+                resume = strip_resume_tech_stack(resume)
+            if plan is not None and resume is not None:
+                plan_note = build_plan_coverage_note(plan, resume)
+                if plan_note is not None:
+                    coverage_notes = [*coverage_notes, plan_note]
+
             if resume is None:
                 self._finalize(
                     session, task, GENERATE_STATUS_FAILED, error="模型输出未能解析为有效 JSON"
@@ -390,6 +480,8 @@ class ResumeGenerateRunner:
                 from .resume_record import save_record
 
                 raw = "".join(raw_parts)
+                # 底稿模式默认沿用底稿的视觉版式；开关关闭时用请求里的版式。
+                record_layout = resolve_record_layout(options, base_record)
                 # commit=False：只 flush 拿主键，不提交；记录与任务终态同事务落库。
                 record = save_record(
                     session,
@@ -401,12 +493,12 @@ class ResumeGenerateRunner:
                     options.enhance,
                     options.enhancement_level,
                     requested_title=task.title,
-                    template=options.template,
-                    format_name=options.format_name,
-                    page_limit=options.page_limit,
-                    font_scale=options.font_scale,
-                    language=options.language,
-                    format_config=options.format_config,
+                    template=record_layout["template"],
+                    format_name=record_layout["format_name"],
+                    page_limit=record_layout["page_limit"],
+                    font_scale=record_layout["font_scale"],
+                    language=record_layout["language"],
+                    format_config=record_layout["format_config"],
                     custom_instruction=options.custom_instruction,
                     coverage_notes=coverage_notes,
                     rationale=rationale,
@@ -424,6 +516,7 @@ class ResumeGenerateRunner:
                     attach_snapshot_resume(
                         session, snapshot_id=self._snapshot_id, resume_id=record.id
                     )
+                link_plan_resume(session, options.plan_id, record.id)
             except Exception:  # noqa: BLE001 - 落库失败不能让任务停在 running
                 logger.exception("简历生成结果落库失败 task_id=%s", task_id)
                 # 回滚认领 UPDATE 与半成品记录，避免"completed 却没有简历"的脏终态。

@@ -25,6 +25,10 @@ export interface BatchGenerationConfig extends BatchLayoutFields {
   enhance: boolean;
   enhancement_level: BatchEnhancementLevel;
   custom_instruction: string;
+  /** 批量统一用哪份底稿；null = 从资料库生成。 */
+  base_resume_id?: number | null;
+  /** 底稿模式沿用底稿的模板/版式/页数/字号/语言。 */
+  inherit_base_layout?: boolean;
 }
 
 export interface BatchExportConfig extends BatchLayoutFields {

@@ -36,12 +36,19 @@ from ...services import trash
 from ...services.career_scenarios.resolve import CareerContextError, resolve_context
 from ...services.claims import build_baseline
 from ...services.llm.base import LLMError
+from ...services.profile.generation_preferences import get_generation_preferences
 from ...services.resume.generate_snapshot import (
     consumed_has_content,
     delete_generation_snapshot,
     freeze_generation_snapshot,
     persist_generation_snapshot,
     snapshot_entry_ids,
+)
+from ...services.resume.generation_plan import (
+    build_plan_block,
+    build_plan_coverage_note,
+    link_plan_resume,
+    load_plan,
 )
 from ...services.resume.generation_postprocess import enforce_material_only_echo
 from ...services.resume.resume_generate_runner import (
@@ -50,6 +57,7 @@ from ...services.resume.resume_generate_runner import (
 )
 from ...services.resume.resume_generator import ResumeGenerator
 from ...services.resume.resume_record import save_record
+from ...services.resume.resume_tech_stack import strip_resume_tech_stack
 from ...services.resume.scenario_context import build_scenario_prompt_block
 from ._shared import _format_sse
 
@@ -144,6 +152,18 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
         config = _api.get_llm_config(db)
         if not config.base_url or not config.model:
             raise HTTPException(status_code=400, detail="尚未配置大模型 API")
+        if payload.options.include_tech_stack is None:
+            payload = payload.model_copy(
+                update={
+                    "options": payload.options.model_copy(
+                        update={
+                            "include_tech_stack": get_generation_preferences(db)[
+                                "include_tech_stack"
+                            ]
+                        }
+                    )
+                }
+            )
 
         # A5：显式选用的职业场景在**取租约之后、流开始之前**解析并冻结。缺省/null
         # 不解析（旧请求零差异）；引用非法/归档/版本不符时明确失败，不创建流。
@@ -176,6 +196,17 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
         # 事实台账里已确认的条目作为事实基线交给模型；台账为空时它就是空基线。
         # F3 契约 §4：只带入能关联到本次快照条目的正向事实（组外/旧资料台账不自动带入）。
         baseline = build_baseline(db, source_entry_ids=snapshot_entry_ids(frozen.consumed))
+        evidence_plan_block = ""
+        plan = None
+        if payload.options.plan_id is not None:
+            plan = load_plan(db, payload.options.plan_id)
+            if plan is None:
+                raise HTTPException(status_code=404, detail="生成计划不存在，请重新生成匹配报告")
+            if plan.job_id is not None and plan.job_id != payload.job_id:
+                raise HTTPException(
+                    status_code=400, detail="生成计划与当前岗位不一致，请重新生成匹配报告"
+                )
+            evidence_plan_block = build_plan_block(plan, page_limit=payload.options.page_limit)
         # 流式模型调用可能持续数分钟；快照完成后立即释放请求 Session，避免占满连接池。
         db.close()
     except Exception:
@@ -202,6 +233,7 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
                 career_context_block=career_block,
                 fact_sections=None,
                 consumed=frozen.consumed,
+                evidence_plan_block=evidence_plan_block,
             ):
                 if event["type"] == "delta":
                     raw_parts.append(event["text"])
@@ -219,6 +251,13 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
                 if echo_error:
                     yield _format_sse({"type": "error", "message": echo_error})
                     return
+                if not payload.options.include_tech_stack:
+                    parsed = strip_resume_tech_stack(parsed)
+                plan_coverage_note = (
+                    build_plan_coverage_note(plan, parsed)
+                    if plan is not None and parsed is not None
+                    else None
+                )
                 with factory() as save_db:
                     record = save_record(
                         save_db,
@@ -237,7 +276,10 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
                         language=payload.options.language,
                         format_config=payload.options.format_config,
                         custom_instruction=payload.options.custom_instruction,
-                        coverage_notes=done_event.get("coverage_notes") or [],
+                        coverage_notes=[
+                            *(done_event.get("coverage_notes") or []),
+                            *([plan_coverage_note] if plan_coverage_note else []),
+                        ],
                         rationale=done_event.get("rationale") or "",
                         fact_annotations=done_event.get("fact_annotations") or [],
                         document_mode=payload.options.document_mode,
@@ -252,6 +294,7 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
                     attach_snapshot_resume(
                         save_db, snapshot_id=snapshot_pk, resume_id=record.id
                     )
+                    link_plan_resume(save_db, payload.options.plan_id, record.id)
                     save_db.commit()
                     save_db.refresh(record)
                 # 只有持久化成功后才宣布完成；断流不会留下“成功但无历史记录”的状态。

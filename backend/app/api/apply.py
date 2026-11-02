@@ -206,17 +206,23 @@ async def greeting_preview(
     config = apply_service.get_apply_config(db)
 
     queue_item = db.get(ApplyQueueItem, payload.item_id) if payload.item_id is not None else None
-    if queue_item is not None and queue_item.greeting.strip():
+    # 只有用户确认过的文案才直接回队列值；未确认（AI 批量生成后）要重新生成，
+    # 否则编辑弹窗里的「按岗位生成招呼语」会永远返回同一段草稿。
+    if queue_item is not None and queue_item.greeting.strip() and queue_item.greeting_confirmed:
         return GreetingPreviewOut(greeting=queue_item.greeting.strip(), source="queue")
+
+    # 招呼语是「简历 + 岗位」的投影：队列条目没有可用简历时不生成，也不回退默认文案
+    # （那会变成没看简历的群发话术）。交给前端提示先去岗位广场生成简历。
+    chosen_resume_id = queue_item.resume_id if queue_item is not None else None
+    resume = apply_service.resolve_resume(db, job.id, chosen_resume_id)
+    if queue_item is not None and resume is None:
+        return GreetingPreviewOut(greeting="", source="no_resume")
 
     llm = get_llm_config(db)
     if not (llm.base_url.strip() and llm.model.strip()):
         return GreetingPreviewOut(greeting=config.default_greeting.strip(), source="default")
 
-    # 队列条目指定了"投这份岗位用哪份简历"时，招呼语就按那份简历写——否则会出现
-    # "招呼语里说 A 项目、实际投的简历是 B 版本"的割裂。
-    chosen_resume_id = queue_item.resume_id if queue_item is not None else None
-    resume = apply_service.resolve_resume(db, job.id, chosen_resume_id)
+    # 招呼语按这份简历写——否则会出现"招呼语里说 A 项目、实际投的简历是 B 版本"的割裂。
     resume_text = ""
     if resume is not None:
         resume_text = json.dumps(

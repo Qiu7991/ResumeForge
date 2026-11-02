@@ -11,6 +11,7 @@ from typing import Any
 
 from ...schemas.job import JobOut
 from ...schemas.profile import ProfileOut
+from ..jd.jd_parser_matching import _SKILL_MATCHERS
 from ..jd_parser import parse_jd
 from .profile_relevance_constants import (
     _ASCII_TERM_RE,
@@ -36,6 +37,16 @@ _MIN_SKILL_CANDIDATES = 3
 # 保留数量取 2：足以让模型看到真实经历，又不会把完全不相关的资料整库塞进提示词。
 _MIN_ENTRY_CANDIDATES = 2
 _FALLBACK_ENTRY_SECTIONS = ("experiences", "projects")
+
+# 办公/通用能力属于"软信号"：一个「飞书」不足以把整份技术资料判为不相关，
+# 否则 AI 应用赋能、行政、运营这类岗位会被筛成空简历。领域明确的硬技能
+# （Kubernetes、算法等）仍保留"资料没有就是没有"的严格语义。
+_SOFT_SKILL_CATEGORIES = frozenset({"办公与业务工具", "通用能力"})
+_SOFT_SKILL_NAMES = frozenset(
+    word.casefold()
+    for _pattern, word, category in _SKILL_MATCHERS
+    if category in _SOFT_SKILL_CATEGORIES
+)
 
 
 def _unique(values: list[str]) -> list[str]:

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -22,6 +23,7 @@ from ..schemas.job import RECOGNITION_SOURCE_COLLECT, JobCreate, JobImportUrlIn,
 from ..services import trash
 from ..services.apply._site_browser import browser_status, get_browser_manager
 from ..services.browser.browser_manager import BROWSER_STATE_RUNNING, BrowserError
+from ..services.browser.cdp_client import CdpError
 from ..services.job.job_service import create_job_record
 from ..services.job.job_type_infer import infer_job_type
 from ..services.sites.base import SiteFailure
@@ -31,11 +33,32 @@ router = APIRouter(tags=["jobs"])
 logger = logging.getLogger(__name__)
 
 
+def _canonical_job_url(url: str) -> str:
+    """去掉 BOSS 岗位页的跟踪查询串。
+
+    详情页地址常带 ``?securityId=…``，动辄超过几百字符：既会顶爆 URL 字段上限，
+    也不是岗位身份的一部分。``/job_detail/<id>.html`` 路径本身就能唯一定位岗位。
+    """
+    parts = urlsplit(url)
+    host = parts.netloc.lower()
+    if (host == "zhipin.com" or host.endswith(".zhipin.com")) and parts.path.startswith(
+        "/job_detail/"
+    ):
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return url
+
+
 def _import_from_url(db: Session, url: str) -> Job:
-    """按 URL 抓详情并落成岗位（两个入口共用）。"""
+    """按 URL 抓详情并落成岗位（两个入口共用）。
+
+    **抓取用原链接，入库用规范化链接**：BOSS 的 ``securityId`` 是拿到详情页所必需的，
+    去掉它可能被重定向回首页；但它又不是岗位身份，且长度会超过 URL 字段上限。
+    """
+    fetch_url = url.strip()
+    stored_url = _canonical_job_url(fetch_url)
 
     try:
-        adapter = get_registry().for_target(url)
+        adapter = get_registry().for_target(fetch_url)
     except SiteFailure as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -45,8 +68,12 @@ def _import_from_url(db: Session, url: str) -> Job:
             status_code=422, detail=f"{adapter.display_name}暂不支持按链接导入岗位"
         )
 
+    # 旧数据可能存的是带参数的完整链接，新数据存规范化链接：两种都算同一岗位。
     existing = (
-        db.query(Job).filter(Job.source_url == url).order_by(Job.id.desc()).first()
+        db.query(Job)
+        .filter(Job.source_url.in_([stored_url, fetch_url]))
+        .order_by(Job.id.desc())
+        .first()
     )
     if existing is not None and not trash.is_deleted(existing):
         return JobOut.model_validate(existing)
@@ -60,15 +87,26 @@ def _import_from_url(db: Session, url: str) -> Job:
 
     manager = get_browser_manager(db)
     client = None
+    target_id = ""
     try:
         client = manager.client()
-        detail = fetch_detail(client, url) or {}
+        # **必须开专用标签页**：不指定 target 时 CDP 会操作当前活动页。扩展收录的瞬间，
+        # 活动页往往是应用自己的导入弹窗——它会被导航到招聘站，弹窗一没，回执就没了。
+        target_id = client.new_tab("about:blank")
+        detail = fetch_detail(client, fetch_url) or {}
+    except CdpError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except BrowserError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except SiteFailure as exc:
         raise HTTPException(status_code=502, detail=f"抓取岗位详情失败：{exc}") from exc
     finally:
         if client is not None:
+            if target_id:
+                try:
+                    client.send("Target.closeTarget", {"targetId": target_id})
+                except Exception:  # noqa: BLE001 - 标签页关不掉不影响已读到的结果
+                    logger.debug("关闭导入标签页失败（可忽略）", exc_info=True)
             try:
                 client.close()
             except Exception:  # noqa: BLE001 - 关闭失败不影响已读到的结果
@@ -97,13 +135,13 @@ def _import_from_url(db: Session, url: str) -> Job:
                 description=str(detail.get("description") or ""),
                 requirements=str(detail.get("requirements") or ""),
             ),
-            source_url=url,
+            source_url=stored_url,
             # 录入方式是"采集"：与自动采集导入的岗位同一个口径，界面上的来源标签才一致。
             recognition_source=RECOGNITION_SOURCE_COLLECT,
         ),
         source=RECOGNITION_SOURCE_COLLECT,
     )
-    logger.info("按链接导入岗位 id=%s url=%s", job.id, url)
+    logger.info("按链接导入岗位 id=%s url=%s", job.id, stored_url)
     return job
 
 

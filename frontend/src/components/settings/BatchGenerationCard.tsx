@@ -10,6 +10,7 @@ import { t, type MessageKey } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
 import { resumeFontScaleLabel, resumeTemplateLabel } from "../../i18n/enum/resumeCatalog";
 import type { BatchGenerationConfigOut } from "../../api/settingsBatch";
+import type { BaseResumeOption } from "../generate-resume/GenerationConfigStage";
 import type { ResumeFontScaleOption, ResumeTemplateOption } from "../../types";
 import { useBatchSectionAutoSave } from "../../features/settings/useBatchSectionAutoSave";
 import BatchConfigRow from "./BatchConfigRow";
@@ -25,10 +26,12 @@ export default function BatchGenerationCard({
   section,
   templates,
   fontScales,
+  baseResumeOptions = [],
 }: {
   section: BatchGenerationConfigOut;
   templates: ResumeTemplateOption[];
   fontScales: ResumeFontScaleOption[];
+  baseResumeOptions?: BaseResumeOption[];
 }) {
   useLocale();
   const { draft, status, update } = useBatchSectionAutoSave("generation", section);
@@ -43,6 +46,34 @@ export default function BatchGenerationCard({
         {t("batchOperation.generation.intro")}
       </Typography.Paragraph>
       <div className="batch-config-rows">
+        <BatchConfigRow label={t("batchOperation.field.baseResume")} span2>
+          <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+            <Select
+              style={{ width: "100%" }}
+              allowClear
+              value={draft.base_resume_id ?? 0}
+              options={[
+                { value: 0, label: t("batchOperation.baseResume.useProfile") },
+                ...baseResumeOptions,
+              ]}
+              onChange={(value) =>
+                update("base_resume_id", value ? Number(value) : null)
+              }
+            />
+            <Space size={8} align="center" wrap>
+              <Switch
+                size="small"
+                checked={draft.inherit_base_layout ?? true}
+                disabled={!draft.base_resume_id}
+                onChange={(checked) => update("inherit_base_layout", checked)}
+              />
+              <Typography.Text>{t("batchOperation.baseResume.inheritLayout")}</Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {t("batchOperation.baseResume.inheritHint")}
+              </Typography.Text>
+            </Space>
+          </Space>
+        </BatchConfigRow>
         <BatchConfigRow label={t("batchOperation.field.template")}>
           <Select
             value={draft.template}

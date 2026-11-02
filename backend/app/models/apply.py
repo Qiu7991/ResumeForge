@@ -238,6 +238,9 @@ class ApplyQueueItem(Base):
     )
     # 本岗位的招呼语（用户可编辑 / 按岗位生成后落此）；空 = 用默认招呼语。
     greeting: Mapped[str] = mapped_column(Text, default="")
+    # 是否经用户确认：按岗位批量生成后为 False（待人工保存确认），用户编辑保存 / 入队时
+    # 自带文案为 True。闸门据此判断"这段字用户真的看过"，而不是只判断"非空"。
+    greeting_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
     # pending(待投递) / skipped(用户移出前保留) / done(已投递)。
     status: Mapped[str] = mapped_column(String(16), default=QUEUE_STATUS_PENDING, index=True)
@@ -296,6 +299,8 @@ class ApplyTaskItem(Base):
     resume_title: Mapped[str] = mapped_column(String(256), default="")
     # 实际发送的招呼语（脱敏按"记全文但截断到合理上限"处理）。
     greeting: Mapped[str] = mapped_column(Text, default="")
+    # 建批次时的确认状态快照：执行时按它判断闸门，而不是回头读队列（队列可能已被改）。
+    greeting_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     # pending / running / success / failed / skipped。
     status: Mapped[str] = mapped_column(String(16), default=ITEM_STATUS_PENDING, index=True)
     # 失败分类（selector_invalid / captcha_required / ...），空串表示未失败。

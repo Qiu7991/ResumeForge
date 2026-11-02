@@ -101,6 +101,21 @@
   color: var(--rf-info-strong);
 }
 
+/* 队列里的招呼语本身就是编辑入口：单击直接打开编辑弹窗，不再要求走「更多操作」。 */
+.apply-queue-greeting-edit {
+  cursor: pointer;
+}
+
+.apply-queue-greeting-edit:hover {
+  text-decoration: underline;
+}
+
+.apply-queue-greeting-edit:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 .apply-collect-unmapped {
   margin-top: 12px;
 }

@@ -8,7 +8,8 @@
  * 本组件只迁工具栏自己的文案；移出确认与详情抽屉共用同一条后果正文，避免两处措辞分叉。
  */
 import { PlayCircleOutlined, ReloadOutlined } from "@ant-design/icons";
-import { Button, Popconfirm, Select, Space, Tooltip, Typography } from "antd";
+import { Button, Popconfirm, Progress, Select, Space, Tooltip, Typography } from "antd";
+import type { GreetingBatchState } from "../../../features/apply/greetingBatchRunner";
 import { t } from "../../../i18n";
 import { useLocale } from "../../../i18n/i18nContext";
 import type { QueueStatus } from "../../../types";
@@ -35,6 +36,8 @@ export function QueueFilterBar({
   onClearSelection,
   onRemoveSelected,
   onReload,
+  greetingBatch,
+  onStopGreetings,
   startDisabled,
   onStart,
 }: {
@@ -56,6 +59,9 @@ export function QueueFilterBar({
   onClearSelection: () => void;
   onRemoveSelected: () => void;
   onReload: () => void;
+  /** 入队后自动生成招呼语的进度：只在运行中显示进度与停止。 */
+  greetingBatch: GreetingBatchState;
+  onStopGreetings: () => void;
   /** 有任务在跑：禁止重复开始。 */
   startDisabled: boolean;
   onStart: () => void;
@@ -120,6 +126,33 @@ export function QueueFilterBar({
         <Button icon={<ReloadOutlined />} loading={loading} onClick={onReload}>
           {t("common.action.refresh")}
         </Button>
+        {greetingBatch.running ? (
+          <>
+            <Progress
+              percent={
+                greetingBatch.total > 0
+                  ? Math.round((greetingBatch.done / greetingBatch.total) * 100)
+                  : 0
+              }
+              size="small"
+              style={{ width: 180 }}
+            />
+            <Typography.Text type="secondary">
+              {t("applyQueue.greeting.batchProgress", {
+                done: greetingBatch.done,
+                total: greetingBatch.total,
+                current: greetingBatch.currentTitle,
+              })}
+            </Typography.Text>
+            <Button
+              size="small"
+              disabled={greetingBatch.stopRequested}
+              onClick={onStopGreetings}
+            >
+              {t("applyQueue.greeting.batchStop")}
+            </Button>
+          </>
+        ) : null}
       </Space>
       <Button
         type="primary"

@@ -59,6 +59,11 @@ export function QueueItemEditor({
       return;
     }
     if (outcome.status === "aborted") return;
+    if (outcome.data.source === "no_resume") {
+      // 没有简历就不生成：招呼语必须是「这份简历 + 这个岗位」的投影。
+      message.warning(t("applyQueue.toast.greetingNoResume"));
+      return;
+    }
     form.setFieldValue("greeting", outcome.data.greeting);
     message.success(
       outcome.data.source === "generated"
@@ -71,11 +76,18 @@ export function QueueItemEditor({
     const values = await form.validateFields();
     setSaving(true);
     try {
-      await updateQueueItem(item.id, {
+      const saved = await updateQueueItem(item.id, {
         greeting: values.greeting ?? "",
+        // 保存 = 用户看过这段字：显式确认，批量生成的草稿也在这里转正。
+        // 换简历时后端会强制回到未确认（招呼语对不上新简历），下面按返回值提示。
+        confirm_greeting: true,
         ...(values.resume_id ? { resume_id: values.resume_id } : {}),
       });
-      message.success(t("applyQueue.toast.updated"));
+      if (values.greeting && saved.greeting_confirmed === false) {
+        message.warning(t("applyQueue.toast.resumeChangedGreeting"));
+      } else {
+        message.success(t("applyQueue.toast.updated"));
+      }
       onSaved();
       onClose();
     } catch (err) {
@@ -94,7 +106,7 @@ export function QueueItemEditor({
       onCancel={onClose}
       footer={null}
       mask={{ closable: false }}
-      width={560}
+      width={760}
     >
       <Form form={form} layout="vertical">
         <Form.Item
@@ -109,7 +121,12 @@ export function QueueItemEditor({
           />
         </Form.Item>
         <Form.Item name="greeting" label={t("applyQueue.detail.greeting")}>
-          <HintedTextArea rows={3} maxLength={1000} />
+          {/* 从招呼语标签点进来时光标直接落在这里；7–16 行自适应，长招呼语不用一直滚。 */}
+          <HintedTextArea
+            autoSize={{ minRows: 7, maxRows: 16 }}
+            maxLength={1000}
+            autoFocus
+          />
         </Form.Item>
       </Form>
       <Space>

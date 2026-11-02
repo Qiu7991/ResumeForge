@@ -444,6 +444,10 @@ export interface GenerateOptions {
   custom_instruction: string;
   /** 以某份已有简历为底稿生成岗位版；缺省 = 从「我的资料」重新生成。 */
   base_resume_id?: number | null;
+  /** 底稿模式是否沿用底稿的模板/版式/页数/字号/语言；缺省 true。 */
+  inherit_base_layout?: boolean;
+  /** 已在「岗位匹配报告」里确认过的计划；缺省 = 旧链路，不注入证据块。 */
+  plan_id?: number | null;
   /**
    * 长 CV 文档模式（契约 §5）：`resume`（默认）/ `long_cv`。
    *

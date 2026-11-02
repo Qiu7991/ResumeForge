@@ -343,3 +343,21 @@ def _prompt_candidate(messages: list[dict]) -> dict:
     match = re.search(pattern, messages[1]["content"], re.DOTALL)
     assert match is not None
     return json.loads(match.group(1))
+
+
+def test_consumed_context_keeps_real_entries_for_a_soft_signal_job(db_session):
+    """实际生成走 consumed 路径：软信号岗位同样不能把项目/技能筛空。"""
+    seed_profile(db_session)
+    soft_job = make_job(
+        "AI应用赋能专员",
+        "负责 AI 工具选型与分部门工作流搭建，熟悉飞书、企业微信自动化，组织内部培训。",
+        "有培训经验，懂基础代码逻辑。",
+    )
+
+    selection = build_targeted_consumed_profile_context(
+        all_sections_consumed(db_session), soft_job
+    )
+
+    assert selection.data["projects"]
+    assert selection.data["skills"]
+    assert "projects" in selection.fallback_sections

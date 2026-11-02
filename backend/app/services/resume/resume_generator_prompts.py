@@ -235,6 +235,7 @@ def render_generation_messages(
     career_context_block: str,
     general: bool,
     scoped: bool,
+    evidence_plan_block: str = "",
 ) -> list[dict[str, str]]:
     """渲染系统/用户提示词；scoped=True 时追加 v3（13 分区/语言/自定义字段）规则。"""
     system_prompt = env.get_template("resume_generate_system.md").render(job=job) + "\n"
@@ -258,6 +259,12 @@ def render_generation_messages(
         claim_baseline=baseline.baseline_text if baseline else "",
         blocked_wording=baseline.blocked_wording if baseline else [],
         career_context_block=career_context_block.strip(),
+        evidence_plan_block=evidence_plan_block.strip(),
+        include_tech_stack=(
+            options.include_tech_stack
+            if getattr(options, "include_tech_stack", None) is not None
+            else True
+        ),
         extended_facts=has_extended_facts(selection.data),
     )
     if scoped:

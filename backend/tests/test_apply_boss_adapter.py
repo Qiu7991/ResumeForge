@@ -224,6 +224,35 @@ def test_parse_job_detail_reads_the_expected_fields():
 
     assert detail["job_title"] == "后端开发"
     assert detail["requirements"] == "要求"
+    assert detail["company"] == "示例科技"
+
+
+def test_parse_job_detail_repairs_company_taken_from_the_wrong_element():
+    """详情页选择器把「岗位名 + 薪资」当公司名时，从页面标题里拆回真正的公司。"""
+    detail = parse_job_detail(
+        {
+            "job_title": "AI 应用开发助理（双休+五险一金）",
+            "company": "AI 应用开发助理（双休+五险一金）\n8-13K",
+            "title": "AI 应用开发助理（双休+五险一金）_广州市依色锦时尚服饰有限公司招聘-BOSS直聘",
+            "description": "职责",
+        }
+    )
+
+    assert detail["company"] == "广州市依色锦时尚服饰有限公司"
+
+
+def test_parse_job_detail_repairs_a_generic_company_label():
+    """选择器命中顶部「公司」导航时，同样从页面标题拆回真正的公司。"""
+    detail = parse_job_detail(
+        {
+            "job_title": "AI 应用开发助理（双休+五险一金）",
+            "company": "公司",
+            "title": "「AI 应用开发助理（双休+五险一金）招聘」_广州市依色锦时尚服饰招聘-BOSS",
+            "description": "职责",
+        }
+    )
+
+    assert detail["company"] == "广州市依色锦时尚服饰"
 
 
 def test_detect_blocker_prefers_captcha_over_login():

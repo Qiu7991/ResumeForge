@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /** AI 生成简历弹窗：配置岗位导向美化/篇幅 -> 流式生成 -> 预览结果（自动保存历史）。 */
-import { App, Modal } from "antd";
+import { App, Modal, Spin, Typography } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { attachTaskUi, resumeTaskKey, watchResumeTask } from "../utils/backgroundTasks";
@@ -16,6 +16,7 @@ import {
   updateResumeLayout,
 } from "../api/resumes";
 import { getLLMConfig } from "../api/settings";
+import { createGenerationPlan, updateGenerationPlan } from "../api/resumePlan";
 import { useGenerationExtras } from "../features/career-scenarios/useGenerationExtras";
 import { newResumeLayout, withCreationLanguage } from "../features/resume-document/newResumeLayout";
 import { t } from "../i18n";
@@ -40,8 +41,10 @@ import GenerationProgressStage from "./generate-resume/GenerationProgressStage";
 import GenerationErrorStage from "./generate-resume/GenerationErrorStage";
 import GenerationPreviewStage from "./generate-resume/GenerationPreviewStage";
 import type { GenerateResult } from "./generate-resume/GenerationPreviewStage";
+import GenerationPlanStage from "./generate-resume/GenerationPlanStage";
+import type { GenerationPlan } from "../types/generationPlan";
 
-type Stage = "config" | "generating" | "preview" | "error";
+type Stage = "config" | "planning" | "plan" | "generating" | "preview" | "error";
 
 interface Props {
   /** null 表示生成**通用简历**（不针对任何岗位）。 */
@@ -61,7 +64,10 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
   const [title, setTitle] = useState("");
   const [enhance, setEnhance] = useState(false);
   // 底稿模式：选一份已有简历，复制正文后按 JD 修订（不重新抽取事实）。
-  const { baseResumeId, setBaseResumeId, baseResumeOptions, resetBaseResume } = useBaseResumeOptions(open);
+  const { baseResumeId, setBaseResumeId, baseResumeOptions, resetBaseResume } =
+    useBaseResumeOptions(open);
+  // 底稿默认沿用其模板/版式/页数/字号/语言；关掉后可以单独挑模板。
+  const [inheritBaseLayout, setInheritBaseLayout] = useState(true);
   const [enhancementLevel, setEnhancementLevel] = useState<EnhancementLevel>("balanced");
   // 默认 1 页 A4 + 标准字号：绝大多数简历就该是一页。
   const [layout, setLayout] = useState<ResumeLayout>(newResumeLayout);
@@ -80,6 +86,8 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
   const [taskId, setTaskId] = useState<number | null>(null);
   const [task, setTask] = useState<ResumeGenerateTask | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [plan, setPlan] = useState<GenerationPlan | null>(null);
+  const [planSaving, setPlanSaving] = useState(false);
   const [result, setResult] = useState<GenerateResult | null>(null);
   const [previewHtml, setPreviewHtml] = useState("");
   const [suggestionsGenerated, setSuggestionsGenerated] = useState(false);
@@ -205,11 +213,14 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
     setErrorMsg("");
     setResult(null);
     setPreviewHtml("");
+    setPlan(null);
+    setPlanSaving(false);
     setSuggestionsGenerated(false);
     setSuggestionsResetKey((value) => value + 1);
     setLayoutStatus(null);
     setMeasure(null);
     setCustomInstruction("");
+    setInheritBaseLayout(true);
     resetBaseResume();
     generation.resetExtras();
   }, [generation, initialTitle, resetBaseResume]);
@@ -227,7 +238,28 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
     }
   }, []);
 
-  const startGenerate = async () => {
+  const startPlan = async () => {
+    if (!open || !job) return;
+    setStage("planning");
+    setPlan(null);
+    setErrorMsg("");
+    try {
+      const created = await createGenerationPlan({
+        job_id: job.id,
+        ...(baseResumeId ? { base_resume_id: baseResumeId } : {}),
+        custom_instruction: customInstruction.trim(),
+      });
+      setPlan(created);
+      setStage("plan");
+    } catch (err) {
+      setStage("config");
+      message.error(
+        err instanceof Error ? err.message : t("generate.plan.analysisFailed"),
+      );
+    }
+  };
+
+  const startGenerate = async (planId: number | null = null) => {
     if (!open) return;
     generationLayoutRef.current = layout;
     setStage("generating");
@@ -255,7 +287,10 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
           format_config: layout.format_config ?? {},
           custom_instruction: customInstruction.trim(),
           // 只有选了底稿才带这个键：不选时请求体与旧版逐字节相同。
-          ...(baseResumeId ? { base_resume_id: baseResumeId } : {}),
+          ...(baseResumeId
+            ? { base_resume_id: baseResumeId, inherit_base_layout: inheritBaseLayout }
+            : {}),
+          ...(planId ? { plan_id: planId } : {}),
           // 默认不发送新字段：两个条件展开保证"未启用场景 + 普通简历"的请求体与旧版逐字节相同。
           ...(generation.documentMode === "long_cv" ? { document_mode: "long_cv" as const } : {}),
           ...(generation.careerContext ? { career_context: generation.careerContext } : {}),
@@ -272,6 +307,19 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
       setStage("error");
       // RF-20：失败不只显示原始异常——给「原因 + 建议 + 编号」指引。
       setErrorMsg(formatErrorGuidance(err, t("generate.startFailed")));
+    }
+  };
+
+  const savePlanAndGenerate = async (planId: number, selectedEvidenceIds: string[]) => {
+    setPlanSaving(true);
+    try {
+      const updated = await updateGenerationPlan(planId, selectedEvidenceIds);
+      setPlan(updated);
+      await startGenerate(updated.id);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : t("generate.plan.analysisFailed"));
+    } finally {
+      setPlanSaving(false);
     }
   };
 
@@ -456,10 +504,33 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
           baseResumeId={baseResumeId}
           setBaseResumeId={setBaseResumeId}
           baseResumeOptions={baseResumeOptions}
+          inheritBaseLayout={inheritBaseLayout}
+          setInheritBaseLayout={setInheritBaseLayout}
           llmReady={llmReady}
           modelName={modelName}
           onClose={handleClose}
           onStart={() => void startGenerate()}
+          onAnalyze={job ? () => void startPlan() : undefined}
+        />
+      )}
+
+      {stage === "planning" && (
+        <div style={{ padding: "48px 0", textAlign: "center" }}>
+          <Spin size="large" />
+          <Typography.Paragraph style={{ marginTop: 16 }}>
+            {t("generate.plan.analyzingHint")}
+          </Typography.Paragraph>
+        </div>
+      )}
+
+      {stage === "plan" && plan && (
+        <GenerationPlanStage
+          key={plan.id}
+          plan={plan}
+          saving={planSaving}
+          onBack={() => setStage("config")}
+          onSkip={() => void startGenerate(null)}
+          onGenerate={(planId, selected) => void savePlanAndGenerate(planId, selected)}
         />
       )}
 
@@ -492,7 +563,7 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
           suggestionsResetKey={suggestionsResetKey}
           setSuggestionsGenerated={setSuggestionsGenerated}
           onGoResumes={() => navigate("/resumes")}
-          onRegenerate={() => void startGenerate()}
+          onRegenerate={() => void startGenerate(plan?.id ?? null)}
           onClose={handleClose}
         />
       )}
@@ -501,7 +572,7 @@ export default function GenerateResumeModal({ job, open, initialTitle = "", onCl
         <GenerationErrorStage
           errorMsg={errorMsg}
           onReset={reset}
-          onRegenerate={() => void startGenerate()}
+          onRegenerate={() => void startGenerate(plan?.id ?? null)}
         />
       )}
     </Modal>

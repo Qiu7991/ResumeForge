@@ -2,9 +2,25 @@
 
 from __future__ import annotations
 
-import pytest
-
 ZHIPIN_URL = "https://www.zhipin.com/job_detail/abc123.html"
+
+
+class _FakeCdpClient:
+    """导入现在会先开一个专用标签页，再在它上面抓详情；假客户端补齐这两个能力。"""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.closed_target = None
+
+    def new_tab(self, url: str = "about:blank") -> str:
+        return "fake-target"
+
+    def send(self, method, params=None, **kwargs):
+        self.closed_target = (method, params)
+        return {}
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_rejects_a_url_outside_registered_sites(client):
@@ -33,7 +49,7 @@ def test_creates_a_job_from_the_page_detail_and_dedupes(client, monkeypatch):
     class RunningStatus:
         state = "running"
 
-    class FakeClient:
+    class FakeClient(_FakeCdpClient):
         closed = False
 
         def close(self) -> None:
@@ -72,6 +88,9 @@ def test_creates_a_job_from_the_page_detail_and_dedupes(client, monkeypatch):
     # 来源命中站点域名 → 可以直接进投递台
     assert job["apply_supported"] is True
     assert client_obj.closed is True
+    # 抓详情用的是新开的专用标签页，抓完关掉；绝不能导航用户当前的活动页。
+    assert client_obj.closed_target is not None
+    assert client_obj.closed_target[0] == "Target.closeTarget"
 
     # 同一链接再导入：返回同一条，不在岗位广场里出现重复岗位
     again = client.post("/api/jobs/import-url", json={"url": ZHIPIN_URL})
@@ -118,7 +137,7 @@ def test_import_current_picks_the_detail_tab_and_creates_the_job(client, monkeyp
     from app.api import job_import
     from app.services.sites.registry import get_registry
 
-    class FakeClient:
+    class FakeClient(_FakeCdpClient):
         def close(self) -> None:
             pass
 
@@ -166,7 +185,7 @@ def test_import_infers_job_type_from_the_jd(client, monkeypatch):
 
     class Manager:
         def client(self):
-            class C:
+            class C(_FakeCdpClient):
                 def close(self) -> None:
                     pass
 
@@ -189,3 +208,66 @@ def test_import_infers_job_type_from_the_jd(client, monkeypatch):
     monkeypatch.setattr(adapter, "fetch_job_detail", fake_detail)
     job = client.post("/api/jobs/import-url", json={"url": ZHIPIN_URL}).json()
     assert job["job_type"] == "校招"
+
+
+def test_long_tracking_url_is_canonicalized_before_use():
+    """BOSS 详情页的 securityId 查询串不是岗位身份，不能顶爆 URL 字段。"""
+    from app.api.job_import import _canonical_job_url
+
+    long_url = ZHIPIN_URL + "?securityId=" + "x" * 600
+    assert len(long_url) > 512
+    assert _canonical_job_url(long_url) == ZHIPIN_URL
+
+
+def test_import_url_schema_accepts_long_tracking_urls():
+    """512 的旧上限会把真实 BOSS 链接直接拦在 422，先放进来再规范化。"""
+    from app.schemas.job import JobImportUrlIn
+
+    long_url = ZHIPIN_URL + "?securityId=" + "x" * 600
+    assert JobImportUrlIn(url=long_url).url == long_url
+
+
+def test_long_tracking_url_is_fetched_verbatim_but_stored_canonical(client, monkeypatch):
+    """securityId 是抓取详情所必需的，不能丢；但入库只留岗位路径。"""
+    from app.api import job_import
+    from app.services.sites.registry import get_registry
+
+    class RunningStatus:
+        state = "running"
+
+    class FakeClient(_FakeCdpClient):
+        def close(self) -> None:
+            return None
+
+    class FakeManager:
+        def client(self) -> FakeClient:
+            return FakeClient()
+
+    monkeypatch.setattr(job_import, "browser_status", lambda _db: RunningStatus())
+    monkeypatch.setattr(job_import, "get_browser_manager", lambda _db: FakeManager())
+
+    seen: dict[str, str] = {}
+    adapter = get_registry().for_target(ZHIPIN_URL)
+    monkeypatch.setattr(
+        adapter,
+        "fetch_job_detail",
+        lambda _client, url: seen.update(url=url) or {
+            "job_title": "人工智能训练师",
+            "company": "极擎科技",
+            "description": "岗位职责全文",
+            "requirements": "任职要求全文",
+            "url": url,
+        },
+    )
+
+    long_url = ZHIPIN_URL + "?securityId=" + "x" * 600
+    created = client.post("/api/jobs/import-url", json={"url": long_url})
+    assert created.status_code == 200, created.text
+    assert seen["url"] == long_url
+    job = created.json()
+    assert job["source_url"] == ZHIPIN_URL
+
+    # 再用规范化链接导入：命中的是同一条，不再造重复岗位。
+    again = client.post("/api/jobs/import-url", json={"url": ZHIPIN_URL})
+    assert again.status_code == 200
+    assert again.json()["id"] == job["id"]

@@ -16,7 +16,9 @@
  * 反过来，模块作用域直接求值 `t()` 是错的（交接单 §8.1）：那会在模块求值时把语言钉死。
  */
 import { addToQueue, QueueConflictError } from "../../../api/apply";
+import { startGreetingBatch } from "../../../features/apply/greetingBatchRunner";
 import { t } from "../../../i18n";
+import type { ApplyQueueItem } from "../../../types";
 
 export interface BulkEnqueueOutcome {
   /** 成功加入队列的条数。 */
@@ -27,6 +29,12 @@ export interface BulkEnqueueOutcome {
   unsupported: number;
   /** 其它失败明细（岗位 id + 原因）。 */
   failed: { jobId: number; message: string }[];
+  /** 入队后已自动开始生成招呼语的条数（按岗位版简历）。 */
+  greetingsStarted: number;
+  /** 没有岗位版简历、因此未生成招呼语的条数。 */
+  withoutResume: number;
+  /** 已有招呼语任务在跑，本批没能自动开始的条数。 */
+  greetingsDeferred: number;
 }
 
 export function isAlreadyQueued(err: unknown): boolean {
@@ -39,10 +47,22 @@ export function isUnsupportedSite(err: unknown): boolean {
 }
 
 export async function bulkEnqueueJobs(jobIds: number[]): Promise<BulkEnqueueOutcome> {
-  const outcome: BulkEnqueueOutcome = { enqueued: 0, alreadyQueued: 0, unsupported: 0, failed: [] };
+  const outcome: BulkEnqueueOutcome = {
+    enqueued: 0,
+    alreadyQueued: 0,
+    unsupported: 0,
+    failed: [],
+    greetingsStarted: 0,
+    withoutResume: 0,
+    greetingsDeferred: 0,
+  };
+  const created: ApplyQueueItem[] = [];
   for (const jobId of jobIds) {
     try {
-      await addToQueue([{ job_id: jobId, confirm_unanalyzed: true, confirm_real_gap: true }]);
+      const added = await addToQueue([
+        { job_id: jobId, confirm_unanalyzed: true, confirm_real_gap: true },
+      ]);
+      created.push(...added);
       outcome.enqueued += 1;
     } catch (err) {
       if (isAlreadyQueued(err)) outcome.alreadyQueued += 1;
@@ -54,6 +74,14 @@ export async function bulkEnqueueJobs(jobIds: number[]): Promise<BulkEnqueueOutc
           message: err instanceof Error ? err.message : t("bulkEnqueue.error.enqueueFailed"),
         });
     }
+  }
+  // 入队 = 决定要投这个岗位，随即将「JD → 简历 → 招呼语」这条链走完：只对有岗位版
+  // 简历的条目生成，没有简历的交给摘要如实说明，绝不拿空资料编一段话。
+  const withResume = created.filter((item) => item.resume_id !== null);
+  outcome.withoutResume = created.length - withResume.length;
+  if (withResume.length > 0) {
+    if (startGreetingBatch(withResume)) outcome.greetingsStarted = withResume.length;
+    else outcome.greetingsDeferred = withResume.length;
   }
   return outcome;
 }
@@ -75,6 +103,19 @@ export function bulkEnqueueSummary(outcome: BulkEnqueueOutcome): string {
   }
   if (outcome.failed.length) {
     parts.push(t("bulkEnqueue.summary.failed", { count: outcome.failed.length }));
+  }
+  if (outcome.greetingsStarted) {
+    parts.push(
+      t("bulkEnqueue.summary.greetingsStarted", { count: outcome.greetingsStarted }),
+    );
+  }
+  if (outcome.withoutResume) {
+    parts.push(t("bulkEnqueue.summary.withoutResume", { count: outcome.withoutResume }));
+  }
+  if (outcome.greetingsDeferred) {
+    parts.push(
+      t("bulkEnqueue.summary.greetingsDeferred", { count: outcome.greetingsDeferred }),
+    );
   }
   return parts.join(t("bulkEnqueue.summary.separator"));
 }

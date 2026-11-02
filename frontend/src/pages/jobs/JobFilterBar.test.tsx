@@ -22,9 +22,11 @@ function matchHistoryButton(): HTMLElement | null {
 function StatefulHarness({
   onKeywordChange,
   selectionMode,
+  onOpenMatchBatch,
 }: {
   onKeywordChange?: (value: string) => void;
   selectionMode?: boolean;
+  onOpenMatchBatch?: (view?: "setup" | "history", mode?: "match" | "compare") => void;
 }) {
   const [keyword, setKeyword] = useState("");
   const updateKeyword = (value: string) => {
@@ -42,8 +44,11 @@ function StatefulHarness({
       setStatus={vi.fn()}
       sourceKind=""
       setSourceKind={vi.fn()}
+      city=""
+      setCity={vi.fn()}
+      cityOptions={[]}
       batchAction={null}
-      openMatchBatch={vi.fn()}
+      openMatchBatch={onOpenMatchBatch ?? vi.fn()}
       emptyDescriptionJobIds={[]}
       backfilling={false}
       backfillDetails={vi.fn()}
@@ -69,6 +74,9 @@ function ControlledHarness({ keyword }: { keyword: string }) {
       setStatus={vi.fn()}
       sourceKind=""
       setSourceKind={vi.fn()}
+      city=""
+      setCity={vi.fn()}
+      cityOptions={[]}
       batchAction={null}
       openMatchBatch={vi.fn()}
       emptyDescriptionJobIds={[]}
@@ -141,5 +149,18 @@ describe("JobFilterBar · 分析记录入口随多选态收放", () => {
     expect(
       screen.getByRole("button", { name: looseButtonName(t("jobsPage.filter.analyzeMatch")) }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("JobFilterBar · 匹配度分析入口", () => {
+  it("顶部按钮以 match 模式打开批量匹配，而不是对比选岗", () => {
+    const onOpenMatchBatch = vi.fn();
+    render(<StatefulHarness onOpenMatchBatch={onOpenMatchBatch} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: looseButtonName(t("jobsPage.filter.matchAnalysis")) }),
+    );
+
+    expect(onOpenMatchBatch).toHaveBeenCalledWith("setup", "match");
   });
 });

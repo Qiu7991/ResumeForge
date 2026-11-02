@@ -13,8 +13,10 @@ def test_capture_extension_points_at_the_same_origin_app():
     content = (EXTENSION / "content.js").read_text(encoding="utf-8")
     assert 'const APP_ORIGIN = "http://127.0.0.1:8005"' in content
     assert "127.0.0.1:5173" not in content
+    # 应用弹窗加载后先发 started，扩展据此把等待上限从 12 秒放宽到 120 秒。
+    assert "resumeforge-import-started" in content
 
 
 def test_capture_extension_manifest_is_reloaded_by_version_bump():
     manifest = (EXTENSION / "manifest.json").read_text(encoding="utf-8")
-    assert '"version": "1.1.1"' in manifest
+    assert '"version": "1.1.6"' in manifest

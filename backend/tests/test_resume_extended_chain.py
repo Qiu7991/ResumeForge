@@ -181,3 +181,35 @@ def test_bilingual_translatable_paths_include_research_project_points():
 def test_bilingual_translatable_paths_are_unchanged_for_old_content():
     paths = translatable_paths({"summary": "一段总结", "experience": [{"role": "工程师"}]})
     assert paths == ["summary", "experience.0.role"]
+
+
+def test_restore_selected_sections_clears_education_fields_the_profile_never_gave():
+    """「本科」是学历：资料没填学习形式/学位类型时，生成结果不能自己补上。"""
+    resume = ResumeContent.model_validate(
+        {
+            "education": [
+                {
+                    "school": "哈尔滨信息工程学院",
+                    "major": "计算机科学与技术",
+                    "degree": "本科",
+                    "study_form": "本科",
+                    "degree_type": "学士",
+                }
+            ]
+        }
+    )
+    candidates = {
+        **_BASE_CANDIDATES,
+        "educations": [
+            {
+                "school": "哈尔滨信息工程学院",
+                "major": "计算机科学与技术",
+                "degree": "本科",
+            }
+        ],
+    }
+
+    restored = restore_selected_sections(resume, candidates)
+
+    assert restored.education[0].degree_type == ""
+    assert restored.education[0].study_form == ""

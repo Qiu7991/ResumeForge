@@ -6,11 +6,17 @@
  * 下拉只负责把动作交回页面（`onBulkAction`）：导出要下载文件、入队要带双确认、
  * 删除要走撤销 Toast，这些都留在各自的既有实现里，工具栏不再各持一份状态。
  */
-import { CheckOutlined, ClearOutlined, CloseCircleOutlined } from "@ant-design/icons";
-import { Button, Progress, Select, Space, Tooltip, Typography } from "antd";
+import {
+  CheckOutlined,
+  ClearOutlined,
+  CloseCircleOutlined,
+  DeleteOutlined,
+} from "@ant-design/icons";
+import { Button, Popconfirm, Progress, Select, Space, Tooltip, Typography } from "antd";
 import { t } from "../../i18n";
 import { JOB_STATUS_LABEL_KEYS } from "../../i18n/enum/jobs";
 import { useLocale } from "../../i18n/i18nContext";
+import type { GreetingBatchState } from "../../features/apply/greetingBatchRunner";
 import type { BulkAiState } from "../../features/jobs/jobBulkAiRunner";
 import BulkActionsMenu from "./BulkActionsMenu";
 import type { BulkMenuAction } from "./bulkActionItems";
@@ -27,6 +33,8 @@ export function BatchToolbar({
   onBulkAction,
   bulkAi,
   onStopBulkAi,
+  greetingBatch,
+  onStopGreetings,
   exitSelectionMode,
   totalCount = 0,
   selectAllPagesLoading = false,
@@ -43,6 +51,9 @@ export function BatchToolbar({
   onBulkAction: (action: BulkMenuAction) => void;
   bulkAi: BulkAiState;
   onStopBulkAi: () => void;
+  /** 入队后自动按岗位简历生成招呼语的进度（跨页面共享的模块级状态）。 */
+  greetingBatch: GreetingBatchState;
+  onStopGreetings: () => void;
   /** 退出选择模式（从筛选行挪到这里，用户要求）。 */
   exitSelectionMode: () => void;
   /** 当前筛选下全部岗位数：>0 时显示「全选全部岗位」按钮。 */
@@ -103,6 +114,26 @@ export function BatchToolbar({
           {t("jobsPage.toolbar.applyStatus")}
         </Button>
         <BulkActionsMenu disabled={selectedJobIds.length === 0 || busy} onAction={onBulkAction} />
+        {/* 删除是最高频的批量动作之一，不再只藏在下拉里：可见的红色按钮 + 二次确认。
+            后端是软删除（进回收站），确认正文要说清可恢复，用户才敢点。 */}
+        <Popconfirm
+          title={t("jobsPage.toolbar.deleteConfirmTitle", { count: selectedJobIds.length })}
+          description={t("jobsPage.toolbar.deleteConfirmBody")}
+          okText={t("jobsPage.toolbar.delete")}
+          cancelText={t("common.action.cancel")}
+          okButtonProps={{ danger: true }}
+          disabled={selectedJobIds.length === 0 || busy}
+          onConfirm={() => onBulkAction("delete")}
+        >
+          <Button
+            danger
+            icon={<DeleteOutlined />}
+            loading={batchAction === "delete"}
+            disabled={selectedJobIds.length === 0 || busy}
+          >
+            {t("jobsPage.toolbar.delete")}
+          </Button>
+        </Popconfirm>
       </Space>
       {bulkAi.running ? (
         <Space size={12} wrap>
@@ -124,6 +155,29 @@ export function BatchToolbar({
             )}
           </Typography.Text>
           <Button size="small" disabled={bulkAi.stopRequested} onClick={onStopBulkAi}>
+            {t("jobsPage.bulkAi.stop")}
+          </Button>
+        </Space>
+      ) : null}
+      {greetingBatch.running ? (
+        <Space size={12} wrap>
+          <Progress
+            percent={
+              greetingBatch.total > 0
+                ? Math.round((greetingBatch.done / greetingBatch.total) * 100)
+                : 0
+            }
+            size="small"
+            style={{ width: 220 }}
+          />
+          <Typography.Text type="secondary">
+            {t("jobsPage.bulkAi.greetingProgress", {
+              done: greetingBatch.done,
+              total: greetingBatch.total,
+              current: greetingBatch.currentTitle,
+            })}
+          </Typography.Text>
+          <Button size="small" disabled={greetingBatch.stopRequested} onClick={onStopGreetings}>
             {t("jobsPage.bulkAi.stop")}
           </Button>
         </Space>
