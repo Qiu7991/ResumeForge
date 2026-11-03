@@ -27,6 +27,11 @@ if ($LASTEXITCODE -ne 0) { $failed += "ruff" }
 & $ruff format --check backend/app backend/tests
 if ($LASTEXITCODE -ne 0) { $failed += "ruff-format" }
 
+# ---- Backend: v2 boundary guard (Phase 4, AST; regex-free by design) ----
+Step "1b/6 v2 boundary guard (backend)"
+& $py -I scripts\check_v2_boundary.py
+if ($LASTEXITCODE -ne 0) { $failed += "v2-boundary" }
+
 # ---- Backend: full pytest (exclude canary tests that need live app on 9333) ----
 Step "2/6 pytest (backend full, canary excluded)"
 Push-Location backend
