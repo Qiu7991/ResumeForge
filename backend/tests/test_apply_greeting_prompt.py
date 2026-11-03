@@ -3,7 +3,7 @@
 
 import json
 
-from app.services.job.job_match import build_greeting_messages
+from app.services.job.job_match import build_greeting_messages, parse_greeting
 
 
 def _resume_with_photo() -> str:
@@ -50,11 +50,23 @@ def test_greeting_payload_includes_full_jd_and_real_resume_text():
     assert "RAG 与 Function Calling" in user_message
 
 
-def test_greeting_prompt_pins_the_first_15_chars_and_length_rules():
+def test_greeting_prompt_requires_polite_opening_and_length_rules():
     messages = build_greeting_messages({"title": "AI应用赋能专员"}, "{}")
     system = messages[0]["content"]
 
-    assert "15 个字" in system
+    assert "必须以「您好」开头" in system
+    assert "当前情况" in system
+    assert "岗位匹配" in system
     assert "简历已附" in system  # 作为禁止项出现
     assert "150–260 字" in system
     assert "不得编造" in system
+
+
+def test_parse_greeting_adds_polite_opening_when_model_omits_it():
+    assert parse_greeting("计算机本科在读，做过提示词工程。").startswith("您好，")
+    assert parse_greeting("你好，计算机本科在读。").startswith("您好，")
+    assert parse_greeting("尊敬的HR您好，计算机本科在读。").startswith("您好，")
+
+
+def test_parse_greeting_keeps_an_existing_polite_opening():
+    assert parse_greeting("您好，计算机本科在读。") == "您好，计算机本科在读。"

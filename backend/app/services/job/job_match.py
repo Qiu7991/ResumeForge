@@ -455,6 +455,27 @@ def build_greeting_messages(
     ]
 
 
+def normalize_greeting_opening(text: str) -> str:
+    """保证招呼语以「您好，」开头（提示词之外的第二道保险）。
+
+    模型偶尔会漏掉问候，或写成「你好」「尊敬的 HR 您好」；这里统一成「您好，」，
+    不改变后面的正文。只处理开头最多 8 个字以内的问候，避免误伤正文里的「您好」。
+    """
+    value = (text or "").strip()
+    if not value:
+        return value
+    index = value.find("您好")
+    if 0 <= index <= 8:
+        value = value[index:]
+    elif value.startswith("你好"):
+        value = "您好" + value[2:]
+    else:
+        value = "您好，" + value.lstrip("，,。.！!：: ")
+    if len(value) > 2 and value[2] not in "，,！!。.：: ":
+        value = "您好，" + value[2:].lstrip()
+    return value
+
+
 def parse_greeting(raw: str) -> str:
     """解析招呼语模型输出：剥掉可能的 Markdown 代码围栏，截断到落库上限。"""
     if not raw or len(raw) > MAX_GREETING_RESPONSE_CHARS:
@@ -465,6 +486,7 @@ def parse_greeting(raw: str) -> str:
         cleaned = fenced.group(1).strip()
     if not cleaned:
         raise LLMError("模型返回的招呼语为空，请重试")
+    cleaned = normalize_greeting_opening(cleaned)
     return cleaned[:GREETING_RECORD_MAX_CHARS]
 
 
@@ -486,6 +508,7 @@ __all__ = [
     "job_payload",
     "local_match_result",
     "match_requires_confirmation",
+    "normalize_greeting_opening",
     "parse_greeting",
     "parse_match_result",
     "strip_data_urls",
