@@ -20,6 +20,7 @@ from __future__ import annotations
 from ...schemas.resume_document_plan import BlockPlan, DocumentPlan, Inline
 from .document_html import coerce_document, join_cell_texts, paper_document
 from .resume_labels import DEFAULT_RESUME_LANGUAGE, normalize_language
+from .resume_sections import DEFAULT_SECTION_ORDER
 
 
 def _inline_text(segments: list[Inline], *, strong_marks: bool = True) -> str:
@@ -119,15 +120,25 @@ def _apply_visible_sections(document, section_order: list[str] | None):
     """旧调用方的 ``section_order`` 参数 = **可见板块清单**（``resolved_visible_sections`` 的产物）。
 
     v2 板块显隐的唯一真相是 ``section.hidden``（``paper_document`` 已过滤）；这个兼容
-    参数只在调用方**显式传入**时生效：清单外的板块不上正文（test_resume_hidden_sections
-    的 Markdown/TXT 出口用它表达"被隐藏的板块不进正文"）。传 None（v2 正常路径）原样返回。
+    参数只在调用方**显式传入**时生效：清单外的**内置**板块不上正文
+    （test_resume_hidden_sections 的 Markdown/TXT 出口用它表达"被隐藏的板块不进正文"）。
+    传 None（v2 正常路径）原样返回。
+
+    白名单只约束内置板块（``DEFAULT_SECTION_ORDER``）：``resolved_visible_sections``
+    只含内置键，自建板块（``custom:*``）永远不在清单里——按清单硬过滤会让自建板块从
+    Markdown/TXT 消失而 HTML/PDF/Word 保留，四个出口不一致（对抗审查 L1，P0）。
+    所以非内置 key 一律保留，不上纸面与否仍由 ``section.hidden`` 单独决定。
     """
     if not section_order:
         return document
     visible = {str(key).strip() for key in section_order if str(key or "").strip()}
     if not visible:
         return document
-    sections = [section for section in document.sections if section.key in visible]
+    sections = [
+        section
+        for section in document.sections
+        if section.key in visible or section.key not in DEFAULT_SECTION_ORDER
+    ]
     if len(sections) == len(document.sections):
         return document
     return document.model_copy(update={"sections": sections})

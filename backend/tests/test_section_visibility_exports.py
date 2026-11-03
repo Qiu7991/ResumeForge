@@ -14,10 +14,15 @@ from app.services.docx_exporter import build_resume_docx
 from app.services.exporter import export_markdown, render_html
 from app.services.pdf_exporter import build_resume_pdf
 from app.services.resume.document_io import ensure_document_version
-from app.services.resume.resume_sections import persistable_format_config
+from app.services.resume.resume_sections import (
+    persistable_format_config,
+    resolved_visible_sections,
+)
+from app.services.txt_exporter import export_txt
 
 SECTION_KEY = "campus_experience"
 BODY_KEYWORD = "示例社团"  # campus_experience 条目的正文原文
+CUSTOM_KW = "自建正文关键词XYZ"  # 自建板块条目的正文原文
 
 
 def _v2_document(*, hidden: bool) -> dict:
@@ -87,3 +92,37 @@ def test_markdown_visible_list_filters_hidden_section():
     markdown = export_markdown(document, section_order=visible)
     assert BODY_KEYWORD not in markdown
     assert "示例项目" in markdown
+
+
+def _v2_document_with_custom_section() -> dict:
+    """含一个自建板块（custom:*）的 v2 文档：白名单过滤必须不碰它。"""
+    content = {
+        "name": "张示例",
+        "summary": "总结文字",
+        "projects": [{"name": "示例项目", "description": ["做了 A"]}],
+        "custom_sections": [
+            {
+                "key": "custom:abc123",
+                "title": "我的自建板块",
+                "entries": [{"text": CUSTOM_KW}],
+            }
+        ],
+    }
+    return ensure_document_version(dict(content), language="zh-CN", format_config={})
+
+
+def test_markdown_visible_list_keeps_custom_sections():
+    """对抗审查 L1（P0）回归：section_order 白名单只过滤**内置**板块。
+
+    ``resolved_visible_sections`` 只含内置键，而 export_pipeline 把它传给
+    ``export_markdown``；若按清单硬过滤，自建板块（custom:*）会从 Markdown/TXT
+    消失而 HTML/PDF/Word 保留——四个出口不一致。非内置 key 一律保留。
+    """
+    document = _v2_document_with_custom_section()
+    visible = resolved_visible_sections({})
+    markdown = export_markdown(document, section_order=visible)
+    assert CUSTOM_KW in markdown
+    txt = export_txt(document, section_order=visible)
+    assert CUSTOM_KW in txt
+    html = render_html(document, format_config={})
+    assert CUSTOM_KW in html
