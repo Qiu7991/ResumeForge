@@ -17,6 +17,7 @@ import {
   applyProjectionCandidate,
   isV2ProjectionContent,
   itemSourceKey,
+  appendProjectionEntry,
   mergeProjectionCandidate,
   projectionDocument,
   resolvableProjectionCandidates,
@@ -234,6 +235,55 @@ describe("候选解析（document_entry > document_path > 旧 v1 路径）", () 
     const items = document.sections[0].entries[0].items;
     expect(itemSourceKey(items[0])).toBe("educations.educations.school");
     expect(itemSourceKey(items[2])).toBeNull();
+  });
+});
+
+describe("追加整条（覆盖清单缺项目时）", () => {
+  it("追加为新条目，不合并到已有第一条", () => {
+    const source = projection();
+    const document = emptyDocument();
+    document.sections.push({
+      key: "education",
+      title: "",
+      kind: "entries",
+      layout: defaultSectionLayout(),
+      entries: [
+        entry("ob_target000001", [field("ob_mine00000001", "school", "My school", "title")]),
+      ],
+    });
+    const resolved = resolveProjectionCandidate(source, source.candidates[0]);
+    if (!resolved) throw new Error("candidate unresolved");
+
+    const result = appendProjectionEntry(document, resolved);
+
+    expect(result.filled).toBeGreaterThan(0);
+    expect(result.document.sections[0].entries).toHaveLength(2);
+    expect((result.document.sections[0].entries[1] as { items: unknown[] }).items.length).toBe(
+      resolved.items.length,
+    );
+  });
+});
+
+describe("新板块按用户规定顺序插入", () => {
+  it("缺失板块按 profile_section_order 插入，而不是永远追加到末尾", () => {
+    const source = projection();
+    const document = emptyDocument();
+    document.sections.push({
+      key: "projects",
+      title: "",
+      kind: "entries",
+      layout: defaultSectionLayout(),
+      entries: [],
+    });
+    const resolved = resolveProjectionCandidate(source, source.candidates[0]);
+    if (!resolved) throw new Error("candidate unresolved");
+
+    const result = appendProjectionEntry(document, resolved, ["education", "projects"]);
+
+    expect(result.document.sections.map((section) => section.key)).toEqual([
+      "education",
+      "projects",
+    ]);
   });
 });
 

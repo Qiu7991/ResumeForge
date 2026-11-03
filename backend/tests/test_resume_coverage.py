@@ -145,3 +145,70 @@ def test_confirmed_claims_are_matched_by_subject():
 def test_malformed_baseline_lines_do_not_break_the_check():
     baseline = ClaimDigestOut(confirmed_count=0, baseline_text="不是 JSON\n{也是坏的\n")
     assert confirmed_claims_about({"会员增长系统"}, baseline) == []
+
+
+def test_remaining_coverage_notes_keeps_sections_not_yet_written():
+    """定向修订补上实习后，其他还没写的项目分区必须继续留在清单里。"""
+    from app.services.resume.resume_coverage import remaining_coverage_notes
+
+    notes = [
+        {
+            "section": "experience",
+            "section_label": "实习/工作经历",
+            "names": ["成都纳界盛科技有限公司"],
+            "filtered": ["成都纳界盛科技有限公司"],
+            "model_omitted": [],
+            "total": 1,
+        },
+        {
+            "section": "projects",
+            "section_label": "项目经历",
+            "names": ["AI 简历工作台", "CreatorDistill"],
+            "filtered": [],
+            "model_omitted": ["AI 简历工作台", "CreatorDistill"],
+            "total": 2,
+        },
+    ]
+    revised = {
+        "version": 2,
+        "sections": [
+            {
+                "key": "experience",
+                "entries": [{"items": [{"value": "成都纳界盛科技有限公司"}]}],
+            }
+        ],
+    }
+
+    remaining = remaining_coverage_notes(revised, notes)
+
+    assert [note["section"] for note in remaining] == ["projects"]
+    assert remaining[0]["names"] == ["AI 简历工作台", "CreatorDistill"]
+    assert remaining[0]["total"] == 2
+
+
+def test_remaining_coverage_notes_drops_summary_only_when_it_changed():
+    """个人总结的清单名是相似度描述，正文里匹配不到；按"总结是否被改写"收口。"""
+    from app.services.resume.resume_coverage import remaining_coverage_notes
+
+    notes = [
+        {
+            "section": "summary",
+            "section_label": "个人总结",
+            "names": ["个人总结（与资料原文相似度 14%）"],
+            "filtered": [],
+            "model_omitted": [],
+            "total": 1,
+        }
+    ]
+
+    def document(summary: str) -> dict:
+        return {
+            "version": 2,
+            "sections": [
+                {"key": "summary", "entries": [{"items": [{"kind": "text", "text": summary}]}]}
+            ],
+        }
+
+    previous = document("旧总结")
+    assert remaining_coverage_notes(previous, notes, previous)  # 没改 → 继续提醒
+    assert remaining_coverage_notes(document("资料里的总结"), notes, previous) == []

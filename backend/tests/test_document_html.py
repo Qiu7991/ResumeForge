@@ -244,3 +244,16 @@ def test_hidden_content_never_renders():
     html = _html()
     for hidden in ("隐藏大学", "秘密字段", "隐藏要点"):
         assert hidden not in html
+
+
+def test_hidden_section_is_omitted_from_paper_and_html():
+    """整块隐藏（section.hidden）必须从纸面/HTML 消失，但源文档仍保留该板块。"""
+    document = make_document()
+    skills = next(section for section in document["sections"] if section["key"] == "skills")
+    skills["hidden"] = True
+
+    html = _html(document)
+
+    assert "专业技能" not in html_text(html)
+    assert 'data-section="skills"' not in html
+    assert skills in document["sections"]  # 源数据未被渲染层改掉

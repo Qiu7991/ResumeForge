@@ -308,6 +308,8 @@ class ResumeSection(BaseModel):
     key: str = Field(default="", max_length=64)
     title: str = Field(default="", max_length=64)
     kind: SectionKind = "entries"
+    # 整个板块不上纸面（数据保留，编辑态仍可见）；与条目的 hidden 同语义。
+    hidden: bool = False
     layout: SectionLayout = Field(default_factory=SectionLayout)
     entries: list[ResumeEntry] = Field(default_factory=list, max_length=MAX_RESUME_SECTION_ITEMS)
 

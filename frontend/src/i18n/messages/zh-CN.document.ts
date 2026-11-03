@@ -213,7 +213,7 @@ const document = {
   "document.editor.region": "简历文档编辑器",
   "document.editor.readOnly": "只读",
   "document.editor.empty": "还没有任何板块",
-  "document.editor.selectHint": "点纸面或结构树可以定位字段",
+  "document.editor.selectHint": "单击选中字段；双击或按 F2 编辑；右键可隐藏/删除；拖动或用 ↑↓ 调整顺序",
 
   // ── 旧简历转换提示（v1 → v2，读取时一次性转换）──────────────
   "document.conversion.title": "旧简历已转换",

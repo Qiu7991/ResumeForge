@@ -48,3 +48,38 @@ def test_strip_resume_tech_stack_clears_field_and_label_lines():
 def test_strip_resume_tech_stack_tolerates_missing_projects():
     assert strip_resume_tech_stack({"summary": "x"}) == {"summary": "x"}
     assert strip_resume_tech_stack({"projects": "bad"}) == {"projects": "bad"}
+
+
+def test_strip_resume_tech_stack_handles_v2_document_items():
+    """底稿模式返回的是 v2 文档：tech_stack 列表项要 hidden，文本行要删掉。"""
+    content = {
+        "version": 2,
+        "sections": [
+            {
+                "key": "projects",
+                "entries": [
+                    {
+                        "items": [
+                            {
+                                "kind": "list",
+                                "key": "tech_stack",
+                                "placement": "trail",
+                                "values": ["Docker", "Caddy"],
+                            },
+                            {
+                                "kind": "text",
+                                "text": "技术栈/工具：Docker、Caddy\n独立搭建家庭网络。",
+                            },
+                        ]
+                    }
+                ],
+            }
+        ],
+    }
+
+    result = strip_resume_tech_stack(content)
+    items = result["sections"][0]["entries"][0]["items"]
+
+    assert items[0]["placement"] == "hidden"
+    assert items[0]["values"] == ["Docker", "Caddy"]
+    assert items[1]["text"] == "独立搭建家庭网络。"

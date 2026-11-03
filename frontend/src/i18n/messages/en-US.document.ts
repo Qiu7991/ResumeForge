@@ -211,7 +211,7 @@ const document = {
   "document.editor.region": "Resume document editor",
   "document.editor.readOnly": "Read only",
   "document.editor.empty": "No sections yet",
-  "document.editor.selectHint": "Click the page or the structure tree to locate a field",
+  "document.editor.selectHint": "Click to select; double-click or F2 to edit; right-click to hide/remove; drag or use ↑↓ to reorder",
 
   // ── Old resume conversion notice (v1 → v2, converted on read) ──
   "document.conversion.title": "Resume converted",

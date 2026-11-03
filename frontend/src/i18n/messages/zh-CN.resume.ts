@@ -136,6 +136,10 @@ const resume = {
   "resume.coverage.itemSeparator": "、",
   /** 按分区补写的按钮（把指令交给修订弹窗）。 */
   "resume.coverage.revise": "AI 补上这段",
+  "resume.coverage.fill": "从资料补上这段",
+  "resume.coverage.fillSuccess": "已从资料补入 {count} 个字段",
+  "resume.coverage.fillFailed": "从资料补入失败",
+  "resume.coverage.polish": "AI 润色这段",
   /** 打开手动调整的按钮。 */
   "resume.coverage.openEditor": "打开手动调整",
 

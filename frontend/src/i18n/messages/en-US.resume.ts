@@ -73,6 +73,10 @@ const resume = {
   "resume.coverage.item": "“{name}”",
   "resume.coverage.itemSeparator": ", ",
   "resume.coverage.revise": "Have AI add this",
+  "resume.coverage.fill": "Add from Profile",
+  "resume.coverage.fillSuccess": "Added {count} fields from Profile",
+  "resume.coverage.fillFailed": "Could not add from Profile",
+  "resume.coverage.polish": "Polish with AI",
   "resume.coverage.openEditor": "Open manual edit",
 
   "resume.revise.title": "Revise Resume with AI",
