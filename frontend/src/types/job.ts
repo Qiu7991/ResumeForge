@@ -83,7 +83,7 @@ export interface Job {
    * 可留空、可随时清空——备注不再自动追加「来源：…」行（0042 起拆成独立字段）。
    */
   origin_source: string;
-  /** 后端派生的招聘平台展示名（BOSS直聘 / 智联招聘 / 手动添加…）；只读。 */
+  /** 后端派生的招聘平台展示名（清单见 GET /jobs/platforms 的聚合结果）；只读。 */
   platform?: string;
   favorite: boolean;
   /**

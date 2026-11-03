@@ -45,6 +45,27 @@ interface Props {
   /** 当前排序（受控）：列头箭头由它决定，点击列头经 onSortChange 回到 URL 状态里。 */
   sortState: JobSortState;
   onSortChange: (state: JobSortState) => void;
+  /** 后端聚合的平台展示名清单（GET /jobs/platforms）：Tag 颜色按清单下标派生，
+   *  前端不写死任何站点名（见 test_qa_browser_sites_adversarial 的约定）。 */
+  platformOptions?: string[];
+}
+
+/** 平台 Tag 的固定色板：颜色只按「后端清单里的下标」取，不认识站点名。 */
+const PLATFORM_TAG_PALETTE = [
+  "blue",
+  "cyan",
+  "geekblue",
+  "purple",
+  "magenta",
+  "volcano",
+  "gold",
+  "green",
+  "orange",
+] as const;
+
+function platformTagColor(platform: string, platformOptions: string[]): string {
+  const index = platformOptions.indexOf(platform);
+  return index >= 0 ? PLATFORM_TAG_PALETTE[index % PLATFORM_TAG_PALETTE.length] : "default";
 }
 
 /**
@@ -80,6 +101,7 @@ export default function JobTable({
   onPageChange,
   sortState,
   onSortChange,
+  platformOptions = [],
 }: Props) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后列头与菜单不重渲染。
   useLocale();
@@ -200,13 +222,7 @@ export default function JobTable({
       dataIndex: "platform",
       width: 100,
       render: (value: string) =>
-        value ? (
-          <Tag color={value === "BOSS直聘" ? "blue" : value === "智联招聘" ? "cyan" : "default"}>
-            {value}
-          </Tag>
-        ) : (
-          "-"
-        ),
+        value ? <Tag color={platformTagColor(value, platformOptions)}>{value}</Tag> : "-",
     },
     {
       title: t("jobTable.column.note"),

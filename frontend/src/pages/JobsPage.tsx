@@ -404,6 +404,7 @@ export default function JobsPage() {
         <JobTable
           jobs={jobs}
           loading={loading}
+          platformOptions={platformOptions}
           selectionMode={selectionMode}
           rowSelection={rowSelection}
           batchAction={batchAction}

@@ -67,7 +67,7 @@ export function JobFilterBar({
   cityOptions: string[];
   platform: string;
   setPlatform: (value: string) => void;
-  /** 招聘平台选项由后端按岗位数聚合（BOSS直聘 / 智联招聘 / 手动添加…）。 */
+  /** 招聘平台选项由后端按岗位数聚合（清单见 GET /jobs/platforms）。 */
   platformOptions: string[];
   batchAction: BatchAction;
   /** `mode` 缺省是 compare（AI 对比选岗）；match 是逐岗位匹配度分析。 */
