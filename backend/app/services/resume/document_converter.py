@@ -44,7 +44,7 @@ from .document_converter_custom import (
 from .document_converter_sections import build_entry_items, hints_by_doc_section
 from .resume_contact import validate_contact_breaks
 from .resume_labels import normalize_language
-from .resume_sections import normalized_section_order
+from .resume_sections import normalized_hidden_sections, normalized_section_order
 
 __all__ = [
     "ConversionError",
@@ -144,6 +144,7 @@ def convert_content(
     sections = _convert_sections(legacy, hints, report)
     _apply_field_layout(sections, config)
     ordered = _ordered_sections(sections, config)
+    _apply_hidden_sections(ordered, config)
     document = ResumeDocument(
         language=normalize_language(language),
         header=header,
@@ -303,6 +304,24 @@ def _entry_id(entry: Any, *, fallback_attr: str = "id") -> str | None:
     from .document_identity import is_object_id
 
     return raw if is_object_id(raw) else None
+
+
+def _apply_hidden_sections(
+    sections: list[ResumeSection], format_config: Mapping[str, Any]
+) -> None:
+    """v1 `format_config.hidden_sections` -> `section.hidden`（P3：转换时一次性消费）。
+
+    这个旧键此前**从不被读取**：用户藏了的板块一直显示在纸面上。Phase 1 的迁移脚本把
+    存量记录的键映射成了 `section.hidden`；这里让**读时转换**同样生效——旧导入 / 旧
+    备份恢复的 v1 内容不再复活"藏了却显示"的状态。过滤本身仍由 `paper_document`
+    统一执行，本函数只负责把旧键翻译成 v2 的唯一真相。
+    """
+    hidden = set(normalized_hidden_sections(format_config.get("hidden_sections")))
+    if not hidden:
+        return
+    for section in sections:
+        if section.key in hidden:
+            section.hidden = True
 
 
 def _ordered_sections(

@@ -116,18 +116,21 @@ def normalized_section_order(raw: object) -> list[str]:
 
 
 def persistable_format_config(raw: object) -> dict:
-    """v2 的保存边界：**不再把 v1 的 `section_order` 写进记录**。
+    """v2 的保存边界：**不再把 v1 的 `section_order` / `hidden_sections` 写进记录**。
 
-    v2 的分区顺序就是 `document.sections` 本身（planner 按它出计划）。`section_order`
-    只剩一个用途：旧数据 / 生成请求在 **v1→v2 转换**时决定分区落位（`document_converter`
-    仍读入参里的这个键）。转换完成后它就不该再落库——否则它会变成"第二真相"：
-    用户在结构页签改了顺序，这个旧键还在，备份/诊断/兼容读取会继续把它当真。
+    v2 的分区顺序与显隐的唯一真相是 `document.sections` 本身（planner 按它出计划、
+    `paper_document` 按它过滤）。这两个旧键只剩一个用途：旧数据 / 生成请求在
+    **v1→v2 转换**时决定分区落位与隐藏（`document_converter` 仍读入参里的这两个键）。
+    转换完成后它们就不该再落库——否则它们会变成"第二真相"：用户在结构页签改了顺序/
+    显隐，旧键还在，备份/诊断/兼容读取会继续把它当真（实测 Phase 1 清干净的键，
+    用户拿旧简历当底稿生成一次就回来了）。
 
     未知类型一律返回空 dict（与 `validated_format_config` 的宽容口径一致）。
     """
     if not isinstance(raw, dict):
         return {}
-    return {str(key): value for key, value in raw.items() if str(key) != "section_order"}
+    legacy = ("section_order", "hidden_sections")
+    return {str(key): value for key, value in raw.items() if str(key) not in legacy}
 
 
 def resolved_section_order(format_config: dict | None) -> list[str]:

@@ -115,6 +115,24 @@ def _header_lines(plan: DocumentPlan, *, sep: str) -> list[str]:
     return lines
 
 
+def _apply_visible_sections(document, section_order: list[str] | None):
+    """旧调用方的 ``section_order`` 参数 = **可见板块清单**（``resolved_visible_sections`` 的产物）。
+
+    v2 板块显隐的唯一真相是 ``section.hidden``（``paper_document`` 已过滤）；这个兼容
+    参数只在调用方**显式传入**时生效：清单外的板块不上正文（test_resume_hidden_sections
+    的 Markdown/TXT 出口用它表达"被隐藏的板块不进正文"）。传 None（v2 正常路径）原样返回。
+    """
+    if not section_order:
+        return document
+    visible = {str(key).strip() for key in section_order if str(key or "").strip()}
+    if not visible:
+        return document
+    sections = [section for section in document.sections if section.key in visible]
+    if len(sections) == len(document.sections):
+        return document
+    return document.model_copy(update={"sections": sections})
+
+
 def export_markdown(
     resume,
     *,
@@ -124,8 +142,10 @@ def export_markdown(
 ) -> str:
     """导出不包含照片的 Markdown 文本（四个出口的正文同源：同一份 DocumentPlan）。
 
-    section_order 仅为兼容旧调用方保留：v2 的分区顺序在文档的 sections 里，由 converter
-    把 v1 的 format_config.section_order 迁进去，渲染器不再自行重排。
+    ``section_order`` 是**兼容旧调用方**的可见板块清单：v2 的分区顺序在文档的 sections
+    里（converter 把 v1 的 format_config.section_order 迁进去），渲染器不自行重排；
+    但清单**外的板块不上正文**——隐藏语义由它表达（显隐的 v2 真相 ``section.hidden``
+    仍由 ``paper_document`` 先行过滤）。不传则不过滤。
 
     language 决定分区标题/字段标签/分隔符的文案（converter 写入文档、planner 解析），
     与 PDF / Word / HTML 同源；缺省 zh-CN，与历史输出一致。
@@ -134,6 +154,7 @@ def export_markdown(
     document = paper_document(
         coerce_document(resume, language=resolved_language, format_config=format_config)
     )
+    document = _apply_visible_sections(document, section_order)
     # planner 是字段位置 / 顺序 / 格式化（日期、枚举、作者、列表）的唯一真相。
     from .document_plan import build_document_plan
 

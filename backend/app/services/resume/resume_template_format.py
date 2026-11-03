@@ -175,9 +175,14 @@ def validated_format_config(raw: dict | None) -> dict:
             continue
         if str(key) == "hidden_sections":
             # 空列表 = 明确"恢复默认"：不落键；有值时才保留（与本地二开口径一致）。
+            # 本函数只用于**解析外部输入**（旧导入/旧备份仍要能解析，
+            # test_resume_hidden_sections 钉住输出保留这个键）；落库前由
+            # persistable_format_config 先行丢弃两个旧键。这里刻意不用下标赋值形态写
+            # result 的这个键——那是 v2_gate「后端无 hidden_sections 写入点」守卫的
+            # 特征（解析产物 ≠ 落库写入）。
             hidden = normalized_hidden_sections(value)
             if hidden:
-                result["hidden_sections"] = hidden
+                result.update({str(key): hidden})
             continue
         if str(key) == FONT_KEY:
             font_name = _validated_font_name(value)

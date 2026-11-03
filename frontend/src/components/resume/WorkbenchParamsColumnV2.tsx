@@ -33,6 +33,7 @@ import StructurePanel from "./structure/StructurePanel";
 import EntryLayoutPanel from "./EntryLayoutPanel";
 import DocumentModePanel from "./DocumentModePanel";
 import SectionPaginationPanel from "./pagination/SectionPaginationPanel";
+import SectionVisibilityPanel from "./SectionVisibilityPanel";
 import PageThumbnailStrip from "./pagination/PageThumbnailStrip";
 import { usePaginationReport } from "../../features/resume-pagination/usePaginationReport";
 import { usePaginationReportMarkers } from "../../features/resume-pagination/paginationPageMarkers";
@@ -239,6 +240,11 @@ export default function WorkbenchParamsColumnV2({
               formatConfig={layout.format_config}
               disabled={relayouting}
               onChange={(format_config) => onChange({ ...layout, format_config })}
+            />
+            <SectionVisibilityPanel
+              document={document}
+              onChange={onDocumentChange}
+              disabled={relayouting}
             />
             <SectionPaginationPanel
               document={document}

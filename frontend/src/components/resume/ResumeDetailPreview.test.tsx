@@ -166,8 +166,8 @@ describe("生成说明与警告分级", () => {
     expect(await screen.findByText("这些资料内容没有写进这份简历")).toBeInTheDocument();
     expect(screen.getByText(/「Amazon ESG」/)).toBeInTheDocument();
 
-    // 「AI 补上这段」打开修订弹窗，并把这条内容的补充指令预填好。
-    fireEvent.click(screen.getByRole("button", { name: "AI 补上这段" }));
+    // 从资料补入失败（测试环境没有投影数据）时退回 AI 修订弹窗，补全指令。
+    fireEvent.click(screen.getByRole("button", { name: "从资料补上这段" }));
     const box = await screen.findByPlaceholderText(/留空则整体重新生成/);
     expect((box as HTMLTextAreaElement).value).toContain("Amazon ESG");
     expect((box as HTMLTextAreaElement).value).toContain("项目经历");

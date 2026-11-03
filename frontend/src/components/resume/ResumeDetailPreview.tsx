@@ -7,7 +7,8 @@
  * 只依赖子组件与 `api/resumes`，不 import 两个宿主 Modal，避免循环依赖（设计 §9 ⑨）。
  */
 import type { Props } from "./ResumeDetailPreview.types";
-import { Collapse, Space, Tag, Tooltip, Typography } from "antd";
+import type { ResumeDocument } from "../../types/resumeDocument";
+import { App, Collapse, Space, Tag, Tooltip, Typography } from "antd";
 import { useMemo, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
@@ -22,6 +23,7 @@ import ResumeWorkbenchV2 from "./ResumeWorkbenchV2";
 import { useResumeTemplateCatalog } from "../../hooks/useResumeTemplateCatalog";
 import ResumeMeasureControls from "./ResumeMeasureControls";
 import ResumeTemplateControls from "./ResumeTemplateControls";
+import PreviewSectionsControl from "./PreviewSectionsControl";
 import { useShortcut } from "../../features/shortcuts/useShortcutKeymap";
 import ResumeQualityModal from "../ResumeQualityModal";
 import ResumeSuggestionsModal from "../ResumeSuggestionsModal";
@@ -40,6 +42,8 @@ import EvidencePanel from "./EvidencePanel";
 import { documentHasPhoto } from "../../features/resume-document/view";
 import { useFieldPlacementCatalog } from "../../features/profile-library/fieldPlacement";
 import { useVariants } from "../../features/resume-versions/useVariants";
+import { getCurrentProjection } from "../../features/profile-library/api";
+import { fillCoverageNote } from "../../features/profile-library/projectionContent";
 /** W19 导出交付包：模块级单例（与 DeliveryArchiveModal 同一注入模式，测试可替换）。 */
 const deliveryApi = createExportDeliveryApi();
 export default function ResumeDetailPreview({
@@ -72,10 +76,12 @@ export default function ResumeDetailPreview({
   onReplaceDocument,
 }: Props) {
   useLocale();
+  const { message } = App.useApp();
   const navigate = useNavigate();
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [reviseOpen, setReviseOpen] = useState(false);
   const [reviseInstructions, setReviseInstructions] = useState("");
+  const [fillingCoverage, setFillingCoverage] = useState(false);
   const [qualityOpen, setQualityOpen] = useState(false);
   const [exportOptionsOpen, setExportOptionsOpen] = useState(false);
   // W19：制作台动作条的「导出」打开「导出交付包」弹层（旧面板仍留给主预览入口）。
@@ -131,6 +137,58 @@ export default function ResumeDetailPreview({
     return { fabricationWarnings: rest, legacyCoverageWarnings: legacy };
   }, [detail.warnings]);
   const coverageNotes = detail.coverage_notes ?? [];
+
+  /**
+   * 覆盖清单的「从资料补上这段」：按条目身份把缺失内容确定性地补进**已有条目**，
+   * 已有条目不存在才追加新条目。返回是否真的写入了内容（「AI 润色这段」先补后润色）。
+   */
+  const fillCoverageSection = async (
+    note: { section: string; section_label: string; names: string[] },
+    options: { quiet?: boolean } = {},
+  ): Promise<boolean> => {
+    if (fillingCoverage) return false;
+    const current = detail.content as ResumeDocument;
+    if (current?.version !== 2 || !Array.isArray(current.sections)) return false;
+    setFillingCoverage(true);
+    try {
+      const projection = await getCurrentProjection();
+      const result = fillCoverageNote(
+        current,
+        projection,
+        note,
+        catalog?.profile_section_order ?? [],
+      );
+      if (result.filled > 0) {
+        await onSaveEditedResume(result.document);
+        if (!options.quiet) {
+          message.success(t("resume.coverage.fillSuccess", { count: result.filled }));
+        }
+        return true;
+      }
+      if (!options.quiet) {
+        // 资料里没有可解析的原始条目：退回 AI 修订弹窗，至少不让按钮无反应。
+        setReviseInstructions(fillInstructions(note));
+        setReviseOpen(true);
+      }
+      return false;
+    } catch (err) {
+      // 投影接口失败时不要让按钮无反应：保留 AI 修订兜底，并说明原因。
+      if (!options.quiet) {
+        message.warning(err instanceof Error ? err.message : t("resume.coverage.fillFailed"));
+        setReviseInstructions(fillInstructions(note));
+        setReviseOpen(true);
+      }
+      return false;
+    } finally {
+      setFillingCoverage(false);
+    }
+  };
+  /** 兜底：让模型把缺失内容补进来（只新增这些，其余不动）。 */
+  // i18n-ok: 喂给模型的修订指令（作为 prompt 保持中文）
+  const fillInstructions = (note: { section_label: string; names: string[] }) =>
+    `请把资料中的以下内容补进这份简历的${note.section_label}（只新增这些内容，其余部分保持不变）：` +
+    note.names.map((name) => `「${name}」`).join("、") +
+    "。补充时使用这些条目在个人资料中的原文事实，不要虚构细节。";
   // 精确预览上下文只在这里构造一次：主预览与制作台必须拿到同一份（各拼一份必然漂）。
   // `catalog` 一并传进去：衬线标题的说明（P1-2）只需要目录里那一个布尔值，目录本身已经取过了。
   const exactPreview = useMemo<ExactPreviewOptions>(
@@ -215,6 +273,19 @@ export default function ResumeDetailPreview({
           setReviseInstructions(instructions);
           setReviseOpen(true);
         }}
+        onFillSection={(note) => void fillCoverageSection(note)}
+        onPolishSection={(note) => {
+          // 先确定性补进正文（不弹 toast），再让模型润色：没补进去的段落模型无从改写，
+          // 直接弹润色窗只会得到"一字未动"的空结果。
+          void (async () => {
+            await fillCoverageSection(note, { quiet: true });
+            setReviseInstructions(
+              `请只润色这份简历的${note.section_label}，使用其中已有的事实，不要新增项目、公司、数字或技能；` +
+                `重点把以下内容表达得更清楚、更贴合岗位：${note.names.map((name) => `「${name}」`).join("、")}。`,
+            );
+            setReviseOpen(true);
+          })();
+        }}
         // 预览里不再提供手动编辑：这条提示指向「简历制作台」，详细编辑都在那边做。
         onOpenEditor={() => setZoomOpen(true)}
       />
@@ -229,19 +300,27 @@ export default function ResumeDetailPreview({
         // 具名插槽（P2/D4）：结构类第一行、度量类第二行；目录本组件取一次两组共用。
         // 渲染中不禁用（D12）：禁用会让用户以为坏了；边距合并保证最后一次生效。
         templateControls={
-          // 与「岗位详情 → AI 生成」同一套控件（非 compact）：分组/尺寸/排布必须一致。
-          <ResumeTemplateControls
-            layout={layout}
-            catalog={catalog}
-            // R-03：模板试用通道与制作台同一套接线（「我的内容」/「采用模板默认」）。
-            // 这里是「预览 / 导出」入口，没有撤销栈——采纳一次即写 layout，由宿主保存。
-            resumeId={detail.id}
-            content={detail.content}
-            onTrialAdopt={({ template, formatConfig }) =>
-              onApplyLayout({ ...layout, template, format_config: formatConfig })
-            }
-            onChange={(next) => onApplyLayout(next)}
-          />
+          <Space size={8} wrap>
+            {/* 与「岗位详情 → AI 生成」同一套控件（非 compact）：分组/尺寸/排布必须一致。 */}
+            <ResumeTemplateControls
+              layout={layout}
+              catalog={catalog}
+              // R-03：模板试用通道与制作台同一套接线（「我的内容」/「采用模板默认」）。
+              // 这里是「预览 / 导出」入口，没有撤销栈——采纳一次即写 layout，由宿主保存。
+              resumeId={detail.id}
+              content={detail.content}
+              onTrialAdopt={({ template, formatConfig }) =>
+                onApplyLayout({ ...layout, template, format_config: formatConfig })
+              }
+              onChange={(next) => onApplyLayout(next)}
+            />
+            <PreviewSectionsControl
+              document={detail.content as ResumeDocument}
+              sectionOrder={catalog?.profile_section_order ?? []}
+              disabled={relayouting}
+              onApply={(next) => onSaveEditedResume(next)}
+            />
+          </Space>
         }
         measureControls={
           <>

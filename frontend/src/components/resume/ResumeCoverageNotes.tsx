@@ -36,6 +36,10 @@ interface Props {
   legacyWarnings: string[];
   /** 「AI 补上这段」：把拼好的指令交给宿主的修订弹窗。 */
   onRevise: (instructions: string) => void;
+  /** 「从资料补上这段」：宿主直接把资料条目追加进文档；不传则退回 AI 修订。 */
+  onFillSection?: (note: ResumeCoverageNote) => void;
+  /** 「AI 润色这段」：已经补进正文后，用 AI 改写表达而不新增事实。 */
+  onPolishSection?: (note: ResumeCoverageNote) => void;
   /** 「打开手动调整」：宿主负责关掉目标定位、打开编辑器。 */
   onOpenEditor: () => void;
 }
@@ -44,6 +48,8 @@ export default function ResumeCoverageNotes({
   notes,
   legacyWarnings,
   onRevise,
+  onFillSection,
+  onPolishSection,
   onOpenEditor,
 }: Props) {
   const { t } = useI18n();
@@ -74,16 +80,22 @@ export default function ResumeCoverageNotes({
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {t("resume.coverage.intro")}
           </Typography.Text>
-          {notes.map((note) => {
+          {notes.map((note, index) => {
             // 分区名走语言包（按稳定的 `section` 键，先归一对资料侧的复数键），
             // 后端下发的原文只作未知分区的回退；喂给模型的修订指令仍用后端原文，不本地化。
             const section = PROFILE_SECTION_KEY_ALIASES[note.section] ?? note.section;
             const sectionKey = RESUME_CATALOG_SECTION_LABEL_KEYS[section];
             return (
-              <div key={note.section}>
+              <div key={`${note.section}:${note.section_label}:${index}`}>
                 <Typography.Text strong style={{ fontSize: 13 }}>
                   {t("resume.coverage.sectionCount", {
-                    label: sectionKey ? t(sectionKey) : note.section_label,
+                    // 项目亮点这类 note 的 section_label 带具体项目名；不能一律用
+                    // 「项目经历」——否则多个项目的缺口看起来像重复项。
+                    label: note.section_label?.includes("「")
+                      ? note.section_label
+                      : sectionKey
+                        ? t(sectionKey)
+                        : note.section_label,
                     count: note.total,
                   })}
                 </Typography.Text>
@@ -95,10 +107,17 @@ export default function ResumeCoverageNotes({
                     size="small"
                     type="primary"
                     ghost
-                    onClick={() => onRevise(reviseInstructions(note))}
+                    onClick={() =>
+                      onFillSection ? onFillSection(note) : onRevise(reviseInstructions(note))
+                    }
                   >
-                    {t("resume.coverage.revise")}
+                    {onFillSection ? t("resume.coverage.fill") : t("resume.coverage.revise")}
                   </Button>
+                  {onFillSection && onPolishSection ? (
+                    <Button size="small" onClick={() => onPolishSection(note)}>
+                      {t("resume.coverage.polish")}
+                    </Button>
+                  ) : null}
                 </Space>
               </div>
             );

@@ -85,6 +85,9 @@ export function buildSectionOrderConfig(
   base: ResumeFormatConfig = {},
 ): ResumeFormatConfig {
   const next: ResumeFormatConfig = { ...base };
+  // 旧版式键不进生成请求：底稿的 format_config 可能还带着 v1 的 hidden_sections，
+  // {...base} 会把它原样透传给生成落库——Phase 1 清干净的键会被它写回来。
+  delete next.hidden_sections;
   if (profileOrder.join(",") === builtInDefaultOrder.join(",")) {
     delete next.section_order;
   } else {
