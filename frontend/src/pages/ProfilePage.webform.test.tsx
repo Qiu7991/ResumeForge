@@ -34,11 +34,17 @@ const apiMocks = vi.hoisted(() => ({
   listResumes: vi.fn(),
   getWebFormExtraProfile: vi.fn(),
   updateWebFormExtraProfile: vi.fn(),
+  // v2 整改后 ProfilePage 挂了「显示技术栈」开关组件（ProfileGenerationPreferences），
+  // 不假掉这两个导出页面渲染即崩（夜间基线 20+ 条失败的根因之一）。
+  getGenerationPreferences: vi.fn(async () => ({ include_tech_stack: false })),
+  saveGenerationPreferences: vi.fn(async () => ({ include_tech_stack: false })),
 }));
 
 vi.mock("../api/profile", () => ({
   getProfile: apiMocks.getProfile,
   saveProfile: apiMocks.saveProfile,
+  getGenerationPreferences: apiMocks.getGenerationPreferences,
+  saveGenerationPreferences: apiMocks.saveGenerationPreferences,
 }));
 
 // F6 页面数据源是 workspace（GET /api/profile/workspace）；按真实接口名造 mock 工厂，

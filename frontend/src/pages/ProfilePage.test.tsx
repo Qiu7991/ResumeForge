@@ -27,11 +27,17 @@ const apiMocks = vi.hoisted(() => ({
   listResumes: vi.fn(),
   getWebFormExtraProfile: vi.fn(),
   updateWebFormExtraProfile: vi.fn(),
+  // v2 整改后 ProfilePage 挂了「显示技术栈」开关组件（ProfileGenerationPreferences），
+  // 不假掉这两个导出页面渲染即崩（夜间基线 20+ 条失败的根因之一）。
+  getGenerationPreferences: vi.fn(async () => ({ include_tech_stack: false })),
+  saveGenerationPreferences: vi.fn(async () => ({ include_tech_stack: false })),
 }));
 
 // 「保存全部资料」的第一半走 saveProfile；此前没假它，submit 内部会静默失败——
 // 未保存防护的用例要靠它成功来断言"警示解除"，所以一并 mock。
 vi.mock("../api/profile", () => ({
+  getGenerationPreferences: apiMocks.getGenerationPreferences,
+  saveGenerationPreferences: apiMocks.saveGenerationPreferences,
   getProfile: apiMocks.getProfile,
   saveProfile: apiMocks.saveProfile,
   parseProfileText: apiMocks.parseProfileText,
