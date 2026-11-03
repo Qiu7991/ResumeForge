@@ -1,0 +1,240 @@
+======================================================================
+简历通 v2 整改 · 第一轮任务提示词（Phase 0：基线固化与备份）
+======================================================================
+复制下面两条横线之间的全部内容，整段粘给 GLM-5.3-flash。
+本文件路径：D:\飞牛文件同步\工作\简历通\docs\fork-v2-phase-prompts.txt
+======================================================================
+
+
+你在 Windows 仓库 D:\飞牛文件同步\工作\简历通 工作。这是一个 FastAPI + React 的本地二开项目（ResumeForge）。
+
+【第一步：读方案】
+先完整阅读这个文件（约 1000 行，务必读完再动手）：
+D:\飞牛文件同步\工作\简历通\docs\fork-v2-compatibility-plan.md
+
+本轮只执行它的 **Phase 0（基线固化与备份）**。不要做 Phase 1 及之后任何事。
+
+【最高优先级的执行规则】
+1. 本轮唯一验收标准是这个闸门命令变绿：
+   cd /d D:\飞牛文件同步\工作\简历通
+   backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --phase 0
+   你只修它输出的 FAIL 行，不要碰 PASS 行，不要改闸门脚本 scripts\v2_gate.py 本身。
+2. 禁止 git reset / git checkout . / git clean -fd / git stash drop。
+   工作树里有未提交的二开修复，一条都不能丢。开始前先 git status 把输出贴给我。
+3. 禁止修改任何业务代码。本轮只允许：新建分支、跑备份命令、新建一个 Markdown 文件。
+4. 禁止修改已存在的测试断言。
+5. 遇到方案文档与代码不一致，不要自己二选一：在最后汇报里单独列一节"冲突/存疑"写清楚，然后停下问我。
+6. 不要一次读完整个 backend/ 和 frontend/；本轮的"前置阅读"只有上面那一个文档。
+
+【具体步骤】
+
+步骤 1：确认现场
+  cd /d D:\飞牛文件同步\工作\简历通
+  git status
+  git branch --show-current
+把两个输出都记下来（最后要贴给我）。
+
+步骤 2：新建分支
+  git switch -c fix/v2-single-model feat/ai-jobs-sidecar-20261102
+如果分支已存在，直接 git switch fix/v2-single-model，不要删了重建。
+
+步骤 3：备份数据库（关键，不要用 cp）
+这个库是 SQLite WAL 模式，且有活跃的 -wal 文件。用 cp 复制主库文件会丢掉 WAL 里已提交的事务，
+极端情况下备份出来的库里连表都没有（已实测复现）。所以必须用 Python 执行 SQLite 在线备份命令。
+直接跑闸门内置的备份命令，一条就够：
+
+  cd /d D:\飞牛文件同步\工作\简历通
+  stop.cmd
+  backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --backup
+
+预期输出形如：
+  PASS 备份已创建 — D:\飞牛文件同步\工作\简历通\backend\data\resume_forge.db.pre-v2-normalize-20261103-234912.bak
+       integrity=ok resume_record=40 源库大小=123387904
+
+如果 integrity 不是 ok，立刻停下告诉我，不要继续。
+
+步骤 4：收集基线数据（全部要真跑，不要推测）
+在 D:\飞牛文件同步\工作\简历通\backend 目录下依次执行，记录真实输出：
+
+  cd /d D:\飞牛文件同步\工作\简历通\backend
+  .venv\Scripts\python.exe -m pytest -q
+  .venv\Scripts\python.exe -c "from alembic.config import Config; from alembic.script import ScriptDirectory; print('heads:', ScriptDirectory.from_config(Config('alembic.ini')).get_heads())"
+
+前端（如果 npm 依赖已装好；没装就跳过并在汇报里注明"未跑，原因：..."）：
+  cd /d D:\飞牛文件同步\工作\简历通\frontend
+  npm run test
+  npm run typecheck
+
+注意：后端全量 pytest 可能要跑十几分钟，耐心等它结束，不要中途打断、不要只跑一部分就写"全部通过"。
+已知预存量失败（属于起点状态，不是本轮引入，必须原样记进基线）：
+  tests/test_resume_hidden_sections.py 有 3 条失败
+其他失败也全部如实记录，一条都不要漏。
+
+步骤 5：写基线文档
+新建文件：D:\飞牛文件同步\工作\简历通\docs\quality\fork-baseline.md
+
+必须严格包含这四个二级标题（闸门会检查字面）：
+  ## 1. 环境
+  ## 2. 后端
+  ## 3. 前端
+  ## 4. 预存量失败清单
+
+内容要求（照方案文档 Phase 0 任务 3 的模板填）：
+- 第 1 节：分支名、HEAD 短哈希、Python 版本、Node 版本、数据库路径与大小、journal_mode、integrity_check 结果、备份文件名
+- 第 2 节：alembic heads 输出、迁移文件前缀重复清单（0069 和 0070 各有两个文件）、
+         版本分布（live 记录里 v1 几条 / v2 几条；含软删又各是几条）、
+         pytest 全量结果的通过数/失败数，以及**失败清单逐条列出**
+- 第 3 节：前端 npm run test / typecheck 的通过与失败数；没跑就写"未执行"和原因
+- 第 4 节：一张表，列出所有预存量失败（测试文件 / 测试名 / 一句话原因）。
+         这一节的用途是：后面任何阶段出现失败，先来这里对照是预存量还是本轮引入。
+
+步骤 6：跑闸门，让它全绿
+  cd /d D:\飞牛文件同步\工作\简历通
+  backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --phase 0
+
+需要看到三行都是 PASS：
+  PASS 基线文档存在
+  PASS 基线文档结构完整
+  PASS WAL 安全备份存在
+  PASS alembic 单头
+（最后一行是 PASS alembic 单头）
+如果不是全绿，只修对应的那一项，然后重跑，直到全绿。
+
+步骤 7：提交
+  cd /d D:\飞牛文件同步\工作\简历通
+  git add docs/quality/fork-baseline.md
+  git commit -m "docs(v2): 记录 v2 整改前的基线（Phase 0）"
+注意：只 add 这一个文件。不要把 backend/data/*.bak、backend/data/*.db、frontend/runtime/ 加进去。
+
+【本轮禁止清单】
+- 不准改 backend/app/ 下任何 .py
+- 不准改 frontend/src/ 下任何文件
+- 不准改 scripts/v2_gate.py
+- 不准创建 scripts/normalize_resume_documents.py（那是 Phase 1）
+- 不准创建 backend/app/services/resume/document_invariants.py（那是 Phase 2）
+- 不准删 frontend/src/components/resume/ResumeHiddenSectionsControl.tsx（那是 Phase 3）
+- 不准用 cp 备份数据库
+- 不准 push、不准建 PR
+
+【汇报格式（必须按这个格式给我，不许省略）】
+1. git status 原始输出（步骤 1 的）
+2. 闸门原始输出：backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --phase 0 的完整输出，原样粘贴
+3. 备份命令的原始输出（含备份文件完整路径和 integrity 结果）
+4. pytest 全量结果末 20 行 + 失败测试的完整列表
+5. 新建文件的绝对路径：D:\飞牛文件同步\工作\简历通\docs\quality\fork-baseline.md
+6. 提交哈希
+7. "冲突/存疑"：这一轮遇到的、方案文档与代码不一致的地方；没有就写"无"
+8. "遗留风险"：你判断可能有问题但本轮没处理的东西
+
+汇报完就停下，等我确认后再做 Phase 1。不要自作主张继续。
+
+
+======================================================================
+第二轮的提示词（等第一轮汇报确认后，再整段粘给它）
+======================================================================
+
+
+你在 Windows 仓库 D:\飞牛文件同步\工作\简历通 工作。
+
+【第一步：读方案】
+先读 D:\飞牛文件同步\工作\简历通\docs\fork-v2-compatibility-plan.md 的 Phase 1 章节（约 297-386 行）。
+如果上下文里已有全文，直接看 Phase 1 那一节即可。
+
+本轮只执行 **Phase 1（把库里的 v1 简历转成 v2）**。不要做 Phase 2 及之后任何事。
+
+【最高优先级的执行规则】
+1. 唯一验收标准：
+   cd /d D:\飞牛文件同步\工作\简历通
+   backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --phase 1
+   只修 FAIL 行。不要改 scripts\v2_gate.py。
+2. 禁止 git reset / git checkout . / git clean -fd / git stash drop。
+3. 一次只改一个文件，改完立刻重跑闸门，全绿才改下一个。
+4. 禁止修改已存在的测试断言。
+5. 迁移脚本必须先 --dry-run，把输出贴给我，再 --apply。
+6. 不要用 cp 备份；用 backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --backup
+
+【关键背景（方案文档里有，这里再强调一次，做错会毁数据）】
+- 转换器 document_converter.py 只读 format_config.section_order，**不读 hidden_sections**。
+  也就是说：库里有 12 条记录的 format_config.hidden_sections 现在完全不生效，
+  那些"被隐藏"的板块其实一直显示在纸面上。
+  你的迁移会让它们第一次真正生效 —— 这是修复，不是 bug，但它是**用户可见的变化**。
+  所以 dry-run 必须逐条列出 "哪条记录的哪些板块会从纸面上消失"（visibility_changes 字段），
+  我要人工看一眼才能让你 apply。
+- 每个 Phase 1 脚本文件头必须有 sys.path 引导，否则 import app.xxx 会失败：
+    from pathlib import Path
+    import sys
+    BACKEND = Path(__file__).resolve().parents[1] / "backend"
+    sys.path.insert(0, str(BACKEND))
+- 旧版式键的消费顺序不能错：先用 section_order 排序 → 再消费 hidden_sections → 最后删两个键。
+  顺序反了会丢信息。
+
+【具体步骤】
+
+步骤 1：创建迁移脚本
+新建 D:\飞牛文件同步\工作\简历通\scripts\normalize_resume_documents.py
+行为契约严格按方案文档 Phase 1「实现」一节的 7 条，不要增删。要点：
+- 默认 --dry-run，--apply 才写库
+- --apply 前自动做 WAL 安全备份
+- 遍历全部 resume_record（含软删）
+- v2 记录：parse_document 归一化，与原文有差异才写
+- v1 记录：document_io.ensure_document_version(...)
+- revision 只对 live 记录 +1
+- 幂等：第二次 --apply 必须 0 条修改
+- --json 时在 stdout 最后一行输出一行 JSON，形如：
+  {"total":40,"v1":0,"v2_normalized":0,"skipped":0,"hidden_sections_consumed":0,"section_order_consumed":0,"parse_failed":0,"visibility_changes":[{"id":9,"hidden":["awards","campus_experience","skills"]}]}
+
+步骤 2：dry-run 并贴给我
+  cd /d D:\飞牛文件同步\工作\简历通
+  backend\.venv\Scripts\python.exe -I scripts\normalize_resume_documents.py --dry-run --json
+把完整输出和 visibility_changes 列表贴出来。
+
+步骤 3：写测试
+新建 D:\飞牛文件同步\工作\简历通\backend\tests\test_normalize_resume_documents.py
+必须覆盖方案文档列的 6 条（幂等、hidden_sections 消费、section_order 消费、软删、坏 JSON、dry-run 不写库）。
+用临时库，不要碰 backend/data/resume_forge.db。
+
+步骤 4：apply
+  cd /d D:\飞牛文件同步\工作\简历通
+  stop.cmd
+  backend\.venv\Scripts\python.exe -I scripts\normalize_resume_documents.py --apply --json
+  start.cmd
+
+步骤 5：跑闸门
+  backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --phase 1
+需要看到这些全 PASS：
+  PASS 全部记录 content.version == 2（含软删）
+  PASS format_config 不再含旧版式键
+  PASS 归一化脚本 dry-run 幂等
+  PASS parse_document 全量通过（live）
+
+步骤 6：冒烟
+启动应用后（http://127.0.0.1:8005），做两件事并记录结果：
+1. 简历列表能打开原来的旧简历，详情预览正常
+2. 导出其中一份 PDF 正常
+注意：原来被"隐藏"的板块现在可能真的不出现了，这是预期行为，不是 bug。
+
+步骤 7：提交
+  git add scripts/normalize_resume_documents.py backend/tests/test_normalize_resume_documents.py
+  git commit -m "fix(v2): 把库里的 v1 简历一次性归一为 v2（Phase 1）"
+只 add 这两个文件，不要 add *.bak / *.db / frontend/runtime/。
+
+【本轮禁止清单】
+- 不准改 resume_record.py / generate_routes.py / ai_edits_routes.py（Phase 2）
+- 不准创建 document_invariants.py（Phase 2）
+- 不准改导出管线、渲染器（Phase 3，且它们已经是对的）
+- 不准删 ResumeHiddenSectionsControl.tsx（Phase 3）
+- 不准改 scripts/v2_gate.py
+- 不准 push
+
+【汇报格式（必须按这个格式）】
+1. git status 原始输出
+2. dry-run 的完整 JSON 输出 + visibility_changes 逐条
+3. apply 的完整 JSON 输出
+4. 闸门 --phase 1 的原始输出（原样）
+5. 测试结果：pytest backend/tests/test_normalize_resume_documents.py -q 的输出
+6. 冒烟两项的结果
+7. 提交哈希
+8. "冲突/存疑"
+9. "遗留风险"
+
+汇报完停下，等我确认。

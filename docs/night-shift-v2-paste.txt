@@ -1,0 +1,329 @@
+你在 Windows 仓库 D:\飞牛文件同步\工作\简历通 工作。
+现在开始**夜间无人值守模式**。我去睡觉，早上 9 点来看结果。你不用等我确认，自己往下做。
+
+======================================================================
+【第一优先：读懂这三份文件】
+======================================================================
+1. D:\飞牛文件同步\工作\简历通\docs\fork-v2-compatibility-plan.md
+   方案正文。Phase 1 / 2 / 3 的详细任务都在里面，全文读完。
+2. D:\飞牛文件同步\工作\简历通\docs\fork-v2-phase-prompts.txt
+   第二轮提示词，Phase 1 的逐步骤命令在这里。
+3. D:\飞牛文件同步\工作\AI求职集成-交接文档.md
+   只读第 0.0 节和第 17 节任务板。其它章节现在不用读。
+
+======================================================================
+【⏱ 省时间：不要重跑全量 pytest（重要）】
+======================================================================
+你已经跑过两次全量后端 pytest，结果已经拿到了：
+    **65 failed / 7634 passed / 105 skipped / 1 xpassed，用时 44:49**
+
+这是一个非常贵的操作（44 分钟）。**今晚不要再跑第二次全量。** 只跑定向测试。
+
+两条必须记住的事实：
+- 这 65 条失败是**分支起点的预存量**，不是 v2 整改引入的。
+  方案文档里写"已知只有 test_resume_hidden_sections.py 3 条"，那是错的，
+  实测是 65 条。基线文档里如实写 65 条，并注明"来源未知，待人工判断"。
+- 后续任何阶段出现测试失败，**先比对这 65 条**：
+  在名单里 → 预存量，不修，跳过；
+  不在名单里 → 本轮引入，必须修。
+
+第二次全量如果还在后台跑，**直接停掉它**，用第一次的 65 条结果写基线就够了。
+（重复跑不会让结果更准，只会烧掉一小时。）
+
+======================================================================
+【时间预算与硬停规则（最重要）】
+======================================================================
+  01:00–01:40  Phase 0 收尾
+  01:40–03:20  Phase 1（数据归一）
+  03:20–06:00  Phase 2（写路径收口）
+  06:00–07:15  Phase 3（板块统一）
+  07:15–08:00  AI 求职 sidecar 验证
+  08:00        **无论做到哪一步，立刻停止改代码**
+  08:00–08:30  写晨间报告
+  08:30 之后   不要再做任何事
+
+**08:00 的硬停是绝对的。** 宁可停在 Phase 2 中间的一个绿灯提交，也不要为了"再做一点"留下半成品。
+半成品比没做更危险——早上我不知道该回滚哪一半。
+
+阶段超时的处理：
+- 某个阶段到点还没绿 → 停在最近的绿灯提交，在报告里写清楚卡在哪，进入下一阶段。
+- 同一件事连续失败 3 次且 20 分钟内定位不了 → 放弃它，记进报告，跳到下一个不依赖它的任务。
+
+======================================================================
+【绝对禁止清单（违反任何一条，今晚全部工作作废）】
+======================================================================
+1. 禁止 git reset --hard / git checkout . / git clean -fd / git stash drop / git rebase
+2. 禁止 git push、禁止建 PR、禁止 merge 到 main
+3. 禁止直接改 backend/data/resume_forge.db（只能通过 Phase 1 的脚本，且必须先备份）
+4. 禁止修改任何**已存在**的测试断言来让它变绿
+5. 禁止修改 scripts/v2_gate.py（那是裁判，不是选手）
+6. 禁止重命名文件、搬动目录、"顺手清理无关代码"
+7. 禁止跳过闸门直接进入下一阶段
+8. 禁止把 *.bak / *.db / frontend/runtime/ 加进 git
+9. 禁止再跑后端全量 pytest（见上面的"省时间"）
+10. 禁止在没有备份的情况下跑任何写库脚本
+11. 禁止同时开第二个会话/第二个窗口做同一件事
+
+======================================================================
+【阶段一：Phase 0 收尾（现在就开始，目标 01:40 前完成）】
+======================================================================
+1. 停掉后台那个重复的全量 pytest（如果有）。
+2. 从已有的第一次全量日志里提取**完整的失败清单**（所有 FAILED 行，不是只看 tail）。
+   第一次的日志在 $TEMP 下，文件名形如 pytest-baseline*.log；找不到就重跑一次
+   `pytest -q --lf`（只跑上次失败的，很快）。
+3. 新建 D:\飞牛文件同步\工作\简历通\docs\quality\fork-baseline.md
+   必须严格包含这四个二级标题（闸门按字面匹配）：
+     ## 1. 环境
+     ## 2. 后端
+     ## 3. 前端
+     ## 4. 预存量失败清单
+   已知事实（直接填，不用重新验证）：
+   - 备份：backend\data\resume_forge.db.pre-v2-normalize-20261103-235326.bak（integrity=ok，40 条记录）
+   - 分支 fix/v2-single-model，HEAD 93913237
+   - Python 3.12.10 / Node v24.18.1
+   - DB journal_mode=wal，integrity_check=ok
+   - alembic 单头 0075_ai_job_link；迁移在 backend/migrations/versions（不是 backend/alembic/versions），共 77 个
+   - 重复前缀：0069（apply_greeting_confirm / profile_field_placement）、0070（failure_taxonomy / resume_generation_plan）
+   - 版本分布：live v1=9 / v2=3；含软删 v1=23 / v2=17；坏 JSON 0
+   - hidden_sections 12 条（live 6：id 9–13、24；软删 6：id 18–23），值均为 ['awards','campus_experience','skills']
+   - 后端 pytest：65 failed / 7634 passed / 105 skipped / 1 xpassed（44:49）
+   - 前端：33 failed / 4605 passed / 1 skipped；typecheck 通过；lint 0 error / 14 warning；build 成功
+     （前端失败清单在 frontend/runtime/vitest-baseline-clean.log）
+4. 跑闸门到全绿：
+   backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --phase 0
+5. 提交：
+   git add docs/quality/fork-baseline.md
+   git commit -m "docs(v2): 记录 v2 整改前的基线（Phase 0）"
+
+======================================================================
+【阶段二：Phase 1 数据归一（01:40 起）】
+======================================================================
+按 docs/fork-v2-phase-prompts.txt「第二轮提示词」步骤 1–5 做。要点：
+
+1. 新建 scripts\normalize_resume_documents.py
+   文件头必须有 sys.path 引导（否则 import app.xxx 失败）：
+     from pathlib import Path
+     import sys
+     BACKEND = Path(__file__).resolve().parents[1] / "backend"
+     sys.path.insert(0, str(BACKEND))
+2. 新建 backend\tests\test_normalize_resume_documents.py，覆盖 6 条（幂等、
+   hidden_sections 消费、section_order 消费、软删记录、坏 JSON、dry-run 不写库）。
+   用临时库，不要碰真实库。
+3. 先 dry-run，然后按下面三条机械规则**自己判断能不能 apply**（不要等我）：
+
+   backend\.venv\Scripts\python.exe -I scripts\normalize_resume_documents.py --dry-run --json
+
+   三条全满足 → 直接 apply。
+   任何一条不满足 → 不 apply，跳过 Phase 1 直接进 Phase 2，并在报告里写原因。
+
+   规则 A：JSON 能解析，且 parse_failed == 0
+   规则 B：visibility_changes 里出现的板块名，只能来自这个白名单：
+           awards / campus_experience / skills / publications / research_projects /
+           patents / credentials / languages
+           出现任何别的名字 = 异常，停下
+   规则 C：没有任何一条记录会变成"所有板块都被隐藏"（那样简历成了空白纸）
+
+4. apply 前必须停应用 + 必须备份：
+   stop.cmd
+   backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --backup
+   backend\.venv\Scripts\python.exe -I scripts\normalize_resume_documents.py --apply --json
+5. 跑闸门：
+   backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --phase 1
+   需要这四行全 PASS：
+     PASS 全部记录 content.version == 2（含软删）
+     PASS format_config 不再含旧版式键
+     PASS 归一化脚本 dry-run 幂等
+     PASS parse_document 全量通过（live）
+   注意：apply 之后必须**再跑一次 dry-run**，它必须输出 v1=0 且 v2_normalized=0。
+6. 提交：
+   git add scripts/normalize_resume_documents.py backend/tests/test_normalize_resume_documents.py
+   git commit -m "fix(v2): 把库里的 v1 简历一次性归一为 v2（Phase 1）"
+
+**不要启动应用做人工冒烟**——那是早上的事。报告里写"待晨间冒烟"。
+
+======================================================================
+【阶段三：Phase 2 写路径收口（03:20 起）】
+======================================================================
+读方案文档 Phase 2 全节。严格按 2.1 → 2.2 → 2.3 → 2.4 顺序，每完成一小节跑一次闸门。
+
+**三处做错就会删用户数据的细节，逐条对照：**
+
+(a) 先拆函数，再收口。
+    resume_dedupe.py 现在一个函数同时做"无损合并"和"有损截断"。
+    先拆成 dedupe_resume（无损）和 limit_resume（仅生成用），
+    再让修订路径只调 dedupe_resume。
+    实测证据：记录 id=40 有 7 个项目，page_limit=3 会裁到 6 个。
+    把 limit 用到修订路径上，用户点一次"AI 修订"就少一个项目。
+
+(b) 经历去重键必须是 (company, role, period)，不能只用 company。
+    实测：同公司两段不同职位会被合并成一条，晋升经历直接消失。
+
+(c) finalize_ai_document 里 parse_document 必须是**最后一步**。
+    顺序：ensure_document_version → dedupe → limit → strip → parse_document
+          → validate_document_ids_v2 → document_to_json
+    反了会产出非法文档。实测：两条各 500 值的同名项目合并后会变成 1000 值，
+    超过 MAX_LIST_VALUES=500，下次读库直接 422。
+    所以 dedupe 里合并后的 values 要加 [:MAX_LIST_VALUES]。
+
+另外两件必须做的：
+(d) 删掉 save_record 的 document= 参数（绕过全部后处理的旁路）。
+    实测：generate_routes 传进来的 document 构造于后处理之前，6 个重复项目全部落库。
+    改法：让 SSE 的 done.resume 和落库用同一个返回值。
+(e) 技术栈的"恢复"（hidden_from 现在只写不读）：
+    **如果 05:00 之后你还没开始做这一项，就不要实现它。**
+    改成分两步：报告里写"未实现自动恢复，建议把文档口径改成
+    '数据保留、需手工拖回'"。时间紧张时不要硬写这个功能。
+
+验证：
+  backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --phase 2
+  需要这些全 PASS：
+    PASS 存在 finalize_ai_document
+    PASS save_record 无 document= 旁路
+    PASS finalize 至少接入 2 处写入
+    PASS finalize 行为：去重+限量+技术栈+可再解析
+    PASS test_ai_write_invariants.py 全绿
+
+test_ai_write_invariants.py 必须含这三条回归：
+  - 7 个项目修订后仍是 7 个
+  - 同公司两段不同职位不被合并
+  - 合并后 values 不超过 500 且能再次 parse_document
+
+提交：
+  git add -A backend/app/services/resume/ backend/tests/test_ai_write_invariants.py
+  git commit -m "fix(v2): AI 写路径接入统一不变量收口（Phase 2）"
+
+======================================================================
+【阶段四：Phase 3 板块统一（06:00 起，前面全绿才做）】
+======================================================================
+只做三件小事。**不要碰导出管线**（它已经是对的，六个出口都过 paper_document）：
+
+1. resume_sections.py 的 persistable_format_config：把 hidden_sections 一起过滤掉
+   （现在只删了 section_order，这是旧键能从正常业务路径写回库的根因之一）
+2. frontend/src/utils/resumeSectionOrder.ts 的 buildSectionOrderConfig：
+   不要用 {...base} 把 hidden_sections 带进请求
+3. 删除 frontend/src/components/resume/ResumeHiddenSectionsControl.tsx
+   （先 grep 确认只剩自身引用；**不要删 i18n key**，sections.hidden.* 还有别处在用）
+
+新增 backend\tests\test_section_visibility_exports.py（四格式对拍：隐藏的板块在
+HTML / PDF / Word / Markdown 里都不出现其正文关键词）。
+
+注意：backend\tests\test_resume_hidden_sections.py 现在有 3 条失败，
+它们断言的正是本阶段要修的行为。本阶段结束时它们必须转绿——这是完成标志，
+**不要改它们的断言**。改完实现还是红的，说明没修对。
+
+跑闸门：
+  backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --phase 3
+
+提交：
+  git add backend/app/services/resume/resume_sections.py backend/tests/test_section_visibility_exports.py frontend/src/utils/resumeSectionOrder.ts
+  git add -u frontend/src/components/resume/ResumeHiddenSectionsControl.tsx
+  git commit -m "fix(v2): 板块显隐收敛到 v2 单一真相（Phase 3）"
+
+======================================================================
+【阶段五：AI 求职 sidecar 验证（07:15 起，只有时间够才做）】
+======================================================================
+目标只有一个：**确认 v2 整改没把 sidecar 弄坏。** 不做新功能，不重构。
+
+按顺序做，做完一条就跑对应测试：
+
+1. 先看闸门是不是全绿（不是就别往下做）：
+   backend\.venv\Scripts\python.exe -I scripts\v2_gate.py --all
+
+2. 跑 sidecar 专项测试（关键：v2 收口改了 save_record，可能影响 resume_sync）：
+   cd backend
+   .venv\Scripts\python.exe -m pytest tests\test_ai_jobs_resume_sync.py tests\test_ai_jobs_greeting.py tests\test_ai_jobs_e2e.py tests\test_ai_jobs_delivery.py tests\test_ai_jobs_redteam_fixes.py -q
+
+   全绿 → 记一行"sidecar 未受 v2 影响"（基线是 **36 passed**，实测），跳到第 4 条。
+   有红 → 做第 3 条。
+
+3. 修坏掉的部分（只修到测试绿，不做别的）：
+   最常见的原因：v2 收口改了 save_record，而这几处还在按旧方式读 record.content：
+     backend/app/services/ai_jobs/resume_sync.py
+     backend/app/services/job/job_match_context.py
+     backend/app/api/apply.py
+   修法：改成先经 document_io.document_for_record(db, record) 或
+         document_io.ensure_document_version(...) 转成 v2 再消费。
+   修完再跑第 2 条，绿了就提交：
+     git add -u backend/app/services/ai_jobs backend/app/services/job backend/app/api/apply.py
+     git commit -m "fix(ai-jobs): v2 收口后 sidecar 读取口改走 document_io"
+
+4. 写一份晨间验收清单（纯文档，15 分钟能写完）：
+   新建 D:\飞牛文件同步\工作\AI求职集成-晨间验收清单.md
+   按交接文档第 0.0 节的安全模式和任务板倒推，每步写：操作 → 预期 → 失败时看哪。
+   内容至少覆盖：
+   - 配引擎路径 → 启动 sidecar → 9333 登录 BOSS
+   - 预检六项全绿
+   - 采集 1 页到待确认（不发送）
+   - 用测试账号验证一次发送 + tracker 写回
+   - 回复监测能收到
+   - 数据集隔离：切数据集后 sidecar 不串库
+   - 停止 sidecar 后简历通不崩溃
+   提交：
+     git add ..\AI求职集成-晨间验收清单.md
+     git commit -m "docs(ai-jobs): 补晨间真实联调验收清单"
+
+5. **不要做的事**（这条很重要）：
+   - 不要启动真实 BOSS 引擎、不要访问招聘网站、不要尝试真实发送
+   - 不要跑 OCR 审查（本机没 Key）
+   - 不要改前端写死的站点 token（那是下一个白天的活，风险大、收益低）
+   - 不要补 parity 文档、不要写对抗项复盘（都可以白天做）
+   - 不要碰 ai_jobs 的任何业务逻辑，除非第 2 条的测试是红的
+
+======================================================================
+【最后：写晨间报告（08:00–08:30，必做）】
+======================================================================
+新建：D:\飞牛文件同步\工作\简历通-morning-report.md
+
+严格按这个结构：
+
+    # 简历通 v2 整改 · 夜间执行报告（2026-11-04）
+
+    ## 一句话结论
+    （做到哪了，能不能用，有没有数据风险，sidecar 有没有被弄坏）
+
+    ## 1. 各阶段状态
+    | 阶段 | 状态（完成/部分/未开始/跳过） | 提交哈希 | 闸门结果 |
+    （贴闸门原始输出的汇总行，不要只写"通过"）
+
+    ## 2. 我改了哪些文件
+    （逐个列出路径 + 一句话说明）
+
+    ## 3. 数据库当前状态
+    - 版本分布（live v1=?, v2=?）—— 期望 v1 为 0
+    - format_config 里还有没有 hidden_sections / section_order
+    - 今晚一共做了几次备份，分别是哪些文件
+    - integrity_check 结果
+
+    ## 4. sidecar 状态
+    - 5 个专项测试的结果
+    - 如果改了什么，改了哪里、为什么
+
+    ## 5. 卡住的地方 / 我没敢做的事
+    （每条写：现象、试过什么、建议的下一步命令）
+
+    ## 6. 需要你早上亲自确认的三件事
+    （按优先级排，给具体命令，不要写"请检查一下"这种空话）
+
+    ## 7. 回滚方法
+    （如果早上发现不对，用哪条命令退回今晚开始前：
+      备份文件名 + git 分支 + 提交哈希 + 要不要删 -wal/-shm）
+
+    ## 8. 下一步建议
+    （Phase 4/5 从哪开始，AI 求职还剩什么）
+
+======================================================================
+【现在开始】
+======================================================================
+先做两件事：
+1. 停掉后台重复的全量 pytest（省 45 分钟）
+2. 从已有的 65 条失败清单开始写基线文档
+
+然后按阶段一二三四五往下走。
+
+
+======================================================================
+附：早上我要看的三个数（你在报告里也复述一遍）
+======================================================================
+1. 库里 live v1 记录还有几条？应该是 0。
+2. v2_gate.py --phase 1 / 2 / 3 各自绿了几项、红了几项？
+3. sidecar 的 5 个专项测试全绿吗？

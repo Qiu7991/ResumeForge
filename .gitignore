@@ -54,6 +54,9 @@ backend/test_resume_forge.db
 # 后端运行期产物：本机调查脚本会在 backend/runtime/ 下写导出件。
 # 上面那行 `/runtime/` 是根锚定，挡不住 `backend/runtime/`，这里单独补一条。
 backend/runtime/
+# 前端验证期产物：vitest 基线日志与 out/ 输出目录。同上的道理，
+# 根锚定的 `/runtime/` 挡不住 `frontend/runtime/`，单独补一条。
+frontend/runtime/
 # 验证期把 pytest / importer 的输出重定向到文件留下的日志，不是产物也不是输入。
 backend/rf_inv.txt
 # 脚本里变量未赋值时写出的字面 `undefined` 目录（历史遗留）。
