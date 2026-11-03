@@ -27,13 +27,16 @@ from ...services import trash
 from ...services.llm import usage_ledger
 from ...services.llm.base import LLMError
 from ...services.profile.ai_profile import load_ai_profile
+from ...services.profile.generation_preferences import get_generation_preferences
 from ...services.resume import document_io, fact_locks
 from ...services.resume.document_identity import sanitize_document_ids
+from ...services.resume.document_invariants import finalize_ai_document
 from ...services.resume.document_save import (
     RevisionConflict,
     revision_conflict_response,
     save_ai_revision,
 )
+from ...services.resume.resume_coverage import remaining_coverage_notes
 from ...services.resume.resume_revision import revise_resume
 from ...services.resume.resume_suggestions import generate_suggestions
 from ._shared import _to_resume_out
@@ -153,19 +156,31 @@ async def revise_existing_resume(
     # ``base_revision`` 没命中（期间别处保存过）→ 409，这次模型结果**直接丢弃**：
     # 既不覆盖别人刚存的正文，也不清掉那份正文的 ``fact_annotations``——"内容没换、
     # 标注被清了"是比覆盖更难解释的状态。
+    # 定向修订只清掉「已经补进正文」的分区；其他分区还没有写进去，必须继续留在
+    # 覆盖清单里，用户才能接着点下一个「AI 补上这段」。整体重写才清空整份清单。
+    remaining_notes = (
+        remaining_coverage_notes(sanitized, record.coverage_notes or [], resume)
+        if payload.instructions.strip()
+        else []
+    )
     try:
         outcome = save_ai_revision(
             db,
             record_id=record.id,
-            # 落库的永远是 v2：修订算法产出的 v1 内容在写回前统一转换（带当前方案定义）。
-            content=document_io.prepare_document_for_save(
+            # 落库的永远是 v2，且与生成共用同一个不变量收口（Phase 2）。
+            # **page_limit=None：修订路径绝不截断**（P9：点一次"AI 修订"少一个项目
+            # 就是事故）；技术栈开关与生成同源。
+            content=finalize_ai_document(
                 sanitized,
                 language=record.language,
                 format_config=record.format_config or {},
                 custom_fields=document_io.custom_field_definitions(db),
+                page_limit=None,
+                include_tech_stack=get_generation_preferences(db)["include_tech_stack"],
             ),
             fact_annotations=[],
             base_revision=payload.base_revision,
+            coverage_notes=remaining_notes,
         )
     except RevisionConflict as exc:
         logger.warning(

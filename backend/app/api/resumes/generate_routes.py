@@ -38,7 +38,6 @@ from ...services.claims import build_baseline
 from ...services.llm.base import LLMError
 from ...services.llm.usage_tasks import set_ambient_scope
 from ...services.profile.generation_preferences import get_generation_preferences
-from ...services.resume import document_io
 from ...services.resume.generate_snapshot import (
     consumed_has_content,
     delete_generation_snapshot,
@@ -60,7 +59,6 @@ from ...services.resume.resume_generate_runner import (
 from ...services.resume.resume_generation_levels import generation_token_budget
 from ...services.resume.resume_generator import ResumeGenerator
 from ...services.resume.resume_record import save_record
-from ...services.resume.resume_tech_stack import strip_resume_tech_stack
 from ...services.resume.scenario_context import (
     build_scenario_prompt_block,
     scenario_section_order,
@@ -250,7 +248,6 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
     async def event_stream():
         raw_parts: list[str] = []
         parsed: dict | None = None
-        document: dict | None = None
         warnings: list[str] = []
         done_event: dict | None = None
         try:
@@ -280,22 +277,12 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
                 if echo_error:
                     yield _format_sse({"type": "error", "message": echo_error})
                     return
-                if not payload.options.include_tech_stack:
-                    parsed = strip_resume_tech_stack(parsed)
                 plan_coverage_note = (
                     build_plan_coverage_note(plan, parsed)
                     if plan is not None and parsed is not None
                     else None
                 )
                 with factory() as save_db:
-                    # SSE 的 done.resume 与详情/保存接口必须同一种形状（v2）：
-                    # 在保存同一事务的快照里取自定义字段定义，转换一次供事件使用。
-                    document = document_io.ensure_document_version(
-                        parsed,
-                        language=payload.options.language,
-                        format_config=save_format_config,
-                        custom_fields=document_io.custom_field_definitions(save_db),
-                    )
                     record = save_record(
                         save_db,
                         parsed,
@@ -321,8 +308,6 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
                         fact_annotations=done_event.get("fact_annotations") or [],
                         document_mode=payload.options.document_mode,
                         context_snapshot=context_snapshot,
-                        # 与 SSE done.resume 复用同一份转换结果（只转一次，id 一致）。
-                        document=document,
                         commit=False,
                     )
                     # F3 §1：简历记录与快照行同事务提交（resume_id 回写）。
@@ -338,8 +323,9 @@ async def generate_resume(payload: GenerateRequest, db: Session = Depends(get_db
                     save_db.refresh(record)
                 # 只有持久化成功后才宣布完成；断流不会留下“成功但无历史记录”的状态。
                 yield _format_sse({"type": "saved", "record_id": record.id})
-                if document is not None:
-                    done_event = {**done_event, "resume": document}
+                # done.resume 与落库内容同源（record.content）：save_record 内部完成
+                # v1→v2 转换与全部后处理，这里不再单独转换一份（Phase 2 收口）。
+                done_event = {**done_event, "resume": record.content}
                 yield _format_sse(done_event)
         except LLMError:
             logger.warning("简历生成失败（模型错误，用户可见错误已固定脱敏）")

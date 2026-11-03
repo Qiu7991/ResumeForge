@@ -197,11 +197,18 @@ def save_content(
     if unchanged and not needs_promotion:
         return SaveOutcome(record=current, revision=current_revision, written=False)
 
+    # 覆盖清单跟着正文走：手工/AI 补进去的条目从清单移除，还没写进去的继续保留，
+    # 用户下次打开仍能看到可继续补的项。整体重写仍由 save_ai_revision 清空。
+    from .resume_coverage import remaining_coverage_notes
+
     values: dict[str, Any] = {
         "content": content,
         # AI 生成阶段的告警不再适用于用户已手工确认过的内容。
         "warnings": [],
         "parse_error": "",
+        "coverage_notes": remaining_coverage_notes(
+            content, current.coverage_notes or [], current.content
+        ),
     }
     if pruned is not None:
         values["format_config"] = pruned
@@ -266,6 +273,7 @@ def save_ai_revision(
     content: dict[str, Any],
     fact_annotations: list[dict[str, Any]],
     base_revision: int | None,
+    coverage_notes: list[dict[str, Any]] | None = None,
 ) -> SaveOutcome | None:
     """AI 修订落库：用 ``base_revision`` 条件写，冲突时**一个字段都不写**。
 
@@ -287,7 +295,7 @@ def save_ai_revision(
         values={
             "content": content,
             "warnings": [],
-            "coverage_notes": [],
+            "coverage_notes": coverage_notes or [],
             "fact_annotations": fact_annotations,
             "rationale": "",
         },

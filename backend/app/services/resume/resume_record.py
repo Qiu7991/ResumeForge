@@ -28,6 +28,7 @@ from ...schemas.resume_generation import RESUME_MODES, ResumeLanguage
 from ..exporter import normalize_page_limit
 from . import document_io
 from .document_conversion_types import ConversionError
+from .document_invariants import finalize_ai_document
 from .document_view import header_text
 from .resume_sections import default_section_order_config, persistable_format_config
 from .resume_template_store import (
@@ -107,7 +108,6 @@ def save_record(
     context_snapshot: dict | None = None,
     commit: bool = True,
     language: ResumeLanguage = "zh-CN",
-    document: dict | None = None,
 ) -> ResumeRecord:
     """生成结果落库（在流结束后的同一请求内调用）。
 
@@ -134,6 +134,12 @@ def save_record(
     ``context_snapshot`` 是本次生成冻结的职业场景上下文（A5）：server-owned 独立列，
     不塞进 content / format_config / render_context；None = 未使用（旧调用方不变）。
     """
+    # 落库前按**当前**生成偏好再兜一次：任务入队时读到的值可能已经过时，且
+    # v2 文档的 tech_stack 是列表项，不能只依赖生成器里的 v1 清理。
+    from ..profile.generation_preferences import get_generation_preferences
+
+    # 标题/岗位意图按 v1 视图取值：必须在 finalize_ai_document **之前**——转换后
+    # content 是 v2 形状，content.get("name") / ("job_intent") 取不到。
     name = str(content.get("name") or "简历").strip()[:48]
     timestamp = datetime.now().strftime("%Y%m%d%H%M")
     merged_config = dict(format_config or {})
@@ -149,19 +155,20 @@ def save_record(
         title = f"{name}-{company}-{job_title}-{timestamp}"
     title = requested_title.strip()[:256] or title
     mode = document_mode if document_mode in RESUME_MODES else "resume"
-    # 落库的永远是 v2：生成链路内部仍按 v1（模型只写值），在唯一落库点一次性转换。
-    # 标题/岗位意图在上面已按 v1 视图取过，不受影响；自定义字段位置来自当前方案定义。
-    # document 参数供 SSE 复用**同一个转换结果**（done 事件与落库内容 id 一致）。
-    if document is None:
-        try:
-            document = document_io.prepare_document_for_save(
-                content,
-                language=language,
-                format_config=merged_config,
-                custom_fields=document_io.custom_field_definitions(db),
-            )
-        except (ConversionError, DocumentValidationError) as exc:
-            raise HTTPException(status_code=422, detail=f"生成内容无法落库：{exc}") from exc
+    # 落库的永远是 v2，且与 AI 修订共用同一个不变量收口（Phase 2）：归一 → 去重 →
+    # 限量 → 技术栈 → **校验（最后一步）**。旧的 document= 旁路（SSE 复用后处理之前
+    # 构造的文档，绕过去重/技术栈清理）已删除：done.resume 改用落库的 record.content。
+    try:
+        document = finalize_ai_document(
+            content,
+            language=language,
+            format_config=merged_config,
+            custom_fields=document_io.custom_field_definitions(db),
+            page_limit=page_limit,
+            include_tech_stack=get_generation_preferences(db)["include_tech_stack"],
+        )
+    except (ConversionError, DocumentValidationError) as exc:
+        raise HTTPException(status_code=422, detail=f"生成内容无法落库：{exc}") from exc
     record = ResumeRecord(
         title=title,
         job_id=job.id if job is not None else None,

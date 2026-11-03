@@ -333,3 +333,82 @@ def confirmed_claims_about(names: set[str], baseline: ClaimDigestOut | None) -> 
                 hits.append(name)
                 break
     return sorted(set(hits))
+
+
+def _coverage_text(value: Any) -> str:
+    """把 v2 文档里的可见文字压成一条匹配串；只用于判断名字有没有写进去。"""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return "\n".join(_coverage_text(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return "\n".join(_coverage_text(item) for item in value)
+    return ""
+
+
+def _section_text(document: dict[str, Any] | Any, key: str) -> str:
+    """取 v2 文档某个板块的可见文字；v1 模型退回顶层字段（如 summary）。"""
+    data = document.model_dump() if hasattr(document, "model_dump") else document
+    if not isinstance(data, dict):
+        return ""
+    sections = data.get("sections")
+    if isinstance(sections, list):
+        for section in sections:
+            if isinstance(section, dict) and section.get("key") == key:
+                return _coverage_text(section)
+    value = data.get(key)
+    return _coverage_text(value) if isinstance(value, str) else ""
+
+
+def remaining_coverage_notes(
+    document: dict[str, Any] | Any,
+    notes: list[dict[str, Any]],
+    previous: dict[str, Any] | Any | None = None,
+) -> list[dict[str, Any]]:
+    """定向 AI 修订后保留尚未写入的分区清单。
+
+    旧行为是修订成功后把 coverage_notes 全部清空：用户点了「实习/工作经历 → AI 补上这段」，
+    其他分区（项目经历等）的「AI 补上这段」也一起消失，只能重新生成。这里按名字做一次
+    保守核对：已经出现在新正文里的名字从清单移除；仍没出现的保留，用户还能继续补。
+
+    「个人总结」的清单名是一句相似度描述（如「个人总结（与资料原文相似度 14%）」），
+    正文里永远匹配不到。它按**总结是否被改写**判断：给了修订前正文且总结变了，就视为
+    已补上。
+    """
+    text = _coverage_text(document)
+    compact = "".join(str(text).split()).casefold()
+    summary_now = _section_text(document, "summary")
+    summary_before = _section_text(previous, "summary") if previous is not None else ""
+    remaining: list[dict[str, Any]] = []
+    for note in notes or []:
+        if not isinstance(note, dict):
+            continue
+        if (
+            note.get("section") == "summary"
+            and previous is not None
+            and summary_now.strip()
+            and summary_now != summary_before
+        ):
+            continue
+        names = [
+            str(name).strip()
+            for name in (note.get("names") or [])
+            if str(name).strip()
+            and "".join(str(name).split()).casefold() not in compact
+        ]
+        if not names:
+            continue
+        updated = dict(note)
+        updated["names"] = names
+        updated["total"] = len(names)
+        # filtered / model_omitted 也可能含已写入的名字；按同一份 names 收窄。
+        for field in ("filtered", "model_omitted"):
+            values = note.get(field)
+            if isinstance(values, list):
+                updated[field] = [
+                    str(item)
+                    for item in values
+                    if str(item) in set(note.get("names") or [])
+                ]
+        remaining.append(updated)
+    return remaining

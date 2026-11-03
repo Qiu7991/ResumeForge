@@ -197,6 +197,9 @@ def paper_document(document: ResumeDocument) -> ResumeDocument:
     changed = False
     sections = []
     for section in document.sections:
+        if section.hidden:
+            changed = True
+            continue
         entries = []
         section_changed = False
         for entry in section.entries:

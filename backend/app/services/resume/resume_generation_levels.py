@@ -129,6 +129,7 @@ def build_layout_guide(
         return (
             f"目标篇幅：1 页 A4、{spec['label']}。整份简历（含联系方式与全部文字）"
             f"控制在 {low}-{high} 个汉字以内；个人总结不超过 100 字。"
+            "项目经历最多 3 条、实习/工作经历最多 2 段，只保留与 JD 最相关的；"
             "宁可少写，也不要为了完整而超出篇幅。"
         )
     total_low = low * page_limit
@@ -136,5 +137,6 @@ def build_layout_guide(
     return (
         f"目标篇幅：最多 {page_limit} 页 A4、{spec['label']}。整份简历控制在 "
         f"{total_low}-{total_high} 个汉字以内：优先写满第一页，确有必要再用第二页；"
+        "项目经历控制在 4–5 条、实习/工作经历最多 3 段，只保留与 JD 最相关的；"
         "不要为了填满页数而堆砌次要内容，也不要留下大半页空白。"
     )
