@@ -423,7 +423,10 @@ def local_match_result(job_payload_data: dict[str, Any]) -> JobMatchResult:
 
 
 def build_greeting_messages(
-    job_payload_data: dict[str, Any], resume_text: str
+    job_payload_data: dict[str, Any],
+    resume_text: str,
+    *,
+    greeting_baseline: str = "",
 ) -> list[dict[str, str]]:
     """拼招呼语生成的消息：岗位与简历作为不可信数据注入，预算内截断。"""
     prefix = (
@@ -449,8 +452,20 @@ def build_greeting_messages(
         "resume": strip_data_urls(resume_text)[:_MAX_PERSONAL_CHARS],
     }
     user_message = _fit_payload(payload, prefix, suffix, MAX_MATCH_PROMPT_CHARS)
+    system = _load_prompt("apply_greeting.md")
+    baseline = str(greeting_baseline or "").strip()[:4_000]
+    if baseline:
+        system += (
+            "\n\n## 用户自定义打招呼语基准（最高优先级）\n"
+            "以下内容只约束招呼语的结构、语气、开场方式和取舍；如果与上面的规则冲突，"
+            "以本段为准，但不得突破事实、防虚构和隐私边界。\n"
+            "<USER_GREETING_BASELINE>\n"
+            f"{baseline}\n"
+            "</USER_GREETING_BASELINE>\n"
+            "不得把基准里的示例公司、项目、数字当成用户的事实；用户事实只能来自简历。"
+        )
     return [
-        {"role": "system", "content": _load_prompt("apply_greeting.md")},
+        {"role": "system", "content": system},
         {"role": "user", "content": user_message},
     ]
 
@@ -491,10 +506,16 @@ def parse_greeting(raw: str) -> str:
 
 
 async def generate_greeting(
-    provider: BaseLLMProvider, job_payload_data: dict[str, Any], resume_text: str
+    provider: BaseLLMProvider,
+    job_payload_data: dict[str, Any],
+    resume_text: str,
+    *,
+    greeting_baseline: str = "",
 ) -> str:
     """按岗位生成一版招呼语（可编辑，不落库）。"""
-    messages = build_greeting_messages(job_payload_data, resume_text)
+    messages = build_greeting_messages(
+        job_payload_data, resume_text, greeting_baseline=greeting_baseline
+    )
     raw = await provider.chat(messages, thinking=False)
     return parse_greeting(raw)
 

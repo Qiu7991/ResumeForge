@@ -218,12 +218,23 @@ async def greeting_preview(
     queue_item = db.get(ApplyQueueItem, payload.item_id) if payload.item_id is not None else None
     # 只有用户确认过的文案才直接回队列值；未确认（AI 批量生成后）要重新生成，
     # 否则编辑弹窗里的「按岗位生成招呼语」会永远返回同一段草稿。
-    if queue_item is not None and queue_item.greeting.strip() and queue_item.greeting_confirmed:
+    # 弹窗里明确换了简历时也必须重新生成：旧招呼语是按另一份简历写的。
+    if (
+        payload.resume_id is None
+        and queue_item is not None
+        and queue_item.greeting.strip()
+        and queue_item.greeting_confirmed
+    ):
         return GreetingPreviewOut(greeting=queue_item.greeting.strip(), source="queue")
 
     # 招呼语是「简历 + 岗位」的投影：队列条目没有可用简历时不生成，也不回退默认文案
     # （那会变成没看简历的群发话术）。交给前端提示先去岗位广场生成简历。
-    chosen_resume_id = queue_item.resume_id if queue_item is not None else None
+    # 弹窗里刚选中的简历优先于队列里已保存的 resume_id（可能还没点保存）。
+    chosen_resume_id = (
+        payload.resume_id
+        if payload.resume_id is not None
+        else (queue_item.resume_id if queue_item is not None else None)
+    )
     resume = apply_service.resolve_resume(db, job.id, chosen_resume_id)
     if queue_item is not None and resume is None:
         return GreetingPreviewOut(greeting="", source="no_resume")
@@ -245,7 +256,14 @@ async def greeting_preview(
     disconnected = False
     try:
         greeting = await run_until_disconnect(
-            request, generate_greeting(provider, payload_data, resume_text), what="招呼语生成"
+            request,
+            generate_greeting(
+                provider,
+                payload_data,
+                resume_text,
+                greeting_baseline=config.greeting_baseline,
+            ),
+            what="招呼语生成",
         )
         if greeting is not None:
             return GreetingPreviewOut(greeting=greeting, source="generated")

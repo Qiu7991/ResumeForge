@@ -47,6 +47,8 @@ export function QueueTable({
 }) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后列头停在旧文案。
   useLocale();
+  // 每页条数：默认 10 条（队列行高较高，一页塞太多会挤满整屏），由分页器切换。
+  const [pageSize, setPageSize] = useState(10);
   // 右键菜单：记录鼠标位置与目标行，用定位式 Menu 渲染（避免把 <tr> 包进 Dropdown 造成行重建竞态）。
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -253,10 +255,13 @@ export function QueueTable({
         // 每页 10 条：队列条目行高较高，一页塞太多会把整屏挤满；分页形态与岗位广场 /
         // 简历中心一致（条数切换 + 总数显示）。hideOnSinglePage：队列很短时不打扰。
         pagination={{
-          pageSize: 10,
+          pageSize,
           hideOnSinglePage: true,
           showSizeChanger: true,
           showTotal: (total) => t("applyQueue.table.total", { total }),
+          // pageSize 一旦写成固定值就是受控属性：不在这里回写 state，切「20 条/页」
+          // 会被下一次渲染重置回 10，看起来像选择没生效。
+          onChange: (_page, size) => setPageSize(size),
         }}
         rowSelection={rowSelection}
         tableLayout="fixed"

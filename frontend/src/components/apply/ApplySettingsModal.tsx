@@ -162,6 +162,14 @@ function ApplySettingsForm({ onClose, onSaved }: Omit<Props, "open">) {
       </Form.Item>
 
       <Form.Item
+        name="greeting_baseline"
+        label={t("applySettings.greetingBaseline.label")}
+        extra={t("applySettings.greetingBaseline.extra")}
+      >
+        <HintedTextArea rows={5} maxLength={4000} />
+      </Form.Item>
+
+      <Form.Item
         name="require_greeting_review"
         label={t("applySettings.greetingReview.label")}
         valuePropName="checked"

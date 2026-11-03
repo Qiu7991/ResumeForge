@@ -12,6 +12,7 @@ import { getJob, listJobs } from "../api/jobs";
 import { getResume, listResumes } from "../api/resumes";
 import { getTrack, listTracksPage } from "../api/tracker";
 import { t } from "../i18n";
+import type { ResumeBrief } from "../types";
 import { useRemoteSearchSelect } from "./useRemoteSearchSelect";
 import type { RemoteSelectOption } from "./useRemoteSearchSelect";
 
@@ -62,20 +63,54 @@ export function useResumeSearchSelect() {
 }
 
 /**
- * 简历远程搜索（限定某岗位，P0-1）：投递队列条目的简历选择用——
- * 候选只给该岗位关联过的简历，不把全库简历混进来。
+ * 简历远程搜索（投递队列用）：候选 = 本岗位生成的简历 + 收藏的简历。
+ *
+ * 排序按优先级：**本岗位的简历排最前**（为这条 JD 专门生成/改过的那份），收藏简历
+ * 补在后面并去重——收藏是通用备选，默认不该盖过岗位版。标签后缀标出来源，避免同名
+ * 简历分不清该投哪份。
  */
 export function useResumeSearchSelectForJob(jobId: number | null) {
   return useRemoteSearchSelect({
-    fetchOptions: (keyword) =>
-      listResumes({ job_id: jobId ?? undefined, keyword, page_size: SELECT_PAGE_SIZE }).then(
-        (page) => page.items.map(resumeOption),
-      ),
+    fetchOptions: async (keyword) => {
+      const [forJob, favorites] = await Promise.all([
+        jobId == null
+          ? Promise.resolve([] as ResumeBrief[])
+          : listResumes({ job_id: jobId, keyword, page_size: SELECT_PAGE_SIZE }).then(
+              (page) => page.items,
+            ),
+        listResumes({ favorite: true, keyword, page_size: SELECT_PAGE_SIZE }).then(
+          (page) => page.items,
+        ),
+      ]);
+      const options = forJob.map((resume) => queueResumeOption(resume, jobId));
+      const seen = new Set(options.map((option) => option.value));
+      for (const resume of favorites) {
+        if (seen.has(resume.id)) continue;
+        seen.add(resume.id);
+        options.push(queueResumeOption(resume, jobId));
+      }
+      return options;
+    },
     fetchById: (id) =>
       getResume(id)
-        .then(resumeOption)
+        .then((resume) => queueResumeOption(resume, jobId))
         .catch(() => null),
   });
+}
+
+/** 队列简历选项：岗位版标「本岗位」，其余收藏项标「收藏」，后缀只影响展示。 */
+function queueResumeOption(
+  resume: Pick<ResumeBrief, "id" | "title" | "job_id" | "favorite">,
+  jobId: number | null,
+): RemoteSelectOption {
+  const option = resumeOption(resume);
+  if (jobId != null && resume.job_id === jobId) {
+    return { ...option, label: `${option.label}${t("hooksUi.option.resumeForJob")}` };
+  }
+  if (resume.favorite) {
+    return { ...option, label: `${option.label}${t("hooksUi.option.resumeFavorite")}` };
+  }
+  return option;
 }
 
 /**

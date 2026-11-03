@@ -54,12 +54,14 @@ def test_greeting_prompt_requires_polite_opening_and_length_rules():
     messages = build_greeting_messages({"title": "AI应用赋能专员"}, "{}")
     system = messages[0]["content"]
 
-    assert "必须以「您好」开头" in system
-    assert "当前情况" in system
-    assert "岗位匹配" in system
+    assert "必须以「您好，」开头" in system
+    assert "正好五句话" in system
+    assert "一段话" in system
     assert "简历已附" in system  # 作为禁止项出现
-    assert "150–260 字" in system
-    assert "不得编造" in system
+    assert "140–220 字" in system
+    assert "只写 1 个项目" in system
+    assert "不得照抄示例" in system
+    assert "不要编造" in system
 
 
 def test_parse_greeting_adds_polite_opening_when_model_omits_it():
@@ -70,3 +72,20 @@ def test_parse_greeting_adds_polite_opening_when_model_omits_it():
 
 def test_parse_greeting_keeps_an_existing_polite_opening():
     assert parse_greeting("您好，计算机本科在读。") == "您好，计算机本科在读。"
+
+
+def test_custom_greeting_baseline_is_injected_as_style_guidance():
+    messages = build_greeting_messages(
+        {"title": "AI应用赋能专员"},
+        "{}",
+        greeting_baseline="BASELINE-SENTINEL：先您好，再一句匹配，最后一句沟通请求。",
+    )
+    system = messages[0]["content"]
+    assert "BASELINE-SENTINEL" in system
+    assert "USER_GREETING_BASELINE" in system
+    assert "不得把基准里的示例" in system
+
+
+def test_greeting_prompt_no_longer_requires_education_intro():
+    system = build_greeting_messages({"title": "AI应用赋能专员"}, "{}")[0]["content"]
+    assert "不要介绍学校、专业、年级、届别、学历、毕业时间" in system

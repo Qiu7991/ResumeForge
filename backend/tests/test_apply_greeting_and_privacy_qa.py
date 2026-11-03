@@ -177,6 +177,61 @@ def test_greeting_preview_refuses_without_a_resume(client, db_session):
     assert response.json() == {"greeting": "", "source": "no_resume"}
 
 
+def test_greeting_preview_uses_the_explicitly_selected_resume(client, db_session, monkeypatch):
+    """弹窗里刚选的简历优先于队列里的 resume_id；旧招呼语已确认也要按新简历重写。"""
+    from app.schemas.setting import LLMConfig
+
+    job = Job(title="后端开发", company="A公司", source="BOSS直聘", source_url="u")
+    db_session.add(job)
+    db_session.flush()
+    resume_a = ResumeRecord(title="A 版-旧简历", job_id=job.id, content={})
+    db_session.add(resume_a)
+    db_session.commit()
+    created = apply_service.add_to_queue(
+        db_session,
+        ApplyQueueAddRequest(items=[{"job_id": job.id, "confirm_unanalyzed": True}]),
+    )
+    item_id = created[0].id
+    apply_service.update_queue_item(
+        db_session,
+        item_id,
+        ApplyQueueItemUpdate(greeting="对 A 版写的旧招呼语", confirm_greeting=True),
+    )
+    resume_b = ResumeRecord(title="B 版-本岗位新简历", job_id=job.id, content={})
+    db_session.add(resume_b)
+    db_session.commit()
+
+    captured: dict[str, str] = {}
+
+    async def _fake_generate(provider, payload_data, resume_text, *, greeting_baseline=""):
+        captured["resume_text"] = resume_text
+        captured["baseline"] = greeting_baseline
+        return "您好，按 B 版简历重新生成的招呼语。"
+
+    monkeypatch.setattr("app.api.apply.generate_greeting", _fake_generate)
+    monkeypatch.setattr(
+        "app.api.apply.get_llm_config",
+        lambda _db: LLMConfig(base_url="https://example.com/v1", api_key="test", model="m"),
+    )
+    monkeypatch.setattr("app.api.apply.create_provider", lambda _config: object())
+
+    # 不带 resume_id：沿用已确认的队列文案（旧行为不变）。
+    unchanged = client.post(
+        "/api/apply/greeting/preview", json={"job_id": job.id, "item_id": item_id}
+    )
+    assert unchanged.json() == {"greeting": "对 A 版写的旧招呼语", "source": "queue"}
+
+    # 带 resume_id：按 B 版重新生成，prompt 里也必须是 B 版内容。
+    regenerated = client.post(
+        "/api/apply/greeting/preview",
+        json={"job_id": job.id, "item_id": item_id, "resume_id": resume_b.id},
+    )
+    assert regenerated.status_code == 200
+    assert regenerated.json()["greeting"] == "您好，按 B 版简历重新生成的招呼语。"
+    assert "B 版-本岗位新简历" in captured["resume_text"]
+    assert "A 版-旧简历" not in captured["resume_text"]
+
+
 def test_resolve_greeting_falls_back_to_default_when_item_is_empty():
     config = ApplyConfigIn(default_greeting="您好，我对该岗位很感兴趣。")
     item = ApplyQueueItem(job_id=1, greeting="   ")

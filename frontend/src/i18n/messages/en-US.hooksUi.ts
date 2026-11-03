@@ -12,6 +12,10 @@ const hooksUi = {
   "hooksUi.remoteSearch.empty": "No matches — type a keyword to search",
 
   "hooksUi.option.resumeFallback": "Resume #{id}",
+  /** Queue resume select: marks the Resume tailored for this Job (listed first). */
+  "hooksUi.option.resumeForJob": " (this Job)",
+  /** Queue resume select: marks a favorited Resume as the generic fallback. */
+  "hooksUi.option.resumeFavorite": " (favorite)",
 
   "hooksUi.batchItems.error.load": "Could not load the batch items",
 

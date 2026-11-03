@@ -32,6 +32,8 @@ class ApplyConfigIn(BaseModel):
     per_task_limit: int = Field(default=DEFAULT_PER_TASK_LIMIT, ge=1, le=200)
     breaker_threshold: int = Field(default=DEFAULT_BREAKER_THRESHOLD, ge=1, le=20)
     default_greeting: str = Field(default=DEFAULT_GREETING, max_length=GREETING_INPUT_MAX_CHARS)
+    # 用户自定义的打招呼语基准/模板：只作为风格与结构约束，不能覆盖事实与防虚构规则。
+    greeting_baseline: str = Field(default="", max_length=4_000)
     skip_same_company: bool = True
     confirm_real_gap: bool = False
     # 发送前必须确认招呼语：开启时，队列条目里没有"已确认招呼语"的岗位会被跳过，

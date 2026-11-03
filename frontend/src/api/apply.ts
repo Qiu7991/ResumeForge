@@ -173,11 +173,14 @@ export function removeQueueItem(itemId: number): Promise<void> {
 }
 
 /** 按岗位生成一版招呼语（不落库）；给了 item_id 就基于队列里的当前值。
+ *  `resume_id` 是编辑弹窗里刚选中、可能还没保存的简历：传了就按它生成，
+ *  避免「选了 A 简历，招呼语却仍按队列里的 B 简历写」。
  *  `signal` 供面板上的「停止」用：断开连接即不再等这条生成。 */
 export function previewGreeting(
   payload: {
     job_id: number;
     item_id?: number;
+    resume_id?: number;
   },
   signal?: AbortSignal,
 ): Promise<GreetingPreview> {

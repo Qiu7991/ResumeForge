@@ -109,6 +109,30 @@ describe("QueueTable 横向滚动区（a11y）", () => {
   });
 });
 
+describe("QueueTable 分页", () => {
+  it("切到 20 条/页后生效（pageSize 是受控属性，必须回写 state）", async () => {
+    const items = Array.from({ length: 15 }, (_, index) => ({
+      ...BASE_ITEM,
+      id: index + 1,
+      job_id: index + 1,
+      job_title: `岗位 ${index + 1}`,
+    }));
+    const { container } = renderTable(items);
+
+    const rows = () => container.querySelectorAll(".ant-table-tbody tr.ant-table-row");
+    expect(rows()).toHaveLength(10);
+
+    const sizeChanger = container.querySelector<HTMLElement>(".ant-pagination-options .ant-select");
+    expect(sizeChanger).not.toBeNull();
+    fireEvent.mouseDown(sizeChanger as HTMLElement);
+
+    const option = await screen.findByText(/^20\b/);
+    fireEvent.click(option);
+
+    await waitFor(() => expect(rows()).toHaveLength(15));
+  });
+});
+
 describe("QueueTable 招呼语点击编辑", () => {
   it("点招呼语文本直接打开编辑", () => {
     const { onEdit } = renderTable([

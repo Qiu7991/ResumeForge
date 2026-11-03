@@ -51,8 +51,10 @@ export function QueueItemEditor({
     // 先落到局部常量：闭包里读 `item.job_id` 会丢掉上面的判空收窄（TS 不跨回调保留）。
     const jobId = item.job_id;
     if (jobId == null) return;
+    // 下拉里刚选的简历可能还没保存：一起传过去，招呼语才和将要用那份简历一致。
+    const resumeId = form.getFieldValue("resume_id") as number | undefined;
     const outcome = await greetingRequest.run((signal) =>
-      previewGreeting({ job_id: jobId, item_id: item.id }, signal),
+      previewGreeting({ job_id: jobId, item_id: item.id, resume_id: resumeId }, signal),
     );
     if (outcome.status === "error") {
       message.error(errorText(outcome.error, t("applyQueue.toast.greetingFailed")));

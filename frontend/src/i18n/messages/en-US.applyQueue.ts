@@ -96,8 +96,9 @@ const applyQueue = {
   "applyQueue.editor.title": "Edit “{title}”",
   "applyQueue.editor.untitledJob": "this Job",
   "applyQueue.editor.resumeHint":
-    "Leave empty to use this Job's latest tailored Resume at run time",
-  "applyQueue.editor.resumePlaceholder": "Resolved by default rules (type to search)",
+    "Pick the Resume marked “this Job” first (tailored for this JD); favorited Resumes are listed after it. Leave empty to use this Job's latest tailored Resume at run time",
+  "applyQueue.editor.resumePlaceholder":
+    "This Job's Resume first, then favorites (type to search)",
   "applyQueue.editor.generate": "Generate a greeting for this Job",
   "applyQueue.toast.greetingGenerated": "Generated a greeting for this Job",
   "applyQueue.toast.greetingDefault": "Filled in the default greeting (no model configured)",

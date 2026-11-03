@@ -103,8 +103,9 @@ const applyQueue = {
   // 条目编辑弹窗。
   "applyQueue.editor.title": "编辑「{title}」",
   "applyQueue.editor.untitledJob": "该岗位",
-  "applyQueue.editor.resumeHint": "留空则运行时用该岗位最近一份岗位版简历。",
-  "applyQueue.editor.resumePlaceholder": "按默认规则解析（输入关键词搜索）",
+  "applyQueue.editor.resumeHint":
+    "优先选标着「本岗位」的简历（为该 JD 生成的那份）；收藏的简历排在后面。留空则运行时用该岗位最近一份岗位版简历。",
+  "applyQueue.editor.resumePlaceholder": "本岗位简历优先，也可选收藏简历（输入关键词搜索）",
   "applyQueue.editor.generate": "按岗位生成招呼语",
   "applyQueue.toast.greetingGenerated": "已按岗位生成招呼语",
   "applyQueue.toast.greetingDefault": "已填入默认招呼语（未配置模型）",
