@@ -107,13 +107,32 @@
 | tests/test_task_start_dataset_race.py | 1 | 任务提交与 runner 启动的数据集竞态受状态污染 |
 | tests/test_w21_dataset_offline.py | 1 | inflight 请求阻塞切换用例受状态污染 |
 
-**推断名单（6 条，高置信：位于 summary 截断头部 + 缓存交叉比对；单独复跑通过，归属待人工判断）**
+**首次未能留痕、后经 2026-11-04 复跑实测证实的 6 条（对抗审查 L5 闭环）**
 
-| 测试文件 | 条数 | 失败原因（一句话） |
-|---|---|---|
-| tests/test_api_datasets.py（推断） | 4 | 数据集激活/切换全局状态泄漏（activate、created_and_activated、delete_refuses、writes_not_leak） |
-| tests/test_api_datasets_transfer.py（推断） | 1 | 数据集 round-trip 迁移受状态污染（preserves_every_kind） |
-| tests/test_api_sample_dataset.py::test_load_sample_creates_switches_and_seeds（推断） | 1 | 同 api_sample_dataset 组，同文件第 4 条 |
+> 首次全量的输出被 tail 截断，65 条中 59 条有完整名目，其余 6 个失败名额当时按执行顺序
+> 位置 + 缓存交叉比对推断（见下方候选表）。2026-11-04 全量复跑（61 failed / 7657 passed）
+> 的实测名单**恰好包含这 6 条**——推断转实测，预存量定性成立。
+
+| 测试文件 | 条数 | 失败原因（一句话） | 复跑实测 |
+|---|---|---|---|
+| tests/test_api_datasets.py | 4 | 数据集激活/切换全局状态泄漏（activate、created_and_activated、delete_refuses、writes_not_leak） | ✓ 复跑仍失败 |
+| tests/test_api_datasets_transfer.py | 1 | 数据集 round-trip 迁移受状态污染（preserves_every_kind） | ✓ 复跑仍失败 |
+| tests/test_api_sample_dataset.py::test_load_sample_creates_switches_and_seeds | 1 | 样例数据集建立+切换+播种受状态污染 | ✓ 复跑仍失败 |
+
+## 5. 2026-11-04 全量复跑补记（对抗审查 L5 的第三步）
+
+- 结果：**61 failed / 7654 passed / 105 skipped / 1 xpassed（45:03）**（首次：65 failed / 7634 passed）。
+  注：passed 数还包含 11-04 白天新增的 17 条 Phase 4/5/回归测试。
+- 与首次全量的名单对比：
+  - **两次都失败（稳定预存量）54 条**；
+  - **仅复跑失败 7 条**：即上表 6 条（推断转实测）+ `test_dataset_scope.py::test_lease_release_is_idempotent`
+    的截断变体（与首次同名，pytest 短摘要截断造成字符串不同，实为同一条）；
+  - **仅首次失败、复跑通过 5 条**：`test_resume_hidden_sections.py` ×3（**Phase 3 修复生效，全量转绿**）、
+    `test_qa_browser_sites_adversarial.py` ×1、`test_dataset_scope.py::test_lease_release_is_idempotent` ×1（同上截断变体）。
+- 结论：预存量失败集是**顺序依赖的非确定集合**，两次全量的**并集（约 60 条）**才是真实预存量；
+  单次名单只能当快照。判据用法不变：先查本表与两次名单的并集，不在并集里的才算本次引入。
+- 完整实测名单：`%TEMP%\v2-review\rerun-failed.txt`（61 行）与 `run1-failed.txt`（59 行）；
+  复跑原始日志 `pytest-full-rerun.log`（本机临时目录，不入库）。
 
 ### 前端（33 条）
 
