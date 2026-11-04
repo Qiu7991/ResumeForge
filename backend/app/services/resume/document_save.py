@@ -160,6 +160,61 @@ def _conditional_update(
     return _reload(db, record_id)
 
 
+def _hide_tech_stack_when_disabled(db: Session, content: dict[str, Any]) -> dict[str, Any]:
+    """生成偏好关闭时，把技术栈项统一置为 `placement=hidden`（数据保留）。
+
+    这是「手工保存不接入 AI 后处理」的**唯一例外**，理由是它不属于内容改写：
+    - 去重 / 页数截断会删用户内容，所以手工保存绝不碰；
+    - 技术栈是"要不要上纸面"的显示开关，用户明确设过，且 `hidden` 只是不上纸面
+      （数据仍在文档里，编辑器可拖回），不存在"系统悄悄删了用户写的东西"。
+
+    幂等：已经是 hidden 的项原样返回（`strip_resume_tech_stack` 只改 placement）。
+    """
+    from ..profile.generation_preferences import get_generation_preferences
+
+    if get_generation_preferences(db)["include_tech_stack"]:
+        return content
+    from .resume_tech_stack import strip_resume_tech_stack
+
+    return strip_resume_tech_stack(content)
+
+
+def _section_entry_count(content: dict[str, Any], section_key: str) -> int:
+    """某个板块的条目数（v2 形状）；没有该板块返回 0。只用于排障日志。"""
+    for section in content.get("sections") or []:
+        if isinstance(section, dict) and section.get("key") == section_key:
+            entries = section.get("entries")
+            return len(entries) if isinstance(entries, list) else 0
+    return 0
+
+
+def _visible_tech_stack_count(content: dict[str, Any]) -> int:
+    """会上纸面的技术栈项数。只用于排障日志。"""
+    count = 0
+    for section in content.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        for entry in section.get("entries") or []:
+            if not isinstance(entry, dict):
+                continue
+            for item in entry.get("items") or []:
+                if not isinstance(item, dict) or item.get("kind") not in {"field", "list"}:
+                    continue
+                source = item.get("source")
+                is_tech = str(item.get("key") or "") == "tech_stack" or (
+                    isinstance(source, dict)
+                    and str(source.get("field_id") or "").endswith(".tech_stack")
+                )
+                if not is_tech or item.get("placement") == "hidden":
+                    continue
+                values = item.get("values")
+                if isinstance(values, list) and values:
+                    count += 1
+                elif str(item.get("value") or "").strip():
+                    count += 1
+    return count
+
+
 def save_content(
     db: Session,
     *,
@@ -186,6 +241,19 @@ def save_content(
         # 早退：版本不对就没必要再序列化一遍正文。
         raise RevisionConflict(current_revision=current_revision)
 
+    # 「显示技术栈」是**全局显示偏好**，不是 AI 输出的专属规则——所以它在**所有**
+    # 写路径上都必须成立，包括手工保存与覆盖清单补全。
+    #
+    # 为什么必须在这里兜：覆盖清单的「从资料补上这段」会把资料投影里的整条项目
+    # clone 进文档（`projectionContent.ts::fillProjectionCandidate`），而投影里的
+    # tech_stack 是 `placement=trail`（资料本来就该怎么存）。补进来的条目再经本函数
+    # 落库时，如果只靠生成链路的 `finalize_ai_document` 兜底，技术栈就会在
+    # "生成时藏好了 → 补一段 → 又露出来"这条路上反复复发。
+    #
+    # 只做**隐藏**方向（关闭 → hidden），不做反向恢复：用户重新打开开关时，
+    # 已 hidden 的项保持原样（数据还在文档里，编辑器可拖回），语义与生成链路一致。
+    content = _hide_tech_stack_when_disabled(db, content)
+
     _check_content_budget(content, getattr(current, "document_mode", "resume") or "resume")
     needs_promotion = bool(mark_saved and current.draft)
     # §1.6：保存时顺手裁掉"指向已不存在对象 / 照片已换"的域数据，与内容在同一条 UPDATE
@@ -200,6 +268,18 @@ def save_content(
     # 覆盖清单跟着正文走：手工/AI 补进去的条目从清单移除，还没写进去的继续保留，
     # 用户下次打开仍能看到可继续补的项。整体重写仍由 save_ai_revision 清空。
     from .resume_coverage import remaining_coverage_notes
+
+    # 排障日志：手工保存**不接入** AI 后处理（刻意的），所以它是唯一能把
+    # 「生成时剥掉的技术栈 / 截断的条目」原样写回去的入口。留一行计数，
+    # 出问题时能一眼看出是不是这里被覆盖了（历史上排查过一次）。
+    logger.info(
+        "手工保存正文 record_id=%s revision=%s 项目=%d 经历=%d 可见技术栈=%d",
+        record_id,
+        current_revision,
+        _section_entry_count(content, "projects"),
+        _section_entry_count(content, "experience"),
+        _visible_tech_stack_count(content),
+    )
 
     values: dict[str, Any] = {
         "content": content,

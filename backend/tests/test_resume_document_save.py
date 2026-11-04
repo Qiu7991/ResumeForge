@@ -362,3 +362,117 @@ def test_conditional_write_reports_a_missing_row_as_not_found(db_session):
         expected_revision=None,
     )
     assert outcome is None
+
+
+def test_manual_save_hides_tech_stack_when_preference_disabled(client, db_session):
+    """「显示技术栈」是全局显示偏好，手工保存也必须让它成立。
+
+    覆盖清单的「从资料补上这段」会把资料投影里的整条项目 clone 进文档
+    （``projectionContent.ts::fillProjectionCandidate``），而投影里的 ``tech_stack``
+    本来就是 ``placement=trail``。这条路径走手工保存（``PUT /{id}``），如果只在
+    AI 生成链路里剥技术栈，就会出现「生成时藏好了 → 补一段 → 又露出来」的反复复发。
+
+    **只验证隐藏方向与数据保留**：值是用户资料，不能删；`hidden` 只是不上纸面。
+    """
+    from app.services.profile.generation_preferences import save_generation_preferences
+
+    save_generation_preferences(db_session, include_tech_stack=False)
+    record_id = _create(client)
+
+    tech_document = {
+        "version": 2,
+        "language": "zh-CN",
+        "header": {
+            "items": [
+                {
+                    "kind": "field",
+                    "key": "name",
+                    "value": "张示例",
+                    "placement": "name",
+                }
+            ]
+        },
+        "sections": [
+            {
+                "key": "projects",
+                "title": "项目经历",
+                "kind": "entries",
+                "entries": [
+                    {
+                        "items": [
+                            {
+                                "kind": "field",
+                                "key": "name",
+                                "value": "补进来的项目",
+                                "placement": "title",
+                            },
+                            {
+                                "kind": "list",
+                                "key": "tech_stack",
+                                "values": ["Python", "FastAPI"],
+                                "placement": "trail",
+                            },
+                        ]
+                    }
+                ],
+            }
+        ],
+    }
+
+    response = _save(client, record_id, content=tech_document, expected=0)
+    assert response.status_code == 200, response.text
+
+    stored = _row(db_session, record_id).content
+    projects = next(section for section in stored["sections"] if section["key"] == "projects")
+    tech_item = next(
+        item for item in projects["entries"][0]["items"] if item.get("key") == "tech_stack"
+    )
+    assert tech_item["placement"] == "hidden"
+    # 数据保留（只是不上纸面）
+    assert tech_item["values"] == ["Python", "FastAPI"]
+    assert tech_item["hidden_from"] == "trail"
+
+
+def test_manual_save_keeps_tech_stack_visible_when_preference_enabled(client, db_session):
+    """开关打开时不得反向隐藏：用户明确要露技术栈。"""
+    from app.services.profile.generation_preferences import save_generation_preferences
+
+    save_generation_preferences(db_session, include_tech_stack=True)
+    record_id = _create(client)
+    document = {
+        "version": 2,
+        "language": "zh-CN",
+        "header": {
+            "items": [
+                {"kind": "field", "key": "name", "value": "张示例", "placement": "name"}
+            ]
+        },
+        "sections": [
+            {
+                "key": "projects",
+                "title": "项目经历",
+                "kind": "entries",
+                "entries": [
+                    {
+                        "items": [
+                            {"kind": "field", "key": "name", "value": "P", "placement": "title"},
+                            {
+                                "kind": "list",
+                                "key": "tech_stack",
+                                "values": ["Go"],
+                                "placement": "trail",
+                            },
+                        ]
+                    }
+                ],
+            }
+        ],
+    }
+
+    assert _save(client, record_id, content=document, expected=0).status_code == 200
+    stored = _row(db_session, record_id).content
+    projects = next(section for section in stored["sections"] if section["key"] == "projects")
+    tech_item = next(
+        item for item in projects["entries"][0]["items"] if item.get("key") == "tech_stack"
+    )
+    assert tech_item["placement"] == "trail"

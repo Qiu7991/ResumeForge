@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -35,6 +36,8 @@ from .resume_dedupe import dedupe_resume, limit_resume
 from .resume_tech_stack import strip_resume_tech_stack
 
 __all__ = ["finalize_ai_document"]
+
+logger = logging.getLogger(__name__)
 
 
 def finalize_ai_document(
@@ -70,4 +73,54 @@ def finalize_ai_document(
         document = strip_resume_tech_stack(document)
     normalized = parse_document(document)
     validate_document_ids_v2(normalized)
-    return document_to_json(normalized)
+    result = document_to_json(normalized)
+    # 收口效果的可观测性：一行日志能回答"技术栈剥了没 / 页数截了没"。
+    # 排障时不必再靠猜——历史上这两个不变量失效过一次，当时没有任何日志可看。
+    logger.info(
+        "AI 文档收口 page_limit=%s include_tech_stack=%s 项目=%d 经历=%d 可见技术栈=%d",
+        page_limit,
+        include_tech_stack,
+        _entry_count(result, "projects"),
+        _entry_count(result, "experience"),
+        _visible_tech_stack_count(result),
+    )
+    return result
+
+
+def _entry_count(document: dict, section_key: str) -> int:
+    """某个板块的条目数（v2 形状）；没有该板块返回 0。"""
+    for section in document.get("sections") or []:
+        if isinstance(section, dict) and section.get("key") == section_key:
+            entries = section.get("entries")
+            return len(entries) if isinstance(entries, list) else 0
+    return 0
+
+
+def _visible_tech_stack_count(document: dict) -> int:
+    """会上纸面的技术栈项数（placement != hidden 且 values 非空）。"""
+    count = 0
+    for section in document.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        for entry in section.get("entries") or []:
+            if not isinstance(entry, dict):
+                continue
+            for item in entry.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("kind") not in {"field", "list"}:
+                    continue
+                key = str(item.get("key") or "")
+                source = item.get("source")
+                is_tech = key == "tech_stack" or (
+                    isinstance(source, dict)
+                    and str(source.get("field_id") or "").endswith(".tech_stack")
+                )
+                if not is_tech or item.get("placement") == "hidden":
+                    continue
+                values = item.get("values")
+                if isinstance(values, list) and values:
+                    count += 1
+                elif str(item.get("value") or "").strip():
+                    count += 1
+    return count
