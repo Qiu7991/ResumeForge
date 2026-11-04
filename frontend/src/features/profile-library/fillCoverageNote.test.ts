@@ -128,13 +128,36 @@ describe("fillCoverageNote", () => {
     expect(second.filled).toBe(0);
   });
 
-  it("缺失技能作为新条目追加，且不重复", () => {
-    const note = { section: "skills", names: ["Rust"] };
-    const first = fillCoverageNote(baseDocument(), projection(), note);
-    const second = fillCoverageNote(first.document, projection(), note);
+  it("技能只补正文里出现过的相关词，不相关的跳过", () => {
+    // 正文（项目描述）里没有出现 Rust → 不补。资料库有几十个技能，
+    // 无差别补齐会把技能板块撑爆，与"按岗位定制"背道而驰。
+    const unrelated = fillCoverageNote(baseDocument(), projection(), {
+      section: "skills",
+      names: ["Rust"],
+    });
+    expect(names(unrelated.document, "skills")).toEqual(["TypeScript"]);
+    expect(unrelated.filled).toBe(0);
+  });
 
-    expect(names(first.document, "skills")).toEqual(["TypeScript", "Rust"]);
-    expect(names(second.document, "skills")).toEqual(["TypeScript", "Rust"]);
+  it("技能里与正文相关的会补进来，且重复调用不产生第二份", () => {
+    // 让正文出现「Rust」这个词（项目亮点里写一句），此时它才算"相关"。
+    const doc = baseDocument();
+    const projects = doc.sections.find((section) => section.key === "projects")!;
+    projects.entries[0].items.push({ kind: "text", id: "ob_t9", text: "用 Rust 重写了核心模块" } as never);
+
+    const projectionData = projection();
+    const relevant = fillCoverageNote(doc, projectionData, {
+      section: "skills",
+      names: ["Rust"],
+    });
+    expect(names(relevant.document, "skills")).toContain("Rust");
+
+    const again = fillCoverageNote(relevant.document, projectionData, {
+      section: "skills",
+      names: ["Rust"],
+    });
+    const occurrences = names(again.document, "skills").filter((n) => n === "Rust");
+    expect(occurrences).toHaveLength(1);
   });
 
   it("个人总结按资料原文替换当前段落", () => {

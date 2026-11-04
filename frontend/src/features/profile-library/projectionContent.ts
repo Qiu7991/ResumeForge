@@ -324,6 +324,20 @@ export function fillProjectionCandidate(
     ? section.entries.find((entry) => entryIdentity(entry)?.value === identity.value)
     : undefined;
   if (!target) {
+    // 技能板块：投影里的技能名往往比简历里已有的**更细**（「Prompt 工程与 JSON 契约设计」
+    // vs 简历里已有的「Python」）。只按名字精确比对，会把同一能力的另一种说法当成新技能
+    // 整条追加——实测把 12 条技能补成 53 条。这里按**包含关系**兜一层：已有名与新名
+    // 互相包含时视为同一个技能，跳过（返回 filled=0，调用方据此不重复提示成功）。
+    if (section.key === "skills" && identity) {
+      const similar = section.entries.some((entry) => {
+        const existing = entryIdentity(entry);
+        if (!existing) return false;
+        return (
+          existing.value.includes(identity.value) || identity.value.includes(existing.value)
+        );
+      });
+      if (similar) return { document, filled: 0, materialOnly: false };
+    }
     const entry = cloneEntryWithNewIds(resolved.entry);
     return {
       document: replaceSectionEntries(withSection, section.key, [...section.entries, entry]),
@@ -454,9 +468,16 @@ export function fillCoverageNote(
   const candidates = resolvableProjectionCandidates(projection);
   let next = document;
   let filled = 0;
+  // 这份简历正文的可见文字（用于技能的"相关性"判断）：只补正文里已经出现过的能力词，
+  // 不把资料库里几十个与本次岗位无关的技能全搬进来。
+  const bodyText = note.section === "skills" ? resumeVisibleText(document) : "";
   for (const name of note.names) {
     const key = normalizeForCompare(name);
     if (!key) continue;
+    // 技能：只补「正文/已有技能里已经出现过相关词」的那几个。
+    // 实测资料库有 52 个技能、简历里只有 12 个，无差别补齐会把技能板块撑到 50+ 条，
+    // 与"按岗位定制"背道而驰。相关 = 名字里的任一词（长度≥2）出现在正文里。
+    if (note.section === "skills" && !isSkillRelevant(name, bodyText)) continue;
     // 不做全文子串过滤：像「C++」这种短技能可能恰好出现在别的正文里，跳过会把真正
     // 缺失的条目漏掉。合并本身按身份/文本去重，重复调用是幂等的。
     // 个人总结在投影里没有 v2 条目路径（后端候选不带 document_entry），直接从投影
@@ -499,6 +520,48 @@ export function fillCoverageNote(
     }
   }
   return { document: next, filled, materialOnly: false };
+}
+
+/** 简历正文（含已有技能名）压成一条小写串；只用于技能相关性判断。 */
+function resumeVisibleText(document: ResumeDocument): string {
+  const parts: string[] = [];
+  const walk = (value: unknown): void => {
+    if (typeof value === "string") {
+      parts.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        // id / source 这类结构字段不参与相关性判断。
+        if (key === "id" || key === "source" || key === "layout") continue;
+        walk(item);
+      }
+    }
+  };
+  walk(document.sections);
+  return parts.join("\n").toLowerCase();
+}
+
+/**
+ * 技能是否与这份简历相关：名字里任一分词（长度≥2）出现在正文里。
+ *
+ * 判据刻意保守——只有这样才不会把「ROS2」「Modbus」这种跟当前岗位毫无关系的技能
+ * 塞进一份 AI 产品简历。中文按 2 字滑窗、英文按空白/斜杠切词。
+ */
+function isSkillRelevant(name: string, bodyText: string): boolean {
+  if (!bodyText) return false;
+  const normalized = bodyText.replace(/\s+/g, "").toLowerCase();
+  const nameKey = name.replace(/\s+/g, "").toLowerCase();
+  if (nameKey.length >= 2 && normalized.includes(nameKey)) return true;
+  const tokens = name
+    .split(/[\s/、,，+\-（）()]+/)
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => token.length >= 2);
+  return tokens.some((token) => normalized.includes(token));
 }
 
 function candidateMatchesName(resolved: ResolvedProjectionCandidate, key: string): boolean {

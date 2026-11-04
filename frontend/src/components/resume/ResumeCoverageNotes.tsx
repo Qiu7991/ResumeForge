@@ -72,6 +72,22 @@ export default function ResumeCoverageNotes({
     note.names.map((name) => `「${name}」`).join("、") + // i18n-ok: 同上，模型 prompt 里的中文引号与顿号
     "。补充时使用这些条目在个人资料中的原文事实，不要虚构细节。"; // i18n-ok: 同上，模型 prompt
 
+  /**
+   * 「从资料补上这段」实际要补的名单：只取 ``model_omitted``，**不取 filtered**。
+   *
+   * ``filtered`` 是"岗位关键词交集不足、本次根本没进候选资料"的条目——它们是岗位导向
+   * 筛选的正常结果，用户不该一键把它们全部塞回简历。只有 ``model_omitted``（进了候选
+   * 但模型没写）才是一键补全该处理的对象。
+   *
+   * 没有这两个字段的旧记录（只有 names）退回 names，行为与以前一致。
+   */
+  const fillableNote = (note: ResumeCoverageNote): ResumeCoverageNote => {
+    const omitted = note.model_omitted ?? [];
+    const filtered = note.filtered ?? [];
+    if (omitted.length === 0 && filtered.length === 0) return note;
+    return { ...note, names: omitted.length > 0 ? omitted : note.names };
+  };
+
   /** 把多个资料名排成一行：引号与分隔符随界面语言（提示块正文用）。 */
   const formatNames = (names: string[]): string =>
     names
@@ -129,7 +145,7 @@ export default function ResumeCoverageNotes({
                     type="primary"
                     ghost
                     onClick={() =>
-                      onFillSection ? onFillSection(note) : onRevise(reviseInstructions(note))
+                      onFillSection ? onFillSection(fillableNote(note)) : onRevise(reviseInstructions(note))
                     }
                   >
                     {onFillSection ? t("resume.coverage.fill") : t("resume.coverage.revise")}
