@@ -47,6 +47,7 @@ from ..schemas.common import Page
 from ..services import trash
 from ..services.apply import apply_service, task_runner
 from ..services.job.job_match import generate_greeting, job_payload
+from ..services.job.job_match_context import resume_prompt_text
 from ..services.llm import create_provider
 from ..services.llm.base import LLMError
 from ..services.settings_service import get_llm_config
@@ -244,11 +245,12 @@ async def greeting_preview(
         return GreetingPreviewOut(greeting=config.default_greeting.strip(), source="default")
 
     # 招呼语按这份简历写——否则会出现"招呼语里说 A 项目、实际投的简历是 B 版本"的割裂。
+    # 用紧凑 markdown 而不是 json.dumps(content)：v2 文档序列化成 JSON 有 3 万字符，
+    # 而在 job_match 的 8000 字预算里只会保留前 27%，后面的项目/技能/总结全被截掉，
+    # 模型只看到第一个项目，于是每次招呼语都拿它举例。
     resume_text = ""
     if resume is not None:
-        resume_text = json.dumps(
-            {"title": resume.title, "content": resume.content}, ensure_ascii=False
-        )
+        resume_text = resume_prompt_text(db, resume)
     payload_data = job_payload(job)
     provider = create_provider(llm)
     db.close()
