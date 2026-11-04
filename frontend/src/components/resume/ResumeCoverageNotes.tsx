@@ -32,6 +32,14 @@ const PROFILE_SECTION_KEY_ALIASES: Record<string, string> = {
 interface Props {
   /** 结构化的分区级清单（新生成的记录才有）。 */
   notes: ResumeCoverageNote[];
+  /**
+   * 刚「从资料补上这段」成功的板块。
+   *
+   * 补进去之后后端会把它们从 ``notes`` 移除（内容已写进正文，清单自然收窄），
+   * 用户却常常紧接着就要润色刚补的那段——清单项一消失，「AI 润色这段」按钮也跟着
+   * 不见。这里把这些板块并回渲染列表，但只留润色动作（不再给「从资料补上」）。
+   */
+  justFilled?: ResumeCoverageNote[];
   /** 旧记录把未收录警告混在 `warnings` 文本里：按特征句拆出来的那几条。 */
   legacyWarnings: string[];
   /** 「AI 补上这段」：把拼好的指令交给宿主的修订弹窗。 */
@@ -46,6 +54,7 @@ interface Props {
 
 export default function ResumeCoverageNotes({
   notes,
+  justFilled = [],
   legacyWarnings,
   onRevise,
   onFillSection,
@@ -53,8 +62,8 @@ export default function ResumeCoverageNotes({
   onOpenEditor,
 }: Props) {
   const { t } = useI18n();
-  // 两类数据都空时整块不渲染：空壳会在每份简历的弹窗里多出一条什么都没有的提示条。
-  if (notes.length === 0 && legacyWarnings.length === 0) return null;
+  // 三类数据都空时整块不渲染：空壳会在每份简历的弹窗里多出一条什么都没有的提示条。
+  if (notes.length === 0 && justFilled.length === 0 && legacyWarnings.length === 0) return null;
 
   /** 一句话把这条分区清单变成"只补这些、其余不动"的修订指令。 */
   const reviseInstructions = (note: ResumeCoverageNote): string =>
@@ -80,6 +89,18 @@ export default function ResumeCoverageNotes({
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {t("resume.coverage.intro")}
           </Typography.Text>
+          {justFilled.map((note) => (
+            <div key={`filled:${note.section}:${note.section_label}`}>
+              <Typography.Text strong style={{ fontSize: 13 }}>
+                {t("resume.coverage.filledSection", { label: note.section_label })}
+              </Typography.Text>
+              <Space size={8} style={{ marginTop: 6 }} wrap>
+                <Button size="small" onClick={() => onPolishSection?.(note)}>
+                  {t("resume.coverage.polish")}
+                </Button>
+              </Space>
+            </div>
+          ))}
           {notes.map((note, index) => {
             // 分区名走语言包（按稳定的 `section` 键，先归一对资料侧的复数键），
             // 后端下发的原文只作未知分区的回退；喂给模型的修订指令仍用后端原文，不本地化。

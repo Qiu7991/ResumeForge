@@ -77,7 +77,7 @@ const resume = {
   "resume.coverage.fillSuccess": "Added {count} fields from Profile",
   "resume.coverage.fillFailed": "Could not add from Profile",
   "resume.coverage.polish": "Polish with AI",
-  "resume.coverage.justFilledTitle": "Added to resume — polish it now",
+  "resume.coverage.filledSection": "{label} (added — polish it now)",
   "resume.coverage.openEditor": "Open manual edit",
 
   "resume.revise.title": "Revise Resume with AI",

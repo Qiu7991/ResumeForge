@@ -12,9 +12,12 @@
  * 夹具、渲染入口与 CSS 断言辅助在 `src/test/resumeDetailPreviewHarness.tsx`
  * （2026-11 行数预算）；`vi.mock` 仍留在本文件——vitest 的 mock 注册是文件级的。
  */
+import { MemoryRouter } from "react-router-dom";
+import { App as AntdApp } from "antd";
+import ResumeCoverageNotes from "./ResumeCoverageNotes";
 import { t } from "../../i18n";
 import { headerFieldInput } from "../../test/headerChip";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 // @ts-expect-error Node 内置模块：@types/node 未安装，但 vitest 运行在 Node 里。
 import { readFileSync } from "node:fs";
 import type { ReactNode } from "react";
@@ -384,5 +387,42 @@ describe("ResumeDetailPreview 底部按钮排满整行", () => {
     // `grid-column: 4 / -1`"），直接匹配注释会命中它自己。剥完之后全文件只剩
     // `.resume-detail-footer-tail` 那条 `grid-column: 1 / -1`。
     expect(stripCssComments(css)).not.toMatch(/grid-column:\s*[2-9]/);
+  });
+});
+
+describe("补上这段之后的润色入口", () => {
+  it("补入成功后仍保留「AI 润色这段」，不会随清单项一起消失", async () => {
+    // 只给一层纯渲染断言：宿主传入 justFilled 时，那一行必须渲染出润色按钮。
+    // （补全动作本身走投影 API，由 fillCoverageNote.test.ts 覆盖。）
+    render(
+      <MemoryRouter>
+        <AntdApp>
+          <ResumeCoverageNotes
+            notes={[]}
+            justFilled={[
+              {
+                section: "projects",
+                section_label: "项目经历",
+                names: ["Amazon ESG"],
+                filtered: [],
+                model_omitted: [],
+                total: 1,
+              },
+            ]}
+            legacyWarnings={[]}
+            onRevise={vi.fn()}
+            onPolishSection={vi.fn()}
+            onOpenEditor={vi.fn()}
+          />
+        </AntdApp>
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByText("项目经历（已补进正文，可继续润色）"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "AI 润色这段" })).toBeInTheDocument();
+    // 已经补过了，不该再给「从资料补上这段」。
+    expect(screen.queryByRole("button", { name: "从资料补上这段" })).toBeNull();
   });
 });
