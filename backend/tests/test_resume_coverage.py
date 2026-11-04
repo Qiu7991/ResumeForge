@@ -212,3 +212,62 @@ def test_remaining_coverage_notes_drops_summary_only_when_it_changed():
     previous = document("旧总结")
     assert remaining_coverage_notes(previous, notes, previous)  # 没改 → 继续提醒
     assert remaining_coverage_notes(document("资料里的总结"), notes, previous) == []
+
+
+def test_remaining_coverage_notes_matches_skills_by_entry_identity_not_substring():
+    """技能清单按**条目身份**比对，不能全文子串。
+
+    「Go」「C」「R」这类短名几乎必然命中任意正文（比如项目描述里的「做过 Go 服务」），
+    按子串判断会把没补上的技能误判成"已写入"而从清单删除——用户点「从资料补上这段」
+    后清单一整块消失、内容却没进简历。
+    """
+    from app.services.resume.resume_coverage import remaining_coverage_notes
+
+    notes = [
+        {
+            "section": "skills",
+            "section_label": "专业技能",
+            "names": ["Go", "C", "R", "Rust", "Git", "Docker"],
+            "filtered": [],
+            "model_omitted": ["Go", "C", "R", "Rust", "Git", "Docker"],
+            "total": 6,
+        }
+    ]
+
+    def document(skill_names: list[str]) -> dict:
+        return {
+            "version": 2,
+            "sections": [
+                {
+                    "key": "projects",
+                    "entries": [
+                        {
+                            "items": [
+                                {"kind": "text", "text": "做过 Go 服务，也用 C 写过固件"}
+                            ]
+                        }
+                    ],
+                },
+                {
+                    "key": "skills",
+                    "entries": [
+                        {
+                            "items": [
+                                {"kind": "field", "key": "name", "value": name}
+                                for name in skill_names
+                            ]
+                        }
+                    ],
+                },
+            ],
+        }
+
+    # 正文里提到 Go / C，但技能板块一条都没有 → 清单必须原样保留
+    untouched = remaining_coverage_notes(document([]), notes)
+    assert [note["names"] for note in untouched] == [
+        ["Go", "C", "R", "Rust", "Git", "Docker"]
+    ]
+
+    # 真的补进去 Go 和 Rust → 清单收窄到剩下的四个
+    partially = remaining_coverage_notes(document(["Go", "Rust"]), notes)
+    assert [note["names"] for note in partially] == [["C", "R", "Git", "Docker"]]

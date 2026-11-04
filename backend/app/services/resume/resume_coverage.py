@@ -360,6 +360,42 @@ def _section_text(document: dict[str, Any] | Any, key: str) -> str:
     return _coverage_text(value) if isinstance(value, str) else ""
 
 
+#: 条目的身份字段：这些字段的值代表"这一条在不在"，与正文里偶然提到某个词无关。
+_IDENTITY_FIELD_KEYS = ("name", "company", "school", "organization", "title")
+
+
+def _entry_identity_values(document: dict[str, Any] | Any, section_key: str) -> set[str]:
+    """某个板块里**已存在条目**的身份字段值（规范化后的集合）。
+
+    为什么需要它：判断"技能 / 项目 / 公司有没有写进简历"不能用全文子串——
+    ``「Go」`` ``「C」`` ``「R」`` 这类短名几乎必然命中别的正文，于是清单项被误判成
+    "已补上"而从清单消失，用户看到的却是内容根本没进来（前端
+    ``projectionContent.ts`` 的注释里已经踩过同一个坑，这里不能再踩一次）。
+    技能名、项目名、公司名都是条目的身份字段，按集合比较才是准确口径。
+    """
+    data = document.model_dump() if hasattr(document, "model_dump") else document
+    if not isinstance(data, dict):
+        return set()
+    values: set[str] = set()
+    for section in data.get("sections") or []:
+        if not isinstance(section, dict) or section.get("key") != section_key:
+            continue
+        for entry in section.get("entries") or []:
+            if not isinstance(entry, dict):
+                continue
+            for item in entry.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("kind") != "field":
+                    continue
+                if item.get("key") not in _IDENTITY_FIELD_KEYS:
+                    continue
+                normalized = _normalize_field_text(item.get("value"))
+                if normalized:
+                    values.add(normalized)
+    return values
+
+
 def remaining_coverage_notes(
     document: dict[str, Any] | Any,
     notes: list[dict[str, Any]],
@@ -379,6 +415,8 @@ def remaining_coverage_notes(
     compact = "".join(str(text).split()).casefold()
     summary_now = _section_text(document, "summary")
     summary_before = _section_text(previous, "summary") if previous is not None else ""
+    # 每个板块已存在的条目身份值（技能名 / 项目名 / 公司名…）。空集合表示该板块没有条目。
+    identity_cache: dict[str, set[str]] = {}
     remaining: list[dict[str, Any]] = []
     for note in notes or []:
         if not isinstance(note, dict):
@@ -390,11 +428,22 @@ def remaining_coverage_notes(
             and summary_now != summary_before
         ):
             continue
+        section = str(note.get("section") or "")
+        if section not in identity_cache:
+            identity_cache[section] = _entry_identity_values(document, section)
+        written_identities = identity_cache[section]
+        # skills 的清单名是**技能名**（条目身份），只认精确集合，不做全文子串：
+        # 「Go」「C」「R」会命中任意正文，误判成"已补上"会让清单项凭空消失。
+        identity_only = section == "skills"
         names = [
             str(name).strip()
             for name in (note.get("names") or [])
             if str(name).strip()
-            and "".join(str(name).split()).casefold() not in compact
+            and (
+                _normalize_field_text(name) not in written_identities
+                if identity_only
+                else "".join(str(name).split()).casefold() not in compact
+            )
         ]
         if not names:
             continue
