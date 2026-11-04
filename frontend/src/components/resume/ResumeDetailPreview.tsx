@@ -8,7 +8,8 @@
  */
 import type { Props } from "./ResumeDetailPreview.types";
 import type { ResumeDocument } from "../../types/resumeDocument";
-import { App, Collapse, Space, Tag, Tooltip, Typography } from "antd";
+import type { ResumeCoverageNote } from "../../types/resume";
+import { Alert, App, Button, Collapse, Space, Tag, Tooltip, Typography } from "antd";
 import { useMemo, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
@@ -82,6 +83,11 @@ export default function ResumeDetailPreview({
   const [reviseOpen, setReviseOpen] = useState(false);
   const [reviseInstructions, setReviseInstructions] = useState("");
   const [fillingCoverage, setFillingCoverage] = useState(false);
+  // 刚刚「从资料补上这段」成功补入的板块。补进去之后后端会把对应清单项移除
+  // （内容已写进正文，清单自然收窄），但用户往往**紧接着**就想润色刚补的那段——
+  // 清单项一消失，「AI 润色这段」按钮也随之不见，只能重新打开清单或重生成。
+  // 这里把刚补过的板块留在界面上（只在本页会话内），润色入口因此不会断。
+  const [justFilledSections, setJustFilledSections] = useState<ResumeCoverageNote[]>([]);
   const [qualityOpen, setQualityOpen] = useState(false);
   const [exportOptionsOpen, setExportOptionsOpen] = useState(false);
   // W19：制作台动作条的「导出」打开「导出交付包」弹层（旧面板仍留给主预览入口）。
@@ -160,6 +166,24 @@ export default function ResumeDetailPreview({
       );
       if (result.filled > 0) {
         await onSaveEditedResume(result.document);
+        // 记住刚补过的板块：后端会把它从 coverage_notes 移走，用户紧接着想润色时
+        // 需要一个入口（否则按钮随清单一起消失）。
+        setJustFilledSections((previous) => {
+          const rest = previous.filter(
+            (item) => item.section !== note.section || item.section_label !== note.section_label,
+          );
+          return [
+            ...rest,
+            {
+              section: note.section,
+              section_label: note.section_label,
+              names: note.names,
+              filtered: [],
+              model_omitted: [],
+              total: note.names.length,
+            },
+          ];
+        });
         if (!options.quiet) {
           message.success(t("resume.coverage.fillSuccess", { count: result.filled }));
         }
@@ -289,6 +313,42 @@ export default function ResumeDetailPreview({
         // 预览里不再提供手动编辑：这条提示指向「简历制作台」，详细编辑都在那边做。
         onOpenEditor={() => setZoomOpen(true)}
       />
+      {/* 刚补进去的板块：清单已被后端收窄，但用户常常紧接着想润色刚补的那段。
+          这里只留「AI 润色这段」一个动作（不再有「从资料补上」——已经补过了）。 */}
+      {justFilledSections.length > 0 && (
+        <Alert
+          type="success"
+          showIcon
+          style={{ marginBottom: 12 }}
+          title={t("resume.coverage.justFilledTitle")}
+          description={
+            <div style={{ display: "grid", gap: 8 }}>
+              {justFilledSections.map((note) => (
+                <div key={`${note.section}:${note.section_label}`}>
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    {note.section_label}
+                  </Typography.Text>
+                  <Space size={8} style={{ marginLeft: 8 }}>
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        // 内容已经补进正文了，这里直接进润色弹窗，不再重复补。
+                        setReviseInstructions(
+                          `请只润色这份简历的${note.section_label}，使用其中已有的事实，不要新增项目、公司、数字或技能；` +
+                            `重点把以下内容表达得更清楚、更贴合岗位：${note.names.map((name) => `「${name}」`).join("、")}。`,
+                        );
+                        setReviseOpen(true);
+                      }}
+                    >
+                      {t("resume.coverage.polish")}
+                    </Button>
+                  </Space>
+                </div>
+              ))}
+            </div>
+          }
+        />
+      )}
       {/* 事实来源展示（RF-13）：回答"写进去的内容从哪来"，挂在 coverage Alert 之后、预览之前。 */}
       {factAnnotations.length > 0 && (
         <EvidencePanel annotations={factAnnotations} content={detail.content as never} />

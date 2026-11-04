@@ -140,6 +140,8 @@ const resume = {
   "resume.coverage.fillSuccess": "已从资料补入 {count} 个字段",
   "resume.coverage.fillFailed": "从资料补入失败",
   "resume.coverage.polish": "AI 润色这段",
+  /** 「刚补进正文」提示条的标题：清单已收窄，这里的按钮只做润色。 */
+  "resume.coverage.justFilledTitle": "已补进正文，可继续润色",
   /** 打开手动调整的按钮。 */
   "resume.coverage.openEditor": "打开手动调整",
 
