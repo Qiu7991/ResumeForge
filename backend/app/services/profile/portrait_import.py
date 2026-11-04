@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Collection
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -272,19 +273,64 @@ def _find_entry(
     if exact in index:
         return exact
     if allow_contains and len(base) >= 4:
+        best_key, best_score = None, 0.0
         for key in index:
             if not key.startswith(prefix + ":"):
                 continue
             other = key.split(":", 1)[1]
-            if len(other) >= 4 and (base in other or other in base):
+            if len(other) < 4:
+                continue
+            if base in other or other in base:
                 return key
+            # 两个名字互不包含但指的是同一个项目：画像写「老年人居家康养异常行为
+            # 检测系统」，资料库里叫「基于 ESP32-S3 的居家康养异常行为检测系统」——
+            # 一个多前缀、一个多主语。用 2 字滑窗的重叠率判断语义相同，
+            # 阈值 0.6 是"主干明显相同、只是修饰语不同"的经验分界。
+            score = _name_overlap(base, other)
+            # 0.75 而不是 0.6：实测「CreatorDistill 创作者内容分析系统」与
+            # 「CreatorDistill 爆款拆解语料库」重叠 0.65 —— 它们共享品牌名但**是两个
+            # 不同项目**（一个是开源项目二次开发，一个是语料库产出）。误合的代价
+            # （两条变一条、内容混在一起）远高于漏合（多一条，人工删掉即可）。
+            if score >= 0.75 and score > best_score:
+                best_key, best_score = key, score
+        return best_key
     return None
 
 
+def _name_overlap(left: str, right: str) -> float:
+    """两个规范化名字的 2 字滑窗重叠率（交集 / 较短者的片段数）。
+
+    中文项目名没有空格可切词，2 字滑窗对"同一项目的不同说法"足够稳；
+    只用于**判断是否同一条**，不改变写入的名字。
+    """
+    def grams(text: str) -> set[str]:
+        return {text[i : i + 2] for i in range(len(text) - 1)}
+
+    a, b = grams(left), grams(right)
+    if not a or not b:
+        return 0.0
+    return len(a & b) / min(len(a), len(b))
+
+
 def plan_portrait(
-    db: Session, bundle: dict[str, Any], *, source_label: str = "个人画像"
+    db: Session,
+    bundle: dict[str, Any],
+    *,
+    source_label: str = "个人画像",
+    overwrite_names: Collection[str] | None = None,
 ) -> dict[str, Any]:
-    """只计算计划，不写库。返回条目/事实的 create/update/skip 明细。"""
+    """只计算计划，不写库。返回条目/事实的 create/update/skip 明细。
+
+    ``overwrite_names``：需要**整体覆盖**（而不是只补空字段）的项目名集合。
+    默认空 —— 已有条目一律只补空字段，因为名字/描述可能是用户手改过的。
+
+    什么时候需要覆盖：用户在画像里**重写了某个项目**（例如把零散的内容生产线
+    合并重写成一条 AIGC 生产体系），此时旧的描述/要点已经过时，只补空字段等于
+    新内容一个字都进不来。名字按规范化后比较（与 ``_find_entry`` 同一口径）。
+    """
+    overwrite_keys = {
+        _base_key(_display_name(name)) for name in (overwrite_names or ()) if str(name).strip()
+    }
     workspace_bootstrap.ensure_workspace(db)
     existing = _existing_entries(db)
     entry_items: list[dict[str, Any]] = []
@@ -308,11 +354,16 @@ def plan_portrait(
         match_key = _find_entry(existing, prefix, match_value, allow_contains=allow_contains)
         current = existing.get(match_key) if match_key is not None else None
         if current is not None:
-            # 已有条目只补空字段：名字/标题/描述等用户可能已经改过，导入不覆盖。
+            # 已有条目默认只补空字段：名字/标题/描述等用户可能已经改过，导入不覆盖。
+            # 例外：调用方在 overwrite_names 里点名的项目 —— 那是"用户自己重写了这份
+            # 素材"，旧内容已过时，必须让新内容落进去，否则导入是静默无效的。
             merged = dict(current["values"])
-            for field, value in values.items():
-                if not merged.get(field):
-                    merged[field] = value
+            if section == "projects" and _base_key(_display_name(match_value)) in overwrite_keys:
+                merged.update({field: value for field, value in values.items() if value})
+            else:
+                for field, value in values.items():
+                    if not merged.get(field):
+                        merged[field] = value
             values = merged
             entry_items.append(
                 {
@@ -331,7 +382,12 @@ def plan_portrait(
         if not isinstance(project, dict) or not _text(project.get("name")):
             continue
         name = _display_name(project.get("name"))
-        entry_index = add_entry("projects", name, _project_values(project), name)
+        # allow_contains：项目名常带修饰（「基于 ESP32-S3 的居家康养异常行为检测系统」vs
+        # 资料库里已有的「老年人居家康养异常行为检测系统」），只按精确名匹配会**重复建条目**。
+        # 包含式匹配把这类视为同一条，后续按"只补空字段"合并。
+        entry_index = add_entry(
+            "projects", name, _project_values(project), name, allow_contains=True
+        )
         claims.append(
             {
                 **_claim_fact(
@@ -431,10 +487,20 @@ def plan_portrait(
 
 
 def apply_portrait(
-    db: Session, bundle: dict[str, Any], *, source_label: str = "个人画像"
+    db: Session,
+    bundle: dict[str, Any],
+    *,
+    source_label: str = "个人画像",
+    overwrite_names: Collection[str] | None = None,
 ) -> dict[str, Any]:
-    """按计划写库：先写资料库条目，拿到 entry_id 后再写事实台账。"""
-    plan = plan_portrait(db, bundle, source_label=source_label)
+    """按计划写库：先写资料库条目，拿到 entry_id 后再写事实台账。
+
+    ``overwrite_names`` 原样传给 :func:`plan_portrait`（见那里关于"覆盖 vs 只补空"
+    的说明）——预览与实际写入必须用同一份计划，否则预览说会覆盖、写入却没覆盖。
+    """
+    plan = plan_portrait(
+        db, bundle, source_label=source_label, overwrite_names=overwrite_names
+    )
     if not plan["entry_items"]:
         return {**plan, "applied": True, "entry_count": 0, "claim_count": 0}
 

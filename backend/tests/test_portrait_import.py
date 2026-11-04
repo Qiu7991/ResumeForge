@@ -205,3 +205,94 @@ def test_update_keeps_fields_the_portrait_does_not_provide(db_session):
     row = next(row for row in _entries(db_session, "projects") if row.values["projects.name"] == "边缘 AI 跌倒检测")
     assert row.values["projects.public_url"] == "https://example.com/fall-detection"
     assert row.values["projects.role"] == "算法与部署"
+
+
+def test_overwrite_names_replaces_project_fields_instead_of_only_filling_blanks(db_session):
+    """``overwrite_names`` 点名的项目要**整体覆盖**，不能只补空字段。
+
+    场景：用户在画像里重写了某个项目（例如把零散的内容生产线合并重写成一条），
+    此时旧的描述/要点已过时。若仍按"只补空字段"，新内容一个字都进不来 —— 导入
+    表面成功（返回 200）却静默无效，是最难查的一类失败。
+    """
+    entry_store.bulk_save_entries(
+        db_session,
+        [
+            {
+                "section_key": "projects",
+                "values": {
+                    "projects.name": "边缘 AI 跌倒检测",
+                    "projects.role": "算法与部署",
+                    "projects.description": "旧描述：只有一句话。",
+                },
+            }
+        ],
+    )
+
+    plan = plan_portrait(
+        db_session, BUNDLE, overwrite_names=["边缘 AI 跌倒检测"]
+    )
+    project_item = next(
+        item for item in plan["entry_items"] if item["section_key"] == "projects"
+    )
+    # 描述被新内容替换（不是保留旧的）
+    assert "旧描述" not in project_item["values"]["projects.description"]
+    assert project_item["values"]["projects.description"]
+
+
+def test_overwrite_only_applies_to_named_projects(db_session):
+    """没被点名的项目仍走"只补空字段"，用户手改的内容不会被覆盖。"""
+    entry_store.bulk_save_entries(
+        db_session,
+        [
+            {
+                "section_key": "projects",
+                "values": {
+                    "projects.name": "边缘 AI 跌倒检测",
+                    "projects.description": "用户手写的描述，不能被导入覆盖。",
+                },
+            }
+        ],
+    )
+
+    plan = plan_portrait(db_session, BUNDLE)  # 不传 overwrite_names
+    project_item = next(
+        item for item in plan["entry_items"] if item["section_key"] == "projects"
+    )
+    assert project_item["values"]["projects.description"] == "用户手写的描述，不能被导入覆盖。"
+
+
+def test_project_name_match_allows_contains_to_avoid_duplicates(db_session):
+    """项目名只差修饰语时应视为同一条，不能重复建。
+
+    真实事故：画像写「老年人居家康养异常行为检测系统」，资料库里已有
+    「基于 ESP32-S3 的居家康养异常行为检测系统」——只按精确名匹配会建出第二条。
+    """
+    entry_store.bulk_save_entries(
+        db_session,
+        [
+            {
+                "section_key": "projects",
+                "values": {
+                    "projects.name": "基于 ESP32-S3 的居家康养异常行为检测系统",
+                    "projects.role": "个人项目",
+                },
+            }
+        ],
+    )
+    bundle = {
+        "projects": [
+            {
+                "name": "老年人居家康养异常行为检测系统",
+                "role": "毕业设计",
+                "outcomes": ["10,429 行固件"],
+            }
+        ]
+    }
+
+    plan = plan_portrait(db_session, bundle)
+    created = [
+        item
+        for item in plan["entry_items"]
+        if item["section_key"] == "projects" and not item.get("entry_id")
+    ]
+    assert created == [], f"不应新建条目，实际新建了 {len(created)} 条"

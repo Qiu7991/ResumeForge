@@ -276,6 +276,16 @@ def main() -> int:
     parser.add_argument("--bundle", type=Path, default=DEFAULT_BUNDLE, help="抽取结果 JSON 缓存")
     parser.add_argument("--extract", action="store_true", help="强制重新调用模型抽取")
     parser.add_argument("--apply", action="store_true", help="确认写入数据库（会先备份）")
+    parser.add_argument(
+        "--overwrite",
+        action="append",
+        default=[],
+        metavar="项目名",
+        help=(
+            "整体覆盖这个已有项目（可重复）。默认只补空字段——用户把某个项目在画像里"
+            "重写过时，只补空字段等于新内容一个字都进不来，用这个点名覆盖。"
+        ),
+    )
     args = parser.parse_args()
 
     directory: Path = args.dir
@@ -296,7 +306,12 @@ def main() -> int:
     print(f"抽取摘要：{bundle_summary(bundle)}")
     db: Session = SessionLocal()
     try:
-        plan = plan_portrait(db, bundle, source_label=f"个人画像：{directory.name}")
+        plan = plan_portrait(
+            db,
+            bundle,
+            source_label=f"个人画像：{directory.name}",
+            overwrite_names=args.overwrite,
+        )
         print("\n预览（尚未写库）：")
         _print_plan(plan)
         if not args.apply:
@@ -308,7 +323,12 @@ def main() -> int:
         backup = _backup_database(db)
         if backup is not None:
             print(f"\n数据库已备份：{backup}")
-        result = apply_portrait(db, bundle, source_label=f"个人画像：{directory.name}")
+        result = apply_portrait(
+            db,
+            bundle,
+            source_label=f"个人画像：{directory.name}",
+            overwrite_names=args.overwrite,
+        )
         print(
             f"写入完成：资料库 {result['entry_count']} 条，事实台账 {result['claim_count']} 条。"
         )
