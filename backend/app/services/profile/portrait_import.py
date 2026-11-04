@@ -141,7 +141,9 @@ def _project_values(project: dict[str, Any]) -> dict[str, str]:
         "projects.highlights": _clip(
             "\n".join([*(wording or outcomes)]), MAX_MULTI_LINE_CHARS
         ),
-        "projects.project_size": _clip(project.get("project_size"), MAX_SINGLE_LINE_CHARS),
+        # projects.project_size 刻意不写：用户要求简历里**不出现「项目规模」这类行**
+        # （"20 个 API 路由、5 张数据表"这种规模罗列在纸面上像凑数，也不是他要展示的东西）。
+        # 字段本身还在 schema / 编辑器里，用户想手填仍可填；只是画像导入不再往里写。
         "projects.public_url": _clip(project.get("public_url"), MAX_SINGLE_LINE_CHARS),
         "projects.outcome_type": _choice(project.get("artifact_type"), _OUTCOME_TYPES),
     }

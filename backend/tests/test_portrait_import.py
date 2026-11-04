@@ -296,3 +296,31 @@ def test_project_name_match_allows_contains_to_avoid_duplicates(db_session):
         if item["section_key"] == "projects" and not item.get("entry_id")
     ]
     assert created == [], f"不应新建条目，实际新建了 {len(created)} 条"
+
+
+def test_import_does_not_write_project_size(db_session):
+    """画像导入**不写** ``projects.project_size``（用户明确要求简历里不要「项目规模」行）。
+
+    字段本身保留在 schema / 编辑器里（用户想手填仍可填），但导入链路不写它 ——
+    否则每次重新导入都会把「20 个 API 路由、5 张数据表」这类规模罗列塞回简历，
+    纸面上像凑数，也不是用户要展示的东西。
+    """
+    bundle = {
+        "projects": [
+            {
+                "name": "边缘 AI 跌倒检测",
+                "role": "算法与部署",
+                "outcomes": ["推理延迟 32ms"],
+                "project_size": "12 个 API 路由、3 张表、8000 行代码",
+            }
+        ]
+    }
+
+    apply_portrait(db_session, bundle)
+
+    row = next(
+        row
+        for row in _entries(db_session, "projects")
+        if row.values["projects.name"] == "边缘 AI 跌倒检测"
+    )
+    assert not str(row.values.get("projects.project_size") or "").strip()
