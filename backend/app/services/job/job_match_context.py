@@ -66,7 +66,12 @@ def profile_text(profile: ProfileOut | UserProfile | ConsumedProfile) -> str:
     )
 
 
-def resume_prompt_text(db: Session | None, record: Any) -> str:
+def resume_prompt_text(
+    db: Session | None,
+    record: Any,
+    *,
+    job_payload_data: dict[str, Any] | None = None,
+) -> str:
     """把一份简历压成**给模型看的紧凑文本**（标题 + 正文 markdown）。
 
     为什么不用 ``json.dumps(content)``：v2 文档是带 id / layout / placement 的富结构，
@@ -74,6 +79,9 @@ def resume_prompt_text(db: Session | None, record: Any) -> str:
     （``job_match._MAX_PERSONAL_CHARS``）——JSON 会把后面几个项目、专业技能、个人总结
     整段截掉，模型只看到第一个项目，于是每次招呼语都拿它举例。
     markdown 导出同一份简历只有 3–4 千字符，7 个项目全在里面。
+
+    ``job_payload_data`` 非空时，会把「项目经历」按与这份 JD 的相关度重排并标注第一名
+    （见 :mod:`jd_relevance`）；传 None（匹配分析等场景）保持简历原本的顺序。
 
     ``db`` 为空（纯函数上下文/脚本）时无法解析自定义字段定义，仍走 document_io 的
     默认转换路径；它只影响自定义字段的落位，不影响"内容是否完整"。
@@ -99,6 +107,11 @@ def resume_prompt_text(db: Session | None, record: Any) -> str:
     except Exception:  # noqa: BLE001 - 渲染失败不能连带把招呼语/匹配打断
         # 兜底：至少把纯文本字段捞出来，别让整次调用因为渲染异常而失败。
         body = json.dumps(content, ensure_ascii=False)
+    if job_payload_data:
+        # 按 JD 相关度重排项目：模型对"排在前面的内容"有强烈偏好，实测会举错项目。
+        from .jd_relevance import reorder_projects_by_relevance
+
+        body = reorder_projects_by_relevance(body, job_payload_data)
     title = str(getattr(record, "title", "") or "").strip()
     job_title = str(getattr(record, "job_title", "") or "").strip()
     header = f"# {title}" if title else ""

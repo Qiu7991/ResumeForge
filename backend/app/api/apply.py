@@ -248,10 +248,12 @@ async def greeting_preview(
     # 用紧凑 markdown 而不是 json.dumps(content)：v2 文档序列化成 JSON 有 3 万字符，
     # 而在 job_match 的 8000 字预算里只会保留前 27%，后面的项目/技能/总结全被截掉，
     # 模型只看到第一个项目，于是每次招呼语都拿它举例。
+    # 传入 JD 让它顺便按相关度重排项目：模型对"排在前面的内容"有强烈偏好，
+    # 实测会举错项目（JD 要具身智能、它却举了排第一的内容运营）。
+    payload_data = job_payload(job)
     resume_text = ""
     if resume is not None:
-        resume_text = resume_prompt_text(db, resume)
-    payload_data = job_payload(job)
+        resume_text = resume_prompt_text(db, resume, job_payload_data=payload_data)
     provider = create_provider(llm)
     db.close()
     # 客户端断开（用户关了预览/离开页面）：不生成、也不回退默认招呼语——没人收这份结果。
