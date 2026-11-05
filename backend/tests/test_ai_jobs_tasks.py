@@ -13,6 +13,12 @@ def _reset_busy():
     set_ai_jobs_busy(False)
     yield
     set_ai_jobs_busy(False)
+    # start_task 会取「ai-jobs」数据集租约且用例内不停（终态由引擎决定）；不清的
+    # 话租约悬挂在 dataset_scope._leases 里，泄漏到后续 test_dataset_scope 的
+    # leases_pending 断言（见 docs/fork-2.0-ai-jobs-blocked.md NOTE-3）。
+    from app.services.ai_jobs.tasks import _release_dataset_lease
+
+    _release_dataset_lease()
 
 
 # ===== 启动确认门 =====

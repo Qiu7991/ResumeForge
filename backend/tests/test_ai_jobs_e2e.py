@@ -23,7 +23,16 @@ def _reset_busy():
 def sidecar(client, monkeypatch, tmp_path):
     manager = fake_sidecar_manager(tmp_path)
     patch_manager(monkeypatch, manager)
-    return manager
+    yield manager
+    # 全流程用例会启动引擎任务且不在用例内停止（任务终态由引擎决定）；把「任务
+    # 运行中」的全局态（busy 标志 + 数据集租约）在用例后清掉，否则会泄漏到同进程
+    # 的后续测试——apply 侧互斥检查（task_runner.start 的 AI 检查）会把它们误拦，
+    # test_dataset_scope 的租约用例因此失败（见 docs/fork-2.0-ai-jobs-blocked.md NOTE-3）。
+    from app.services.ai_jobs import tasks as _ai_tasks
+    from app.services.ai_jobs.gate import set_ai_jobs_busy
+
+    set_ai_jobs_busy(False)
+    _ai_tasks._release_dataset_lease()
 
 
 def _seed_resume(db):

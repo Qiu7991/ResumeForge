@@ -155,3 +155,18 @@ PASS 互斥测试 test_ai_jobs_mutex.py — 4 passed
 **通用五类**：A PASS（脏岗位跳过/301字400/脏配置回默认探针）；B PASS（sent→APPLIED 映射+幂等回写测试）；C PASS（未运行/非JSON/连接错误/POST 不重试/超时分档 2/5/15/30s 全有测试）；D PASS（分支级回退 + apply_task_runner 24 绿；如实记录 task_runner 懒导入耦合点）；E DEFERRED（前端由会话 B 产出，合并后补验）。
 
 **A7 commit**：docs(ai-jobs): 对抗审查报告
+
+---
+
+## 2026-11-06 夜 · A8 收尾
+
+**A8.1 全量闸门 `--all`（含 phase 0-7 复跑 + phase 8）：PASS=34 FAIL=0 SKIP=9，EXIT=0**
+- SKIP 9 项均为既有口径（N7/N8 未移植 + 会话 B 前端项 + B-1 数据桥），非本轮范围。
+- phase 2 的 `-k apply` = 448 passed；phase 8 的 `-k ai_jobs` = 125 passed / 1 skipped（SK-1）。
+
+**A8.2 合并定向 `-k "ai_jobs or apply"`：567 passed / 1 skipped（SK-1）**
+- 首跑发现 NOTE-3（测试间租约泄漏，1.x 同样存在、联合选择器为本轮新增）：修测试基础设施（tasks autouse fixture 补租约释放 + e2e fixture teardown），未动任何断言。
+
+**A8.3 三方完好证明**：见晨间报告 §4。
+
+**A8.4 晨间报告**：docs/fork-2.0-ai-jobs-morning-report.md
