@@ -40,11 +40,14 @@ def captures_dir() -> Path:
 # 投递专用浏览器的 CDP 调试端口默认值。这是**唯一**的常量来源：
 # schemas 的配置出厂默认与 browser_manager 的兜底默认都从这里取，避免两处各写一个 9333
 # 而在改端口时漏改一处。运行期真正生效的端口由 ApplyConfig.browser_port 驱动。
-DEFAULT_BROWSER_PORT = 9333
+# 2.0 二开隔离（开发计划 §2.2②）：1.x 仍是 9333，两个实例不能抢同一个
+# Chrome 与同一份登录 profile，2.0 出厂默认改为 9343。
+DEFAULT_BROWSER_PORT = 9343
 
 # 网申填表专用浏览器使用固定的另一条调试端口，不与投递台共享进程或用户目录。
 # 这个端口不暴露为投递配置项，避免用户误把两类浏览器配置成同一个实例。
-DEFAULT_WEBFORM_BROWSER_PORT = 9334
+# 同上（§2.2②）：网申浏览器 1.x 用 9334，2.0 隔离为 9344。
+DEFAULT_WEBFORM_BROWSER_PORT = 9344
 
 # 桌面壳注入的环境变量（见 ``is_desktop_shell``）。放在模块顶层只为让"什么算真值"
 # 只有一个说法；判定本身必须是函数，测试才能靠 monkeypatch 环境变量驱动。
