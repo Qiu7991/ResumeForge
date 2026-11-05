@@ -1,14 +1,14 @@
 # 2.0 移植任务板
 
 > 恢复规则：新会话第一件事读本文件，找到第一个非 [x] 项继续，不重做已完成项。
-> 最后更新：2026-11-06 04:00
+> 最后更新：2026-11-06 04:40
 
 | 任务 | 状态 | 结论 / commit | 备注 |
 |---|---|---|---|
 | N0 环境搭建 | [x] | 完成，见 d893243 前基线 + 77d1baa/8738c5b/本次提交 | 闸门 phase 0 全绿后提交 |
 | N1 落点校对 | [x] | 完成（EXISTS 29 / MOVED 2 / GONE 12）| docs/fork-2.0-baseline.md 已替换占位桩 |
 | N2 迁移文件 | [x] | 0002_fork_apply_greeting_plan_aijob（单头，ast OK，未 apply）| 增量：greeting_confirmed×2+resume_generation_plan+ai_job_link；失败列上游已有不重复建 |
-| N3 投递台后端 | [ ] | | greeting_confirmed/失败分类/闸门/队列 |
+| N3 投递台后端 | [x] | 完成（代码全落位；-k apply 30 失败根因=上游测试语义，N4 消除）| phase2 PASS=4 FAIL=1 |
 | N4 投递台测试 | [ ] | | 移植 5 个测试文件 |
 | N5 BOSS 适配器 | [ ] | | 本轮范围外（§8.3） |
 | N6 AI 求职后端 | [ ] | | 本轮范围外（§8.3） |

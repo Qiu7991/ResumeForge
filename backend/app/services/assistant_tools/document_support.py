@@ -64,7 +64,7 @@ def render_settings(db: Session, record: ResumeRecord) -> dict:
 
     ``page_limit`` 在这里是**渲染上限**（``mode_page_limit`` 的结果，pdf_exporter 要一个
     正数 max_pages），``page_limit_is_unlimited`` 单独带出"用户选的是不限"这个语义：
-    ``render_settings(record.page_limit or 1)`` 会把不限折成 1 页——助手于是告诉用户
+    直接把 ``record.page_limit`` 用 ``or`` 兜底会把"不限"折成 1 页——助手于是告诉用户
     "上限 1 页"并把 PDF 真的裁到 1 页，这正好与用户的选择相反。
     """
     template, _html = resolve_style_template(db, record.template)

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+﻿# SPDX-License-Identifier: Apache-2.0
 # 只按本目录 runtime\*.json 的 PID 记录停止，绝不扫描端口、绝不按进程名匹配。
 # 原因：上游 Stop-ResumeForge.ps1 的兜底会枚举所有监听端口并用
 # "uvicorn app.main:app" 匹配，1.x 与 2.0 都满足该条件，会互相误杀。

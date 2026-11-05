@@ -190,6 +190,9 @@ def create_apply_task(db: Session, payload: ApplyTaskCreate) -> ApplyTask:
                 resume_id=resume.id if resume is not None else None,
                 resume_title=resume.title if resume is not None else "",
                 greeting=_clip_greeting(queue_item.greeting) if queue_item is not None else "",
+                greeting_confirmed=bool(queue_item.greeting_confirmed)
+                if queue_item is not None
+                else False,
                 sort_order=index,
             )
         )

@@ -381,8 +381,9 @@ def _shutdown_runtime_services(job_match_runner: JobMatchBackgroundRunner) -> No
     except Exception:  # noqa: BLE001 - 退出路径必须继续清理其它资源
         logging.getLogger(__name__).warning("关闭网申实时填表监听失败", exc_info=True)
     try:
-        # 两个管理器都只会停止自己持有的浏览器句柄，不会按 PID 猜测或触碰外部窗口。
-        apply_service.reset_browser_manager()
+        # 投递浏览器**不随应用关闭**：登录态属于用户，重启后还要继续用；只丢句柄，
+        # 下次启动通过调试端口接回。网申浏览器仍按原语义关闭。
+        apply_service.detach_browser_manager()
     except Exception:  # noqa: BLE001 - 退出路径必须继续清理其它资源
         logging.getLogger(__name__).warning("关闭投递专用浏览器失败", exc_info=True)
     try:

@@ -43,6 +43,9 @@ class ApplyQueueItemUpdate(BaseModel):
 
     greeting: str | None = Field(default=None, max_length=GREETING_INPUT_MAX_CHARS)
     resume_id: int | None = Field(default=None, ge=1)
+    # 保存招呼语时是否同时标记为「用户已确认」。默认 True（编辑弹窗保存即是人工确认）；
+    # 批量按岗位生成走 False——文案先落库，但闸门仍要等用户在编辑器里保存。
+    confirm_greeting: bool | None = None
 
 
 class ApplyQueueReorderRequest(BaseModel):
@@ -63,6 +66,8 @@ class ApplyQueueItemOut(BaseModel):
     resume_id: int | None = None
     resume_title: str = ""
     greeting: str = ""
+    # False = 招呼语还没经用户确认（AI 批量生成后即为此状态），开始投递时会被跳过。
+    greeting_confirmed: bool = False
     sort_order: int = 0
     status: QueueStatus = "pending"
     # 最近一次匹配结论摘要：未分析时 admission / hard_gate 为 None。

@@ -127,6 +127,9 @@ FAILURE_SELECTOR_INVALID = "selector_invalid"
 FAILURE_LOGIN_REQUIRED = "login_required"
 FAILURE_CAPTCHA_REQUIRED = "captcha_required"
 FAILURE_GREETING_MISSING = "greeting_missing"
+# 「有字但没确认」不是「缺失」：批量生成的草稿已经落库，只是没经用户点确认。两者要分开，
+# 否则进度表里明明写着招呼语、分类却显示「招呼语缺失」，用户只会以为程序坏了。
+FAILURE_GREETING_UNCONFIRMED = "greeting_unconfirmed"
 FAILURE_NETWORK_TIMEOUT = "network_timeout"
 FAILURE_FILE_UPLOAD_FAILED = "file_upload_failed"
 # 岗位不属于任何已注册的招聘网站（例如纯手动录入、来源与投递链接都指不到站点）。
@@ -139,17 +142,22 @@ FAILURE_PROFILE_INSUFFICIENT = "profile_insufficient"
 # 「无法确认」= 动手了但读不到成功凭据。**未知状态永不记成功**，也不能当成站点故障去熔断
 # （页面可能其实已经投出去了，重试反而会重复投递）——单列一类，让用户去浏览器核对。
 FAILURE_UNCONFIRMED = "unconfirmed"
+# 「职位已关闭 / 停止招聘」：站点页面还在，但没有沟通入口。这不是我们的故障、也不是
+# 选择器失效——按软跳过处理（不触发熔断），并写清原因让用户把它移出队列。
+FAILURE_JOB_CLOSED = "job_closed"
 FAILURE_UNKNOWN = "unknown"
 FAILURE_CATEGORIES = (
     FAILURE_SELECTOR_INVALID,
     FAILURE_LOGIN_REQUIRED,
     FAILURE_CAPTCHA_REQUIRED,
     FAILURE_GREETING_MISSING,
+    FAILURE_GREETING_UNCONFIRMED,
     FAILURE_NETWORK_TIMEOUT,
     FAILURE_FILE_UPLOAD_FAILED,
     FAILURE_SITE_UNSUPPORTED,
     FAILURE_PROFILE_INSUFFICIENT,
     FAILURE_UNCONFIRMED,
+    FAILURE_JOB_CLOSED,
     FAILURE_UNKNOWN,
 )
 
@@ -159,11 +167,13 @@ FAILURE_CATEGORY_LABELS = {
     FAILURE_LOGIN_REQUIRED: "需要登录",
     FAILURE_CAPTCHA_REQUIRED: "需要验证码或安全验证",
     FAILURE_GREETING_MISSING: "招呼语缺失",
+    FAILURE_GREETING_UNCONFIRMED: "招呼语待确认",
     FAILURE_NETWORK_TIMEOUT: "网络超时",
     FAILURE_FILE_UPLOAD_FAILED: "简历上传失败",
     FAILURE_SITE_UNSUPPORTED: "岗位来源不支持自动投递",
     FAILURE_PROFILE_INSUFFICIENT: "资料不足，需要先补充简历/网申资料",
     FAILURE_UNCONFIRMED: "无法确认投递结果，请到浏览器核对",
+    FAILURE_JOB_CLOSED: "岗位已关闭",
     FAILURE_UNKNOWN: "未知失败",
 }
 
@@ -238,6 +248,9 @@ class ApplyQueueItem(Base):
     )
     # 本岗位的招呼语（用户可编辑 / 按岗位生成后落此）；空 = 用默认招呼语。
     greeting: Mapped[str] = mapped_column(Text, default="")
+    # 是否经用户确认：按岗位批量生成后为 False（待人工保存确认），用户编辑保存 / 入队时
+    # 自带文案为 True。闸门据此判断"这段字用户真的看过"，而不是只判断"非空"。
+    greeting_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
     # pending(待投递) / skipped(用户移出前保留) / done(已投递)。
     status: Mapped[str] = mapped_column(String(16), default=QUEUE_STATUS_PENDING, index=True)
@@ -296,6 +309,8 @@ class ApplyTaskItem(Base):
     resume_title: Mapped[str] = mapped_column(String(256), default="")
     # 实际发送的招呼语（脱敏按"记全文但截断到合理上限"处理）。
     greeting: Mapped[str] = mapped_column(Text, default="")
+    # 建批次时的确认状态快照：执行时按它判断闸门，而不是回头读队列（队列可能已被改）。
+    greeting_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     # pending / running / success / failed / skipped。
     status: Mapped[str] = mapped_column(String(16), default=ITEM_STATUS_PENDING, index=True)
     # 失败分类（selector_invalid / captcha_required / ...），空串表示未失败。

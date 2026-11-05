@@ -29,6 +29,12 @@ class BrowserStatusOut(BaseModel):
     owned: bool = False
 
 
+class BrowserOpenUrlIn(BaseModel):
+    """在投递专用浏览器里打开一个具体岗位页（「前往投递」用）。"""
+
+    url: str = Field(min_length=1, max_length=4096)
+
+
 # ===== 招聘网站（站点适配器）=====
 
 

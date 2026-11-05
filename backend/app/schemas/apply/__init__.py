@@ -102,6 +102,9 @@ from .base import (
     default_site_key as default_site_key,
 )
 from .browser_site import (
+    BrowserOpenUrlIn as BrowserOpenUrlIn,
+)
+from .browser_site import (
     BrowserStatusOut as BrowserStatusOut,
 )
 from .browser_site import (
@@ -235,6 +238,7 @@ __all__ = [
     "ApplyTaskOut",
     "BrowserChoice",
     "BrowserState",
+    "BrowserOpenUrlIn",
     "BrowserStatusOut",
     "CollectBackfillIn",
     "CollectConfigIn",

@@ -29,6 +29,7 @@ from ..schemas.apply import (
     ApplyTaskDetailOut,
     ApplyTaskItemOut,
     ApplyTaskOut,
+    BrowserOpenUrlIn,
     BrowserStatusOut,
     CollectBackfillIn,
     CollectConfigIn,
@@ -46,6 +47,7 @@ from ..schemas.common import Page
 from ..services import trash
 from ..services.apply import apply_service, task_runner
 from ..services.job.job_match import generate_greeting, job_payload
+from ..services.job.job_match_context import resume_prompt_text
 from ..services.llm import create_provider
 from ..services.llm.base import LLMError
 from ..services.settings_service import get_llm_config
@@ -163,6 +165,15 @@ def browser_open(db: Session = Depends(get_db)):
         _raise(exc)
 
 
+@router.post("/browser/open-url", response_model=BrowserStatusOut)
+def browser_open_url(payload: BrowserOpenUrlIn, db: Session = Depends(get_db)):
+    """在**投递专用浏览器**里打开具体岗位页（「前往投递」与投递台共用登录态）。"""
+    try:
+        return apply_service.open_browser_at(db, payload.url)
+    except apply_service.ApplyServiceError as exc:
+        _raise(exc)
+
+
 @router.post("/browser/refresh", response_model=BrowserStatusOut)
 def browser_refresh(db: Session = Depends(get_db)):
     try:
@@ -205,29 +216,59 @@ async def greeting_preview(
         raise HTTPException(status_code=404, detail="岗位不存在或已被删除")
     config = apply_service.get_apply_config(db)
 
-    if payload.item_id is not None:
-        item = db.get(ApplyQueueItem, payload.item_id)
-        if item is not None and item.greeting.strip():
-            return GreetingPreviewOut(greeting=item.greeting.strip(), source="queue")
+    queue_item = db.get(ApplyQueueItem, payload.item_id) if payload.item_id is not None else None
+    # 只有用户确认过的文案才直接回队列值；未确认（AI 批量生成后）要重新生成，
+    # 否则编辑弹窗里的「按岗位生成招呼语」会永远返回同一段草稿。
+    # 弹窗里明确换了简历时也必须重新生成：旧招呼语是按另一份简历写的。
+    if (
+        payload.resume_id is None
+        and queue_item is not None
+        and queue_item.greeting.strip()
+        and queue_item.greeting_confirmed
+    ):
+        return GreetingPreviewOut(greeting=queue_item.greeting.strip(), source="queue")
+
+    # 招呼语是「简历 + 岗位」的投影：队列条目没有可用简历时不生成，也不回退默认文案
+    # （那会变成没看简历的群发话术）。交给前端提示先去岗位广场生成简历。
+    # 弹窗里刚选中的简历优先于队列里已保存的 resume_id（可能还没点保存）。
+    chosen_resume_id = (
+        payload.resume_id
+        if payload.resume_id is not None
+        else (queue_item.resume_id if queue_item is not None else None)
+    )
+    resume = apply_service.resolve_resume(db, job.id, chosen_resume_id)
+    if queue_item is not None and resume is None:
+        return GreetingPreviewOut(greeting="", source="no_resume")
 
     llm = get_llm_config(db)
     if not (llm.base_url.strip() and llm.model.strip()):
         return GreetingPreviewOut(greeting=config.default_greeting.strip(), source="default")
 
-    resume = apply_service.resolve_resume(db, job.id, None)
+    # 招呼语按这份简历写——否则会出现"招呼语里说 A 项目、实际投的简历是 B 版本"的割裂。
+    # 用紧凑 markdown 而不是 json.dumps(content)：v2 文档序列化成 JSON 有 3 万字符，
+    # 而在 job_match 的 8000 字预算里只会保留前 27%，后面的项目/技能/总结全被截掉，
+    # 模型只看到第一个项目，于是每次招呼语都拿它举例。
+    # 传入 JD 让它顺便按相关度重排项目：模型对"排在前面的内容"有强烈偏好，
+    # 实测会举错项目（JD 要具身智能、它却举了排第一的内容运营）。
+    payload_data = job_payload(job)
     resume_text = ""
     if resume is not None:
-        resume_text = json.dumps(
-            {"title": resume.title, "content": resume.content}, ensure_ascii=False
-        )
-    payload_data = job_payload(job)
+        resume_text = resume_prompt_text(db, resume, job_payload_data=payload_data)
     provider = create_provider(llm)
     db.close()
     # 客户端断开（用户关了预览/离开页面）：不生成、也不回退默认招呼语——没人收这份结果。
     disconnected = False
     try:
         greeting = await run_until_disconnect(
-            request, generate_greeting(provider, payload_data, resume_text), what="招呼语生成"
+            request,
+            generate_greeting(
+                provider,
+                payload_data,
+                resume_text,
+                greeting_baseline=config.greeting_baseline,
+                focus_project=payload.focus_project or "",
+            ),
+            what="招呼语生成",
         )
         if greeting is not None:
             return GreetingPreviewOut(greeting=greeting, source="generated")
