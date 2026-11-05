@@ -96,6 +96,16 @@ export function openBrowserSite(): Promise<BrowserStatus> {
   return request("/apply/browser/open", { method: "POST" });
 }
 
+/** 在**投递专用浏览器**里打开具体岗位页；未启动时会直接以该地址启动。 */
+export function openBrowserUrl(url: string): Promise<BrowserStatus> {
+  return request("/apply/browser/open-url", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+    // 未启动时要真拉一个浏览器进程，15s 默认预算不够。
+    budget: "recognition",
+  });
+}
+
 export function refreshBrowser(): Promise<BrowserStatus> {
   return request("/apply/browser/refresh", { method: "POST" });
 }
@@ -153,7 +163,7 @@ export function reorderQueue(order: number[]): Promise<ApplyQueueItem[]> {
 
 export function updateQueueItem(
   itemId: number,
-  payload: { greeting?: string; resume_id?: number },
+  payload: { greeting?: string; resume_id?: number; confirm_greeting?: boolean },
 ): Promise<ApplyQueueItem> {
   return request(`/apply/queue/${itemId}`, { method: "PATCH", body: JSON.stringify(payload) });
 }
@@ -163,11 +173,16 @@ export function removeQueueItem(itemId: number): Promise<void> {
 }
 
 /** 按岗位生成一版招呼语（不落库）；给了 item_id 就基于队列里的当前值。
+ *  `resume_id` 是编辑弹窗里刚选中、可能还没保存的简历：传了就按它生成，
+ *  避免「选了 A 简历，招呼语却仍按队列里的 B 简历写」。
  *  `signal` 供面板上的「停止」用：断开连接即不再等这条生成。 */
 export function previewGreeting(
   payload: {
     job_id: number;
     item_id?: number;
+    resume_id?: number;
+    /** 本次指定第 3 句讲哪个项目（来自该简历的项目名）；不传 = 按 JD 自动挑。 */
+    focus_project?: string;
   },
   signal?: AbortSignal,
 ): Promise<GreetingPreview> {
@@ -175,6 +190,8 @@ export function previewGreeting(
     method: "POST",
     body: JSON.stringify(payload),
     signal,
+    // 一次真实的模型调用 20–60s，默认 15s 预算必然误超时（批量生成时尤其明显）。
+    budget: "analysis",
   });
 }
 

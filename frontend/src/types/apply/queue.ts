@@ -11,6 +11,13 @@ export interface ApplyQueueItem {
   resume_id: number | null;
   resume_title: string;
   greeting: string;
+  /**
+   * 招呼语是否经用户确认。按岗位批量生成后为 false（待确认），在编辑弹窗里保存才置真。
+   *
+   * **可选**：缺失按"未确认"处理（判断写 `=== true`）——宁可多拦一条，也不把没看过的
+   * 文案当成已确认发出去。
+   */
+  greeting_confirmed?: boolean;
   sort_order: number;
   status: QueueStatus;
   admission: AdmissionResult | null;
@@ -173,5 +180,6 @@ export interface ApplyRecordBatch {
 
 export interface GreetingPreview {
   greeting: string;
-  source: "generated" | "queue" | "default";
+  /** no_resume：队列条目还没有可用简历，后端拒绝凭空编招呼语。 */
+  source: "generated" | "queue" | "default" | "no_resume";
 }

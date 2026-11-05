@@ -36,6 +36,12 @@ vi.mock("../../api/apply", async () => {
   };
 });
 
+// 「默认简历」下拉会预拉候选：把这层网络挡掉，用例只关心底部操作条。
+vi.mock("../../api/resumes", () => ({
+  listResumes: vi.fn(async () => ({ items: [], total: 0 })),
+  getResume: vi.fn(async () => null),
+}));
+
 const CONFIG: ApplyConfig = {
   interval_seconds: 30,
   interval_jitter_seconds: 10,
@@ -43,6 +49,7 @@ const CONFIG: ApplyConfig = {
   per_task_limit: 20,
   breaker_threshold: 5,
   default_greeting: "您好，我想应聘这个岗位。",
+  require_greeting_review: true,
   skip_same_company: true,
   confirm_real_gap: false,
   site_key: "boss",

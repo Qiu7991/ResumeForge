@@ -21,6 +21,7 @@ import PageSkeleton from "../common/PageSkeleton";
 import { useEffect, useState } from "react";
 import { getApplyConfig, listSites, updateApplyConfig } from "../../api/apply";
 import { useApi } from "../../hooks/useApi";
+import { useResumeSearchSelect } from "../../hooks/remoteSearchOptions";
 import { HintedTextArea } from "../common/MaxLengthHint";
 import { type ApplyConfig, type ApplyConfigOut, type SiteList } from "../../types";
 import BrowserChoiceFields from "./BrowserChoiceFields";
@@ -59,6 +60,8 @@ function ApplySettingsForm({ onClose, onSaved }: Omit<Props, "open">) {
   const { data: siteList } = useApi<SiteList>(listSites, []);
   const [saving, setSaving] = useState(false);
   const defaults = data?.defaults;
+  // 默认简历的远程搜索：候选取全部简历（不限岗位），只在没有岗位版简历时生效。
+  const defaultResumeSelect = useResumeSearchSelect();
   const siteOptions = (siteList?.sites ?? []).map((site) => ({
     value: site.key,
     label: site.display_name,
@@ -67,6 +70,14 @@ function ApplySettingsForm({ onClose, onSaved }: Omit<Props, "open">) {
   useEffect(() => {
     if (data) form.setFieldsValue(data);
   }, [data, form]);
+
+  useEffect(() => {
+    // 已选默认简历的保显示：按 id 回查补进候选，再预拉第一页候选。
+    if (data?.default_resume_id) void defaultResumeSelect.ensure(data.default_resume_id);
+    void defaultResumeSelect.reload();
+    // 只在读到配置时执行一次；select 的方法稳定。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.default_resume_id]);
 
   const submit = async () => {
     let values: ApplyConfig;
@@ -154,11 +165,49 @@ function ApplySettingsForm({ onClose, onSaved }: Omit<Props, "open">) {
       </Space>
 
       <Form.Item
+        name="default_resume_id"
+        label={t("applySettings.defaultResume.label")}
+        extra={t("applySettings.defaultResume.extra")}
+      >
+        <Select
+          allowClear
+          showSearch
+          optionFilterProp="label"
+          loading={defaultResumeSelect.selectProps.loading}
+          onSearch={defaultResumeSelect.selectProps.onSearch}
+          options={defaultResumeSelect.selectProps.options}
+          placeholder={t("applySettings.defaultResume.placeholder")}
+        />
+      </Form.Item>
+
+      <Form.Item
         name="default_greeting"
         label={t("applySettings.greeting.label")}
         extra={t("applySettings.greeting.extra")}
       >
         <HintedTextArea rows={2} maxLength={1000} />
+      </Form.Item>
+
+      <Form.Item
+        name="greeting_baseline"
+        label={t("applySettings.greetingBaseline.label")}
+        extra={t("applySettings.greetingBaseline.extra")}
+      >
+        <HintedTextArea rows={5} maxLength={4000} />
+      </Form.Item>
+
+      <Form.Item
+        name="require_greeting_review"
+        label={t("applySettings.greetingReview.label")}
+        valuePropName="checked"
+        extra={
+          <>
+            {t("applySettings.greetingReview.extra")}
+            {defaults && <div>{defaultsHint(defaults.require_greeting_review)}</div>}
+          </>
+        }
+      >
+        <Switch />
       </Form.Item>
 
       <Divider plain style={{ margin: "4px 0 16px" }} />

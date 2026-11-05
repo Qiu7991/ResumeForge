@@ -74,6 +74,7 @@ export const BROWSER_STATE_LABEL_KEYS: Record<BrowserState, MessageKey> = {
  */
 export const BROWSER_CHOICE_LABEL_KEYS: Partial<Record<BrowserChoice, MessageKey>> = {
   auto: "enumsApply.browserChoice.auto.label",
+  ego: "enumsApply.browserChoice.ego.label",
   custom: "enumsApply.browserChoice.custom.label",
 };
 
@@ -82,6 +83,7 @@ export const BROWSER_CHOICE_HINT_KEYS: Record<BrowserChoice, MessageKey> = {
   auto: "enumsApply.browserChoice.auto.hint",
   chrome: "enumsApply.browserChoice.chrome.hint",
   edge: "enumsApply.browserChoice.edge.hint",
+  ego: "enumsApply.browserChoice.ego.hint",
   custom: "enumsApply.browserChoice.custom.hint",
 };
 
@@ -121,11 +123,13 @@ export const FAILURE_CATEGORY_LABEL_KEYS: Record<FailureCategory, MessageKey> = 
   login_required: "enumsApply.failure.login_required",
   captcha_required: "enumsApply.failure.captcha_required",
   greeting_missing: "enumsApply.failure.greeting_missing",
+  greeting_unconfirmed: "enumsApply.failure.greeting_unconfirmed",
   network_timeout: "enumsApply.failure.network_timeout",
   file_upload_failed: "enumsApply.failure.file_upload_failed",
   site_unsupported: "enumsApply.failure.site_unsupported",
   profile_insufficient: "enumsApply.failure.profile_insufficient",
   unconfirmed: "enumsApply.failure.unconfirmed",
+  job_closed: "enumsApply.failure.job_closed",
   unknown: "enumsApply.failure.unknown",
 };
 
@@ -165,11 +169,13 @@ export const FAILURE_REASON_LABEL_KEYS: Record<string, MessageKey> = {
   login_required: "enumsApply.failureReason.login_required",
   captcha_required: "enumsApply.failureReason.captcha_required",
   greeting_missing: "enumsApply.failureReason.greeting_missing",
+  greeting_unconfirmed: "enumsApply.failureReason.greeting_unconfirmed",
   network_timeout: "enumsApply.failureReason.network_timeout",
   upload_failed: "enumsApply.failureReason.upload_failed",
   site_unsupported: "enumsApply.failureReason.site_unsupported",
   profile_insufficient: "enumsApply.failureReason.profile_insufficient",
   unconfirmed: "enumsApply.failureReason.unconfirmed",
+  job_closed: "enumsApply.failureReason.job_closed",
   unknown: "enumsApply.failureReason.unknown",
 };
 

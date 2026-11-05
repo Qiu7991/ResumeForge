@@ -7,9 +7,11 @@ import type { BrowserState } from "./tasks";
  * 投递专用浏览器的选择方式。
  * `auto` = 自动（优先 Chrome，未装回退 Edge）；`custom` = 用下面填的自定义路径。
  */
-export type BrowserChoice = "auto" | "chrome" | "edge" | "custom";
+export type BrowserChoice = "auto" | "chrome" | "edge" | "ego" | "custom";
 
-export const BROWSER_CHOICE_META: Record<BrowserChoice, { label: string; hint: string }> = {
+export const BROWSER_CHOICE_META: Partial<
+  Record<BrowserChoice, { label: string; hint: string }>
+> = {
   auto: { label: "自动（优先 Chrome）", hint: "优先用 Chrome；没装 Chrome 时自动回退 Edge。" },
   chrome: { label: "Google Chrome", hint: "只用 Chrome；找不到会明确提示，不会改用别的浏览器。" },
   edge: { label: "Microsoft Edge", hint: "只用 Edge；找不到会明确提示，不会改用别的浏览器。" },
@@ -26,6 +28,12 @@ export interface ApplyConfig {
   per_task_limit: number;
   breaker_threshold: number;
   default_greeting: string;
+  /** 用户自定义的打招呼语基准/模板；只约束结构语气，不覆盖事实。 */
+  greeting_baseline?: string;
+  /** 默认简历：岗位没有专属简历时用它（优先级低于岗位版、高于没有简历）。 */
+  default_resume_id?: number | null;
+  /** 发送前必须确认招呼语：开启时没有已确认招呼语的岗位会被跳过。 */
+  require_greeting_review: boolean;
   skip_same_company: boolean;
   confirm_real_gap: boolean;
   browser_port: number;

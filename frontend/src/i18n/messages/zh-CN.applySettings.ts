@@ -20,6 +20,16 @@
  * 读成全历史，作用域只能由这段说明来界定，所以它必须是一句能独立读通的话。
  */
 const applySettings = {
+  "applySettings.defaultResume.label": "默认简历（可选）",
+  "applySettings.defaultResume.extra":
+    "岗位没有专属简历时用它；优先级低于「为该岗位生成的简历」，高于没有简历。换了默认，已入队的条目也会跟着解析。",
+  "applySettings.defaultResume.placeholder": "选一份通用简历（输入关键词搜索）",
+  "applySettings.greetingBaseline.label": "自定义打招呼语基准",
+  "applySettings.greetingBaseline.extra":
+    "粘贴你认可的模板/句式/语气要求；也可以写你的差异化卖点（例如「我的项目基本都是用 AI 工具端到端做的」）。它会作为最高优先级约束，但事实只能来自简历；留空则使用内置基准。",
+  "applySettings.greetingReview.label": "发送前必须确认招呼语",
+  "applySettings.greetingReview.extra":
+    "开启后，队列里没有填写招呼语的岗位会被跳过（记录里写明「招呼语未确认」），绝不拿默认招呼语替你群发。",
   "applySettings.title": "投递设置",
   "applySettings.intro":
     "这些设置决定投递的节奏与安全网：岗位之间会随机等待，连续失败会自动暂停，每日上限只统计成功投递的数量。",

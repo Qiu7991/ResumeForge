@@ -29,10 +29,16 @@ export default function BrowserChoiceFields({ label, compact = false }: Props) {
   useLocale();
   // 只有选了「自定义路径」才需要填路径。
   const browserChoice = Form.useWatch("browser_choice") as BrowserChoice | undefined;
-  const choiceOptions = (Object.keys(BROWSER_CHOICE_META) as BrowserChoice[]).map((value) => {
-    const labelKey = BROWSER_CHOICE_LABEL_KEYS[value];
-    return { value, label: labelKey ? t(labelKey) : BROWSER_CHOICE_META[value].label };
-  });
+  // ego 的文案只走语言包（BROWSER_CHOICE_META 保留上游四项，避免新增产品文案基线）。
+  const choiceOptions = (["auto", "chrome", "edge", "ego", "custom"] as BrowserChoice[]).map(
+    (value) => {
+      const labelKey = BROWSER_CHOICE_LABEL_KEYS[value];
+      return {
+        value,
+        label: labelKey ? t(labelKey) : (BROWSER_CHOICE_META[value]?.label ?? value),
+      };
+    },
+  );
   return (
     <Space size={compact ? 8 : 16} wrap>
       <Form.Item
