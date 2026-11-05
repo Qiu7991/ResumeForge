@@ -1,0 +1,170 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* item 编辑器（字段行 / 列表值行 / 开关行）。从 document-editor.css 拆出：
+   R-05/R-06 让卡片侧涨到 500 行预算边缘，这里是职责最独立的一段。 */
+
+/* ── item 编辑器 ──────────────────────────────────────────── */
+
+.document-item-editor {
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 6px;
+  background: var(--rf-surface);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.document-item-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+/* R-06 ②A：编辑器内部行 = 26px 标签列 + 内容列。`.document-value-row` 被列表值 /
+   作者行复用，所以**不改它的全局 flex 规则**，只给字段行加这个新 grid。 */
+.document-field-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.document-field-label {
+  color: var(--rf-text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.document-field-label-spacer {
+  display: block;
+}
+
+/* 日期范围：26px 标签列 + 开始 + 「至」 + 结束（「至」为空时不占宽度）。 */
+.document-field-row.is-date-range {
+  grid-template-columns: 26px minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.document-field-sep {
+  color: var(--rf-text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* R-06 ①E：选中的 chip 展开编辑器时跨整行（不被 148px 的格子裁切）。 */
+.document-chip-slot.is-editing {
+  grid-column: 1 / -1;
+}
+
+.document-value-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.document-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* #27 / 问题 13：chip 落点插入线（画在目标 chip 的前/后边缘，不覆盖整个槽）。
+   线要贴边而不是盖住内容：用 ::before/::after 定位在槽的左右边缘。
+   问题 13 把线从 2px 加粗到 3px、并且上下各溢出 2px —— 2px 线落在 8px 的网格间隙里
+   只 3px 宽，密集网格下更像"两个 chip 之间的一道缝"，不像"可以落在这里"。 */
+.document-chip-slot {
+  position: relative;
+}
+
+.document-chip-slot.is-drop-before::before,
+.document-chip-slot.is-drop-after::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--rf-accent, #2563eb);
+  pointer-events: none;
+}
+
+/* 目标 chip 轻微高亮：让"线 + 目标"成为一个整体，而不是一道孤立的缝。 */
+.document-chip-slot.is-drop-before > .document-chip,
+.document-chip-slot.is-drop-after > .document-chip {
+  box-shadow: 0 0 0 2px var(--rf-brand-tint);
+}
+
+.document-chip-slot.is-drop-before::before {
+  left: -4px;
+}
+
+.document-chip-slot.is-drop-after::after {
+  right: -4px;
+}
+
+/* 问题 21a：非法 / 插完不动的落点用**禁用色虚线描边**。与蓝条互斥——同一个
+   `onDragOver` 分支里二选一，`is-drop-rejected` 出现时一定没有 `is-drop-before/after`。
+   选 dashed 是为了不和"选中"的实线边框混淆，也不做红底填充（那更像报错而不是落点提示）。
+   注意：本文件不在 colorGuard 的扫描范围（它只扫 `styles/*.css` 与 `features/tou-tou/*.css`），
+   所以颜色一律走 `var(--rf-*)`，不要写硬编码色值。 */
+.document-chip-slot.is-drop-rejected > .document-chip {
+  outline: 1px dashed var(--rf-danger);
+  outline-offset: 2px;
+}
+
+/* 问题 21b：正文块的唯一拖拽源是这枚 ⠿ 把手（正文区本身要留给选文字），而图标只有
+   约 14×14。热区扩到 24×24、视觉与排版不变：`padding` 撑开命中区，负 `margin` 把外框
+   尺寸还原成原样，网格一格不动。
+   用 `.document-chip >` 多一级特异性：基础规则（`document-editor.css`）只写
+   `.document-chip-handle`，两份样式表的加载先后不该决定谁生效。
+   代价：把手向右侵入主按钮左边缘 5px——那一段原本"点到就选中 chip"，等价入口还有
+   点击标签文字 / 整块。 */
+.document-chip > .document-chip-handle {
+  padding: 5px;
+  margin: -5px;
+}
+
+/* ── 拖动语义 vs. 文本选区 ─────────────────────────────────────
+   编辑器里"按住拖动"只有一种意图：拖动条目/chip 排序。可编辑区以外的文字一旦能被
+   选中，浏览器会先把这次按下判成"框选文字"，松手时 Chrome 弹「松开鼠标以搜索文本」，
+   条目反而没被拖动（用户反馈的原话）。所以整栏默认不可选中，只放行真正要打字/选字
+   的控件——不能逐个 chip 补：漏一个就重现，新加的 DOM 默认又是可选的。
+   规则放这里而不放 document-editor.css：那份已贴 500 行预算。 */
+.document-editor {
+  user-select: none;
+}
+
+.document-editor textarea,
+.document-editor input,
+.document-editor [contenteditable="true"] {
+  user-select: text;
+}
+
+/* chip 内部**每一段文本**都显式 none：既不靠 `.document-chip` 继承（主题/antd 里一条
+   `user-select: text` 就能把它放出来，而这正是"拖 chip 出搜索框"的入口），也不给未来
+   留"为了复制字段值把值放出来"的口子——真要复制走右键菜单，不是靠选区。 */
+.document-chip-main,
+.document-chip-label,
+.document-chip-value,
+.document-chip-badge,
+.document-chip-handle {
+  user-select: none;
+}
+
+/* 光有 `user-select: none` 不够（2026-11-04 用户截图实证）：Chrome 判断"这次拖动拖的是
+   文本还是元素"看的是**另一个属性** `-webkit-user-drag`。chip 里的文本节点仍是 `auto` 时，
+   按下拖动会被当成"拖动这段文字"——顶部弹「松开鼠标以搜索文本」，条目却没动；实测
+   `.document-chip-value` 的该属性就是 `auto`。
+
+   一条通用规则而不是逐个类补：漏一个类就重现（`user-select` 那轮已经踩过一次）。
+   只排除 `[draggable="true"]` —— 把手与 chip 本体靠这个属性才是拖拽源，
+   给它们置 `none` 会连拖动一起禁掉，等于把上一个 bug 修回来。输入框也一并覆盖：
+   `-webkit-user-drag` 只影响"把选中的字拖出去"，不影响框内选中、复制、剪切。 */
+.document-editor :not([draggable="true"]) {
+  -webkit-user-drag: none;
+}

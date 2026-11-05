@@ -1,0 +1,319 @@
+# SPDX-License-Identifier: Apache-2.0
+"""岗位信号提取、资料相关性评分和候选条目选择。"""
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Iterable
+from copy import deepcopy
+from typing import Any
+
+from ...schemas.job import JobOut
+from ...schemas.profile import ProfileOut
+from ..jd_parser import parse_jd
+from .profile_relevance_constants import (
+    _ASCII_TERM_RE,
+    _LIST_DETAIL_FIELDS,
+    _TITLE_SPLIT_RE,
+    DOMAIN_CONTEXT_SIGNALS,
+    DOMAIN_SIGNALS,
+    SECTION_PRIMARY_FIELDS,
+    SKILL_DOMAIN_HINTS,
+    JobFocus,
+    section_limit,
+)
+
+# 技能候选的下限：低于这个数就按分数补足零分条目。设 3 是因为一份简历的技能区
+# 通常有 6-10 项，候选只给 1-2 项时模型必然要自拟技能，而自拟的技能过不了
+# 一致性检查（会被误报成"候选资料未包含"）。
+_MIN_SKILL_CANDIDATES = 3
+
+# A4/§8.5 跨行业 fallback：岗位信号与资料条目**没有直接交集**时，仍保留少量原始
+# 经历/项目作为候选。没有这条兜底，非技术简历遇到"技能词与描述不完全同字"
+# （如 JD 写「排班管理」、经历写「排班、库存」）或未识别领域（会计/教师）时会被
+# 全部筛空，模型只能凭空编——这正是计划要求修复的"把经历筛空"缺陷。
+# 保留数量取 2：足以让模型看到真实经历，又不会把完全不相关的资料整库塞进提示词。
+_MIN_ENTRY_CANDIDATES = 2
+_FALLBACK_ENTRY_SECTIONS = ("experiences", "projects")
+
+
+def _unique(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = value.strip().casefold()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(value.strip())
+    return result
+
+
+def _contains(text: str, term: str) -> bool:
+    """匹配短英文词时使用边界，避免 ``C`` 命中 ``CapCut``。"""
+    text = text.casefold()
+    term = term.strip().casefold()
+    if not term or (not _ASCII_TERM_RE.search(term) and len(term) < 2):
+        return False
+    if _ASCII_TERM_RE.search(term):
+        return re.search(rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])", text) is not None
+    return term in text
+
+
+def _job_text(job: JobOut) -> str:
+    # 公司名不参与匹配，避免资料中恰好出现同名公司而抬高无关经历。
+    return "\n".join(
+        value
+        for value in (job.title, job.description, job.requirements, job.additional_info)
+        if value
+    )
+
+
+def build_job_focus(
+    job: JobOut,
+    profile: ProfileOut | None = None,
+    *,
+    skill_names: Iterable[str] | None = None,
+) -> JobFocus:
+    """提取岗位技能、方向和标题短语；所有信号都来自岗位文本。
+
+    skill_names 是**当前组参与清单里**的技能名（F3/R-28）：生成链路只能看到本次
+    候选里出现过的用户技能，不能借全量 profile.skills 把组外技能提升成 JD 硬信号。
+    profile 参数只为旧 ProfileOut 路径保留；两者都传时 skill_names 优先。
+    """
+    text = _job_text(job)
+    parsed = parse_jd(text)
+    parsed_skills = [item.name for item in parsed["skills"]]
+    # `JobOut.keywords` 是 `list[SkillTag]`（pydantic 已把历史 dict 形状归一成模型），
+    # 直接读 `.name`：之前那句 `hasattr(item, "name")` 是 dict 时代的残留，静态检查也
+    # 无法据此收窄。
+    saved_skills = [item.name for item in job.keywords]
+    skills = _unique(parsed_skills + saved_skills)
+
+    # 用户自定义技能不一定在内置词典中；若其名称出现在 JD，就把它作为硬信号。
+    # 生成链路传当前组内的技能名；旧路径退回完整 profile（非生成消费者，不受组约束）。
+    if skill_names is not None:
+        skills.extend(name for name in skill_names if name and _contains(text, name))
+        skills = _unique(skills)
+    elif profile is not None:
+        skills.extend(
+            item.name for item in profile.skills if item.name and _contains(text, item.name)
+        )
+        skills = _unique(skills)
+
+    domains = [
+        domain
+        for domain, signals in DOMAIN_SIGNALS.items()
+        if any(_contains(text, signal) for signal in signals)
+    ]
+    title_terms = [term for term in _TITLE_SPLIT_RE.split(job.title) if len(term.strip()) >= 2]
+    domain_terms = [
+        signal for domain in domains for signal in DOMAIN_SIGNALS[domain] if _contains(text, signal)
+    ]
+    terms = _unique(skills + title_terms + domain_terms)
+    return JobFocus(skills=tuple(skills), domains=tuple(domains), terms=tuple(terms))
+
+
+def _item_text(item: dict[str, Any]) -> str:
+    return json.dumps(item, ensure_ascii=False)
+
+
+def _skill_domain_score(name: str, domains: tuple[str, ...]) -> int:
+    return sum(
+        4
+        for domain in domains
+        if any(_contains(name, hint) for hint in SKILL_DOMAIN_HINTS.get(domain, ()))
+    )
+
+
+def _score_item(item: dict[str, Any], section: str, focus: JobFocus) -> int:
+    text = _item_text(item)
+    score = 0
+    for skill in focus.skills:
+        if _contains(text, skill):
+            score += 12
+    for term in focus.terms:
+        if term.casefold() in {skill.casefold() for skill in focus.skills}:
+            continue
+        if _contains(text, term):
+            score += 4 if section in {"experiences", "projects", "campus_experiences"} else 3
+    for domain, signals in DOMAIN_SIGNALS.items():
+        if domain not in focus.domains:
+            continue
+        score += sum(2 for signal in signals if _contains(text, signal))
+        score += sum(
+            1 for signal in DOMAIN_CONTEXT_SIGNALS.get(domain, ()) if _contains(text, signal)
+        )
+    if section == "skills":
+        score += _skill_domain_score(item.get("name", ""), focus.domains)
+    return score
+
+
+def _matched_skills(item: dict[str, Any], focus: JobFocus) -> set[str]:
+    """返回该条资料明确覆盖的 JD 技能，用于避免 Top-K 重复命中同一项。"""
+    text = _item_text(item)
+    return {skill.casefold() for skill in focus.skills if _contains(text, skill)}
+
+
+def _select_ranked_items(
+    ranked: list[tuple[int, dict[str, Any], int, set[str]]], limit: int
+) -> list[dict[str, Any]]:
+    """先用有限名额覆盖更多直接技能，再按总相关度补齐。"""
+    selected_indexes: set[int] = set()
+    uncovered = {skill for _, _, _, skills in ranked for skill in skills}
+
+    while len(selected_indexes) < limit:
+        choices = [item for item in ranked if item[0] not in selected_indexes]
+        if not choices:
+            break
+        index, _, _, skills = max(
+            choices,
+            key=lambda item: (len(item[3] & uncovered), item[2], -item[0]),
+        )
+        selected_indexes.add(index)
+        uncovered -= skills
+
+    # ``ranked`` 本身已经按相关度排序；上一步完成技能覆盖后保留这个顺序。
+    return [item for index, item, _, _ in ranked if index in selected_indexes]
+
+
+def _prioritize_item_details(item: dict[str, Any], section: str, focus: JobFocus) -> dict[str, Any]:
+    """将直接命中 JD 的要点前置，供后续预算压缩优先保留。"""
+    result = deepcopy(item)
+    for field in _LIST_DETAIL_FIELDS:
+        values = result.get(field)
+        if not isinstance(values, list):
+            continue
+        result[field] = [
+            value
+            for _, value in sorted(
+                enumerate(values),
+                key=lambda pair: (
+                    -_score_item({field: pair[1]}, section, focus),
+                    pair[0],
+                ),
+            )
+        ]
+    return result
+
+
+def _select_summary(summary: str, focus: JobFocus) -> str:
+    """只保留与岗位有明确交集的个人总结句，避免全量总结绕过筛选。"""
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[。！？!?])|[\r\n]+", summary)
+        if sentence.strip()
+    ]
+    matching = [
+        sentence
+        for sentence in sentences
+        if _score_item({"summary": sentence}, "projects", focus) > 0
+    ]
+    return " ".join(matching[:2])
+
+
+def _select_entries(
+    items: list[dict[str, Any]],
+    section: str,
+    focus: JobFocus,
+    *,
+    fallback_allowed: bool = False,
+) -> list[dict[str, Any]]:
+    primary_field = SECTION_PRIMARY_FIELDS[section]
+    valid_items = [item for item in items if str(item.get(primary_field, "")).strip()]
+    if not valid_items:
+        return []
+    if section == "awards":
+        # 奖项不参与岗位相关性筛选。它的作用是背书，用词与 JD 几乎不会重合——"国家
+        # 励志奖学金"里没有任何岗位技能词，按相关度打分等于每份定向简历都静默丢掉全部
+        # 奖项。按资料录入顺序取到栏目上限；超出上限的部分交给用户自己排序决定去留。
+        return valid_items[: section_limit(section)]
+    ranked = sorted(
+        (
+            (index, item, _score_item(item, section, focus), _matched_skills(item, focus))
+            for index, item in enumerate(valid_items)
+        ),
+        key=lambda item: (-item[2], item[0]),
+    )
+    limit = section_limit(section)
+    matching = [item for item in ranked if item[2] > 0]
+    if matching:
+        # 有明确匹配时不混入零分条目，避免"资料库越全，简历越跑题"。
+        return _select_ranked_items(matching, limit)
+    if section == "campus_experiences":
+        # 校园经历不是每个岗位都需要，用无关条目填充反而稀释重点。
+        # （奖项在上面已经单独返回，不走这里。）
+        return []
+    if section == "educations":
+        # 教育背景是校招简历的基础信息，即使 JD 未命中课程也保留一条。
+        return [ranked[0][1]]
+    if focus.skills or focus.domains or focus.terms:
+        # A4/§8.5：**未识别出岗位领域**（DOMAIN_SIGNALS 为空，如护理/会计/教师/
+        # 门店运营等非技术岗位）、且没有任何条目直接命中时，不能返回空列表。保留少量
+        # 原始事实作为候选（按资料顺序），并在生成说明里如实标注"交集较少、资料中未
+        # 提供的岗位要求不会编写"。
+        # 识别出领域但资料确实没有对应证据时仍返回空：此时空候选是诚实的筛选结果，
+        # 把无关经历硬塞进提示词反而会诱导模型跑题（既有回归
+        # test_context_does_not_fill_unrelated_entries_when_job_has_clear_signals 守着）。
+        if fallback_allowed and section in _FALLBACK_ENTRY_SECTIONS:
+            return [item for _, item, _, _ in ranked[: min(limit, _MIN_ENTRY_CANDIDATES)]]
+        return []
+    # 排名顺序本身传给模型，首项就是最值得优先呈现的事实。
+    return [item for _, item, _, _ in ranked[:limit]]
+
+
+def _select_skills(
+    items: list[dict[str, Any]],
+    evidence: dict[str, Any],
+    focus: JobFocus,
+    *,
+    fallback_allowed: bool = False,
+) -> list[dict[str, Any]]:
+    evidence_text = _item_text(evidence)
+    ranked: list[tuple[int, int, dict[str, Any]]] = []
+    for index, item in enumerate(item for item in items if str(item.get("name", "")).strip()):
+        score = _score_item(item, "skills", focus)
+        if item.get("name") and _contains(evidence_text, item["name"]):
+            score += 5
+        ranked.append((score, index, item))
+    ranked.sort(key=lambda value: (-value[0], value[1]))
+    matching = [item for score, _, item in ranked if score > 0]
+    if matching:
+        if len(matching) >= _MIN_SKILL_CANDIDATES:
+            return matching[: section_limit("skills")]
+        # 匹配数低于下限时按分数补足：技能候选太少，模型只能从项目描述里自拟技能区，
+        # 而自拟的技能会被一致性检查误报成"候选资料未包含"。补足的高分零分项仍然
+        # 来自用户资料，不存在虚构风险。
+        padded = list(matching)
+        for _, _, item in ranked:
+            if len(padded) >= _MIN_SKILL_CANDIDATES:
+                break
+            if item not in padded:
+                padded.append(item)
+        return padded[: section_limit("skills")]
+    if focus.skills or focus.domains or focus.terms:
+        # A4/§8.5：未识别领域（非技术岗位）且技能名没有直接命中时，保留少量用户技能
+        # 作候选，避免空技能区导致模型自拟；识别出领域时不填充无关技能。
+        if fallback_allowed:
+            return [item for _, _, item in ranked[:_MIN_SKILL_CANDIDATES]]
+        return []
+    # JD 未给出可识别信号时保留有限技能作为兜底，避免生成空技能区。
+    return [item for _, _, item in ranked[: section_limit("skills")]]
+
+
+def _take_entries(items: list[dict[str, Any]], section: str) -> list[dict[str, Any]]:
+    """不做相关性筛选地取一个栏目的条目，按资料原顺序保留到该栏目上限。
+
+    通用简历（没有目标岗位）专用。**不能改用 ``_select_entries`` / ``_select_skills``**：
+    那两个函数是按岗位信号打分的，在"没有信号"时它们的行为并不是"保留全部"——
+    ``_select_entries`` 会丢掉校园经历（奖项是例外：两条路径都会保留），
+    ``_select_skills`` 只要证据里出现过任一技能名就只保留那些技能。两者都会静默产生
+    内容残缺的简历。
+
+    仍然保留"主字段为空则丢弃"这一条：只有日期、没有学校/公司/项目名的条目写进提示词
+    只会浪费预算。
+    """
+    primary_field = SECTION_PRIMARY_FIELDS[section]
+    valid_items = [item for item in items if str(item.get(primary_field, "")).strip()]
+    return valid_items[: section_limit(section)]

@@ -1,0 +1,62 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: monthly
+      time: "02:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - backend
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: monthly
+      time: "02:30"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - frontend
+    ignore:
+      # TypeScript 7 (Go-native compiler) is outside typescript-eslint
+      # 8.71.0's peer range (>=4.8.4 <6.1.0) — npm ci fails with ERESOLVE
+      # (#55). Remove this ignore once typescript-eslint announces TS 7
+      # support. (2026-10-02)
+      - dependency-name: typescript
+        versions: [">=7"]
+    commit-message:
+      prefix: deps
+
+  # 桌面壳（Electron）是独立 package.json + lockfile，之前没有任何更新通道：
+  # 壳侧的 Electron / electron-builder / playwright-core 只会在"想起来时"手工升，
+  # 而供应链审计（A07）要求依赖变更可见、可回滚。与 frontend 分开列，是因为
+  # 两者的升级节奏与验证方式不同（壳要跑 `node --test "scripts/test-*.js"` 与打包冒烟）。
+  - package-ecosystem: npm
+    directory: /desktop
+    schedule:
+      interval: monthly
+      time: "03:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - desktop
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: ci

@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: Apache-2.0
+/** 搜索与首页统计类型。 */
+
+import type { JobList } from "./job";
+import type { ResumeBrief } from "./resume";
+
+/** 全局搜索"更多结果"覆盖的数据域。 */
+export type SearchHitType =
+  "referral" | "reminder" | "experience" | "claim" | "material" | "profile";
+
+/** 扩展数据域里的一条命中结果，放在 ``SearchResult.more`` 中。 */
+export interface SearchHit {
+  type: SearchHitType;
+  id: number;
+  title: string;
+  subtitle: string;
+  /** 指向真实前端路由，前端据此跳转。 */
+  path: string;
+  /** 只对 ``profile`` 命中下发：条目所在板块 key（内置 key 或 `custom:<id>`）。 */
+  section_key?: string | null;
+}
+
+export interface SearchResult {
+  /**
+   * 搜索命中的岗位是**摘要**（RR-08）：这两个高频入口不再回传 JD 全文
+   * （单条可达 20KB，`limit` 上限 50 时最坏接近 1MB）。要看全文走
+   * `GET /api/jobs/{id}`——搜索结果点击后的 `/jobs?job_id=` 深链就是这么做的。
+   */
+  jobs: JobList[];
+  resumes: ResumeBrief[];
+  /** 内推 / 提醒 / 面经 / 台账 / 资料 / 我的资料 的命中结果。 */
+  more: SearchHit[];
+}
+
+/** 待确认的台账条目：首页只报数，点进去才看详情。 */
+export interface PendingClaimBrief {
+  id: number;
+  title: string;
+}
+
+/** 最近一条投递成功的记录（岗位可能已被删除，所以带的是快照字段）。 */
+export interface LatestApplication {
+  id: number;
+  job_title: string;
+  company: string;
+  status: string;
+  updated_at: string;
+}
+
+export interface Stats {
+  job_count: number;
+  open_job_count: number;
+  resume_count: number;
+  week_resume_count: number;
+  /** 首页「最近岗位」卡片同样只读摘要（RR-08）；全文按 id 单取。 */
+  latest_jobs: JobList[];
+  latest_resumes: ResumeBrief[];
+  // 首页"接下来做什么"的几个数，都只报**待办**。
+  favorite_job_count: number;
+  pending_claim_count: number;
+  pending_claims: PendingClaimBrief[];
+  stalled_application_count: number;
+  apply_queue_count: number;
+  // 首次使用"第一份交付"进度用的两个总量口径：台账总数与关联岗位的简历数。
+  claim_count: number;
+  resume_with_job_count: number;
+  latest_applications: LatestApplication[];
+}

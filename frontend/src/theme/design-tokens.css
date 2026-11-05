@@ -1,0 +1,262 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/*
+ * 语义 token 的 CSS 侧出口（RF-12）。
+ *
+ * 与 `src/theme/tokens.ts` 一一对应——TS 侧供组件/主题引用，这里供全局 CSS 引用。
+ * 保留品牌与弹层契约；文字与状态颜色在白底、浅色背景上验证对比度。
+ * 新界面优先使用语义变量，存量视觉域按任务逐步迁移。
+ */
+:root {
+  /* 品牌与中性色（与 tokens.ts palette 对应） */
+  --rf-brand: #16365c;
+  --rf-brand-tint: #eaf1f8;
+  --rf-brand-wash: #f7faff;
+  --rf-surface-alt: #f6f8fb;
+  --rf-text-secondary: #5f6b7a;
+  /* 三级文字同时适用于白底和应用浅底，与 tokens.ts 同步。 */
+  --rf-text-tertiary: #626f7f;
+  /* antd 次级说明文字的达标替代（原硬编码 #8c8c8c 只有 3.36:1）。 */
+  --rf-text-description: #5f6b7a;
+  --rf-border: #e7ebf0;
+  --rf-border-subtle: #e5e7eb;
+  --rf-danger: #ff4d4f;
+  /* 信息色（链接、可点提示、信息条）：与品牌深蓝区分开，避免"什么都像主按钮"。 */
+  --rf-info: #1677ff;
+  --rf-info-strong: #1554ad;
+  /* 信息浅底：差异块、被选中的自定义项、提示条的内层底色。
+     与 --rf-brand-tint 分开——那是"品牌色淡底"，这里是"信息蓝淡底"。 */
+  --rf-info-bg: #e6f4ff;
+  /* 比 --rf-border 更明显的分隔线：表格头、分区边、强调边框。 */
+  --rf-border-strong: #d9d9d9;
+  /* 品牌实底（按钮、页头徽标）：深色主题下也要保持深底，才能承载白字。
+     与 --rf-brand 分开——后者是"品牌色文字"，深色下需要提亮。 */
+  --rf-brand-fill: #16365c;
+  /* 提醒类浅底与描边：目前只用于"过期/待确认"条。 */
+  --rf-warning-bg: #fff7e6;
+  --rf-warning-border: #ffd591;
+  /* 遮罩/滚动条轨道用的半透明黑：它在两种主题下都是"压暗"，不随主题翻转。 */
+  --rf-scrim: rgb(15 23 42 / 18%);
+  --rf-scrim-strong: rgb(15 23 42 / 32%);
+  /* 品牌实底上的前景色（白字/白描边）：深色主题下实底仍是深色，所以它始终是浅色。 */
+  --rf-on-brand: rgb(255 255 255 / 92%);
+  /* 分类强调色（状态条、阶段标记）：需要彼此可区分，深浅主题共用同一组。 */
+  --rf-accent-red: #ff7875;
+  --rf-accent-violet: #8b7cf6;
+  --rf-accent-green: #52c41a;
+  --rf-accent-amber: #f0b429;
+  --rf-accent-blue: #7ba7d0;
+  --rf-accent-pink: #f08bb4;
+  /* 求职进度的阶段色（T9）：**随主题变化**，所以只存在于 CSS——`tokens.ts` 不带它们。
+     深色对应值见 dark-tokens.css（同名同序）。这六档是"图形/色块"用色，
+     对比度门槛 3:1（不是正文的 4.5），实测值见 theme/contrast.test.ts。 */
+  --rf-stage-applied: #64748b;
+  --rf-stage-screening: #3b6ea5;
+  --rf-stage-assessment: #2f7d7d;
+  --rf-stage-interview: #6b5fa8;
+  --rf-stage-offer: #2f8f5b;
+  --rf-stage-rejected: #b04a4a;
+  /* 「颜色条」专用（浅色=亮彩色，深色=上面的暗彩色）。
+     为什么不直接改 `--rf-stage-*`：那套还用在描边、徽标底色与文字上，
+     亮彩在浅底上做文字/细线达不到 3:1；条形是大色块且有数字在旁边，用亮色更有辨识度。
+     深色主题里这六个与 `--rf-stage-*` 同值（见 dark-tokens.css）。 */
+  --rf-stage-bar-applied: #6b7c93;
+  --rf-stage-bar-screening: #4f8ff7;
+  --rf-stage-bar-assessment: #2ec4b6;
+  --rf-stage-bar-interview: #7c6cf5;
+  --rf-stage-bar-offer: #3fbf7f;
+  --rf-stage-bar-rejected: #e05c5c;
+  /* 半透明面板（悬浮卡、吸顶条）：背景会透出一点，必须随主题翻转。 */
+  --rf-surface-glass: rgb(255 255 255 / 92%);
+  --rf-surface-glass-border: rgb(31 56 85 / 8%);
+  --rf-focus-ring: #91caff;
+  --rf-surface: #ffffff;
+  /* 浮起面：下拉、Tooltip、Popover、页头上的 chip。浅色下与卡片同白——
+     层次靠阴影而不是亮度差，深色下才需要抬高亮度（见 dark-tokens.css）。 */
+  --rf-surface-elevated: #ffffff;
+  --rf-text-body: #223047;
+  --rf-success-text: #176b41;
+  --rf-warning-text: #875300;
+  --rf-error-text: #b42318;
+  /* 三档「填充」底色（结构树 hover、徽标底、摘要块）：2026-10-31 之前这三处写的是
+     `--rf-color-fill-*`——那个变量族从来没有定义过，于是 `background` 整条失效，
+     结构树 hover 与选中态都看不见底色（审计 R-15）。
+     从正文色与容器底色派生而不是写死灰阶：深色主题下正文变浅、容器变深，
+     同一句 `color-mix` 自动派生出"深底上再浅一层"，不需要第二套硬编码。
+     同名同序的一份在 dark-tokens.css。 */
+  --rf-fill-secondary: color-mix(in srgb, var(--rf-text-body) 6%, var(--rf-surface));
+  --rf-fill-tertiary: color-mix(in srgb, var(--rf-text-body) 4%, var(--rf-surface));
+  --rf-fill-quaternary: color-mix(in srgb, var(--rf-text-body) 2.5%, var(--rf-surface));
+  /* 「资料缺失」徽标底：由错误文字色派生，保证与 --rf-error-text 同色系。 */
+  --rf-error-bg: color-mix(in srgb, var(--rf-error-text) 10%, var(--rf-surface));
+  --rf-focus-visible: #0958d9;
+  /* 收藏星标：只用在图标上（不上文字）。**亮琥珀**是它作为"可点击的收藏态"的语义，
+     不能被换成正文/警示文字色——`--rf-warning-text`（#875300）在浅色下是深棕，
+     星标会像一颗脏点（2026-10 回归）。深色下提亮到 #f0c04a。 */
+  --rf-favorite: #f5a623;
+  /* 大数字的强语义色（求职统计页的「Offer 数」「逾期提醒」）：这两处沿用
+     antd green-7 / red-7，与 --rf-success-text 不是同一个用途——后者是**正文级**
+     状态文字（更暗、对比度更高），这里是大字号指标，保留原来的鲜活度。 */
+  --rf-success-strong: #389e0d;
+  --rf-error-strong: #cf1322;
+  /* 版本对比（diff）三态：底色 / 描边（也是词级高亮的那一档填充）/ 文字。
+     浅色取 antd green-1/green-2/green-9 与 red-1/red-2/red-9 的现值，
+     深色另给一套（深底上浅色底块会变成"亮砖"）。 */
+  --rf-diff-added-bg: #f6ffed;
+  --rf-diff-added-border: #d9f7be;
+  --rf-diff-added-text: #135200;
+  --rf-diff-removed-bg: #fff1f0;
+  --rf-diff-removed-border: #ffccc7;
+  --rf-diff-removed-text: #a8071a;
+  /* A4 纸面：**两种主题下都是白纸**。导出与打印看到的就是屏幕上这张纸，
+     纸不跟着外壳变暗——所以它只能是常量，不是 --rf-surface。
+     模板画廊与结构示例用它，这两处也不跟随主题（问题 19 的范围之外）。 */
+  --rf-paper: #ffffff;
+  /* 草稿画布（预览 iframe）的纸面容器底色：浅色与 `--rf-paper` 同值，深色下变黑——
+     草稿纸在深色下**整体反色显示**（`resume-canvas.css` 的 `.resume-iframe.is-dark-paper`）。
+     它与 `--rf-paper` 分开住：后者仍表示"导出与打印看到的那张纸"，导出链路只认它。 */
+  --rf-preview-paper: #ffffff;
+  --rf-space-1: 4px;
+  --rf-space-2: 8px;
+  --rf-space-3: 16px;
+  --rf-space-4: 24px;
+  --rf-radius-control: 8px;
+  --rf-radius-panel: 16px;
+  --rf-motion-duration: 180ms;
+  --rf-header-height: 64px;
+  /* 断点镜像：与 theme/breakpoints.ts 一一对应，由 breakpointGuard.test.ts 逐值比对。
+     媒体查询本身不能引用变量（`@media (max-width: var(--x))` 无效）——这里存在的意义是
+     "让 CSS 侧也能读到同一个数"，例如 @container 的档位判断要与 TS 侧算出的侧栏宽度对上。 */
+  --rf-bp-phone: 767px;
+  --rf-bp-narrow: 1092px;
+  --rf-bp-base: 1366px;
+  --rf-bp-wide: 1536px;
+  --rf-bp-huge: 1920px;
+  --rf-bp-ultra: 2048px;
+  /* 外壳几何：唯一来源。Sider 的 width 与 .app-main 的 margin-left 都读它，
+     消灭「App.tsx 写 200 / base-shell.css 写 200 / responsive.css 写 64」三处耦合。
+     2026-10-28 由 200 加宽到 216（用户要求"稍微加宽一点"），收起态仍是 64。 */
+  --rf-sider-width: 216px;
+  /* 内容区内边距：取代 base-tasks.css 的 24px、responsive.css 的 16px、mobile.css 的 16px。 */
+  --rf-content-pad: 24px;
+  /* 卡片内边距与栅格间距（供各页复用；值全部落在 4/8 网格上）。 */
+  --rf-card-pad: 20px;
+  --rf-grid-gap: 16px;
+  /* 统计卡的最小可读宽度：标签 12px×8 汉字 96 + 左右内边距 32 + 余量 → 150。 */
+  --rf-stat-min: 150px;
+  /* 正文列的最小可读宽度与最大舒适宽度（rubric R4 / R8 的判据来源）。 */
+  --rf-prose-min: 280px;
+  --rf-prose-max: 900px;
+  /* A4 画布：窄容器可读下限与大屏放大上限（见方案 §4.6）。 */
+  --rf-a4-min-scale: 0.55;
+  --rf-a4-max-fit: 1;
+  /* 弹窗内容区统一高度上限：替代各弹窗散落的 170/180/200/220/230px 多档写法。
+     240px ≈ header + footer + 视口上下安全边距的总和（弹窗距视口上下各 ≥ 48px）。
+     移动端在 mobile.css 的媒体查询里另给一档（页头更高、边距更小）。
+     这是**长度** token：只有这一个源头，深色不重复声明（否则会盖掉移动端档位）。 */
+  --rf-modal-body-max-h: calc(100vh - 240px);
+
+  /*
+   * 弹层层级（与 tokens.ts layer 一一对应）。谁盖谁（自下而上）：
+   *   3100 popup-base    antd zIndexPopupBase。注意 antd 6 useZIndex 给
+   *                      Modal/Drawer 自动 +100 容器偏移：单层 Modal/Drawer 实际
+   *                      3200，Drawer 内嵌 Modal 3300，再嵌 +100/层。
+   *   3110 editor-modal  简历编辑器 Modal（打开时无并存容器）。
+   *   3400 assistant-card 投投助手卡：高于容器链两层（3200/3300）。
+   *   3450 save-card     投投资料保存卡——是 .tt-shell（isolation: isolate）的
+   *                      壳内地标，不参与全局排序，只需壳内 tip > save。
+   *   3500 clipboard-card 投投剪贴板卡：高于三层容器链；两卡同开时压住助手卡。
+   *   3550 card-popup    投投卡内弹层基准（局部 ConfigProvider 注入
+   *                      zIndexPopupBase）：+50~+80 组件偏移落在 3600~3630，
+   *                      卡之上、球之下。
+   *   3650 orb           悬浮球：压住三卡，随时可点。
+   *   3700 orb-tooltip   球身 Tooltip：投投族最高层。
+   *   3710 ai-polish     全局 AI 润色的按钮与卡片：要盖住承载输入框的那一层
+   *                      （编辑器 3110、单层 Modal/Drawer 3200、嵌套 3300），
+   *                      所以排在投投族之上。
+   *   antd message(+1010=4110)/notification(+1050=4150) 在投投族之上——
+   *   toast 不被卡片遮挡。
+   */
+  --rf-layer-popup-base: 3100;
+  --rf-layer-editor-modal: 3110;
+  --rf-layer-assistant-card: 3400;
+  --rf-layer-save-card: 3450;
+  --rf-layer-clipboard-card: 3500;
+  --rf-layer-card-popup: 3550;
+  --rf-layer-orb: 3650;
+  --rf-layer-orb-tooltip: 3700;
+  --rf-layer-ai-polish: 3710;
+}
+
+/*
+ * dvh 回退：移动端浏览器地址栏收起/展开时 `vh` 不是"真正的可见高度"，弹窗会被
+ * 地址栏压掉一截。自定义属性不能像普通声明那样"写两次取后一条"（浏览器不校验
+ * 它的单位），所以这里用 @supports 门控——不支持 dvh 的浏览器保留上面的 vh 值。
+ */
+@supports (height: 100dvh) {
+  :root {
+    --rf-modal-body-max-h: calc(100dvh - 240px);
+  }
+}
+
+/*
+ * 窄高屏（≤760 高）：弹窗内容区上限从 `dvh − 240` 放到 `dvh − 200`。
+ *
+ * 240 是按"上下各留 48px 安全边距"算的，在 768 高的屏上等于把可用高度压到 528——
+ * 而 1366×768 的笔记本正是最常见的底线机型：底部按钮会被推到折线以下。
+ * 收到 200 之后同一块屏多出 40px，按钮重新露出来。
+ * **这是全站唯一按高度分档的媒体查询**：宽度决定"几栏"，高度只决定"弹窗能有多高"。
+ */
+@media (max-height: 760px) {
+  :root {
+    --rf-modal-body-max-h: calc(100dvh - 200px);
+  }
+}
+
+/*
+ * 密度分级（只动"留白"，不动字号与控件圆角——13/14px 中文在 100% 缩放下已偏小，
+ * 为了"放得下"而缩正文是本方案明确禁止的）。三档与断点一一对应：
+ *   D 档 ≤1092、C 档 1366–1535（基准）、A 档 ≥1920。
+ * 用 max-width 向下覆盖、min-width 向上覆盖，互不重叠，避免依赖 @import 顺序。
+ */
+@media (max-width: 1092px) {
+  :root {
+    --rf-sider-width: 64px;
+    --rf-content-pad: 16px;
+    --rf-card-pad: 14px;
+    --rf-grid-gap: 12px;
+  }
+}
+
+/* E 档：侧栏整个让位（mobile.css 里 .app-sider{display:none} 仍保留，
+   因为它是 position:fixed，需要显式退出布局）。 */
+@media (max-width: 767px) {
+  :root {
+    --rf-sider-width: 0px;
+  }
+}
+
+/* A 档：只在大屏才放宽，避免 1366 用户看到"大屏样式"。
+   侧栏宽度仍是 200——"大屏加宽到 216"属 P2，不在本次范围（方案附录 D.2）。 */
+@media (min-width: 1920px) {
+  :root {
+    --rf-content-pad: 32px;
+    --rf-card-pad: 24px;
+    --rf-grid-gap: 20px;
+    --rf-a4-max-fit: 1.35;
+  }
+}
+
+/*
+ * RF-12 a11y：antd 预设 Tag 的浅底配色（green/success）前景对浅底不足 4.5:1
+ * （#389e0d/#52c41a on #f6ffed ≈ 2.2–3.4），统一加深前景到 green-7（5.3:1）。
+ * 只改前景色，底色与语义不变——表格/折叠头里的状态标签仍带文字，颜色不是唯一信号。
+ *
+ * 作用域收窄到**仅浅色**：深色下 #237804 是深绿，压在深绿的 Tag 底上等于看不见。
+ * 深色的对应规则在 dark-tokens.css（改用 --rf-success-text）。
+ */
+/* antd-override: 无障碍补偿 —— 浅色下把 tag 深绿前景压到达标对比度；深色另有提亮值 */
+:root:not([data-theme="dark"]) .ant-tag.ant-tag-green,
+:root:not([data-theme="dark"]) .ant-tag.ant-tag-success {
+  /* !important：antd 的 cssinjs 样式注入晚于本文件，同权重会被它覆盖。 */
+  color: #237804 !important;
+}

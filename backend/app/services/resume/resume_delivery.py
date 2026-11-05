@@ -1,0 +1,308 @@
+# SPDX-License-Identifier: Apache-2.0
+"""投递快照服务（RF-17 / PR-09 可信交付账本）：把"哪一版简历投给了谁"冻结成不可变证据。
+
+职责只有一件事：:func:`freeze_delivery` 把一份简历在投递/显式关联/导出那一刻的
+内容与渲染配置复制进 ``resume_delivery_record``。简历记录本身保持**原地更新**
+语义（PUT/revise 直接改 ``content``），所以投递之后的润色改的是正经历程里的
+"当前版"，而证据是这份快照——哈希不变，血缘可查。
+
+三条触发路径（source 取值见 ``models.resume_delivery``）：
+
+- ``apply``：投递台成功回写（``task_apply`` → ``tracker.record_applied``）；
+- ``track``：进度表单/接口显式把一条进度关联到一份简历；
+- ``export``：导出时显式要求落交付快照（``?record_delivery=true``——GET 旧语义，
+  新调用方走 ``POST /export``，见 ADR-0002）。
+
+目的地快照（PR-09）：``company`` / ``job_title`` 来自**实际投递目标**（track 记录或
+``record_applied`` 的实参），不再从原简历反推——通用简历（无公司）投给 A 公司时，
+快照目的地就是 A 公司。
+
+双指纹（PR-09 拆分）：
+
+- ``source_content_sha256``：导出前（脱敏后）源内容的规范化哈希——存档里是哪份内容；
+- ``artifact_sha256``：导出产物字节的 sha256——产出的文件是哪份。
+  旧列 ``content_sha256`` 语义不变（apply/track = 内容哈希；export = 产物哈希）。
+  响应头口径见 ADR-0002 §4.1（2026-10-14 RR-04 修订）：``X-Content-Sha256`` 是
+  **本次响应真实字节**的哈希，历史指纹走 ``X-Artifact-Sha256``——重放字节（HTML
+  每次换 CSP nonce）与当初下载的源文件不保证逐字节相同。
+
+幂等（PR-09）：``idempotency_key`` 代表"哪一次真实投递动作"——apply 用任务条目 ID，
+export 用产物哈希。同键重放**不重复记账**：:func:`freeze_delivery` 查到已有行时
+原样返回，不插新行。
+
+渲染上下文与导出路由走**同一条解析路径**（``record_format_config`` +
+``resolve_style_template`` / ``resolve_style_config``），不复制逻辑；指纹优先复用
+``export_pipeline.render_config_fingerprint``，保证与 ``ExportDelivery`` 同口径。
+
+渲染上下文里的 ``language``（纸面固定文案的语言）同样是存档的一部分：**旧快照没有
+这个键时回落 ``zh-CN``**——旧快照产出的本来就是中文，所以这是保真而不是降级；新快照
+按当时的语言重放，字节才能与当初那份对得上。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+
+from sqlalchemy.orm import Session
+
+from ...models.resume import ResumeRecord
+from ...models.resume_delivery import ResumeDeliveryRecord
+from ...schemas.resume_generation import (
+    UNLIMITED_PAGE_LIMIT,
+    UNLIMITED_RENDER_MAX_PAGES,
+)
+from ..export_pipeline import (
+    ExportArtifact,
+    ExportRequest,
+    RenderContext,
+    build_export,
+    render_config_fingerprint,
+)
+from .resume_labels import DEFAULT_RESUME_LANGUAGE
+from .resume_record import record_format_config
+from .resume_template_store import resolve_style_config, resolve_style_template
+
+
+def _canonical_json(payload) -> str:
+    """稳定序列化：排序键 + 紧凑分隔符，同一份内容永远得到同一个哈希。"""
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def canonical_content_sha256(content: dict) -> str:
+    """简历内容快照的规范化 sha256（apply/track 路径的内容指纹；export 路径的源内容指纹）。"""
+    return hashlib.sha256(_canonical_json(content or {}).encode("utf-8")).hexdigest()
+
+
+def page_limit_or_default(value: object) -> int:
+    """语义页数上限：``0``（``UNLIMITED_PAGE_LIMIT``）是一个**值**，不是"没配置"。
+
+    只有 ``None`` / 空串 / 无法解析才回落 1（老数据、NULL 列、旧快照缺这个键）。
+    **禁止写成 ``value or 1``**：那会把「不限篇幅」悄悄折成 1 页，而 1 页是最**严**的
+    上限——用户选了"不限"，拿回来却是最紧的那一档，且任何一层都看不出发生过折换。
+    """
+    if value is None or value == "":
+        return 1
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 1
+
+
+def render_page_limit(page_limit: int) -> int:
+    """把语义页数上限折成**渲染入口**要的正数上限（``0`` → 渲染保护上限，绝不折成 1）。
+
+    ``pdf_exporter.fit`` 内部是 ``max(1, page_limit)``：把 0 原样交给渲染器，等于把
+    "不限篇幅"变成"1 页"。所以渲染侧必须先折成 ``UNLIMITED_RENDER_MAX_PAGES``；
+    而"这份文件一个字都不许裁"由 ``RenderContext.page_limit_is_unlimited`` 表达——
+    数字是保护上限，语义才是用户的承诺，两者**不能混成一个字段**。
+    """
+    return UNLIMITED_RENDER_MAX_PAGES if page_limit <= UNLIMITED_PAGE_LIMIT else page_limit
+
+
+def default_render_context(db: Session, record: ResumeRecord) -> dict:
+    """从简历记录解析出的渲染上下文（apply/track 路径的存档口径，与旧行为一致）。
+
+    ``page_limit`` 存**语义值**：用户选「不限」时这里就是 ``0``。存档是"当初那一版的
+    证据"，存 1 页或 10 页都是替用户改口。
+    """
+    export_template, export_html = resolve_style_template(db, record.template)
+    return {
+        "template": export_template,
+        "template_html": export_html,
+        "style_config": resolve_style_config(db, record.template) or {},
+        "format_config": record_format_config(db, record) or {},
+        "page_limit": page_limit_or_default(record.page_limit),
+        "font_scale": record.font_scale or "standard",
+        # 标题语言也进存档：快照要能还原出"当初那份文件"的字面。
+        "language": record.language or DEFAULT_RESUME_LANGUAGE,
+    }
+
+
+def freeze_delivery(
+    db: Session,
+    *,
+    record: ResumeRecord,
+    source: str,
+    track_id: int | None = None,
+    export_format: str = "",
+    filename: str = "",
+    pages: int | None = None,
+    content_sha256: str | None = None,
+    rendered_config_sha256: str | None = None,
+    company: str | None = None,
+    job_title: str | None = None,
+    content: dict | None = None,
+    render_context: dict | None = None,
+    request_params: dict | None = None,
+    source_content_sha256: str | None = None,
+    artifact_sha256: str | None = None,
+    idempotency_key: str | None = None,
+) -> ResumeDeliveryRecord | None:
+    """冻结一份简历的投递快照并落库；**不提交**——由调用方决定事务边界。
+
+    覆盖参数（PR-09，None 表示沿用旧行为）：
+
+    - ``company`` / ``job_title``：实际投递目标（track 记录 / record_applied 实参）。
+      不传时回退简历记录上的冗余字段（旧行为，仅为兼容）；
+    - ``content``：要冻结的内容（脱敏导出传脱敏后内容，保证存档与下载产物同源）；
+    - ``render_context``：实际生效的渲染上下文（导出路径传生效后的版式，修复
+      "请求 page_limit=2 存档却是 1"的错位）；
+    - ``request_params`` / ``source_content_sha256`` / ``artifact_sha256``：可信
+      交付账本的新列，见模块 docstring；
+    - ``idempotency_key``：同键重放不重复记账——查到已有行时**原样返回**（调用方
+      不该把返回值当"新行"再断言数量）。
+
+    ``content_sha256`` / ``rendered_config_sha256`` 缺省时自行计算：
+
+    - 内容指纹对规范化 JSON 的 sha256（apply/track 路径没有导出产物可指）；
+    - 配置指纹用 :func:`render_config_fingerprint` 按"默认导出请求 + 解析出的
+      渲染上下文"计算——与 ``ExportDelivery`` 同一个函数，同口径可比对。
+
+    export 路径请把 ``build_export_delivery`` 产出的哈希原样传入：库里的
+    ``artifact_sha256`` 就是"当初那次导出产物"的指纹，下载时以
+    ``X-Artifact-Sha256`` 报出，供用户与本次重放字节（``X-Content-Sha256``）比对。
+    """
+    if idempotency_key is not None:
+        existing = (
+            db.query(ResumeDeliveryRecord)
+            .filter(ResumeDeliveryRecord.idempotency_key == idempotency_key)
+            .first()
+        )
+        if existing is not None:
+            # 同一次真实动作的重放：证据已经在了，不重复记账。
+            return existing
+    frozen_content = dict(content) if content is not None else dict(record.content or {})
+    effective_render_context = (
+        dict(render_context) if render_context is not None else default_render_context(db, record)
+    )
+    fingerprint_request = ExportRequest(format=export_format or "pdf")
+    # 存档里的 page_limit 是**语义值**（0 = 不限），指纹上下文要的是**渲染值**：
+    # 0 折成渲染保护上限（10）+ ``page_limit_is_unlimited=True``，与导出路由传进来的
+    # 那份 context 同口径——否则"投递快照"和"导出快照"对同一份文件算出两个指纹。
+    archived_page_limit = page_limit_or_default(effective_render_context.get("page_limit"))
+    context = RenderContext(
+        template=effective_render_context.get("template", "classic"),
+        template_html=effective_render_context.get("template_html", ""),
+        style_config=effective_render_context.get("style_config") or {},
+        page_limit=render_page_limit(archived_page_limit),
+        font_scale=effective_render_context.get("font_scale") or "standard",
+        format_config=effective_render_context.get("format_config") or {},
+        # 旧快照里没有 language 这个键 → 回落 zh-CN。而旧快照本来就是中文，
+        # 所以这是**保真**（还原当初那两个字），不是降级。
+        language=effective_render_context.get("language") or DEFAULT_RESUME_LANGUAGE,
+        page_limit_is_unlimited=archived_page_limit == UNLIMITED_PAGE_LIMIT,
+    )
+    delivery = ResumeDeliveryRecord(
+        resume_id=record.id,
+        job_id=record.job_id,
+        track_id=track_id,
+        source=source,
+        resume_title=record.title or "",
+        # 目的地快照：显式传入的实际投递目标优先，不从原简历反推。
+        job_title=record.job_title if job_title is None else job_title,
+        company=record.company if company is None else company,
+        content=frozen_content,
+        render_context=effective_render_context,
+        content_sha256=content_sha256
+        or hashlib.sha256(_canonical_json(frozen_content).encode("utf-8")).hexdigest(),
+        rendered_config_sha256=rendered_config_sha256
+        or render_config_fingerprint(fingerprint_request, context),
+        export_format=export_format,
+        filename=filename,
+        pages=pages,
+        model=record.model or "",
+        source_content_sha256=source_content_sha256
+        if source_content_sha256 is not None
+        else canonical_content_sha256(frozen_content),
+        artifact_sha256=artifact_sha256,
+        request_params=request_params,
+        idempotency_key=idempotency_key,
+    )
+    db.add(delivery)
+    db.flush()
+    return delivery
+
+
+def list_deliveries(db: Session, resume_id: int) -> list[ResumeDeliveryRecord]:
+    """一份简历的全部交付记录（新→旧）。证据不可删，不过滤任何行。"""
+    return (
+        db.query(ResumeDeliveryRecord)
+        .filter(ResumeDeliveryRecord.resume_id == resume_id)
+        .order_by(ResumeDeliveryRecord.created_at.desc(), ResumeDeliveryRecord.id.desc())
+        .all()
+    )
+
+
+def get_delivery(db: Session, delivery_id: int) -> ResumeDeliveryRecord | None:
+    """按 id 取一条交付快照：**不要求原简历存活**（外键早已 SET NULL，证据仍可读）。"""
+    return db.get(ResumeDeliveryRecord, delivery_id)
+
+
+def list_track_deliveries(db: Session, track_id: int) -> list[ResumeDeliveryRecord]:
+    """一条进度记录的全部交付快照（新→旧）：从岗位/进度进入对应 delivery 的入口。"""
+    return (
+        db.query(ResumeDeliveryRecord)
+        .filter(ResumeDeliveryRecord.track_id == track_id)
+        .order_by(ResumeDeliveryRecord.created_at.desc(), ResumeDeliveryRecord.id.desc())
+        .all()
+    )
+
+
+def replay_delivery_export(delivery: ResumeDeliveryRecord) -> ExportArtifact:
+    """从快照重放导出：存档内容 + render_context + 实际生效的请求参数 → 导出产物。
+
+    只对 ``export_format`` 非空的快照有意义（apply/track 快照没有导出请求，调用方
+    应走内容下载）。旧快照缺 ``request_params`` 时抛 ``ValueError``——那是"不可还原"，
+    不该假装能重放出同一份文件。水印由 :func:`build_export` 内部按存档参数补涂，
+    产物字节与当时一致（同内容 + 同参数的确定性渲染）。
+    """
+    params = delivery.request_params or {}
+    if not delivery.export_format or not params:
+        raise ValueError("该快照没有可重放的导出请求参数（旧存档不可还原）")
+    context_data = delivery.render_context or {}
+    # 存档里的 0 = 「不限篇幅」，重放时必须还按不限排：折成 1 页就是"重下的文件比当初少"。
+    replayed_page_limit = page_limit_or_default(context_data.get("page_limit"))
+    context = RenderContext(
+        template=context_data.get("template", "classic"),
+        template_html=context_data.get("template_html", ""),
+        style_config=context_data.get("style_config") or {},
+        page_limit=render_page_limit(replayed_page_limit),
+        font_scale=context_data.get("font_scale") or "standard",
+        format_config=context_data.get("format_config") or {},
+        margin_mm=params.get("margin_mm"),
+        include_photo=bool(params.get("include_photo", True)),
+        # 同 freeze_delivery：旧快照缺 language 就回落 zh-CN，那是保真而非降级。
+        language=context_data.get("language") or DEFAULT_RESUME_LANGUAGE,
+        page_limit_is_unlimited=replayed_page_limit == UNLIMITED_PAGE_LIMIT,
+    )
+    # T4b：存档 content 就是 v2 文档，导出管线（build_export）v2 直通，不再折 v1 分析视图。
+    resume = delivery.content
+    # 重放不做脱敏：存档 content 已经是"实际导出用的那一份"（脱敏导出存脱敏内容），
+    # 再脱敏一次会双重遮罩。请求参数里的 redact 仅作存档备查。
+    return build_export(
+        ExportRequest(
+            format=params.get("format") or delivery.export_format,
+            watermark=params.get("watermark", ""),
+            redact=False,
+            margin_mm=params.get("margin_mm"),
+            font_scale=params.get("font_scale"),
+            page_limit=params.get("page_limit"),
+            include_photo=bool(params.get("include_photo", True)),
+        ),
+        resume,
+        context,
+    )
+
+
+__all__ = [
+    "canonical_content_sha256",
+    "default_render_context",
+    "freeze_delivery",
+    "get_delivery",
+    "list_deliveries",
+    "list_track_deliveries",
+    "page_limit_or_default",
+    "render_page_limit",
+    "replay_delivery_export",
+]

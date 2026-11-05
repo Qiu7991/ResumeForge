@@ -1,0 +1,395 @@
+# SPDX-License-Identifier: Apache-2.0
+"""备份导入校验：解包、版本核对、迁移与表结构校验（职责⑤）。
+
+安全语义（zip-slip 防护、fail-closed manifest、校验顺序）整函数搬运零改动。
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import secrets
+import sqlite3
+import zipfile
+from contextlib import closing
+from pathlib import Path
+from typing import Any
+
+from sqlalchemy import Engine
+
+from ...database_migrations import _APPLICATION_TABLES, run_database_migrations
+from ..schema_epoch import read_epoch
+from .archive_guard import copy_archive_member, validate_archive, validate_manifest_assets
+from .asset_manifest import ASSET_MANIFEST_VERSION, verify_database_rows
+from .global_assets import GLOBAL_ASSETS_VERSION
+from .manifest import _revision_chain, _table_counts
+from .paths import (
+    ARCHIVE_DATASETS_DIRNAME,
+    ARCHIVE_REFERRAL_IMAGES_PREFIX,
+    ARCHIVE_USER_FILES_PREFIX,
+    BACKUP_FORMAT_VERSION,
+    DATABASE_MEMBER,
+    MANIFEST_MEMBER,
+    BackupError,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def extract_database(archive_path: Path, destination: Path) -> Path:
+    """把压缩包里的数据库成员写到 destination 并返回该路径。"""
+    return extract_member(archive_path, DATABASE_MEMBER, destination)
+
+
+def _remove_sqlite_sidecars(path: Path) -> None:
+    """删除一个 SQLite 库文件的 WAL / 回滚日志边车文件（主文件不动）。
+
+    生产引擎开启 WAL 后，候选库在迁移、校验期间会在旁边产生 ``-wal`` / ``-shm``
+    边车；只读连接关闭时无法清理它们，会残留在 staging 目录里越积越多。
+    """
+    for suffix in ("-wal", "-shm", "-journal"):
+        Path(f"{path}{suffix}").unlink(missing_ok=True)
+
+
+def _best_effort_checkpoint(path: Path) -> None:
+    """Require a complete candidate WAL checkpoint before publishing its main file.
+
+    Keep the historical import name for callers; a busy/failed checkpoint now fails closed.
+    """
+    try:
+        with closing(sqlite3.connect(path, timeout=5.0)) as connection:
+            result = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if result is None or result[0] != 0 or result[1] != result[2]:
+                raise BackupError("候选库的 WAL 尚未完整写回，已停止发布，请稍后重试")
+    except sqlite3.Error as exc:
+        raise BackupError("候选库的 WAL 检查失败，已停止发布，请稍后重试") from exc
+
+
+def _remove_candidate_files(path: Path) -> None:
+    """删除候选库主文件及其全部边车文件；确保在引擎 dispose / 连接关闭之后调用。"""
+    _remove_sqlite_sidecars(path)
+    path.unlink(missing_ok=True)
+
+
+def extract_member(archive_path: Path, member: str, destination: Path) -> Path:
+    """把压缩包里指定的成员写到 destination 并返回该路径。
+
+    用 ``ZipFile.open`` 逐块写出，不经过 ``extractall``，从结构上排除了 zip-slip；
+    调用方仍需自行校验 ``member`` 是不是自己期望的那一个。
+    """
+    with zipfile.ZipFile(archive_path) as archive:
+        validate_archive(archive)
+        with destination.open("xb") as target:
+            copy_archive_member(archive, member, target)
+    return destination
+
+
+def restore_referral_images(archive_path: Path, destination_dir: Path) -> int:
+    """把包里附带的内推备注图片恢复到目标库同目录，返回恢复的文件数。
+
+    旧备份包没有这些条目——这里只遍历实际存在的成员，缺了就一个也不写，导入
+    照常成功。成员名只认 ``referral_images/<单段文件名>`` 一种形状（杜绝 zip-slip）；
+    目标已存在的同名文件不覆盖（多份数据集共用一个文件系统命名空间，先到先得）。
+    """
+    return _restore_legacy_assets(
+        archive_path, destination_dir, "referral_images", ARCHIVE_REFERRAL_IMAGES_PREFIX
+    )
+
+
+def restore_user_files(archive_path: Path, destination_dir: Path) -> int:
+    """把包里附带的"我的文件"恢复到目标库同目录，返回恢复的文件数。
+
+    与 ``restore_referral_images`` 同一模式：旧备份包没有这些条目就一个也不写；
+    成员名只认 ``user_files/<单段文件名>``（杜绝 zip-slip）；目标已存在的同名文件
+    不覆盖——user_files 按内容指纹命名，同名即同内容，先到先得。
+    """
+    return _restore_legacy_assets(
+        archive_path, destination_dir, "user_files", ARCHIVE_USER_FILES_PREFIX
+    )
+
+
+def _restore_legacy_assets(archive_path: Path, directory: Path, category: str, prefix: str) -> int:
+    from .asset_restore import AssetRestorePlan
+
+    plan = AssetRestorePlan(directory.parent / f".rf-legacy-{secrets.token_hex(8)}")
+    try:
+        plan.add_legacy_section(
+            archive_path,
+            prefixes={category: prefix},
+            destinations={category: directory},
+            label="旧格式附件",
+        )
+        if plan.blocking_issues():
+            raise BackupError("旧格式备份附件未通过校验：" + plan.blocking_issues()[0])
+        counts, issues = plan.publish()
+        if issues:
+            raise BackupError("旧格式备份附件发布失败：" + issues[0])
+        return counts[category]
+    except BaseException:
+        plan.rollback()
+        raise
+    finally:
+        plan.discard()
+
+
+def declared_datasets(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """清单里声明的"其余数据集"。格式 1 的包没有这一段，返回空列表。"""
+    entries = manifest.get("datasets")
+    if not isinstance(entries, list):
+        return []
+    return [item for item in entries if isinstance(item, dict)]
+
+
+def _assert_member_is_a_dataset(entry: dict[str, Any]) -> str:
+    """校验清单里那条记录指向的成员路径**确实落在 datasets/ 之下且是 .db**。
+
+    包内的路径是可以被构造的：一个改过的备份包可以在这里写 ``../../`` 或指向主数据库
+    成员，让导入过程把别的东西当成数据集写盘。因此路径只认
+    ``datasets/<合法的 id>.db`` 这一种形状，别的一律拒收。
+    """
+    member = str(entry.get("file") or "")
+    prefix = f"{ARCHIVE_DATASETS_DIRNAME}/"
+    if not member.startswith(prefix) or not member.endswith(".db"):
+        raise BackupError(f"备份包里有一份数据集的路径不合法（{member or '空'}），已停止导入")
+    stem = member[len(prefix) : -len(".db")]
+    if not re.fullmatch(r"(?:main|[0-9a-f]{16})", stem) or entry.get("id") != stem:
+        raise BackupError(f"备份包里有一份数据集的路径不合法（{member}），已停止导入")
+    return member
+
+
+def inspect_extra_dataset(
+    archive_path: Path, entry: dict[str, Any], bind: Engine, staging_dir: Path
+) -> Path:
+    """解出包里的一份"其余数据集"并做与主库同样的校验，返回临时文件路径。
+
+    校验链与活动数据集**完全一致**（先核对 revision、再迁移、最后查表结构）：随包带走的
+    那几份也是用户的数据，不能因为"它是附带的"就降低标准。调用方负责把它落盘并在用完后
+    删除临时文件。
+    """
+    member = _assert_member_is_a_dataset(entry)
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    candidate = staging_dir / f"dataset-{secrets.token_hex(8)}.db"
+    try:
+        extract_member(archive_path, member, candidate)
+        # 顺序不能调换：先按原始 epoch/revision 核对版本，再迁移，最后才校验表结构。
+        _check_candidate_epoch(
+            candidate, label=str(entry.get("name") or entry.get("id") or "")
+        )
+        _check_candidate_revision(candidate, bind, {"alembic_revision": None})
+        _upgrade_candidate(candidate)
+        _database_info(candidate, bind)
+        # P4：随包数据集也要按清单复核行数（活动数据集在 ``datasets.import_dataset``
+        # 里做）。不核的话，一份被改过行数的子包会"恢复成功"却少了几十条记录。
+        # 旧包没有 ``tables`` 段 → verify 直接返回空，行为不变。
+        row_issues = verify_database_rows(candidate, entry.get("tables") or {})
+        if row_issues:
+            label = entry.get("name") or entry.get("id") or "随包数据集"
+            raise BackupError(
+                f"备份包里数据集「{label}」的数据库行数与清单不符，已停止导入：{row_issues[0]}"
+            )
+    except BaseException:
+        _remove_candidate_files(candidate)
+        raise
+    return candidate
+
+
+def _read_manifest(archive: zipfile.ZipFile) -> dict[str, Any]:
+    validate_archive(archive)
+    try:
+        manifest = json.loads(archive.read(MANIFEST_MEMBER))
+    except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise BackupError("备份包的元信息已损坏，无法读取") from exc
+    if not isinstance(manifest, dict):
+        raise BackupError("备份包的元信息已损坏，无法读取")
+    format_version = manifest.get("format")
+    # 只拒收"比当前代码更新"的格式。这里曾是 `!=`，等于把每一次导出格式升级都变成
+    # 用户历史备份的全部失效——用户升级一次应用后就再也导不回旧包了。
+    if (
+        not isinstance(format_version, int)
+        or isinstance(format_version, bool)
+        or format_version < 1
+    ):
+        raise BackupError("备份包格式不受支持，可能来自其它版本的 ResumeForge")
+    if format_version > BACKUP_FORMAT_VERSION:
+        raise BackupError("备份来自更新版本的 ResumeForge，当前版本无法恢复；请先升级应用再导入")
+    # fail-closed：清单必须**显式**声明密钥是否在包里，缺失或乱值一律拒收——将来格式
+    # 再变更时，不会静默放行一个自己读不懂的声明。true 表示用户导出时勾选了"包含
+    # API Key"（格式 3）：密钥按本机存储形态随包走，恢复后解不开（换机器/换用户）时
+    # 应用按未配置处理，由用户重填；不认识这个选项的老版本会在上面的格式校验处拒收。
+    if type(manifest.get("api_key_included")) is not bool:
+        raise BackupError("备份包的元信息未声明密钥状态，为安全起见已拒绝恢复")
+    # 资产清单（PR-15）fail-closed：段存在就必须是当前代码认识的版本。没有这一段的
+    # 旧包走"遍历扁平成员"的老路径照常导入；版本号对不上（来自更新/更老版本）时
+    # 明确拒收，不给"按自己读不懂的形状安静误读附件"留门。
+    asset_section = manifest.get("asset_manifest")
+    if asset_section is not None and (
+        not isinstance(asset_section, dict)
+        or asset_section.get("manifest_version") != ASSET_MANIFEST_VERSION
+    ):
+        raise BackupError(
+            "备份包的资产清单版本不受支持，可能来自其它版本的 ResumeForge；请先升级应用再导入"
+        )
+    # 全局资产（字体，格式 6）fail-closed：段存在就必须是当前代码认识的版本。
+    # 没有这一段的 1–5 包照常导入（它们本来就没有字体）；版本对不上说明来自更新/
+    # 更老的版本，宁可拒收也不按自己读不懂的形状去写用户的字体目录。
+    global_assets_section = manifest.get("global_assets")
+    if global_assets_section is not None and (
+        not isinstance(global_assets_section, dict)
+        or global_assets_section.get("version") != GLOBAL_ASSETS_VERSION
+    ):
+        raise BackupError(
+            "备份包的字体清单版本不受支持，可能来自其它版本的 ResumeForge；请先升级应用再导入"
+        )
+    validate_manifest_assets(manifest)
+    return manifest
+
+
+def _read_candidate_revision(database: Path) -> str | None:
+    with closing(sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if "alembic_version" not in tables:
+            return None
+        row = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        return row[0] if row else None
+
+
+def _check_candidate_epoch(database: Path, *, label: str | None = None) -> None:
+    """迁移**之前**核对库形态：没有 app_schema_epoch 表的一律视为 1.x 包并拒收。
+
+    必须排在 _check_candidate_revision 与 _upgrade_candidate 之前：迁移会把候选库改写
+    成本代 head，之后就读不出原来的 epoch/版本了。2.0 的路线是全新库（非 2.0 库整包
+    归档、永不原地迁移），所以 1.x 备份包不导入，提示用户用 1.0.2 打开并导回。
+
+    ``label`` 是随包数据集的展示名：多数据集包拒收时要能点出是哪一份，否则用户只能
+    看到一句笼统的"来自 1.x"。
+    """
+    if read_epoch(database) is not None:
+        return
+    subject = f"备份包中的数据集「{label}」" if label else "这个备份包"
+    raise BackupError(
+        f"{subject}来自 ResumeForge 1.x。2.0 使用全新的资料库，不导入 1.x 的数据："
+        "请用 ResumeForge 1.0.2 打开并导回这份备份，或直接继续使用 1.0.2。"
+    )
+
+
+def _check_candidate_revision(database: Path, bind: Engine, manifest: dict[str, Any]) -> None:
+    """迁移**之前**核对版本：既挡住来自更新版本的备份，也挡住被改过清单的包。
+
+    这一步必须排在 ``_upgrade_candidate`` 前面。迁移会把候选库的 revision 改写成当前
+    head，之后再比就永远对不上——一份完全合法的旧备份会被判成"清单与实际内容不一致"
+    而拒收，等于把新增数据表这件事重新变成一次不兼容改动。
+    """
+    revision = _read_candidate_revision(database)
+    if revision is not None and revision not in _revision_chain(bind):
+        raise BackupError("备份来自更新版本的 ResumeForge，当前版本无法恢复；请先升级应用再导入")
+    declared = manifest.get("alembic_revision")
+    if declared and revision and declared != revision:
+        raise BackupError("备份包的清单与实际数据库内容不一致，已拒绝恢复")
+
+
+def _upgrade_candidate(database: Path) -> None:
+    """把解出来的候选库升到当前 head，再交给表结构校验。
+
+    旧版本导出的备份不含后来新增的表，而校验要求表集合与代码一致——不先迁移的话，
+    一份完全合法的旧备份会被判成"不是 ResumeForge 的备份"而拒收。切换数据集的路径
+    本来就会重跑迁移，这里保持一致。
+
+    迁移前不生成备份：候选库只是压缩包解出来的一次性副本，原始压缩包还在手上，
+    而预迁移备份会落在 restore 目录里越积越多。
+    """
+    from ...database import build_engine, database_url_for
+
+    engine = build_engine(database_url_for(database))
+    try:
+        run_database_migrations(engine, backup=False)
+    finally:
+        engine.dispose()
+
+
+def _database_info(database: Path, bind: Engine) -> dict[str, Any]:
+    """校验解出来的数据库，返回其中的 revision 与各表行数。
+
+    版本与清单的一致性由 ``_check_candidate_revision`` 在迁移前核对过了；走到这里
+    候选库已经在当前 head 上，再比一次只会是永远成立的空检查。
+    """
+    with closing(sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)) as connection:
+        try:
+            if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise BackupError("备份包中的数据库未通过完整性校验")
+            tables = {
+                row[0]
+                for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+        except sqlite3.DatabaseError as exc:
+            raise BackupError("备份包中的数据库已损坏") from exc
+
+        missing = [name for name in _APPLICATION_TABLES if name not in tables]
+        if missing:
+            raise BackupError(
+                f"备份包中的数据库缺少数据表（{missing[0]} 等），可能不是 ResumeForge 的备份"
+            )
+        # SQLite 引擎内部表（sqlite_sequence、sqlite_stat1 等）由 SQLite 自己维护，
+        # 不是业务表，更不是"更新版本的新表"：按 ``sqlite_`` 前缀整体放行。逐个枚举
+        # 会漏——optimize/ANALYZE 这类引擎行为随时可能在库里落下新的统计表，把一份
+        # 完全合法的备份误判成"来自更新版本"。
+        # ``knowledge_fts*``（迁移 0044）与 ``search_fts_*``（迁移 0046）是 FTS5 派生
+        # 索引（含 _data/_idx/_docsize/_config 四张影子表）：内容完全由业务表 +
+        # 触发器推导，删除后 rebuild 即可重建，不算"更新版本的新表"。
+        unexpected = sorted(
+            name
+            for name in tables - set(_APPLICATION_TABLES) - {"alembic_version"}
+            if not name.startswith("sqlite_")
+            and not name.startswith(("knowledge_fts", "search_fts"))
+        )
+        if unexpected:
+            raise BackupError(
+                f"备份包中含有当前版本不认识的数据表（{unexpected[0]}），"
+                "可能来自更新版本的 ResumeForge；请先升级应用再导入"
+            )
+
+        revision = None
+        if "alembic_version" in tables:
+            row = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+            revision = row[0] if row else None
+
+        counts = {
+            name: connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+            for name in _APPLICATION_TABLES
+        }
+    return {"alembic_revision": revision, "tables": counts}
+
+
+def inspect_archive(archive_path: Path, bind: Engine, staging_dir: Path) -> dict[str, Any]:
+    """只读校验备份包并返回预览信息，不触碰当前数据库。"""
+    try:
+        archive = zipfile.ZipFile(archive_path)
+    except zipfile.BadZipFile as exc:
+        raise BackupError("备份文件不是有效的压缩包") from exc
+
+    with archive:
+        names = set(archive.namelist())
+        if DATABASE_MEMBER not in names or MANIFEST_MEMBER not in names:
+            raise BackupError("备份包缺少必要内容，可能不是 ResumeForge 的备份")
+        manifest = _read_manifest(archive)
+
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    candidate = staging_dir / f"inspect-{secrets.token_hex(8)}.db"
+    try:
+        extract_database(archive_path, candidate)
+        # 顺序不能调换：先按原始 epoch/revision 核对版本，再迁移，最后才校验表结构。
+        _check_candidate_epoch(candidate)
+        _check_candidate_revision(candidate, bind, manifest)
+        _upgrade_candidate(candidate)
+        info = _database_info(candidate, bind)
+    finally:
+        _remove_candidate_files(candidate)
+
+    return {
+        "manifest": manifest,
+        "database": info,
+        "current_tables": _table_counts(bind),
+    }

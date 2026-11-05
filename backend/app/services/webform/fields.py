@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+"""网申字段目录的兼容出口。
+
+字段定义、页面同义词和匹配安全规则分别维护在职责单一的模块中；本文件保留原有导入路径，
+避免应用代码和第三方调用方因内部拆分失效。
+"""
+
+from .field_catalog import (
+    FIELD_KEYS,
+    FIELD_LABELS,
+    FORM_FIELDS,
+    GROUP_CONTACT,
+    GROUP_CUSTOM,
+    GROUP_EDUCATION,
+    GROUP_EXTRA_FAMILY,
+    GROUP_EXTRA_HEALTH,
+    GROUP_EXTRA_INTENT,
+    GROUP_EXTRA_LANGUAGE,
+    GROUP_EXTRA_MISC,
+    GROUP_EXTRA_PARTY,
+    GROUP_EXTRA_SCHOOL,
+    GROUP_IDENTITY,
+    GROUP_OTHER,
+    SENSITIVE_FIELD_KEYS,
+    SOURCE_EXTRA,
+    SOURCE_PROFILE,
+    FormField,
+)
+from .field_matching_rules import (
+    AUTOCOMPLETE_DENY,
+    AUTOCOMPLETE_FIELDS,
+    AUTOCOMPLETE_OFF,
+    CLAIM_LABELS,
+    CLAIM_PREFIXES,
+    CONSENT_HINTS,
+    FIELD_DENYLIST,
+    FIELD_EXCLUDE_HINTS,
+    FIELD_PREFERRED_TYPES,
+    OPTION_ALIASES,
+    PLACEHOLDER_TEXTS,
+    is_claim_label,
+)
+from .field_synonyms import FIELD_BLOCK_HINTS, FIELD_SYNONYMS, RELATIVE_HINTS
+
+__all__ = [
+    "AUTOCOMPLETE_DENY",
+    "AUTOCOMPLETE_FIELDS",
+    "AUTOCOMPLETE_OFF",
+    "CLAIM_LABELS",
+    "CLAIM_PREFIXES",
+    "CONSENT_HINTS",
+    "FIELD_BLOCK_HINTS",
+    "FIELD_DENYLIST",
+    "FIELD_EXCLUDE_HINTS",
+    "FIELD_KEYS",
+    "FIELD_LABELS",
+    "FIELD_PREFERRED_TYPES",
+    "FIELD_SYNONYMS",
+    "FORM_FIELDS",
+    "GROUP_CONTACT",
+    "GROUP_CUSTOM",
+    "GROUP_EDUCATION",
+    "GROUP_EXTRA_FAMILY",
+    "GROUP_EXTRA_HEALTH",
+    "GROUP_EXTRA_INTENT",
+    "GROUP_EXTRA_LANGUAGE",
+    "GROUP_EXTRA_MISC",
+    "GROUP_EXTRA_PARTY",
+    "GROUP_EXTRA_SCHOOL",
+    "GROUP_IDENTITY",
+    "GROUP_OTHER",
+    "OPTION_ALIASES",
+    "PLACEHOLDER_TEXTS",
+    "RELATIVE_HINTS",
+    "SENSITIVE_FIELD_KEYS",
+    "SOURCE_EXTRA",
+    "SOURCE_PROFILE",
+    "FormField",
+    "is_claim_label",
+]

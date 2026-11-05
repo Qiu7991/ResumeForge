@@ -1,0 +1,460 @@
+# SPDX-License-Identifier: Apache-2.0
+"""简历导出与脱敏端点（域⑧）：导出闸门 + 管线委托 + GET/POST 导出 + 脱敏预览。
+
+从原 ``api/resumes.py`` 原样搬运（纯切片，无 patch 读取点）；`_get_live_resume` 与两个
+PDF 响应头常量改从 ``_shared`` 导入。
+"""
+
+import logging
+from dataclasses import asdict
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Request as HTTPRequest
+from fastapi.responses import Response
+from sqlalchemy.orm import Session
+
+from ...database import get_db
+from ...middleware.loopback_origin import is_non_cross_site_request
+from ...models.resume import ResumeRecord
+from ...schemas.export import (
+    ExportRequest as ExportRequestSchema,
+)
+from ...schemas.export import (
+    PreviewPdfRequest,
+)
+from ...schemas.resume import mode_page_limit
+from ...schemas.resume_generation import UNLIMITED_PAGE_LIMIT
+from ...services.export_pipeline import (
+    ExportRequest,
+    RenderContext,
+    build_export_delivery,
+    effective_format_config,
+    render_config_fingerprint,
+)
+from ...services.export_save_location import save_artifact, validate_directory
+from ...services.pdf_exporter import ResumePDFError
+from ...services.pdf_preview_cache import CachedPreviewPdf
+from ...services.pdf_preview_cache import get as get_cached_preview
+from ...services.pdf_preview_cache import put as put_cached_preview
+from ...services.privacy import RedactionOptions as PrivacyRedactionOptions
+from ...services.privacy import plain_text_document, redact_document
+from ...services.resume.export_bundle import resolve_variant_export_options
+from ...services.resume.resume_completeness import find_incomplete_document, incomplete_detail
+from ...services.resume.resume_delivery import (
+    canonical_content_sha256,
+    freeze_delivery,
+    page_limit_or_default,
+)
+from ...services.resume.resume_labels import DEFAULT_RESUME_LANGUAGE
+from ...services.resume.resume_record import record_format_config
+from ...services.resume.resume_template_format import validated_format_config
+from ...services.resume.resume_template_store import (
+    resolve_format_config,
+    resolve_style_config,
+    resolve_style_template,
+)
+from ...services.settings_service import get_export_save_location
+from ...services.watermark import WatermarkError
+from .. import settings as settings_api
+from ._shared import (
+    PDF_ENGINE_HEADER,
+    PDF_ENGINE_NAME,
+    PDF_PAGE_LIMIT_HEADER,
+    PDF_PAGES_HEADER,
+    PDF_PAGES_NEEDED_HEADER,
+    RESUME_OVERFLOW_HEADER,
+    _get_live_resume,
+    document_or_422,
+    page_limit_header_value,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+# 1-D：这份文件按「最大篇幅」裁过没有、从哪一块开始没有进去（``section/object_id``）。
+# 与 ``X-Resume-Overflow`` 分开：后者是"裁完还超限"，前者是"文件里确实少了东西"——
+# 裁过的文件页数通常正好等于上限，只看 overflow 的话用户以为一切都好。
+# 必须同时出现在 CORS 的 expose_headers 里（见 application.py），否则跨源部署下前端
+# 读到的是 null。
+RESUME_TRUNCATED_HEADER = "X-Resume-Truncated"
+RESUME_TRUNCATED_AT_HEADER = "X-Resume-Truncated-At"
+
+
+def _require_local_export_request(request: HTTPRequest) -> None:
+    """Resume exports expose private profile data and are a loopback-only capability."""
+    if not settings_api._is_loopback_request(request) or not is_non_cross_site_request(request):
+        raise HTTPException(status_code=403, detail="简历导出仅允许从本机前端访问")
+
+
+def _document_for_request(db: Session, record: ResumeRecord, content_override: dict | None) -> dict:
+    """导出输入的版本收口：v2 直通；旧记录/旧草稿一次性转换（不写库）。
+
+    结构不合法（例如非法照片 data URL）统一 422 + 可读提示，不冒泡成 500。
+    """
+    return document_or_422(
+        content_override if content_override is not None else record.content,
+        db,
+        language=record.language or DEFAULT_RESUME_LANGUAGE,
+        format_config=record.format_config or {},
+    )
+
+
+def _export_record(
+    db: Session,
+    record: ResumeRecord,
+    request: ExportRequest,
+    *,
+    allow_incomplete: bool,
+    record_delivery: bool = False,
+    save_copy: bool = True,
+    inline: bool = False,
+    template_override: str | None = None,
+    format_name_override: str | None = None,
+    cache_result: bool = False,
+    content_override: dict | None = None,
+) -> Response:
+    """导出闸门 + 管线委托 + 响应头，是 GET / POST 两条导出路径的共用出口。
+
+    ``record_delivery``（RF-17）：为真时把这次导出冻结成一份 ``source="export"``
+    的投递快照（「正式投递存档」语义）。**默认不落**——预览导出零膨胀。新调用方
+    请走 ``POST /export``（GET 上的该参数仅为兼容保留，见 ADR-0002）。
+
+    ``save_copy`` / ``inline`` / ``cache_result`` / ``template_override`` /
+    ``format_name_override`` 只服务**精确预览**：不落盘副本、内联 no-store、同输入命中预览缓存、
+    按草稿模板/版式排版；默认值保持导出的原行为。``content_override``（W04）让预览与草稿下载
+    使用未保存正文，缓存键本就含内容指纹，草稿改动不会命中旧产物。
+
+    存档口径（PR-09）：存档 content 与下载产物**同源**（脱敏导出存脱敏后内容）；
+    ``render_context`` / ``request_params`` 记录**实际生效**的参数（覆盖值按生效规则折算）；
+    ``source_content_sha256`` 与 ``artifact_sha256`` 分开回答"存的是哪份内容"与"产出的文件是哪份"。
+    """
+    # 唯一的版本收口：v2 直通、旧记录转换（内容为空导致"导出空壳"的根因就在这里）。
+    document = _document_for_request(db, record, content_override)
+    # 导出闸门：正文里还留着【待补】之类的标记时拦下来。带占位符的简历投出去，
+    # 用户往往直到面试被问起才发现——这道检查的价值全在"导出那一刻"。
+    if not allow_incomplete:
+        # 导出闸门只看**纸面上会出现的内容**（W06）：隐藏条目里的【待补】不会被打出来，
+        # 拦下导出等于让用户为一个他明确隐藏掉的占位符白等一次。完整正文仍在库里。
+        incomplete = find_incomplete_document(document)
+        if incomplete:
+            raise HTTPException(status_code=409, detail=incomplete_detail(incomplete))
+    # W14：页数上限按文档模式夹紧（普通 1–3 / 长 CV 1–10）；请求给了就用请求值。
+    document_mode = getattr(record, "document_mode", "resume") or "resume"
+    raw_page_limit = request.page_limit if request.page_limit is not None else record.page_limit
+    page_limit = mode_page_limit(raw_page_limit, document_mode)
+    # 1-D：「不限篇幅」的语义必须单独带下去。``mode_page_limit(0)`` 折成 10 页只是给
+    # PDF 一个渲染保护上限，若只传数字，10 页就会被当成"用户要 10 页"的裁剪预算——
+    # 于是选「不限」反而在 Word/HTML/TXT/Markdown 里被裁到 10 页。
+    page_limit_is_unlimited = int(raw_page_limit or 0) == UNLIMITED_PAGE_LIMIT
+    # 模板解析一次，json/md 用不到也不多查一次查询；html/pdf/docx 复用同一份解析结果。
+    effective_style = template_override or record.template
+    export_template, export_html = resolve_style_template(db, effective_style)
+    if format_name_override is None:
+        base_format_config = record_format_config(db, record)
+    else:
+        # 草稿给了明确的版式：只按"模板默认 + 该版式预设"起步，再由请求里的
+        # ``format_config``（草稿的完整覆盖）叠加。**不能再叠记录里的旧覆盖**——用户换
+        # 版式时前端已经清掉了该预设管辖的键，旧覆盖会把新预设又盖回去。
+        base_format_config = dict(
+            validated_format_config(resolve_style_config(db, effective_style))
+        )
+        base_format_config.update(resolve_format_config(db, format_name_override))
+    context = RenderContext(
+        template=export_template,
+        template_html=export_html,
+        style_config=resolve_style_config(db, effective_style),
+        page_limit=page_limit,
+        font_scale=record.font_scale,
+        format_config=base_format_config,
+        # 纸面固定文案的语言。旧记录该列为空时按 zh-CN 读（与历史输出逐字一致）。
+        language=record.language or DEFAULT_RESUME_LANGUAGE,
+        # 「不限篇幅」（原始值 0）与"上限 10 页"是两种语义，必须分开传（见上）。
+        page_limit_is_unlimited=page_limit_is_unlimited,
+    )
+    # 预览的重复请求在**渲染之前**就短路：来回切口径、开大图、拖回原值问的都是同一份。
+    # 键 = 内容指纹 + 渲染配置指纹（两者本来就要进响应头，这里只是提前算）。
+    cache_key: str | None = None
+    if cache_result and not save_copy:
+        cache_key = (
+            f"{canonical_content_sha256(document)}:{render_config_fingerprint(request, context)}"
+        )
+        cached = get_cached_preview(cache_key)
+        if cached is not None:
+            return Response(
+                cached.content, media_type=cached.media_type, headers=dict(cached.headers)
+            )
+    try:
+        # 带交付标识的出口（RF-16）：内容指纹 + 渲染配置指纹与响应头同源。
+        # 导出管线接受 v2 文档（本批入口做 v2-native 脱敏，渲染器仍按分析视图绘制）。
+        delivery = build_export_delivery(request, document, context, source_resume_id=record.id)
+        artifact = delivery.artifact
+    except ResumePDFError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except WatermarkError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    headers: dict[str, str] = {
+        "Content-Disposition": (
+            f"{'inline' if inline else 'attachment'}; "
+            f"filename*=UTF-8''{quote(artifact.filename, safe='')}"
+        ),
+        # 交付指纹（RF-17）：用户可拿它核对"下载到的文件"与库里快照的一致性。
+        "X-Content-Sha256": delivery.content_sha256,
+        "X-Render-Config-Sha256": delivery.rendered_config_sha256,
+    }
+    if inline:
+        # 预览是"当前草稿的即时快照"：缓存住它只会让用户改了版式却看到旧页面。
+        headers["Cache-Control"] = "no-store"
+    # 服务端 PDF/Word 用的是自己那套排版，页数未必等于用户选的上限（内容多时会多出一页）。
+    # 把实际页数带回去，让界面能提示，而不是让用户下载完才发现。
+    if artifact.pages is not None:
+        headers[PDF_PAGES_HEADER] = str(artifact.pages)
+    # 真实需要几页（未截断）：界面用它说"按当前设置约需 N 页"，与草稿预览同一措辞。
+    # 1-D 起 html/md/txt 也会带回这个数（它们没有分页引擎、没有 ``pages``，但这次测量
+    # 知道真实需求页数）——否则用户只会看到一句"已裁剪"，不知道差多少。
+    if artifact.pages_needed is not None:
+        headers[PDF_PAGES_NEEDED_HEADER] = str(artifact.pages_needed)
+    if artifact.pages is not None:
+        if request.format == "pdf":
+            # 只有真的由 PDF 引擎渲染时才声称引擎名：html/json/md/txt 根本没有 PDF 引擎，
+            # 给它们也回一个 "fpdf2" 是假话。
+            headers[PDF_ENGINE_HEADER] = PDF_ENGINE_NAME
+        # overflow 只在"有分页引擎"的格式（pdf/docx）里有意义，而 artifact.pages 非空
+        # 正是这一条件。标志不许说谎：它必须与 ``pages_needed`` / 上限的结论一致。
+        headers[RESUME_OVERFLOW_HEADER] = "true" if artifact.overflow else "false"
+    if artifact.truncated:
+        # 1-D：文件里**确实**少了内容（按篇幅上限整块裁掉）。与 overflow 分开说：
+        # 裁完通常已经不超限（overflow=false），但少掉的部分必须让用户知道。
+        headers[RESUME_TRUNCATED_HEADER] = "true"
+        if artifact.truncated_at:
+            headers[RESUME_TRUNCATED_AT_HEADER] = artifact.truncated_at
+    page_limit_header = page_limit_header_value(
+        artifact.page_limit, is_unlimited=page_limit_is_unlimited
+    )
+    if page_limit_header is not None:
+        # 「不限篇幅」回 0 而不是 ``mode_page_limit(0)`` 折出来的渲染保护上限 10（见 helper）。
+        headers[PDF_PAGE_LIMIT_HEADER] = page_limit_header
+    # 「生成内容保存位置」：设置非空且目录合法时，把同一份产物再落盘一份。**best-effort**：
+    # 写失败只记日志、不阻断下载——用户已经等了一次生成，不能因为本地磁盘的问题白等。
+    # 预览（``save_copy=False``）跳过这一段：它不是"用户要的文件"，只是屏幕上的一个视图。
+    saved_location = get_export_save_location(db) if save_copy else None
+    if saved_location and validate_directory(saved_location) is None:
+        try:
+            final_path = save_artifact(artifact.content, saved_location, artifact.filename)
+        except (OSError, ValueError) as exc:
+            logger.warning("导出产物落盘到「%s」失败：%s", saved_location, exc)
+        else:
+            # 头的值做 URL 编码（路径里可能有中文/反斜杠等非 latin-1 字符），前端解码还原。
+            headers["X-Saved-To"] = quote(final_path, safe="")
+    if record_delivery:
+        # 实际导出的那份内容（PR-09）：脱敏导出存脱敏内容，保证存档与下载产物同源——
+        # 与管线内部 ``build_export`` 的脱敏前置是同一条规则、同一份实现（privacy.redact）。
+        effective_content = (
+            redact_document(document, request.redact_options)
+            if request.redact
+            else plain_text_document(document)
+        )
+        # 实际生效的渲染上下文（PR-09）：请求覆盖值按 build_export 的生效规则折算——
+        # 修复"请求 page_limit=2、存档里却是记录默认 1"的错位。
+        effective_render_context = {
+            "template": context.template,
+            "template_html": context.template_html,
+            "style_config": context.style_config or {},
+            # 生效后的版式：记录值 + 本次请求的草稿覆盖，与 build_export 渲染用的是同一份。
+            "format_config": effective_format_config(request, context),
+            # 语义值原样入档（``0`` = 不限篇幅）：存档是"当初那次交付"的证据，
+            # 写成 ``or 1`` 等于把用户选的不限改成"最多 1 页"，重放时按 1 页裁。
+            "page_limit": request.page_limit
+            if request.page_limit is not None
+            else page_limit_or_default(record.page_limit),
+            "font_scale": request.font_scale or context.font_scale or "standard",
+            # 语言同样是"生效后的版式"：请求覆盖优先，否则记录值。存档要能重放出同一份
+            # 文件（`replay_delivery_export`），漏记它就会在重下存档时把英文简历印成中文。
+            "language": request.language or context.language,
+            "margin_mm": request.margin_mm,
+            "include_photo": request.include_photo,
+        }
+        # 实际生效的请求参数（PR-09）：从实际执行的导出调用取，不是默认值拼凑；
+        # 凭它 + render_context 可以重放导出（见 resume_delivery.replay_delivery_export）。
+        effective_request_params = {
+            "format": request.format,
+            "watermark": request.watermark,
+            "redact": request.redact,
+            "redact_options": (asdict(request.redact_options) if request.redact_options else None),
+            "margin_mm": request.margin_mm,
+            "font_scale": effective_render_context["font_scale"],
+            "page_limit": effective_render_context["page_limit"],
+            "format_config": effective_render_context["format_config"],
+            "language": effective_render_context["language"],
+            "include_photo": request.include_photo,
+        }
+        # 显式存档：哈希原样沿用 ExportDelivery 的产出，库里证据与响应头逐字一致。
+        # 幂等键（PR-09）：同一份产物（同简历 + 同字节）只留一份存档——重复点击/
+        # 重试不会刷出一堆一模一样的证据；改过内容后重导出的字节不同，是新的存档。
+        freeze_delivery(
+            db,
+            record=record,
+            source="export",
+            export_format=request.format,
+            filename=artifact.filename,
+            pages=artifact.pages,
+            content_sha256=delivery.content_sha256,
+            rendered_config_sha256=delivery.rendered_config_sha256,
+            content=effective_content,
+            render_context=effective_render_context,
+            request_params=effective_request_params,
+            source_content_sha256=canonical_content_sha256(effective_content),
+            artifact_sha256=delivery.content_sha256,
+            idempotency_key=f"export:{record.id}:{delivery.content_sha256}",
+        )
+        db.commit()
+    if cache_key is not None:
+        # 连响应头一起存：命中与未命中必须逐字节、逐头一致（见 `pdf_preview_cache`）。
+        put_cached_preview(
+            cache_key,
+            CachedPreviewPdf(
+                content=artifact.content,
+                media_type=artifact.media_type,
+                headers=dict(headers),
+            ),
+        )
+    return Response(artifact.content, media_type=artifact.media_type, headers=headers)
+
+
+@router.get("/{resume_id}/export")
+def export_resume(
+    request: HTTPRequest,
+    resume_id: int,
+    format: str = Query(..., pattern="^(json|md|html|pdf)$"),
+    allow_incomplete: bool = Query(
+        default=False,
+        description="为真时允许导出仍含未完成标记的草稿；默认拦下并说明是哪几处",
+    ),
+    record_delivery: bool = Query(
+        default=False,
+        description="【deprecated】仅为兼容保留：为真时把这次导出冻结成投递快照。"
+        "新调用方请改用 POST /export（body 里 record_delivery=true），语义不变",
+    ),
+    db: Session = Depends(get_db),
+):
+    """兼容旧的 GET 导出：仍限四种格式，内部委托管线。全参数导出走 ``POST``。
+
+    ``record_delivery=true`` 的旧行为原样保留（最小破坏兼容，见 ADR-0002）：
+    它仍会落存档，但**推荐所有新调用方走 POST 端点**承担"导出并记录交付"，
+    GET 保持纯下载语义。
+    """
+    _require_local_export_request(request)
+    record = _get_live_resume(db, resume_id)
+    return _export_record(
+        db,
+        record,
+        ExportRequest(format=format),
+        allow_incomplete=allow_incomplete,
+        record_delivery=record_delivery,
+    )
+
+
+@router.post("/{resume_id}/export")
+def export_resume_with_options(
+    request: HTTPRequest,
+    resume_id: int,
+    payload: ExportRequestSchema,
+    db: Session = Depends(get_db),
+):
+    """全参数导出（R-16 / R-17）：格式、水印、脱敏、页边距、字号、页数、照片。
+
+    脱敏作为管线前置步骤（``redact`` 是唯一实现），脱敏版是**独立导出文件**，不回写、
+    不落库副本。响应头保留 ``X-Resume-Pages`` / ``X-Resume-Page-Limit``。
+    """
+    _require_local_export_request(request)
+    record = _get_live_resume(db, resume_id)
+    privacy_options = PrivacyRedactionOptions(**payload.redact_options.model_dump())
+    # W16：variant_id 的解析由 be-prov 的 resolve_variant_export 统一提供（helper 内按名调用）。
+    variant_options = resolve_variant_export_options(db, record, payload)
+    explicit_content = payload.content
+    export_options = ExportRequest(
+        format=payload.format,
+        watermark=payload.watermark,
+        redact=payload.redact,
+        redact_options=privacy_options,
+        margin_mm=payload.margin_mm,
+        font_scale=variant_options.get("font_scale", payload.font_scale),
+        page_limit=variant_options.get("page_limit", payload.page_limit),
+        format_config=variant_options.get("format_config", payload.format_config),
+        # 草稿语言（预览里切的那一个）：与 format_config 同一条覆盖路径——不给就回落记录值。
+        language=variant_options.get("language", payload.language),
+        include_photo=payload.include_photo,
+    )
+    return _export_record(
+        db,
+        record,
+        export_options,
+        allow_incomplete=payload.allow_incomplete,
+        record_delivery=payload.record_delivery,
+        # 预览（`preview=true`）：只服务"屏幕上的一次查看"，不落盘副本、结果进缓存。
+        # 两个开关必须成对：`cache_result` 只在 `save_copy=False` 时生效（否则落盘副本
+        # 会被缓存跳过），所以这里用同一个布尔量表达，不给它们各自传参的机会。
+        save_copy=not payload.preview,
+        cache_result=payload.preview,
+        # W19：草稿下载与精确预览同快照（W04 缺口）——内容覆盖交给同一出口。
+        content_override=variant_options.get("content") if variant_options else explicit_content,
+        # W16：变体快照的模板/版式覆盖（变体自带 layout 时生效；None = 用记录值）。
+        template_override=variant_options.get("template"),
+        format_name_override=variant_options.get("format_name"),
+    )
+
+
+@router.post("/{resume_id}/preview-pdf")
+def preview_resume_pdf(
+    request: HTTPRequest,
+    resume_id: int,
+    payload: PreviewPdfRequest,
+    db: Session = Depends(get_db),
+):
+    """精确预览：返回**与导出逐字节相同**的 PDF，供前端用浏览器原生查看器渲染。
+
+    为什么要有这条端点：预览此前用 CSS 多列模拟分页（`column-count`），而导出的 PDF 由
+    `pdf_exporter`（fpdf2）另排一遍，断点规则不同。要"严格相同"，唯一可靠的口径是
+    **让预览显示的就是导出产物本身**（同一条管线、同一组参数）。
+
+    三个"不是导出"的差别（都通过 `_export_record` 的开关表达）：`allow_incomplete=True`
+    草稿也能看；`save_copy=False` 不写「生成内容保存位置」；`inline=True` + no-store 内联且不缓存。
+    W04 起可按最终交付配置预览：水印/脱敏走与导出相同的管线（脱敏前置、水印后叠加），
+    但仍不落库、不冻结交付。`X-Resume-Pages` / `X-Resume-Overflow` 照常返回。
+    """
+    _require_local_export_request(request)
+    record = _get_live_resume(db, resume_id)
+    variant_options = resolve_variant_export_options(db, record, payload)
+    explicit_content = payload.content
+    return _export_record(
+        db,
+        record,
+        ExportRequest(
+            format="pdf",
+            # W04：最终交付配置预览——脱敏是渲染前置、水印是渲染后叠加（同一条管线）。
+            watermark=payload.watermark,
+            redact=payload.redact,
+            redact_options=PrivacyRedactionOptions(**payload.redact_options.model_dump()),
+            page_limit=variant_options.get("page_limit", payload.page_limit),
+            font_scale=variant_options.get("font_scale", payload.font_scale),
+            format_config=variant_options.get("format_config", payload.format_config),
+            # 草稿语言同样必须走这一条：预览显示的就是导出产物，漏掉它就会出现
+            # "预览是 Summary、下载到的 PDF 是「个人总结」"。
+            language=variant_options.get("language", payload.language),
+            include_photo=payload.include_photo,
+        ),
+        allow_incomplete=True,
+        record_delivery=False,
+        save_copy=False,
+        inline=True,
+        # 模板 / 版式是草稿值：换完还没保存也要按新的排（见 `_export_record`）；W16 变体优先。
+        template_override=variant_options.get("template") or payload.template,
+        format_name_override=variant_options.get("format_name") or payload.format_name,
+        # 同一组参数（切口径 / 开大图 / 拖回原值）第二次进来直接给上一次的字节。
+        cache_result=True,
+        # 中栏还没保存的正文（W04）：预览与"点保存后导出的那份"因此是同一份内容。
+        content_override=variant_options.get("content") if variant_options else explicit_content,
+    )

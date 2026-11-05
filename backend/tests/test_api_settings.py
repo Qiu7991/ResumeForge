@@ -1,0 +1,486 @@
+# SPDX-License-Identifier: Apache-2.0
+"""设置 API 与 API Key 脱敏边界测试。"""
+
+import pytest
+from app.schemas.setting import UNLIMITED_MAX_TOKENS, LLMConfig
+from app.services.api_key_session import clear_session_key
+from app.services.llm_key_refs import PROFILE_API_KEY_PREFIX
+from app.services.settings_service import API_KEY_MASK, get_llm_config
+
+
+@pytest.fixture(autouse=True)
+def _clean_session_key():
+    """会话密钥是模块级内存态，测试间必须清场，否则覆盖 get_llm_config 会污染别的用例。"""
+    clear_session_key()
+    yield
+    clear_session_key()
+
+
+def test_settings_roundtrip(client, db_session):
+    config = LLMConfig(base_url="https://api.example.com/v1", api_key="sk-test", model="test-model")
+    response = client.put("/api/settings/llm", json=config.model_dump())
+    assert response.status_code == 200
+    assert response.json()["api_key"].startswith(API_KEY_MASK)
+    assert response.json()["scope"] == "global"
+    assert "sk-test" not in response.text
+    response = client.get("/api/settings/llm")
+    assert response.json()["model"] == "test-model"
+    assert response.json()["api_key"].startswith(API_KEY_MASK)
+    assert response.json()["scope"] == "global"
+    assert "sk-test" not in response.text
+
+    # 前端原样回传占位符时必须保留原密钥，不能把星号写入数据库。
+    masked_config = response.json()
+    masked_config["model"] = "updated-model"
+    response = client.put("/api/settings/llm", json=masked_config)
+    assert response.status_code == 200
+    assert response.json()["api_key"].startswith(API_KEY_MASK)
+    assert response.json()["scope"] == "global"
+    db_session.expire_all()
+    assert get_llm_config(db_session).api_key == "sk-test"
+
+    # 测试连接：未填配置或配置无效时应友好返回而非抛 500
+    response = client.post("/api/settings/llm/test", json=LLMConfig().model_dump())
+    assert response.status_code == 200 and response.json()["ok"] is False
+
+
+def test_navigation_visibility_keeps_optional_keys_and_never_hides_core_entries(client):
+    assert client.get("/api/settings/navigation").json() == {"hidden": []}
+
+    response = client.put(
+        "/api/settings/navigation",
+        json={"hidden": ["/assistant", "/assistant", "/profile", "/not-a-route", "/analytics"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"hidden": ["/assistant", "/analytics"]}
+    assert client.get("/api/settings/navigation").json() == {"hidden": ["/assistant", "/analytics"]}
+
+
+def test_assistant_orb_setting_defaults_and_roundtrips(client):
+    assert client.get("/api/settings/assistant-orb").json() == {
+        "enabled": True,
+        "tips_enabled": True,
+    }
+
+    response = client.put(
+        "/api/settings/assistant-orb", json={"enabled": False, "tips_enabled": False}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"enabled": False, "tips_enabled": False}
+    assert client.get("/api/settings/assistant-orb").json() == {
+        "enabled": False,
+        "tips_enabled": False,
+    }
+
+    response = client.put("/api/settings/assistant-orb", json={"enabled": True})
+    assert response.status_code == 200
+    # 旧客户端只发 enabled：新字段落默认值，不丢字段、不 500。
+    assert response.json() == {"enabled": True, "tips_enabled": True}
+
+
+def test_assistant_orb_setting_keeps_legacy_bare_boolean_and_corrupt_values(client, db_session):
+    """存量三种形态：裸 bool（老格式原样兼容）、损坏 JSON、非法对象——都不 500。"""
+    from app.models.setting import AppSetting
+
+    # 老格式：裸 bool。入口开关读同值，标语保持默认开（老用户体验不变）。
+    db_session.add(AppSetting(key="assistant_orb_enabled", value="false"))
+    db_session.commit()
+    assert client.get("/api/settings/assistant-orb").json() == {
+        "enabled": False,
+        "tips_enabled": True,
+    }
+
+    db_session.get(AppSetting, "assistant_orb_enabled").value = '"not-a-boolean"'
+    db_session.commit()
+    assert client.get("/api/settings/assistant-orb").json() == {
+        "enabled": True,
+        "tips_enabled": True,
+    }
+
+    # 对象形态但字段非法（enabled 不是 bool）：校验不过也回默认，不抛异常。
+    db_session.get(AppSetting, "assistant_orb_enabled").value = '{"enabled": "yes"}'
+    db_session.commit()
+    assert client.get("/api/settings/assistant-orb").json() == {
+        "enabled": True,
+        "tips_enabled": True,
+    }
+
+    # 新格式对象：两个开关都原样读回。
+    db_session.get(
+        AppSetting, "assistant_orb_enabled"
+    ).value = '{"enabled": false, "tips_enabled": false}'
+    db_session.commit()
+    assert client.get("/api/settings/assistant-orb").json() == {
+        "enabled": False,
+        "tips_enabled": False,
+    }
+
+
+def test_settings_accepts_unlimited_output_and_keeps_the_minimum_bound(client):
+    config = LLMConfig(base_url="https://api.example.com/v1", model="test-model")
+
+    unlimited = client.put(
+        "/api/settings/llm", json={**config.model_dump(), "max_tokens": UNLIMITED_MAX_TOKENS}
+    )
+    assert unlimited.status_code == 200
+    assert unlimited.json()["max_tokens"] == UNLIMITED_MAX_TOKENS
+
+    # 放行 0 之后仍须拒绝 1..255：它们既不是“不限制”，也低于可用的下界。
+    for rejected in (1, 128, 255):
+        response = client.put(
+            "/api/settings/llm", json={**config.model_dump(), "max_tokens": rejected}
+        )
+        assert response.status_code == 422, rejected
+
+
+def test_new_config_defaults_to_unlimited_output():
+    """新配置默认「不限制」，让新用户不调参也能用服务商/模型的默认上限。
+
+    这是**默认值**的改动，不迁移已保存的配置——用户已经存过的 max_tokens 原样保留，
+    悄悄改存量等于替用户改一个他未必想改的东西。
+    """
+    assert LLMConfig().max_tokens == UNLIMITED_MAX_TOKENS
+    assert LLMConfig().uses_unlimited_output is True
+
+
+def test_settings_api_key_reveal_is_explicit_and_not_cached(client):
+    config = LLMConfig(
+        provider="deepseek",
+        base_url="https://api.deepseek.com",
+        api_key="sk-reveal-test",
+        model="deepseek-chat",
+    )
+    saved = client.put("/api/settings/llm", json=config.model_dump())
+
+    assert saved.status_code == 200
+    assert saved.json()["api_key"].startswith(API_KEY_MASK)
+    assert "sk-reveal-test" not in client.get("/api/settings/llm").text
+    assert client.get("/api/settings/llm/api-key/reveal").status_code == 405
+
+    revealed = client.post("/api/settings/llm/api-key/reveal")
+
+    assert revealed.status_code == 200
+    assert revealed.json() == {"api_key": "sk-reveal-test"}
+    assert revealed.headers["cache-control"] == "no-store, private"
+    assert revealed.headers["pragma"] == "no-cache"
+
+
+def test_settings_api_key_reveal_handles_config_without_a_key(client):
+    config = LLMConfig(
+        provider="ollama",
+        base_url="http://localhost:11434/v1",
+        api_key="",
+        model="qwen2.5:7b",
+    )
+    client.put("/api/settings/llm", json=config.model_dump())
+
+    response = client.post("/api/settings/llm/api-key/reveal")
+
+    assert response.status_code == 200
+    assert response.json() == {"api_key": ""}
+    assert response.headers["cache-control"] == "no-store, private"
+
+
+def test_settings_api_key_reveal_rejects_non_loopback_clients(client, monkeypatch):
+    monkeypatch.setattr("app.api.settings._is_loopback_request", lambda _request: False)
+
+    response = client.post("/api/settings/llm/api-key/reveal")
+
+    assert response.status_code == 403
+    assert "只能在运行后端的本机查看" in response.json()["detail"]
+
+
+def test_settings_config_records_roundtrip_and_upsert(client):
+    config = LLMConfig(
+        provider="deepseek",
+        base_url="https://api.deepseek.com",
+        api_key="sk-record",
+        model="deepseek-chat",
+    )
+    payload = {"name": "校招 DeepSeek", **config.model_dump()}
+
+    created = client.post("/api/settings/llm/records", json=payload)
+    assert created.status_code == 200
+    record = created.json()
+    assert record["name"] == "校招 DeepSeek"
+    assert record["model"] == "deepseek-chat"
+    assert record["api_key"] == f"{PROFILE_API_KEY_PREFIX}{record['id']}"
+    assert "sk-record" not in created.text
+
+    listed = client.get("/api/settings/llm/records")
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [record["id"]]
+    assert "sk-record" not in listed.text
+
+    updated = client.post(
+        "/api/settings/llm/records",
+        json={**payload, "model": "deepseek-reasoner"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["id"] == record["id"]
+    assert updated.json()["model"] == "deepseek-reasoner"
+    assert len(client.get("/api/settings/llm/records").json()) == 1
+
+    deleted = client.delete(f"/api/settings/llm/records/{record['id']}")
+    assert deleted.status_code == 204
+    assert client.get("/api/settings/llm/records").json() == []
+    assert client.delete(f"/api/settings/llm/records/{record['id']}").status_code == 404
+
+
+def test_settings_record_reference_switches_the_correct_secret(client, db_session):
+    """两个记录仅密钥不同时，切换「使用中」必须用对应记录的密钥。"""
+    common = LLMConfig(
+        provider="custom",
+        base_url="https://api.example.com/v1",
+        model="same-model",
+    ).model_dump()
+    first = client.post(
+        "/api/settings/llm/records",
+        json={"name": "账号 A", **common, "api_key": "secret-a"},
+    ).json()
+    second_response = client.post(
+        "/api/settings/llm/records",
+        json={"name": "账号 B", **common, "api_key": "secret-b"},
+    )
+    second = second_response.json()
+
+    assert "secret-a" not in str(first)
+    assert "secret-b" not in second_response.text
+
+    # C：切换记录 = activate（记录与"生效配置"是同一份，不再靠 PUT 复制一份）。
+    applied = client.post(f"/api/settings/llm/records/{second['id']}/activate")
+    assert applied.status_code == 200
+    assert applied.json()["api_key"] == second["api_key"]
+    assert "secret-b" not in applied.text
+
+    db_session.expire_all()
+    assert get_llm_config(db_session).api_key == "secret-b"
+
+    client.post(f"/api/settings/llm/records/{first['id']}/activate")
+    db_session.expire_all()
+    assert get_llm_config(db_session).api_key == "secret-a"
+
+
+def test_settings_test_connection_resolves_masked_secret(client, monkeypatch):
+    config = LLMConfig(
+        base_url="https://api.example.com/v1",
+        api_key="secret-for-test",
+        model="test-model",
+    )
+    saved = client.put("/api/settings/llm", json=config.model_dump()).json()
+    captured = {}
+
+    class FakeProvider:
+        async def chat(self, _messages, *, thinking: bool = True):
+            return "正常"
+
+    def fake_create_provider(resolved):
+        captured["api_key"] = resolved.api_key
+        return FakeProvider()
+
+    monkeypatch.setattr("app.api.settings.create_provider", fake_create_provider)
+    response = client.post("/api/settings/llm/test", json=saved)
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert captured["api_key"] == "secret-for-test"
+    assert "secret-for-test" not in response.text
+
+
+def test_masked_api_key_cannot_be_reused_for_another_base_url(client, db_session):
+    config = LLMConfig(
+        base_url="https://api.example.com/v1",
+        api_key="secret-for-test",
+        model="test-model",
+    )
+    masked = client.put("/api/settings/llm", json=config.model_dump()).json()
+    masked["base_url"] = "https://attacker.example/v1"
+
+    save_response = client.put("/api/settings/llm", json=masked)
+    test_response = client.post("/api/settings/llm/test", json=masked)
+
+    assert save_response.status_code == 400
+    assert "重新填写 API Key" in save_response.json()["detail"]
+    assert test_response.status_code == 200
+    assert test_response.json()["ok"] is False
+    assert "重新填写 API Key" in test_response.json()["message"]
+    assert get_llm_config(db_session).base_url == config.base_url
+
+
+def test_masked_api_key_url_binding_normalizes_host_but_preserves_path_case(client):
+    config = LLMConfig(
+        base_url="https://api.example.com/v1",
+        api_key="secret-for-test",
+        model="test-model",
+    )
+    masked = client.put("/api/settings/llm", json=config.model_dump()).json()
+
+    equivalent = {**masked, "base_url": "HTTPS://API.EXAMPLE.COM/v1/"}
+    assert client.put("/api/settings/llm", json=equivalent).status_code == 200
+
+    changed_path = {**masked, "base_url": "https://api.example.com/V1"}
+    response = client.put("/api/settings/llm", json=changed_path)
+    assert response.status_code == 400
+    assert "重新填写 API Key" in response.json()["detail"]
+
+
+def test_the_connection_test_ignores_the_thinking_settings(client, monkeypatch):
+    """「测试连接」只测连通性：思考参数写错不该表现成"连不上"，否则用户会去查网络。"""
+    config = LLMConfig(
+        base_url="https://api.example.com/v1",
+        api_key="secret-for-test",
+        model="test-model",
+        thinking_enabled=True,
+        thinking_effort="low",
+        thinking_budget=4096,
+    )
+    saved = client.put("/api/settings/llm", json=config.model_dump()).json()
+    captured = {}
+
+    class FakeProvider:
+        async def chat(self, _messages, *, thinking: bool = True):
+            return "正常"
+
+    def fake_create_provider(resolved):
+        captured["config"] = resolved
+        return FakeProvider()
+
+    monkeypatch.setattr("app.api.settings.create_provider", fake_create_provider)
+    response = client.post("/api/settings/llm/test", json=saved)
+
+    assert response.status_code == 200 and response.json()["ok"] is True
+    assert captured["config"].thinking_enabled is False
+    assert captured["config"].thinking_budget is None
+
+
+# ===== 「思考模式」的获取接口 =====
+
+
+def test_the_thinking_check_reads_the_table_without_calling_the_vendor(client, monkeypatch):
+    """``probe=false`` 是**零上游调用**的：只回仓库里的能力表，用来出选项。
+
+    这条把"不发请求"钉死——否则每打开一次设置页都会悄悄花一次钱。
+    """
+
+    def exploding_factory(*_args, **_kwargs):  # pragma: no cover - 被调用即失败
+        raise AssertionError("probe=false 不该创建 provider")
+
+    monkeypatch.setattr("app.services.llm.create_provider", exploding_factory)
+    response = client.post(
+        "/api/settings/llm/thinking/check",
+        json={"base_url": "https://api.openai.com/v1", "model": "gpt-5.1", "api_key": "k"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["probed"] is False
+    assert body["style"] == "reasoning_effort"
+    assert body["efforts"] == ["minimal", "low", "medium", "high"]
+    assert body["supported"] is True
+    assert body["note"]
+
+
+def test_the_thinking_check_needs_a_url_and_a_model(client):
+    response = client.post("/api/settings/llm/thinking/check", json={"base_url": "", "model": ""})
+
+    assert response.status_code == 200
+    assert "Base URL" in response.json()["message"]
+
+
+def test_the_thinking_check_probes_and_reports_a_rejection(client, monkeypatch):
+    """``probe=true`` 实发一次：上游拒绝时要说清楚是**参数**被拒，而不是网断了。"""
+    from app.services.llm.base import LLMError
+
+    class FakeProvider:
+        async def stream_chat_events(self, _messages, tools=None):
+            raise LLMError("请求格式错误，请检查模型名称与参数设置（HTTP 400）")
+            yield  # pragma: no cover - 让它是个异步生成器
+
+    monkeypatch.setattr("app.services.llm.create_provider", lambda config, **kw: FakeProvider())
+    response = client.post(
+        "/api/settings/llm/thinking/check",
+        json={
+            "base_url": "https://api.example.com/v1",
+            "model": "some-model",
+            "api_key": "k",
+            "probe": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["probed"] is True
+    assert body["accepted"] is False
+    assert body["reasoning_seen"] is False
+    assert "拒绝" in body["message"]
+
+
+def test_the_thinking_check_probe_keeps_the_masked_key_on_the_server(client, monkeypatch):
+    """探测同样走"脱敏引用 → 后端还原密钥"，明文密钥不会回到前端。"""
+    config = LLMConfig(
+        base_url="https://api.example.com/v1", api_key="secret-for-test", model="some-model"
+    )
+    saved = client.put("/api/settings/llm", json=config.model_dump()).json()
+    captured = {}
+
+    class FakeProvider:
+        async def stream_chat_events(self, _messages, tools=None):
+            from app.services.llm.base import LLMDelta
+
+            yield LLMDelta(reasoning="让我想想")
+
+    def fake_create_provider(resolved, **_kwargs):
+        captured["api_key"] = resolved.api_key
+        return FakeProvider()
+
+    monkeypatch.setattr("app.services.llm.create_provider", fake_create_provider)
+    response = client.post("/api/settings/llm/thinking/check", json={**saved, "probe": True})
+
+    assert response.status_code == 200
+    assert response.json()["reasoning_seen"] is True
+    assert captured["api_key"] == "secret-for-test"
+    assert "secret-for-test" not in response.text
+
+
+def test_create_provider_forwards_request_overrides():
+    """工厂的 request_overrides 参数必须真的生效。
+
+    它曾经只是"文档里有"：构造函数不收这个关键字，照签名调用会直接 TypeError，
+    调用方只能改成构造完再赋属性——看起来能用，实际绕过了工厂的契约。
+    """
+    from app.schemas.setting import LLMConfig
+    from app.services.llm import create_provider
+
+    config = LLMConfig(base_url="https://api.example.com/v1", model="m")
+    provider = create_provider(config, request_overrides={"reasoning_effort": "high"})
+
+    assert provider.request_overrides == {"reasoning_effort": "high"}
+
+    # 白名单之外的键不会被采纳，但也不该炸。
+    ignored = create_provider(config, request_overrides={"messages": "覆盖对话"})
+    payload: dict = {}
+    ignored._apply_request_overrides(payload)
+    assert "messages" not in payload
+
+
+def test_auto_backup_interval_defaults_and_roundtrips(client):
+    """自动备份间隔：默认回退环境配置；保存后可读回（运行时值）。"""
+    from app.config import get_settings
+
+    expected_default = get_settings().auto_backup_interval_days
+    response = client.get("/api/settings/auto-backup-interval")
+    assert response.status_code == 200
+    assert response.json() == {"interval_days": expected_default}
+
+    response = client.put("/api/settings/auto-backup-interval", json={"interval_days": 3})
+    assert response.status_code == 200
+    assert response.json() == {"interval_days": 3}
+    assert client.get("/api/settings/auto-backup-interval").json() == {"interval_days": 3}
+
+
+def test_auto_backup_interval_rejects_out_of_range(client):
+    """1..365 的边界由 schema 校验挡下，越界值不该落库。"""
+    for value in (0, 366):
+        response = client.put("/api/settings/auto-backup-interval", json={"interval_days": value})
+        assert response.status_code == 422

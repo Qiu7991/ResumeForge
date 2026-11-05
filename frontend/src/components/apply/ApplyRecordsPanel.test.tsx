@@ -1,0 +1,475 @@
+// SPDX-License-Identifier: Apache-2.0
+/** 投递记录（按批次分组）：组头统计、展开看明细、详情 Drawer 完整失败信息（含 URL）。 */
+import { App as AntdApp } from "antd";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ApplyRecord, ApplyRecordBatch, Page } from "../../types";
+import ApplyRecordsPanel from "./ApplyRecordsPanel";
+
+const apiMocks = vi.hoisted(() => ({
+  listRecordBatches: vi.fn(),
+  listRecordBatchItems: vi.fn(),
+  retryRecord: vi.fn(),
+  deleteRecord: vi.fn(),
+  deleteRecordBatch: vi.fn(),
+  batchDeleteRecords: vi.fn(),
+}));
+
+vi.mock("../../api/apply", () => ({
+  listRecordBatches: apiMocks.listRecordBatches,
+  listRecordBatchItems: apiMocks.listRecordBatchItems,
+  retryRecord: apiMocks.retryRecord,
+  deleteRecord: apiMocks.deleteRecord,
+  deleteRecordBatch: apiMocks.deleteRecordBatch,
+  batchDeleteRecords: apiMocks.batchDeleteRecords,
+}));
+
+const RECORD: ApplyRecord = {
+  id: 1,
+  task_id: 7,
+  job_id: 11,
+  job_title: "高级后端工程师（高并发方向）",
+  company: "某知名互联网科技有限公司",
+  resume_title: "后端开发岗位版简历",
+  greeting: "您好，我看到贵司的岗位非常契合我的经验，希望能进一步沟通。",
+  status: "failed",
+  failure_category: "selector_invalid",
+  failure_label: "",
+  failure_detail:
+    "页面结构变化：投递表单的选择器已失效。失败页面 URL：https://example.com/job/12345 ，页面标题：「职位申请 - 某某招聘」",
+  attempt: 2,
+  created_at: "2026-09-17T08:00:00",
+  finished_at: "2026-09-17T08:05:00",
+};
+
+const RECORD_SUCCESS: ApplyRecord = {
+  ...RECORD,
+  id: 2,
+  job_title: "全栈工程师",
+  company: "另一家公司",
+  status: "success",
+  failure_category: "",
+  failure_label: "",
+  failure_detail: "",
+};
+
+const BATCHES: Page<ApplyRecordBatch> = {
+  items: [
+    {
+      id: 7,
+      status: "completed",
+      total: 3,
+      processed: 3,
+      succeeded: 1,
+      failed: 1,
+      skipped: 1,
+      message: "投递任务已完成",
+      created_at: "2026-09-17T08:00:00",
+      finished_at: "2026-09-17T08:05:00",
+      matched_count: 2,
+      failure_summary: [],
+      items: [],
+    },
+    {
+      id: 6,
+      status: "failed",
+      total: 1,
+      processed: 1,
+      succeeded: 0,
+      failed: 1,
+      skipped: 0,
+      message: "",
+      created_at: "2026-09-16T08:00:00",
+      finished_at: "2026-09-16T08:01:00",
+      matched_count: 0,
+      failure_summary: [],
+      items: [],
+    },
+  ],
+  total: 2,
+};
+
+const BATCH_ITEMS: Page<ApplyRecord> = {
+  items: [RECORD, RECORD_SUCCESS],
+  total: 2,
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  apiMocks.listRecordBatches.mockResolvedValue(BATCHES);
+  apiMocks.listRecordBatchItems.mockResolvedValue(BATCH_ITEMS);
+  apiMocks.retryRecord.mockResolvedValue({ id: 99 } as never);
+});
+
+afterEach(() => {
+  cleanup();
+  document.body.innerHTML = "";
+});
+
+async function renderPanel() {
+  render(
+    <AntdApp>
+      <MemoryRouter>
+        <ApplyRecordsPanel disabled={false} onRetried={vi.fn()} />
+      </MemoryRouter>
+    </AntdApp>,
+  );
+  // 等组头渲染完成。
+  await screen.findByTestId("record-batch-7");
+}
+
+/** 取某个批次的组头按钮（批次卡片里可能有多个 button，组头有专属 class）。 */
+function batchHead(batchId: number): HTMLElement {
+  const card = screen.getByTestId(`record-batch-${batchId}`);
+  const head = card.querySelector<HTMLElement>("button.apply-records-batch-head");
+  if (!head) throw new Error(`batch #${batchId} head not found`);
+  return head;
+}
+
+describe("ApplyRecordsPanel (grouped by batch)", () => {
+  it("loads concurrently expanded batches without invalidating another batch", async () => {
+    let resolveFirst!: (value: Page<ApplyRecord>) => void;
+    const firstResponse = new Promise<Page<ApplyRecord>>((resolve) => {
+      resolveFirst = resolve;
+    });
+    apiMocks.listRecordBatchItems.mockImplementation((id: number) =>
+      id === 7
+        ? firstResponse
+        : Promise.resolve({
+            items: [{ ...RECORD_SUCCESS, id: 3, task_id: 6, job_title: "并行批次的岗位" }],
+            total: 1,
+          }),
+    );
+    await renderPanel();
+    fireEvent.click(batchHead(7));
+    fireEvent.click(batchHead(6));
+    expect(await screen.findByText("并行批次的岗位")).toBeInTheDocument();
+    await act(async () => resolveFirst(BATCH_ITEMS));
+    expect(await screen.findByText(RECORD.job_title)).toBeInTheDocument();
+    expect(apiMocks.listRecordBatchItems).toHaveBeenCalledTimes(2);
+  });
+
+  it("初次分组请求走轻量分页（include_items=false），组头展示命中数", async () => {
+    await renderPanel();
+
+    expect(screen.getByTestId("record-batch-7")).toBeInTheDocument();
+    expect(screen.getByTestId("record-batch-6")).toBeInTheDocument();
+    // 轻量分页：批次不带明细，只带 matched_count。
+    await waitFor(() => {
+      const calls = apiMocks.listRecordBatches.mock.calls;
+      expect(calls[calls.length - 1][0]).toMatchObject({ include_items: false });
+    });
+    // 组头展示「N 条记录」（来自 matched_count，而不是本地数 items）。
+    const head7 = batchHead(7);
+    expect(within(head7).getByText("批次 #7")).toBeInTheDocument();
+    expect(within(head7).getByText(/^2 条记录/)).toBeInTheDocument();
+    expect(within(head7).getByText(/成功 1/)).toBeInTheDocument();
+    expect(within(head7).getByText(/失败 1/)).toBeInTheDocument();
+    // 未展开时不该调明细端点。
+    expect(apiMocks.listRecordBatchItems).not.toHaveBeenCalled();
+    // 未展开时看不到岗位明细。
+    expect(screen.queryByText("高级后端工程师（高并发方向）")).not.toBeInTheDocument();
+  });
+
+  it("展开批次时才调明细端点（带与列表一致的筛选参数），折叠再展开用缓存", async () => {
+    await renderPanel();
+
+    // 展开批次 7：调明细端点，参数与列表一致。
+    fireEvent.click(batchHead(7));
+    expect(await screen.findByText("高级后端工程师（高并发方向）")).toBeInTheDocument();
+    expect(apiMocks.listRecordBatchItems).toHaveBeenCalledTimes(1);
+    expect(apiMocks.listRecordBatchItems).toHaveBeenCalledWith(7, {
+      keyword: "",
+      result: "",
+      // #39：明细必须与组头吃同一套筛选（漏传 failure_category 就是「组头 1 条、明细 6 条」）。
+      failure_category: "",
+      page: 1,
+      page_size: 20,
+    });
+    expect(screen.getByText("全栈工程师")).toBeInTheDocument();
+    // 「详 情」独立按钮已并入「···」菜单（重投仍是行内按钮）。
+    expect(screen.queryByRole("button", { name: /详\s*情/ })).toBeNull();
+    expect(screen.getAllByRole("button", { name: /重投/ }).length).toBeGreaterThanOrEqual(2);
+
+    // 折叠不丢：收起再展开不再重复调明细端点。
+    fireEvent.click(batchHead(7));
+    fireEvent.click(batchHead(7));
+    expect(await screen.findByText("高级后端工程师（高并发方向）")).toBeInTheDocument();
+    expect(apiMocks.listRecordBatchItems).toHaveBeenCalledTimes(1);
+  });
+
+  it("明细支持批内服务端翻页", async () => {
+    apiMocks.listRecordBatchItems.mockResolvedValue({
+      items: [RECORD_SUCCESS],
+      total: 22,
+    });
+    await renderPanel();
+
+    fireEvent.click(batchHead(7));
+    expect((await screen.findAllByText("全栈工程师")).length).toBeGreaterThan(0);
+    // total=22 > 20：批内分页器出现，翻到第 2 页携带 page=2。
+    fireEvent.click(await screen.findByTitle("2"));
+    await waitFor(() => {
+      const calls = apiMocks.listRecordBatchItems.mock.calls;
+      expect(calls[calls.length - 1]).toEqual([7, expect.objectContaining({ page: 2 })]);
+    });
+  });
+
+  it("opens the detail Drawer from the row's ··· menu with full failure info including the URL", async () => {
+    await renderPanel();
+    fireEvent.click(batchHead(7));
+    await screen.findByText("高级后端工程师（高并发方向）");
+    // 「查看详情」收在行内「···」菜单里（独立「详 情」按钮已合并）。
+    const row = screen.getByText("高级后端工程师（高并发方向）").closest("tr") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "更多操作" }));
+    fireEvent.click(await screen.findByText("查看详情"));
+
+    const drawer = await screen.findByRole("dialog");
+    expect(
+      within(drawer).getByText(/失败页面 URL：https:\/\/example\.com\/job\/12345/),
+    ).toBeInTheDocument();
+    expect(within(drawer).getByText(/批次 #7 · 第 2 次尝试/)).toBeInTheDocument();
+  });
+
+  it("does not enable a horizontal scroll bar (no scroll.x on the table)", async () => {
+    const { container } = render(
+      <AntdApp>
+        <MemoryRouter>
+          <ApplyRecordsPanel disabled={false} onRetried={vi.fn()} />
+        </MemoryRouter>
+      </AntdApp>,
+    );
+    await screen.findByTestId("record-batch-7");
+    fireEvent.click(batchHead(7));
+    await screen.findByText("高级后端工程师（高并发方向）");
+
+    // scroll.x 未设置：AntD 不会渲染横向滚动容器 .ant-table-content（它是 scroll.x 专属）。
+    expect(container.querySelector(".ant-table-content")).toBeNull();
+    // 纵向滚动容器仍在（scroll.y），列表高度受限、可纵向滚动。
+    expect(container.querySelector(".ant-table-body")).not.toBeNull();
+  });
+
+  it("shows an empty state when there are no batches", async () => {
+    apiMocks.listRecordBatches.mockResolvedValue({ items: [], total: 0 });
+    render(
+      <AntdApp>
+        <MemoryRouter>
+          <ApplyRecordsPanel disabled={false} onRetried={vi.fn()} />
+        </MemoryRouter>
+      </AntdApp>,
+    );
+    expect(await screen.findByText("还没有投递记录")).toBeInTheDocument();
+  });
+});
+
+describe("投递记录分页器", () => {
+  it("多页时渲染分页器，翻页携带 page 重新加载；单页时不出现", async () => {
+    // 12 个批次、每页 10 个 → 两页，分页器应出现。
+    apiMocks.listRecordBatches.mockResolvedValue({ items: BATCHES.items, total: 12 });
+    await renderPanel();
+    expect(await screen.findByTitle("2")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("2"));
+    await waitFor(() => {
+      const calls = apiMocks.listRecordBatches.mock.calls;
+      expect(calls[calls.length - 1][0]).toMatchObject({ page: 2 });
+    });
+
+    // 只有一页时分页器隐藏（hideOnSinglePage，与旧文字链行为对齐）。
+    cleanup();
+    document.body.innerHTML = "";
+    apiMocks.listRecordBatches.mockResolvedValue(BATCHES);
+    await renderPanel();
+    expect(screen.queryByTitle("2")).not.toBeInTheDocument();
+  });
+});
+
+describe("删除投递记录", () => {
+  it("整批删：组头的「删除本批」带二次确认，确认后调接口并刷新", async () => {
+    apiMocks.deleteRecordBatch.mockResolvedValue(undefined);
+    await renderPanel();
+
+    fireEvent.click(batchHead(7));
+    await screen.findByText("高级后端工程师（高并发方向）");
+
+    // 组头的删除收进了「···」菜单：打开菜单 → 点「删除本批」→ 确认。
+    fireEvent.click(screen.getAllByRole("button", { name: "更多操作" })[0]);
+    fireEvent.click(await screen.findByText(/删除本批（2 条）/));
+    // 必须二次确认——删除是用户可见的破坏性动作。
+    expect((await screen.findAllByText("删除这一批的记录？")).length).toBeGreaterThan(0);
+    // 条数按 §4.4 的例外移到正文（标题只写动作 + 对象）。用 textContent 而不是 ByText：
+    // 断言的是"正文里有没有条数"，不是新增一处文案查询。
+    await waitFor(() => {
+      expect(document.querySelector(".ant-modal-confirm")?.textContent).toContain(
+        "这 2 条投递记录会移入回收站",
+      );
+    });
+    expect(apiMocks.deleteRecordBatch).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole("button", { name: "OK" }));
+
+    await waitFor(() => expect(apiMocks.deleteRecordBatch).toHaveBeenCalledWith(7));
+  });
+
+  it("单条删：行内的删除按钮带二次确认，确认后按记录 id 调接口", async () => {
+    apiMocks.deleteRecord.mockResolvedValue(undefined);
+    await renderPanel();
+
+    fireEvent.click(batchHead(7));
+    await screen.findByText("高级后端工程师（高并发方向）");
+
+    // 单条删除同样收进行内「···」菜单。
+    const row = screen.getByText("高级后端工程师（高并发方向）").closest("tr") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "更多操作" }));
+    fireEvent.click(await screen.findByText("删除"));
+    expect((await screen.findAllByText(/删除这条投递记录/)).length).toBeGreaterThan(0);
+    expect(apiMocks.deleteRecord).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole("button", { name: "OK" }));
+
+    await waitFor(() => expect(apiMocks.deleteRecord).toHaveBeenCalledWith(1));
+  });
+
+  it("取消时什么都不做——二次确认必须真的拦得住", async () => {
+    await renderPanel();
+
+    fireEvent.click(batchHead(7));
+    await screen.findByText("高级后端工程师（高并发方向）");
+    fireEvent.click(screen.getAllByRole("button", { name: "更多操作" })[0]);
+    fireEvent.click(await screen.findByText(/删除本批/));
+    await screen.findAllByText(/删除这一批/);
+
+    // 无 locale 时取消键是 "Cancel"。
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    expect(apiMocks.deleteRecordBatch).not.toHaveBeenCalled();
+  });
+
+  it("批内多选：组头菜单进选择模式 → 勾 2 条 → 删除所选（直接删，撤销在 Toast）→ 一次批量删除并重拉", async () => {
+    apiMocks.batchDeleteRecords.mockResolvedValue({ deleted: 2 });
+    // reload 后 data 必须是**新对象**（真实后端每次返回新响应），明细缓存才会作废重取；
+    // mockResolvedValue 会复用同一引用，绕开 prevData 守卫让重取断言失真。
+    apiMocks.listRecordBatches.mockImplementation(async () => ({
+      items: BATCHES.items,
+      total: BATCHES.total,
+    }));
+    await renderPanel();
+
+    fireEvent.click(batchHead(7));
+    await screen.findByText("高级后端工程师（高并发方向）");
+
+    // 入口在组头「···」菜单：多选范围＝批内明细表。
+    fireEvent.click(screen.getAllByRole("button", { name: "更多操作" })[0]);
+    fireEvent.click(await screen.findByText("批量选择"));
+
+    // 明细表出现 rowSelection：第 0 个是工具条「全选本页」，第 1 个是表头全选，之后是数据行。
+    const pageSelectAll = screen
+      .getAllByRole("checkbox")
+      .find((box) => (box.closest("label")?.textContent ?? "").includes("全选本页"));
+    const rowBoxes = () => screen.getAllByRole("checkbox").filter((box) => box !== pageSelectAll);
+    fireEvent.click(rowBoxes()[1]!);
+    fireEvent.click(rowBoxes()[2]!);
+    expect(screen.getByText("已选 2 项")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "删除所选" }));
+    // 软删可撤销：不再前置确认，点一下就直接发请求（撤销在 Toast 上）。
+
+    await waitFor(() => {
+      expect(apiMocks.batchDeleteRecords).toHaveBeenCalledTimes(1);
+    });
+    expect(apiMocks.batchDeleteRecords).toHaveBeenCalledWith([1, 2]);
+    // 成功后清空选择并 reload：分组列表重拉、展开中的批次明细缓存作废后重取。
+    expect(await screen.findByText(/已删除 2 条投递记录/)).toBeInTheDocument();
+    expect(screen.queryByText(/已选/)).not.toBeInTheDocument();
+    await waitFor(
+      () => {
+        expect(apiMocks.listRecordBatches.mock.calls.length).toBeGreaterThan(1);
+        expect(apiMocks.listRecordBatchItems.mock.calls.length).toBeGreaterThan(1);
+      },
+      { timeout: 5000 },
+    );
+  });
+});
+
+describe("投递记录搜索框（受控化）", () => {
+  /** Input.Search 里的文本输入框。 */
+  function searchInput(): HTMLInputElement {
+    return screen.getByPlaceholderText("搜索岗位 / 公司").closest("input") as HTMLInputElement;
+  }
+
+  it("点 × 清空后立即按空关键词重新加载（不再沿用旧关键词筛选）", async () => {
+    await renderPanel();
+    const input = searchInput();
+
+    // 输入关键词并回车搜索。
+    fireEvent.change(input, { target: { value: "后端" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => {
+      const calls = apiMocks.listRecordBatches.mock.calls;
+      expect(calls[calls.length - 1][0]).toMatchObject({ keyword: "后端" });
+    });
+
+    // 点 × 清空：输入框变空的同时，筛选也要跟着变空。
+    fireEvent.change(input, { target: { value: "" } });
+    await waitFor(() => {
+      const calls = apiMocks.listRecordBatches.mock.calls;
+      expect(calls[calls.length - 1][0]).toMatchObject({ keyword: "" });
+    });
+    expect(input.value).toBe("");
+  });
+
+  it("回车搜索后输入框与筛选保持一致（受控镜像回填）", async () => {
+    await renderPanel();
+    const input = searchInput();
+
+    fireEvent.change(input, { target: { value: "前端" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      const calls = apiMocks.listRecordBatches.mock.calls;
+      expect(calls[calls.length - 1][0]).toMatchObject({ keyword: "前端" });
+    });
+    // 受控镜像从 keyword 同步回来，输入框不会被antd内部状态带跑。
+    expect(input.value).toBe("前端");
+  });
+});
+
+describe("明细请求竞态守卫（PR-14）", () => {
+  /** Input.Search 里的文本输入框（本 describe 自用，避免跨 describe 复用内部函数）。 */
+  function searchInput(): HTMLInputElement {
+    return screen.getByPlaceholderText("搜索岗位 / 公司").closest("input") as HTMLInputElement;
+  }
+
+  it("慢的旧明细响应晚返回，不把旧筛选的数据写回新视图", async () => {
+    let resolveOld: (value: Page<ApplyRecord>) => void = () => {};
+    const oldResponse = new Promise<Page<ApplyRecord>>((resolve) => {
+      resolveOld = resolve;
+    });
+    // 第一次明细请求（旧筛选）挂起不返回；新筛选的补拉请求立即返回新数据。
+    apiMocks.listRecordBatchItems
+      .mockImplementationOnce(() => oldResponse)
+      .mockResolvedValue({ items: [RECORD_SUCCESS], total: 1 });
+    // 每次返回新对象引用（与真实响应一致）：组件按 data 引用变化清明细缓存。
+    apiMocks.listRecordBatches.mockImplementation(async () => ({ ...BATCHES }));
+
+    await renderPanel();
+    fireEvent.click(batchHead(7)); // 发起旧筛选下的明细请求（一直挂起）
+
+    // 换筛选：列表重拉 → 缓存清空 → 展开中的批次按新筛选补拉（立即返回）。
+    const input = searchInput();
+    fireEvent.change(input, { target: { value: "全栈" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect((await screen.findAllByText("全栈工程师")).length).toBeGreaterThan(0);
+
+    // 旧响应此刻才姗姗来迟，带着旧筛选（无关键词）的数据。
+    await act(async () => {
+      resolveOld({ items: [RECORD], total: 2 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // 若没有代次守卫，旧数据会在此刻覆盖新视图：旧岗位必须不出现。
+    expect(screen.queryByText("高级后端工程师（高并发方向）")).not.toBeInTheDocument();
+    expect(screen.getAllByText("全栈工程师").length).toBeGreaterThan(0);
+  });
+});

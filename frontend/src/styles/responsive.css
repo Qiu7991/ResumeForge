@@ -1,0 +1,53 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 手机档专用覆盖（≤575）。跨页的紧凑档规则在 responsive-narrow.css（≤1092），
+   767 以下的整页形态在 mobile.css——这个文件只留"575 以下才需要"的那几条，
+   这样"越窄越后"的层叠顺序才成立。 */
+@media (max-width: 575px) {
+  .assistant-empty-state {
+    padding-inline: 8px;
+  }
+
+  .assistant-context-selects {
+    grid-template-columns: 1fr;
+  }
+
+  .assistant-composer-actions {
+    align-items: flex-end;
+  }
+
+  .assistant-composer-utility {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .assistant-context-toggles {
+    width: 100%;
+    padding-top: 8px;
+    padding-left: 0;
+    border-top: 1px solid var(--rf-border-subtle);
+    border-left: 0;
+  }
+
+  .assistant-message {
+    width: 94%;
+  }
+
+  .jobs-filter-bar > .ant-space-item:first-child,
+  .jobs-search-input {
+    width: 100%;
+  }
+
+  .profile-page-header,
+  .settings-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .profile-page-header-actions {
+    width: 100%;
+  }
+
+  .profile-page-header-actions > button {
+    flex: 1;
+  }
+}

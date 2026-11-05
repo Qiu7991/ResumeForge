@@ -1,0 +1,221 @@
+// SPDX-License-Identifier: Apache-2.0
+/** 岗位相关接口。 */
+import type {
+  ExtractionDocumentInput,
+  ExtractionImageInput,
+  Job,
+  JobBatchDeleteResult,
+  JobBatchStatusResult,
+  JobAnalysisResult,
+  JobList,
+  JobMatchOut,
+  JobMatchResult,
+  JobMatchBatchOut,
+  JobMatchBatchMode,
+  JobMatchBatchSummary,
+  JobMatchBackgroundTask,
+  JobPayload,
+  Page,
+  JobMultiParseResult,
+  ParsedJobDraft,
+  JobImportPreview,
+  JobImportResult,
+  JobImportRow,
+} from "../types";
+import { buildQuery, request, requestRaw } from "./client";
+
+/**
+ * 岗位列表排序键（后端 Literal）：键自带方向，`order` 可覆盖它。
+ * 非法值后端直接 422——所以这里的联合类型就是权威取值。
+ */
+export type JobSort = "created_desc" | "updated_desc" | "title_asc" | "company_asc" | "posted_desc";
+export type JobSortOrder = "asc" | "desc";
+
+export interface JobListParams {
+  keyword?: string;
+  job_type?: string;
+  status?: string;
+  favorite?: boolean;
+  /** 按录入方式粗筛：`collected`=投递台自动采集，`manual`=其余（手动填写/粘贴/截图/文档等）。 */
+  source_kind?: "collected" | "manual";
+  /** 排序键（R14）；不传 = 后端默认 `created_desc`。 */
+  sort?: JobSort;
+  /** 方向覆盖；不传则用 sort 自带方向。 */
+  order?: JobSortOrder;
+  page?: number;
+  page_size?: number;
+}
+
+/** 列表响应是瘦身版 JobListOut（无 JD 全文，带 has_description）；要 JD 用 getJob。 */
+export function listJobs(params: JobListParams = {}): Promise<Page<JobList>> {
+  return request(`/jobs${buildQuery(params)}`);
+}
+
+/** 当前筛选下全部岗位的 id（不分页）：批量选择「全选全部岗位」用；上限由调用方裁决。 */
+export function listJobIds(params: JobListParams = {}): Promise<number[]> {
+  return request(`/jobs/ids${buildQuery(params)}`);
+}
+
+export function getJob(id: number): Promise<Job> {
+  return request(`/jobs/${id}`);
+}
+
+export function createJob(payload: JobPayload): Promise<Job> {
+  return request("/jobs", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function updateJob(id: number, payload: Partial<JobPayload>): Promise<Job> {
+  return request(`/jobs/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+}
+
+export function parseJobText(payload: {
+  text: string;
+  images?: ExtractionImageInput[];
+  documents?: ExtractionDocumentInput[];
+}): Promise<ParsedJobDraft> {
+  return request("/jobs/parse-text", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    budget: "recognition",
+  });
+}
+
+/**
+ * 一次粘贴多份招聘信息：返回一份或多份草稿。
+ *
+ * 与 `parseJobText` 的差别只在"要不要拆"——单份识别遇到多份资料会合成一份残缺草稿，
+ * 所以导入入口统一走这个接口，`items.length === 1` 时退回单份流程即可。
+ */
+export function parseJobsMultiple(payload: {
+  text: string;
+  images?: ExtractionImageInput[];
+  documents?: ExtractionDocumentInput[];
+}): Promise<JobMultiParseResult> {
+  return request("/jobs/parse-multiple", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    budget: "recognition",
+  });
+}
+
+export function deleteJob(id: number): Promise<void> {
+  return request(`/jobs/${id}`, { method: "DELETE" });
+}
+
+export function batchUpdateJobStatus(payload: {
+  job_ids: number[];
+  status: string;
+}): Promise<JobBatchStatusResult> {
+  return request("/jobs/batch-status", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function batchDeleteJobs(payload: { job_ids: number[] }): Promise<JobBatchDeleteResult> {
+  return request("/jobs/batch-delete", { method: "POST", body: JSON.stringify(payload) });
+}
+
+/** 把勾选的岗位导出成 CSV（返回原始 blob，调用方负责触发下载）。 */
+export async function exportJobsCsv(jobIds: number[]): Promise<Blob> {
+  const response = await requestRaw("/jobs/export", {
+    method: "POST",
+    // requestRaw 不像 request() 那样补 Content-Type：这里是 JSON body 而非
+    // FormData，缺这个头后端会把 body 当空表单解析，Pydantic 直接报
+    // "Input should be a valid dictionary or object to extract fields from"。
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_ids: jobIds }),
+  });
+  return response.blob();
+}
+
+/** CSV 导入第一步：上传文件解析预览（不落库）。 */
+export function previewJobImport(file: File): Promise<JobImportPreview> {
+  const form = new FormData();
+  form.append("file", file);
+  // 文件上传走 upload 预算（10 分钟）：大 CSV 的传输时间不该挤 15s 的 default 预算。
+  return request("/jobs/import/preview", { method: "POST", body: form, budget: "upload" });
+}
+
+/** CSV 导入第二步：确认提交，逐行建岗并返回账目。 */
+export function importJobs(rows: JobImportRow[]): Promise<JobImportResult> {
+  return request("/jobs/import", { method: "POST", body: JSON.stringify({ rows }) });
+}
+
+/** 已缓存的解读（R2）：不调用模型，秒回；`stale` 表示岗位内容改过。 */
+export interface JobAnalysisCache {
+  cached: boolean;
+  stale: boolean;
+  generated_at: string | null;
+  result: JobAnalysisResult | null;
+}
+
+export function getJobAnalysis(id: number): Promise<JobAnalysisCache> {
+  return request(`/jobs/${id}/analysis`);
+}
+
+export function generateJobAnalysis(
+  id: number,
+  signal?: AbortSignal,
+  force = false,
+): Promise<JobAnalysisResult> {
+  // signal 保留给"真正需要中断"的调用方（T1 起「取消」会真的 abort）。
+  // force（R2-a）：后端默认先读缓存、命中就直接返回；只有点「重新生成」才带它，
+  // 明确表示"这次愿意再付一次 token"。
+  // 预算走 analysis（180s）：岗位解读要整段生成，default 的 15s 必然超时——超时那次
+  // 前端已经放弃，后端却还在烧 token，用户只看到「请求超时，请重试」。
+  return request(`/jobs/${id}/analysis${force ? "?force=true" : ""}`, {
+    method: "POST",
+    signal,
+    budget: "analysis",
+  });
+}
+
+/**
+ * 岗位匹配度分析：读取个人资料与简历，逐条对照 JD 并落库。
+ *
+ * 与 `generateJobAnalysis`（岗位需求解读，只读 JD）是两条不同的链路——这里会读取用户资料，
+ * 因此生成的是"我够不够"的结论；`force` 为真时忽略已有结论强制重算。
+ */
+export function generateJobMatch(id: number, force = false): Promise<JobMatchResult> {
+  return request(`/jobs/${id}/match-analysis${force ? "?force=true" : ""}`, { method: "POST" });
+}
+
+export function getJobMatch(id: number): Promise<JobMatchOut> {
+  return request(`/jobs/${id}/match-analysis`);
+}
+
+export function deleteJobMatch(id: number): Promise<void> {
+  return request(`/jobs/${id}/match-analysis`, { method: "DELETE" });
+}
+
+export function listJobMatchBatches(limit = 30): Promise<JobMatchBatchSummary[]> {
+  return request(`/jobs/match-batches?limit=${encodeURIComponent(limit)}`);
+}
+
+export function startJobMatchBatchTask(payload: {
+  job_ids: number[];
+  force?: boolean;
+  /** 省略即逐岗匹配（旧行为）；compare = 逐岗结论之后再横向排序并解释原因。 */
+  mode?: JobMatchBatchMode;
+}): Promise<JobMatchBackgroundTask> {
+  return request("/jobs/match-batch-tasks", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listJobMatchBatchTasks(): Promise<JobMatchBackgroundTask[]> {
+  return request("/jobs/match-batch-tasks");
+}
+
+export function getJobMatchBatchTask(taskId: string): Promise<JobMatchBackgroundTask> {
+  return request("/jobs/match-batch-tasks/" + encodeURIComponent(taskId));
+}
+
+export function cancelJobMatchBatchTask(taskId: string): Promise<JobMatchBackgroundTask> {
+  return request("/jobs/match-batch-tasks/" + encodeURIComponent(taskId) + "/cancel", {
+    method: "POST",
+  });
+}
+
+export function getJobMatchBatch(id: number): Promise<JobMatchBatchOut> {
+  return request(`/jobs/match-batches/${id}`);
+}

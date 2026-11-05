@@ -1,0 +1,473 @@
+# SPDX-License-Identifier: Apache-2.0
+"""「网申资料」的读写：用户专门为网申表单填的那批补充资料。
+
+与 ``data.py`` 的分工：那份把 ``UserProfile``（简历资料）展开成扁平字段，本模块管**另一张表**
+（``web_form_profile_entry``）——简历里没有、只有网申表单会问的那些栏目（四六级分数、档案
+所在地、紧急联系人、身高视力…）。
+
+**为什么独立一张表**（而不是往 ``UserProfile`` 加列）记在 ``models/web_form_profile.py``
+的模块说明里，一句话：让"生成简历不读这些"成为**代码路径上到不了**，而不是一句约定。
+
+## 写入语义
+
+``save_entries`` 是**整份覆盖**：传进来的映射就是全部，没提到的 key 一律删除。理由是这一屏
+就是"网申资料的全部"，用户清空某一格时**删除**才是他要的语义（否则那张空值会一直躺在库里，
+下次读出来还要靠过滤兜住）。空值不落库——"没有这一项"与"这一项是空的"在这里是同一件事。
+
+## 学到的（``source="learned"``）
+
+``learnable()`` 从"这次将填入的行"里挑出**资料里没有、值得记下来**的那些，交给前端弹一条
+提示；用户勾选后仍走 ``save_entries`` 落库（**不另开写入接口**）。两件事都在这个模块里，
+因为它们是同一张表的读与写。
+
+历史版本曾提供 ``general / scenario / once`` 三档；现在网申资料统一按通用资料复用，
+读取端会把历史档位归一化为 ``general``。
+
+## 自定义字段（``CUSTOM_`` 前缀，2026-09-27）
+
+用户要能记下**字段清单之外**、这家公司问了的框（「导师姓名」「实验室」）。这类 key 的形状是
+``CUSTOM_导师姓名``：前缀让库里一眼看得出它不是目录字段，后缀是**用户当初看到的栏目名**。
+
+自定义字段可以保存、显示、手填和在「换个资料…」中搜索。普通模式只做唯一标签的精确对应；
+用户主动开启放宽模式后，文本控件可以使用自定义标签与上下文做受约束匹配。候选只来自用户已有字段，
+必须有唯一映射、值非空且控件未填写；安全否决、他人信息与字段区块约束仍有效。遇到同等候选不猜；
+重复经历只在同一字段族且页面控件与资料记录能够按序对应时才按 DOM 顺序匹配。放宽结果标成低置信度并提示复核。
+
+### 写入与读取必须同时放行
+
+``_accepts()`` 是**唯一**的收窄判据，三个入口（``save_entries`` / ``list_entries`` /
+``list_details``）共用它。先前只有 ``save_entries`` 收窄、读取端另写一份过滤——那种形状下
+"加了新 key 忘了同步改读取"会表现为**存进去了读不出来**（用户看到自己刚记的东西不见了），
+而且没有任何报错。收在一处就不会漏。
+"""
+from __future__ import annotations
+
+import re
+from collections.abc import Iterable, Mapping
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from ...models.profile import UserProfile
+from ...models.web_form_profile import (
+    CUSTOM_KEY_PREFIX,
+    REUSE_GENERAL,
+    SOURCE_LEARNED,
+    SOURCE_MANUAL,
+    WebFormProfileEntry,
+)
+from ...schemas.date_format import normalize_partial_date
+from .field_types import GROUP_CUSTOM, normalize_group_id
+from .fields import FIELD_LABELS, FORM_FIELDS, SOURCE_EXTRA
+
+# 目录里 ``source="extra"`` 的那些 key。**目录内的**合法 key 就是这一批。
+EXTRA_FIELD_KEYS: frozenset[str] = frozenset(
+    field.key for field in FORM_FIELDS if field.source == SOURCE_EXTRA
+)
+EXTRA_FIELDS_BY_KEY = {
+    field.key: field for field in FORM_FIELDS if field.source == SOURCE_EXTRA
+}
+
+# 单个值最长多少字符。与资料里其它长文本字段同量级；超长多半是误粘贴。
+MAX_VALUE_CHARS = 2000
+
+# 自定义字段的标签最长多少字符（``field_key`` 那一列是 64，前缀也占位置）。
+MAX_CUSTOM_LABEL_CHARS = 40
+
+
+def _normalized_reuse(_value: str | None = None) -> str:
+    """网申资料统一按通用资料复用，兼容历史记录但不再暴露旧档位。"""
+    return REUSE_GENERAL
+
+# 旧版「网申专用资料」曾经直接存在 ``UserProfile``。这些列保留用于旧库兼容，新的网申资料
+# 界面把它们当作独立网申字段读取和保存；``salary`` 是填表目录键，对应旧列
+# ``expected_salary``。
+LEGACY_EXTRA_FIELD_COLUMNS: dict[str, str] = {
+    "birth_date": "birth_date",
+    "country_region": "country_region",
+    "native_place": "native_place",
+    "political_status": "political_status",
+    "id_type": "id_type",
+    "id_number": "id_number",
+    "phone_country_code": "phone_country_code",
+    "family_info": "family_info",
+    "salary": "expected_salary",
+    "preferred_industry": "preferred_industry",
+    "advisor": "advisor",
+    "research_direction": "research_direction",
+}
+
+# 规范标签时要剥掉的装饰性符号（与 ``matching._DECORATION`` 同一批：表单里"（"与"("混用
+# 是常态，必填星号也常见）。
+_LABEL_DECORATION = " \t\r\n-—–:：·.、,，*＊[]【】()（）<>《》\"'“”‘’"
+
+
+def _accepts(key: str) -> bool:
+    """这个 key 允许读写吗。**三个入口共用这一处判据**（理由见模块说明）。
+
+    目录内的 key 收，``CUSTOM_`` 前缀的也收——后者是用户在填表时攒出来的。
+    **其余一律不收**：目录外的普通 key 混进来会冒充简历资料字段（"姓名""手机号"那种），
+    下一次它们会被当成"库里已有的字段"参与判据，把不该学的东西挡掉或放进来。
+    """
+    return key in EXTRA_FIELD_KEYS or key.startswith(CUSTOM_KEY_PREFIX)
+
+
+def _normalize_value(key: str, value: str) -> str:
+    """按字段目录规范化可识别的日期；自定义字段保持用户原文。"""
+    field = EXTRA_FIELDS_BY_KEY.get(key)
+    if field is not None and field.kind == "date":
+        return normalize_partial_date(value)
+    return value
+
+
+def custom_key(label: str) -> str:
+    """把用户看到的栏目名规范成自定义字段的 key（``CUSTOM_导师姓名``）。
+
+    剥掉装饰符号与内部空白后**原样保留中文**——不做拼音/哈希之类的转换，因为这一列是给人
+    看的、也要靠它去重（同一个栏目名第二次记住时该覆盖，而不是攒出两条）。
+    空标签返回空串，调用方据此拒绝（没有名字的字段在界面上没法显示）。
+    """
+    cleaned = re.sub(r"\s+", "", label.strip().strip(_LABEL_DECORATION))
+    if not cleaned:
+        return ""
+    return f"{CUSTOM_KEY_PREFIX}{cleaned[:MAX_CUSTOM_LABEL_CHARS]}"
+
+
+def display_label(field_key: str, label: str = "") -> str:
+    """一条记录在界面上该显示什么名字。
+
+    ``label`` 非空就用它；否则回落到目录的 ``FIELD_LABELS``。两条路径合成一处，所以读取端
+    不必判断"这个 key 是自定义的还是目录的"。
+
+    **自定义字段的兜底要把前缀剥掉**：库里有 ``label`` 为空的存量行（这一列是后加的），
+    直接回落到 key 的话界面上会出现 ``CUSTOM_导师姓名``——那个前缀是给库里看的，不是给
+    用户看的。
+    """
+    if label:
+        return label
+    if field_key.startswith(CUSTOM_KEY_PREFIX):
+        return field_key[len(CUSTOM_KEY_PREFIX) :] or field_key
+    return FIELD_LABELS.get(field_key, field_key)
+
+
+# 自定义字段在「网申资料」里的分组名。放最后——它们没有目录里的归类信息。
+CUSTOM_GROUP = GROUP_CUSTOM
+
+
+def custom_fields_of(db: Session, groups: list[str]) -> list[dict[str, Any]]:
+    """库里那些 ``CUSTOM_`` 前缀的自定义字段，转成与目录字段同形的条目。
+
+    给「网申资料」界面用：用户记下了就得看得见、改得掉、删得掉。**只收有值的**——与
+    ``list_entries`` 同一口径（没有这一项与"这一项是空的"是同一件事），所以界面不会为
+    一个空的自定义字段铺一格输入框。
+
+    ``groups`` 会被**就地追加** ``自定义``（如果确实有自定义字段）：分组顺序来自目录，
+    而这个组是运行时才出现的，只能在这里补。（``list_extra_fields`` 另外**无条件**补一次
+    ——界面默认要有那张空卡片；这里保留原地追加，是为了本函数单独使用时语义不变。）
+
+    ``matchable=True`` 是给界面看的信号：普通模式做唯一精确标签对应；放宽模式开启时，
+    参与受约束的文本标签/上下文匹配。
+    """
+    # Normalize cached legacy labels before they leave the API layer.
+    groups[:] = list(dict.fromkeys(normalize_group_id(group) for group in groups))
+    rows = (
+        db.query(WebFormProfileEntry)
+        .filter(WebFormProfileEntry.field_key.like(f"{CUSTOM_KEY_PREFIX}%"))
+        .all()
+    )
+    rows = [row for row in rows if row.value and _accepts(row.field_key)]
+    if not rows:
+        return []
+
+    if CUSTOM_GROUP not in groups:
+        groups.append(CUSTOM_GROUP)
+
+    return [
+        {
+            "key": row.field_key,
+            "label": display_label(row.field_key, row.label),
+            # 自定义字段在库里是什么类型无从得知（那是跟着页面控件走的，不是跟着字段走的），
+            # 一律给 text——长文本也能存，只是输入框不自动撑高。
+            "kind": "text",
+            "group": CUSTOM_GROUP,
+            "sensitive": False,
+            "matchable": True,
+        }
+        for row in rows
+    ]
+
+
+def list_entries(db: Session, *, reusable_only: bool = False) -> dict[str, str]:
+    """读出全部「网申资料」，返回 ``{key: value}``。
+
+    **只返回目录里认得的 key**：目录删掉某个字段后，库里那条旧值不该再被读出来
+    （否则会填进一个我们已经不认识的字段）。
+
+    ``reusable_only`` 保留在签名中兼容旧调用方；当前所有网申资料都是通用资料，
+    因此历史 ``once`` / ``scenario`` 也会参与预填。
+    """
+    rows = db.query(WebFormProfileEntry).all()
+    stored_keys = {row.field_key for row in rows if _accepts(row.field_key)}
+    result: dict[str, str] = {}
+    for row in rows:
+        if not _accepts(row.field_key):
+            continue
+        value = _normalize_value(row.field_key, str(row.value or "").strip())
+        if value:
+            result[row.field_key] = value
+    profile = db.query(UserProfile).order_by(UserProfile.id).first()
+    if profile is not None:
+        for key, column in LEGACY_EXTRA_FIELD_COLUMNS.items():
+            if key in stored_keys:
+                continue
+            value = _normalize_value(
+                key, str(getattr(profile, column, "") or "").strip()
+            )
+            if key == "phone_country_code" and value == "+86":
+                # 这是旧模型的默认值，不等于用户在网申资料里主动填写过。
+                continue
+            if value:
+                result[key] = value
+    return result
+
+
+def list_details(db: Session) -> dict[str, dict[str, str]]:
+    """读出每条的**完整形状**（值 + 来源 + 档位 + 显示名），供「我的资料」展示。
+
+    与 ``list_entries`` 分开：那个是给**填表**用的（只关心 key→值），这个是给**界面**用的
+    （还要显示来源与档位）。合成一个会让前者多返回三个它永远不看的字段。
+    """
+    rows = db.query(WebFormProfileEntry).all()
+    result = {
+        row.field_key: {
+            "value": _normalize_value(row.field_key, str(row.value or "").strip()),
+            "source": row.source or SOURCE_MANUAL,
+            "reuse": _normalized_reuse(row.reuse),
+            "label": display_label(row.field_key, row.label),
+        }
+        for row in rows
+        if _accepts(row.field_key) and row.value
+    }
+    profile = db.query(UserProfile).order_by(UserProfile.id).first()
+    if profile is not None:
+        for key, column in LEGACY_EXTRA_FIELD_COLUMNS.items():
+            if key in result:
+                continue
+            value = _normalize_value(
+                key, str(getattr(profile, column, "") or "").strip()
+            )
+            if key == "phone_country_code" and value == "+86":
+                continue
+            if value:
+                result[key] = {
+                    "value": value,
+                    "source": SOURCE_MANUAL,
+                    "reuse": REUSE_GENERAL,
+                    "label": display_label(key),
+                }
+    return result
+
+
+def save_entries(
+    db: Session,
+    values: Mapping[str, str],
+    *,
+    details: Mapping[str, Mapping[str, str]] | None = None,
+    commit: bool = True,
+) -> dict[str, str]:
+    """整份覆盖写入。返回落库后的结果，供调用方回显（不必再查一次）。
+
+    ``details`` 可选，用来给某几条指定 ``source`` / ``reuse`` / ``label``（学到的那些走
+    这里）；没提到的 key 按"用户自己录的、默认档位、从目录取名"落库——这正是「我的资料」
+    那一屏的语义。
+    """
+    cleaned: dict[str, str] = {}
+    for key, raw in values.items():
+        if not _accepts(key):
+            continue  # 目录外且非自定义的键直接丢弃，不报错——前端多传一个键不该让整次保存失败。
+        value = _normalize_value(key, (raw or "").strip())[:MAX_VALUE_CHARS]
+        if value:
+            cleaned[key] = value
+
+    existing = {row.field_key: row for row in db.query(WebFormProfileEntry).all()}
+    for key, value in cleaned.items():
+        extra = (details or {}).get(key) or {}
+        source = extra.get("source") or SOURCE_MANUAL
+        if source not in (SOURCE_MANUAL, SOURCE_LEARNED):
+            source = SOURCE_MANUAL
+        # 标签没给就留空串（读取端回落到目录名）。**不从 key 倒推**——自定义 key 里那个
+        # 后缀虽然长得像标签，但它是规范化过的（剥过标点），倒推会让界面上的名字和用户
+        # 当初填的那个逐渐对不上。
+        label = str(extra.get("label") or "")[:64]
+        row = existing.get(key)
+        if row is None:
+            db.add(
+                WebFormProfileEntry(
+                    field_key=key, value=value, label=label, source=source, reuse=REUSE_GENERAL
+                )
+            )
+        else:
+            row.value = value
+            row.label = label
+            row.source = source
+            row.reuse = REUSE_GENERAL
+    profile = db.query(UserProfile).order_by(UserProfile.id).first()
+    if profile is not None:
+        # ``save_entries`` 是整份覆盖写入：旧列也要同步清空，否则用户在新界面清掉的
+        # 值会从旧的 UserProfile 兼容列里再次回流到网申填表数据。
+        for key, column in LEGACY_EXTRA_FIELD_COLUMNS.items():
+            setattr(profile, column, cleaned.get(key, ""))
+    # 本次没提到的（含被清空的）一律删掉——见模块说明里的"整份覆盖"。
+    for key, row in existing.items():
+        if key not in cleaned:
+            db.delete(row)
+    if commit:
+        db.commit()
+    return cleaned
+
+
+def remember(
+    db: Session,
+    *,
+    key: str,
+    value: str,
+    label: str = "",
+    source: str = SOURCE_LEARNED,
+    reuse: str = REUSE_GENERAL,
+) -> bool:
+    """记下一条，**不动库里已有的其它条目**。返回是否真的写进去了。
+
+    与 ``save_entries`` 的区别是语义：那个是"这一屏就是全部"（没提到的删掉），这个是
+    "把这一条加进去"。逐框「记住这条」走这里——用户在页面上点的是**一个框**，
+    不该因此把他之前记的东西全删掉。
+
+    同 key 再记一次是覆盖（值/标签/档位都更新），所以反复点同一个框不会攒出重复条目。
+    值或 key 不合法则不写，返回 ``False`` 让调用方如实告诉用户"这条没记上"。
+    """
+    if not _accepts(key):
+        return False
+    cleaned_value = _normalize_value(key, (value or "").strip())[:MAX_VALUE_CHARS]
+    if not cleaned_value:
+        return False
+
+    row = (
+        db.query(WebFormProfileEntry)
+        .filter(WebFormProfileEntry.field_key == key)
+        .one_or_none()
+    )
+    if row is None:
+        db.add(
+            WebFormProfileEntry(
+                field_key=key,
+                value=cleaned_value,
+                label=label[:64],
+                source=source,
+                reuse=REUSE_GENERAL,
+            )
+        )
+    else:
+        row.value = cleaned_value
+        if label:
+            row.label = label[:64]
+        row.source = source
+        row.reuse = REUSE_GENERAL
+    profile = db.query(UserProfile).order_by(UserProfile.id).first()
+    if profile is not None and key in LEGACY_EXTRA_FIELD_COLUMNS:
+        setattr(profile, LEGACY_EXTRA_FIELD_COLUMNS[key], cleaned_value)
+    db.commit()
+    return True
+
+
+# ===== 学到的东西 =====
+
+# 值是哪来的，写进提案里给用户看。与 ``service.SOURCE_RULE`` / ``SOURCE_AI`` 同义，
+# 但**不 import 那两个常量**——``service`` 会连带拉起 ``engine``（重依赖），而本模块
+# 只做这张表的读写，不该为两个字符串把整条链拽进导入期。
+FROM_RULE = "rule"
+FROM_AI = "ai"
+
+
+def learnable(db: Session, items: Iterable[Any], known: Mapping[str, str]) -> list[dict[str, str]]:
+    """从"这次将填入的行"里挑出**简历通里没有、值得记下来**的那些。
+
+    ``items`` 是 ``service.PreviewItem`` 的序列（用户勾选过、这次真会填进去的行）；
+    ``known`` 是 ``data.build_form_data()`` 的结果——**由调用方传进来复用**，不要在这里
+    再查一次库（``preview`` 路由已经算过一份）。
+
+    ## 判据只有三条
+
+    1. 这行的 ``field`` **不在** ``known`` 里。**这就是"简历通里没有"的定义**——包括简历
+       资料与已经存在的网申资料。
+    2. 值非空。
+    3. ``field`` 是**认得的**（``_accepts()``：目录内的，或 ``CUSTOM_`` 前缀的自定义字段）。
+
+    ## 第 3 条在挡什么
+
+    规则偶尔会把**简历资料里的字段**（姓名、手机号…）映射到一个"资料里恰好为空"的框上，
+    AI 也可能把某个 ``source="profile"`` 的字段判成新信息。那些行的 ``field`` 不在
+    ``EXTRA_FIELD_KEYS`` 里，**学下来会让"学到的东西"冒充简历资料字段**，下次还会覆盖
+    用户自己在「我的资料」里填的值。所以在**提案阶段**就滤掉。
+
+    同理也是在挡 ``save_entries`` 的静默丢弃：那边按同一个 ``_accepts()`` 收窄，不认得的
+    key 会**悄悄消失**。与其让用户勾了半天发现没存上，不如一开始就不提案。
+
+    ## 为什么不需要问"值是不是用户敲的"
+
+    ``field not in known`` 已经蕴含了答案：这个字段在库里没有值，所以这行出现在 ``items``
+    里的值只能来自别处（规则给它的、或 AI 候选给的）。而**资料里"有这个字段但值为空"的行
+    根本不在 ``items`` 里**——它们落在 ``report.missing_data``，是另一桶。所以那种行既不会
+    被误学，也不需要额外判断。
+
+    > 逐框「记住这条」那条链**确实**要处理 ``missing_data``（用户点着一个认得出但没值的框
+    > 要记住它）。它走 ``remember()``，**不经过这里**——两条链各自成立，不要在这里混。
+
+    ## 与已有资料不重复提案
+
+    一个字段被记住之后，下一次它就出现在 ``known`` 里了 → 不再提案。所以这条提示**不会**
+    变成每次填表都弹的骚扰。
+    """
+    proposals: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in items:
+        key = str(getattr(item, "field", "") or "").strip()
+        if not key or key in seen or key in known:
+            continue
+        # 补充事实派生的 CUSTOM_FACT_ 键已经存在用户资料里，不是"简历通里没有的信息"；
+        # 若提案保存会生成一个以事实 id 为基础、用户看不懂的自定义字段。
+        if key.startswith("CUSTOM_FACT_"):
+            continue
+        if not _accepts(key):
+            continue
+        value = str(getattr(item, "value", "") or "").strip()[:MAX_VALUE_CHARS]
+        if not value:
+            continue
+        seen.add(key)
+        source = str(getattr(item, "source", "") or "")
+        proposals.append(
+            {
+                "key": key,
+                "label": FIELD_LABELS.get(key, key),
+                "value": value,
+                "from": FROM_AI if source == FROM_AI else FROM_RULE,
+            }
+        )
+    return proposals
+
+
+__all__ = [
+    "CUSTOM_GROUP",
+    "CUSTOM_KEY_PREFIX",
+    "EXTRA_FIELD_KEYS",
+    "FROM_AI",
+    "FROM_RULE",
+    "MAX_CUSTOM_LABEL_CHARS",
+    "MAX_VALUE_CHARS",
+    "custom_fields_of",
+    "custom_key",
+    "display_label",
+    "learnable",
+    "list_details",
+    "list_entries",
+    "remember",
+    "save_entries",
+]

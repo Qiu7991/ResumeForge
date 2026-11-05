@@ -1,0 +1,387 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 分页设置区（W08）与「页缩略图」的样式。
+ *
+ * 2026-10-25 重排：分组标题 12px/600 secondary、辅助说明 12px、组间距统一 12px；
+ * 颜色 / 间距只用 --rf-* 语义 token（深色主题由 dark-tokens 提供同义值）。
+ * 页缩略图仍然保留（实际页数 / 末页占用 / 溢出与手动分页位置），只收紧内边距与行距，
+ * 让它在 380 宽左栏里只占「标题行 + 一行状态」。 */
+
+/* ===== 面板节奏与文字层级 ===== */
+.resume-pagination-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.resume-pagination-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.resume-pagination-label {
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.resume-pagination-sublabel {
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+/* 辅助说明：380 宽下长句/长板块名要能换行，不能把面板撑出横向滚动。 */
+.resume-pagination-help {
+  min-width: 0;
+  color: var(--rf-text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+/* 草稿说明：原来是一条信息蓝底 Alert，和真正的错误/危险信息抢注意力；
+ * 它只是"草稿里看不到断页"的常驻解释，降成一行弱提示即可。 */
+.resume-pagination-note {
+  color: var(--rf-text-tertiary);
+}
+
+.resume-pagination-note-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--rf-text-tertiary);
+  font-size: 12px;
+}
+
+.resume-pagination-note-text {
+  color: var(--rf-text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.resume-pagination-info {
+  color: var(--rf-text-tertiary);
+  font-size: 12px;
+  cursor: help;
+}
+
+/* ===== Q08：板块级开关 + 已设置断页汇总 ===== */
+.resume-section-pagination {
+  min-width: 0;
+}
+
+/* 顶部说明与「切到精确预览」并排。问题 22 ③ 起这一行**不再换行**：
+   说明固定单行 + 省略号，按钮永远在它右边、随行居中。 */
+.resume-section-pagination-head {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 一条说明文字，三个使用点：head（与「切到精确预览」并排）、空态、已有断页的 entryHint。
+   `flex: 1 1 160px` 的原意是"宽度至少 160px 再伸缩"，但它被 `<Flex vertical>` 的 summary
+   复用后主轴变成**高度**，于是空态那一行被撑成 160px 高（实测 summary 195px 里 160px 是空白）。
+   现在按布局语义拆开：基础规则只管文字，弹性只在 head 里生效。 */
+.resume-section-pagination-hint {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+/* 问题 22 ③：head 里那一句固定**一行**。
+ *
+ * 原来可用宽约 200px 时它折成两行，右侧按钮独占剩下的一整行并垂直居中，看起来像浮在
+ * 文字中间。现在：说明 `nowrap` + 省略号吃掉剩余宽度，按钮不收缩（`flex: 0 0 auto`），
+ * 全文由组件上的 `title` 兜底（悬停可读全）。
+ *
+ * 为什么不用"缩小字号硬塞"：12px 是这一栏的可读下限，再缩小在 125% 缩放的屏上就糊了；
+ * 而且那句说明是**低频参考信息**（断页只在精确预览与导出里生效），一眼看出主题即可。
+ * `flex: 1 1 auto` + `min-width: 0` 缺一不可：少了后者的 span 会按内容宽撑开整行。 */
+.resume-section-pagination-head > .resume-section-pagination-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 按钮不许被说明挤扁：它是这一行唯一可点的东西。 */
+.resume-section-pagination-head > .ant-btn {
+  flex: 0 0 auto;
+}
+
+/* ===== R-07：板块开关表（表头化）=====
+ *
+ * 旧形态每行都重复「从新页开始 / 整块不跨页」两个文字标签：13 个板块 = 26 段重复文字，
+ * 把左栏撑成一堵墙，两个开关的列也不对齐（文字长短不一）。现在：
+ * - 行与表头共用同一套 grid 轨道（`minmax(0,1fr) 44px`）→ 开关天然同列；
+ * - 列名只在表头写一次，且 `aria-hidden`（语义由每行开关承载）；
+ * - 板块名 `min-width: 0` + 省略号（R1/R3）：360px 下不折行、不横向裁切。
+ */
+.resume-section-pagination-table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.resume-section-pagination-header,
+.resume-section-pagination-row {
+  display: grid;
+  /* #1：板块级「不跨页」已删（渲染端从未消费，死开关）——只剩名称 + 断页两列。 */
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+}
+
+.resume-section-pagination-header {
+  padding-bottom: 2px;
+  color: var(--rf-text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.resume-section-pagination-row {
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.resume-section-pagination-col-name {
+  min-width: 0;
+}
+
+.resume-section-pagination-col-flag {
+  min-width: 0;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.resume-section-pagination-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* 省略号必须配 title（R3）：完整板块名挂在 name 单元格的 title 上。 */
+.resume-section-pagination-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 已设置断页的板块：5px 圆点（不占 1fr 的剩余宽度，固定 5px）。 */
+.resume-section-pagination-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--rf-info);
+}
+
+.resume-section-pagination-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+/* 汇总区：与板块开关之间用一条细线分层，避免"两个开关 + 芯片"糊成一片。 */
+.resume-section-pagination-summary {
+  min-width: 0;
+  border-top: 1px solid var(--rf-border-subtle);
+  padding-top: 8px;
+}
+
+/* ===== 已设置的板块断页：芯片列表 ===== */
+.resume-pagination-break-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 芯片里的可点击标签：antd 链接按钮默认内边距与高度会撑高 24px 芯片。
+   antd-override: 私有形态 —— 芯片尺寸由外层 .resume-pagination-break-chip 决定 */
+.resume-pagination-break-label.ant-btn {
+  height: 20px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.resume-pagination-break-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resume-pagination-break-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 2px 0 8px;
+  border: 1px solid var(--rf-border);
+  border-radius: 999px;
+  background: var(--rf-surface-alt);
+  color: var(--rf-text-body);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.resume-pagination-break-label {
+  white-space: nowrap;
+}
+
+/* 「恢复自然分页」是链接型按钮：跟芯片区标题同一行，不再独占一行高度。 */
+.resume-pagination-restore.ant-btn {
+  height: 20px;
+  padding: 0;
+  font-size: 12px;
+}
+
+/* antd-override: 私有形态 —— 芯片里的「×」要压到 20×20，antd small 按钮最小 24px 会把芯片撑高 */
+.resume-pagination-break-clear.ant-btn {
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--rf-text-tertiary);
+  font-size: 10px;
+}
+
+.resume-pagination-break-clear.ant-btn:hover {
+  color: var(--rf-text-body) !important;
+  background: var(--rf-border-subtle) !important;
+}
+
+/* 可折叠小分组：ghost 只保留标题行；标题/内容的默认内边距在 380 宽左栏里过松。
+   antd-override: 私有形态 —— 左栏分组已经提供了一层内边距，这里只做标题行紧排 */
+.resume-pagination-subgroup.ant-collapse > .ant-collapse-item > .ant-collapse-header {
+  padding: 2px 0;
+  color: var(--rf-text-secondary);
+}
+
+.resume-pagination-subgroup.ant-collapse
+  > .ant-collapse-item
+  > .ant-collapse-content
+  > .ant-collapse-content-box {
+  padding: 6px 0 0;
+}
+
+/* ===== 页缩略图（紧凑） ===== */
+.resume-page-thumbnails {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: var(--rf-radius-control);
+  padding: 6px 8px;
+}
+
+.resume-page-thumbnails-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.resume-page-thumbnails-title {
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.resume-page-thumbnails-summary,
+.resume-page-thumbnails-hint {
+  margin: 0;
+  color: var(--rf-text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* #2：格子必须等宽——第 1 页只有页码、末页多出「末页」「占用 N%」两行字，
+ * flex 的 auto 基准让字多的那格更宽（实测 70.0px vs 81.9px）。改成网格：一列一个
+ * 格子，列宽由容器均分（每列同宽 64px 起），页数再多也只是换行，不会出现"某格更宽"。 */
+.resume-page-thumbnails-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.resume-page-thumbnail {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--rf-border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  background: var(--rf-surface-alt);
+}
+
+.resume-page-thumbnail.is-last {
+  border-color: var(--rf-border-strong);
+}
+
+.resume-page-thumbnail.is-truncated {
+  border-color: var(--rf-warning-border);
+  background: var(--rf-warning-bg);
+}
+
+.resume-page-thumbnail-index {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.resume-page-thumbnail-badge {
+  border: 1px solid var(--rf-border);
+  border-radius: 999px;
+  padding: 0 6px;
+  color: var(--rf-text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.resume-page-thumbnail-badge.is-warning {
+  border-color: var(--rf-warning-border);
+  color: var(--rf-warning-text);
+}
+
+.resume-page-thumbnail-fill {
+  color: var(--rf-text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.resume-page-thumbnail-issue {
+  color: var(--rf-text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.resume-page-thumbnail-issue.is-blocker {
+  color: var(--rf-warning-text);
+}

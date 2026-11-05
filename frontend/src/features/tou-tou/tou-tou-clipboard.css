@@ -1,0 +1,124 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 投投剪贴板卡片：双击悬浮球弹出的小卡片，与助手卡片同一形态（把手拖动 + 关闭按钮）。 */
+
+.tt-clipboard-card {
+  position: fixed;
+  /* 默认停在悬浮球上方：球贴右下时占 bottom 24~88，剪贴板从 120 起，互不遮挡。
+     拖动后由内联 left/top 接管（freePosition 写进卡片仓库）。 */
+  right: 24px;
+  bottom: 120px;
+  /*
+   * 3500：高于 antd 6 容器链——zIndexPopupBase（3100）+ useZIndex 容器偏移
+   * +100/层（单层 Modal/Drawer 实际 3200、Drawer 内嵌 Modal 3300），弹窗无论
+   * 常规单层还是 Drawer 内嵌都盖不住本卡；也高于助手卡（3400）——两卡同时
+   * 弹出时剪贴板压在助手卡上面，而两者都低于悬浮球（3650），保持
+   * 球 > 剪贴板 > 助手卡 的相对次序。
+   */
+  z-index: var(--rf-layer-clipboard-card);
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(600px, calc(100vh - 140px));
+  overflow: hidden;
+  border: 1px solid var(--rf-border-strong);
+  border-radius: 14px;
+  background: var(--rf-surface);
+  box-shadow: 0 20px 55px rgb(25 61 99 / 24%);
+}
+
+.tt-clipboard-card.is-dragging {
+  cursor: grabbing;
+  box-shadow: 0 24px 60px rgb(25 61 99 / 30%);
+}
+
+.tt-clipboard-card-grip {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 12px 44px 10px 14px;
+  border-bottom: 1px solid var(--rf-border-subtle);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tt-clipboard-card.is-dragging .tt-clipboard-card-grip {
+  cursor: grabbing;
+}
+
+.tt-clipboard-card-grip:focus-visible {
+  outline: 2px solid var(--rf-focus-ring);
+  outline-offset: 2px;
+}
+
+.tt-clipboard-card-title {
+  color: var(--rf-brand);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tt-clipboard-card-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--rf-text-secondary);
+  background: var(--rf-brand-wash);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 26px;
+}
+
+.tt-clipboard-card-close:hover {
+  color: var(--rf-brand);
+  background: var(--rf-brand-tint);
+}
+
+.tt-clipboard-card-close:focus-visible {
+  outline: 2px solid var(--rf-focus-ring);
+  outline-offset: 2px;
+}
+
+.tt-clipboard-card-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.tt-clipboard-card-hint {
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.tt-clipboard-card-list {
+  margin-top: 12px;
+}
+
+.tt-clipboard-card-list .ant-listy-item {
+  gap: 8px;
+  padding: 8px 4px;
+}
+
+.tt-clipboard-card-item-content {
+  margin-bottom: 0;
+  white-space: pre-wrap;
+}
+
+/* 内容达到 maxLength 硬上限时的小号红色提示，样式对齐 antd 表单错误文案
+   （showCount 计数已移除，见 TouTouClipboardCard）。 */
+.tt-clipboard-card-limit-hint {
+  margin-top: 4px;
+  color: var(--rf-danger);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: right;
+}

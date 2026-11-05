@@ -1,0 +1,302 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 简历制作台（2/4）：三栏分宽、拖动分隔条、左栏分组与参数行定宽。 */
+/* ===== 三栏 ===== */
+/* 2026-10 起从 grid 改成 flex + 显式宽度：三栏要能**拖动改宽**，而 grid 的列宽由轨道
+   定义决定，拖动只能反复拼 `grid-template-columns` 字符串——既难读也难做 clamp。
+   flex 下参数栏与内容栏各拿一个自定义属性定宽，预览栏 `flex: 1` 吃掉剩余，拖拽只改
+   一个数字。属性由 `useWorkbenchColumns` 内联写在元素上；这里的值是"JS 还没挂上"的兜底。 */
+.resume-wb-body {
+  /* 与 `useWorkbenchColumns` 的 `WORKBENCH_DEFAULT_WIDTHS` 逐值相等：JS 还没挂上时
+     （首帧）左栏就是 380，不会先画一个低于新下限（380）的栏再跳一下。 */
+  --resume-wb-params: 380px;
+  --resume-wb-editor: 448px;
+
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 分隔线画在**栏元素**上而不是滚动容器里：滚动时不跟着内容走，也不与滚动条重叠。 */
+.resume-wb-col {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid var(--rf-border-subtle);
+  scrollbar-color: var(--rf-border) transparent;
+  scrollbar-width: thin;
+}
+
+.resume-wb-col:last-child {
+  border-right: 0;
+}
+
+.resume-wb-col::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.resume-wb-col::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--rf-border);
+}
+
+/* 参数栏与内容栏的宽度来自自定义属性；预览栏吃掉剩下的全部（折叠态与只读态也一样：
+   中栏不渲染时它自动变宽，不需要另写一套列宽规则）。
+   2026-10-25 起两栏都可拖（用户："第一列也支持调整宽度"）：默认值与上下限在
+   `useWorkbenchColumns` 里，CSS 只负责把两个变量接到宽度上。
+   2026-10-29：分组改成轻卡片后，容器间距 18 → 14（页签条 / 文档模式开关 / 卡片之间
+   都落在这个 gap 上；卡片自己已有边框与内边距，再留 18 会显得空）。 */
+.resume-wb-col-params {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 14px;
+  width: var(--resume-wb-params);
+  padding: 20px;
+  background: var(--rf-surface);
+}
+
+.resume-wb-col-editor {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  /* 中栏自己滚的是面板本体（`.resume-wb-editor-body`），这一层再滚一次就是两条滚动条。 */
+  overflow: hidden;
+  width: var(--resume-wb-editor);
+  padding: 16px 16px 0;
+  background: var(--rf-surface);
+}
+
+/* 画布自己控制内边距与滚动，所以这一栏不设 overflow-y（否则会出现两条滚动条）。
+   这一栏必须是 **flex 列**：横幅（分页报告 / 溢出提示）先占它需要的高度，画布再吃剩下的。
+   2026-10-29 之前这里是普通块级流，而 `.resume-wb-canvas { height: 100% }` 是相对**整栏**
+   高度算的，于是「画布 = 整栏」+「横幅 52px」叠起来比栏高多 52px，被 `overflow: hidden`
+   裁掉——裁掉的正好是画布最底部那条缩放条（用户反馈"制作台下方还是没有缩放行"）。
+   画布自身改由 `flex: 1 1 auto` 撑满剩余高度（见 `workbench-canvas.css`）。 */
+.resume-wb-col-canvas {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 0;
+}
+
+/* ===== 分隔条（拖动改宽） ===== */
+/* 两条：参数栏右边、内容栏右边（2026-10-25）。6px 命中区，`margin-left: -1px` 让它正好
+   压住左栏那 1px `border-right`：视觉上仍是一条分隔线（不会出现两条并排的细线），但可拖的
+   范围是 6px。键盘等价物在 `WorkbenchResizer`：←/→ 每次 16px、双击复位默认宽度（两条一起），
+   动作条上的「恢复默认列宽」是同一个动作的显式入口。 */
+.resume-wb-resizer {
+  flex: 0 0 6px;
+  width: 6px;
+  margin-left: -1px;
+  border-left: 1px solid var(--rf-border-subtle);
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.resume-wb-resizer:hover,
+.resume-wb-resizer:focus-visible,
+.resume-wb-resizer.is-dragging {
+  border-left-color: var(--rf-focus-visible);
+  outline: none;
+  background: var(--rf-brand-tint);
+}
+
+/* 拖动期间整屏都不该选中文字：鼠标划过左栏会把标签涂蓝，看起来像界面坏了。
+   `useWorkbenchColumns` 在拖拽期间给 `body` 加 `is-resizing`，松手即摘。 */
+body.is-resizing,
+body.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* 拖动期间让指针"穿过"预览 iframe：iframe 是独立的文档，指针滑到它上面之后父页面再也
+   收不到 mousemove / mouseup——这正是"松手了却还在拖"的第二个来源（第一个是松在窗口外，
+   由 `useWorkbenchColumns` 的 `buttons === 0` 兜底）。关掉 `pointer-events` 之后，
+   指针划过预览区时事件仍然落在父文档上，拖动跟手、松手必被感知。 */
+body.is-resizing iframe,
+/* 同一条性质用到**滑杆**上（简历预览界面：滑杆右边紧挨着预览 iframe，拖动时松手事件
+   会被 iframe 吃掉，滑杆停在"正在拖"。见 `hooks/useSliderDragGuard`）。 */
+body.is-slider-dragging iframe {
+  pointer-events: none;
+}
+
+/* ===== 左栏分组 ===== */
+/* 2026-10-29 用户反馈「左边各个功能之间的区分不是很明显」：原先分组标题是一行 12px
+   secondary 色的纯文本，六个分组摞起来像一段连续文字（「条目字段排版／分页／格式支持」
+   几乎糊成一片）。现在每个分组是一张**轻卡片**——细边框 + 控制圆角 + 10/12 内边距 +
+   与左栏同色的底（边框承担"这是一块独立功能"的唯一职责，不叠第二层底色）。
+   分组之间 14px（左栏容器的 gap），卡片内部 12px。 */
+.resume-wb-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: var(--rf-radius-control);
+  background: var(--rf-surface);
+}
+
+/* 折叠标题：整行可点（32px 命中高度），文字 13px 正文色 + 600 字重，箭头靠右。
+   收起的卡片就只剩这一行——高度与展开态的卡片头一致，折叠/展开不会跳动。 */
+.resume-wb-group-title.ant-btn {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: var(--rf-radius-control);
+  color: var(--rf-text-body);
+  font-size: 13px;
+}
+
+/* antd-override: 私有形态 —— 分组标题是"整行可点的卡片头"，hover 铺满一行；
+   .ant-btn 的默认 hover 底色是浅灰实心块，权重不够压住，故用 !important。 */
+.resume-wb-group-title.ant-btn:hover {
+  color: var(--rf-text-body) !important;
+  background: var(--rf-surface-alt) !important;
+}
+
+.resume-wb-group-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  text-align: left;
+}
+
+/* 展开 / 收起的唯一视觉状态：箭头翻转。文字保持不变，用户不用重读一遍标签。 */
+.resume-wb-group-chevron {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+
+.resume-wb-group-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.resume-wb-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* ===== 「版面」组的参数行：一行一个网格（任务 4）=====
+ *
+ * 改前同一分组里有两套布局系统：文档模式用 antd `Row/Col`（`Col flex="auto"` 把「篇幅上限」
+ * 顶到最右），后三行用 `Space`（控件起点跟着标签字宽走，四行分别是 131 / 93 / 95 / 123）。
+ * 现在统一成「标签列 + 控件列」的两列网格：标签列宽由 `--resume-wb-field-label-w` 决定，
+ * 控件因此天然落在同一条竖线上，与标签字数无关。
+ *
+ * 标签列宽按语言切：中文最长是「联系方式换行」6 字（12px ≈ 72px），英文是
+ * 「Line breaks」这类 11 字符（≈ 88px），所以英文档给 112px。用 `html[lang^="en"]`
+ * 而不是 `navigator.language`：语言包切换会同步 `<html lang>`，而 `navigator` 不会变。
+ */
+.resume-wb-field-row {
+  display: grid;
+  grid-template-columns: var(--resume-wb-field-label-w) minmax(0, 1fr);
+  align-items: center;
+  /* 网格项默认 `stretch`：分段控件、下拉的包装 span 都会被拉到整格宽，宽栏下看着像
+     「控件贴到右边」。统一靠左按内容排，四行控件因此都是左对齐的一小截。 */
+  justify-items: start;
+  column-gap: 8px;
+  min-width: 0;
+}
+
+/* 组件内部自带两行以上时（文档模式 + 篇幅上限）用它包一层：行间距与
+   `.resume-wb-group-body` 同值 12px，否则会出现 12 / 8 / 12 / 12 的参差。 */
+.resume-wb-field-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.resume-wb-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  white-space: nowrap;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* 「文档模式」那一行还要塞一个 ⓘ：antd 的 small 文字按钮左右各有 7px 内边距，
+   在 76px 的标签列里会把四个字挤成两行（实测标签高 36px = 折行）。
+   这里只压掉那颗图标按钮的内边距与固定宽度，不改 antd 的按钮口径。 */
+.resume-wb-field-label > .ant-btn {
+  flex: none;
+  width: 14px;
+  min-width: 14px;
+  height: 16px;
+  padding: 0;
+  font-size: 12px;
+}
+
+.resume-wb-col-params {
+  --resume-wb-field-label-w: 76px;
+}
+
+html[lang^="en"] .resume-wb-col-params {
+  --resume-wb-field-label-w: 112px;
+}
+
+/* 侧栏里的滑杆由本栏定宽：不做这一步会继承弹窗的 200px（modules-layout.css 的
+   `.is-stacked` 规则），在 300px 栏宽里把读数与来源胶囊顶出格子。 */
+.resume-wb-col-params .resume-measure-grid.is-stacked {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+
+.resume-wb-col-params .resume-measure-grid.is-stacked .ant-space-item:has(> .ant-slider) {
+  flex: 0 1 132px;
+  min-width: 112px;
+}
+
+.resume-wb-col-params .resume-measure-grid.is-stacked .ant-slider {
+  width: 132px;
+  max-width: 100%;
+}
+
+.resume-wb-col-params .resume-measure-grid.is-stacked .resume-measure-cell > .ant-space {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ===== 参数行右侧的「恢复到打开时的值」（2026-10-24） ===== */
+/* 它占用的是来源胶囊（「随模板」）那一格：参数一改，那一格本来就是空的。
+   `:has` 让胶囊壳在装着按钮时退成透明——一颗 ↺ 外面再套一圈胶囊边框会读成两个控件。 */
+.resume-measure-source:has(.resume-param-restore) {
+  padding: 0;
+  border-color: transparent;
+  background: none;
+}
+
+/* 图标按钮压到 20×20、无内边距：胶囊格高 20px，默认小号按钮是 30px，会把读数挤走。 */
+.resume-param-restore.ant-btn {
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+.resume-param-restore.ant-btn:hover {
+  color: var(--rf-brand) !important;
+  background: var(--rf-brand-tint) !important;
+}

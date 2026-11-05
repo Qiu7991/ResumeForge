@@ -1,0 +1,298 @@
+# SPDX-License-Identifier: Apache-2.0
+"""「自动一页」：生成逐档收紧的候选版式清单（职责④）。
+
+从 ``resume_layout.py`` 拆出：与诊断段仅通过常量与 ``_round`` 耦合。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from .resume_layout import (
+    _FONT_STEP,
+    _LINE_HEIGHT_STEP,
+    _PADDING_STEP_MM,
+    _SECTION_GAP_STEP,
+    MIN_FONT_PX,
+    MIN_LINE_HEIGHT,
+    MIN_PADDING_MM,
+    MIN_SECTION_GAP,
+    _round,
+)
+from .resume_layout_overrides import PAGE_MARGIN_KEYS, resolve_page_margins
+from .resume_template_scalars import template_float
+from .resume_templates import (
+    font_scale_spec,
+    format_css,
+    template_layout_defaults,
+    validated_format_config,
+)
+
+# ===== 自动一页 =====
+
+# 阶梯的每一档都从"用户当前配置"出发、只摘掉**四个版式旋钮**，其余（配色、字体、分区顺序、
+# 照片大小…）原样保留。
+#
+# **四条分边支路也在摘除之列**：阶梯每档写的是 ``page_padding: target``，支路留着就会覆盖
+# 它——"按了自动一页却什么都没变"。摘掉之后四边自动平到 target（取舍见设计 §6.2：这是
+# 有意把不对称抹平，用户要保留不对称就别点自动一页）。
+#
+# ⚠️ ``photo_scale`` **刻意不摘**：设计 §6.1 的红线是"照片绝不自动缩小"，把它从阶梯里抹掉
+# 等于点一次「自动一页」就把用户调好的 150% 悄悄重置回 100%——正是那条红线禁止的失败。
+_LADDER_STRIPPED_KEYS: frozenset[str] = frozenset(
+    {
+        "page_padding",
+        "line_height",
+        "section_gap",
+        "font_scale_adjust",
+        *PAGE_MARGIN_KEYS.values(),
+    }
+)
+
+# 「自动一页」的收紧下限，**与格式字段自身的下限是两件事**。
+#
+# 字段下限（``FORMAT_FIELDS["font_scale_adjust"]["min"]``）放宽到 0.35 是为了让无级
+# 字号滑块能拖到 5px；但自动一页是**程序替用户做决定**，它不该把字号缩到那种程度——
+# 那等于不打招呼地把简历变成看不清的样子。所以这里单独钉一个 0.88（标准档 ≈12.3px），
+# 与放宽之前的行为逐字一致：standard / large 仍收到 0.88，small 仍停在 1.0。
+AUTO_FIT_MIN_ADJUST = 0.88
+
+
+def _effective_layout(template: str, format_config: dict | None) -> dict[str, float]:
+    """把"模板默认值 + 用户已设的覆盖"合成一组当前生效的版式值。
+
+    自动一页只会**在用户当前的基础上往紧收**，所以必须先知道当前是多少。
+
+    页边距取**四边的最小值**（不是某一个边、也不是平均值）：阶梯只承诺"更紧、不反弹"，
+    用最小值保证任何一边都不会被放大。用户设成"上 20 / 其余 10"时取 10，页边距档直接
+    跳过（10 < ``MIN_PADDING_MM``），阶梯从区块间距开始——什么都没被放大。
+    """
+    defaults = template_layout_defaults(template)
+    # 先过一遍白名单：越界值在渲染侧是**丢弃**的，这里若照原样用，阶梯就会按一个
+    # 根本没生效的值去收（"按了自动一页，页边距收了个寂寞"）。
+    config = validated_format_config(format_config or {})
+    # 与 PDF/Word 同一个解析口径（分边支路 > page_padding > 模板默认）。
+    margin_top, margin_right, margin_bottom, margin_left = resolve_page_margins(
+        config, template_float(defaults["padding_mm"])
+    )
+    line_height = config.get("line_height")
+    section_gap = config.get("section_gap")
+    font_adjust = config.get("font_scale_adjust")
+    return {
+        "page_padding": min(margin_top, margin_right, margin_bottom, margin_left),
+        "line_height": (
+            template_float(line_height) if line_height else template_float(defaults["line_height"])
+        ),
+        "section_gap": (
+            template_float(section_gap) if section_gap else template_float(defaults["section_gap"])
+        ),
+        # 没设过系数就等于 1（渲染时 base_px 不做任何缩放）。
+        "font_scale_adjust": float(font_adjust) if font_adjust else 1.0,
+    }
+
+
+def font_adjust_floor(font_scale: str) -> float:
+    """字号系数能小到多少：不低于 ``MIN_FONT_PX``，且不越过自动一页自己的下限。
+
+    两种下限取更严的那个——档位大时是"11px"这条在管，档位小时是
+    ``AUTO_FIT_MIN_ADJUST``（0.88）在管（小字号档 11px 已经等于下限，此时系数只能是 1）。
+
+    注意这里取的是 ``max(AUTO_FIT_MIN_ADJUST, 字段下限)`` 而不是直接用字段下限：
+    字段下限为了无级滑块已经放宽到 0.35，直接拿来用会让自动一页把字缩到 5px 以下。
+    两者取更严的那个，既尊重"有人把字段下限调得更严"，也不会因为放宽而变松。
+    """
+    from .resume_templates import _format_field
+
+    spec = font_scale_spec(font_scale)
+    base_px = float(spec["base_px"])
+    field = _format_field("font_scale_adjust") or {}
+    field_min = max(AUTO_FIT_MIN_ADJUST, float(field.get("min", AUTO_FIT_MIN_ADJUST)))
+    by_pixels = MIN_FONT_PX / base_px if base_px > 0 else 1.0
+    return _round(max(field_min, min(1.0, by_pixels)), 3)
+
+
+def _next_target(current: float, floor: float, step: float) -> float | None:
+    """往紧收一档；已经到下限（或比下限还紧）就返回 None 表示这个旋钮没得收了。"""
+    if current <= floor + 1e-9:
+        return None
+    return _round(max(floor, current - step), 3)
+
+
+@dataclass
+class FitCandidate:
+    """一档候选版式：把它交给浏览器量一次，够放下就用它。"""
+
+    key: str
+    label: str
+    # 这一档相对**原始**配置的完整覆盖（不是增量），直接存进简历的 format_config。
+    config: dict[str, Any]
+    # 量这一档时要注入预览的 CSS。**只用于测量**，不是最终渲染用的样式。
+    css: str
+
+
+def _font_scale_probe_css(font_scale: str, adjust: float) -> str:
+    """把字号系数翻译成一段**只给预览探针用**的 CSS。
+
+    字号系数在真正渲染时是由后端预先乘进 ``base_px`` 再交给模板的（见
+    ``services/exporter.py``）——那是唯一对内置模板与用户自制模板都生效的路径，
+    所以它**刻意没有** CSS 变量映射（有的话两者会叠乘）。
+
+    但"自动一页"要在浏览器里逐档试，就必须让当前这一档真的作用到预览上。所以这里
+    用**绝对像素**写一段等价样式覆盖 `--fs`：模板里所有尺寸都是
+    `calc(var(--fs) * N)` 算出来的，改这一个变量就等于整份简历按这一档缩放。
+    用绝对像素而不是再套一层变量，是因为探针注入的是最终样式，不该依赖任何尚未
+    存在的变量。
+    """
+    base_px = float(font_scale_spec(font_scale)["base_px"])
+    return f":root {{ --fs: {round(base_px * adjust, 2)}px; }}"
+
+
+def _padding_floor(current_padding: float, min_padding_mm: float | None) -> float:
+    """页边距阶梯的下界：渲染下限与用户下限取更严的那个。
+
+    「最小页边距」是**排版参数的下界**，不是候选筛选条件（问题 17）：把阶梯在阈值处
+    截断，后面的档从阈值处继续累积，用户就不会拿到一份"只改行高、却顺手把页边距压到
+    承诺以下"的方案——否则前端只能整档整档地丢，最后报"全部被排除"。
+
+    两个边界：
+    - 不低于 ``MIN_PADDING_MM``（渲染器自己的下限，再小就不像同一份简历）；
+    - 不**高于**当前值：阶梯只承诺"更紧、不反弹"，用户把下限设得比当前值还大时，
+      不能为了"遵守下限"反而把页边距放大（那是变松，不是优化）。
+    """
+    floor = float(MIN_PADDING_MM)
+    if min_padding_mm is None:
+        return floor
+    requested = float(min_padding_mm)
+    if requested <= floor:
+        return floor
+    return min(requested, float(current_padding))
+
+
+# ⚠️ **生成期刻意不做服务端版式收敛**（需求 7A 的边界，2026-11-03 定稿）。
+#
+# 本模块的"逐档试版"流程是：**先真实渲染，再由客户端逐档测量高度，够放下就停**。
+# 它没有 `target_pages` 参数，因为阶梯本身与页数无关——收敛目标是调用方在拿到实测高度后
+# 才决定的（优化器面板把 `targetPages` 交给 `overflowForTarget` 判 `fits`；「自动一页」
+# 固定按 1 页判）。把这条流程搬进生成链路（`resume_generator` / `resume_space_gate`）被
+# 明确否决，原因有二：
+#   1. **渲染成本**：每档都要 `build_resume_pdf` 一次，一次生成要跑 N 次渲染，长 CV 会直接
+#      撞上 `LONG_CV_RESOURCE_BUDGET["max_render_seconds"] = 20` 的硬预算（AGENTS 红线：
+#      超时明确失败，不静默截断、不缩字号）。
+#   2. **失败回滚不确定**：生成链路走到这里内容已定稿、版式即将落库；"试到哪一档没装下"
+#      没有确定的回退版本可退（退回原版式 = 明知超页还保存，退回最紧档 = 未经用户同意
+#      把简历缩到看不清）。所以生成期只做"内容裁剪 + 如实警告"，版式收敛留给用户在预览
+#      里显式触发（「自动一页」/ 优化器面板），那一步有真实测量、也看得见改动。
+#
+# 因此 `build_fit_ladder` 只负责**按用户下限生成候选**（`min_padding_mm`），不判断页数。
+
+
+def build_fit_ladder(
+    template: str,
+    font_scale: str,
+    format_config: dict | None,
+    *,
+    min_padding_mm: float | None = None,
+) -> list[FitCandidate]:
+    """生成"自动一页"要依次尝试的版式清单。
+
+    顺序是**页边距 → 区块间距 → 行高 → 字号**：越靠前的旋钮对可读性的影响越小。
+    每一档都是相对原配置的**完整覆盖**，所以客户端试出哪一档就原样保存哪一档，
+    不需要自己算增量。
+
+    ``min_padding_mm`` 是用户设的页边距下限（``None`` = 不限制，行为与引入该参数前
+    逐字一致）：页边距阶梯在此处截断，后续档带着阈值处的边距继续收紧其它旋钮。
+
+    为什么没有 ``target_pages``：见上方「生成期刻意不做服务端版式收敛」的注释——
+    目标页数由调用方按实测高度决定。
+    """
+    current = _effective_layout(template, format_config)
+    floor_adjust = font_adjust_floor(font_scale)
+    # 保留用户已经调好的其它项（强调色、正文色、照片大小等）——自动一页只该动版式旋钮，
+    # 不该顺手把人选的颜色/照片尺寸丢掉。四个版式旋钮与四条分边支路先摘掉，
+    # 下面由阶梯逐档重新写入（见 `_LADDER_STRIPPED_KEYS` 的注释）。
+    base = {
+        key: value
+        for key, value in (format_config or {}).items()
+        if key not in _LADDER_STRIPPED_KEYS
+    }
+
+    ladder: list[FitCandidate] = []
+    accumulated: dict[str, Any] = dict(base)
+
+    def add(key: str, label: str, patch: dict[str, Any], probe_extra: str = "") -> None:
+        accumulated.update(patch)
+        config = dict(accumulated)
+        css = format_css(config) + ("\n" + probe_extra if probe_extra else "")
+        ladder.append(FitCandidate(key=key, label=label, config=config, css=css))
+
+    padding = current["page_padding"]
+    # 用户下限决定 padding 阶梯能走到哪一档（问题 17：边距是下界，不是筛选条件）。
+    padding_floor = _padding_floor(padding, min_padding_mm)
+    while True:
+        target = _next_target(padding, padding_floor, _PADDING_STEP_MM)
+        if target is None:
+            break
+        add("padding", f"页边距收到 {target:g}mm", {"page_padding": target})
+        padding = target
+
+    gap = current["section_gap"]
+    while True:
+        target = _next_target(gap, MIN_SECTION_GAP, _SECTION_GAP_STEP)
+        if target is None:
+            break
+        add("section_gap", f"区块间距收到 {target:g}", {"section_gap": target})
+        gap = target
+
+    line_height = current["line_height"]
+    while True:
+        target = _next_target(line_height, MIN_LINE_HEIGHT, _LINE_HEIGHT_STEP)
+        if target is None:
+            break
+        add("line_height", f"行高收到 {target:g}", {"line_height": target})
+        line_height = target
+
+    adjust = current["font_scale_adjust"]
+    while True:
+        target = _next_target(adjust, floor_adjust, _FONT_STEP)
+        if target is None:
+            break
+        add(
+            "font_scale_adjust",
+            f"字号收到 {target:g} 倍",
+            {"font_scale_adjust": target},
+            # 字号在渲染时是预乘进 base_px 的，没有 CSS 变量可覆盖，所以探针要自己补一段。
+            _font_scale_probe_css(font_scale, target),
+        )
+        adjust = target
+
+    return ladder
+
+
+def fit_room_report(
+    template: str,
+    font_scale: str,
+    format_config: dict | None,
+    *,
+    min_padding_mm: float | None = None,
+) -> dict[str, Any]:
+    """还有没有可收紧的余地，以及下限说明。给界面用来决定要不要显示「自动一页」。
+
+    ``min_padding_mm`` 与 ``build_fit_ladder`` 同一个口径：用户设了页边距下限时，
+    `has_room` 与 `steps` 必须按**截断后**的阶梯算，否则会出现"报告还有余地、
+    点开却只有被下限挡掉的档位"。
+    """
+    ladder = build_fit_ladder(template, font_scale, format_config, min_padding_mm=min_padding_mm)
+    adjust_floor = font_adjust_floor(font_scale)
+    return {
+        "has_room": bool(ladder),
+        "steps": len(ladder),
+        # 界面上要如实告诉用户字号最多缩到多少——不写清就等于让他按了才知道。
+        "font_floor_px": MIN_FONT_PX,
+        "font_adjust_floor": adjust_floor,
+        "font_floor_note": (
+            f"正文字号最多缩到 {MIN_FONT_PX:g}px（≈9pt），再小打印出来会吃力。"
+            if adjust_floor < 1.0
+            else "当前字号档位已经接近可读下限，自动一页不会再缩小字号。"
+        ),
+    }

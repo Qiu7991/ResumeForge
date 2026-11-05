@@ -1,0 +1,148 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+.jobs-filter-bar {
+  width: 100%;
+}
+
+/* 备选岗位卡片网格：antd Card 自身不带下间距，裸堆会一张贴一张；用 grid gap 拉开。 */
+.candidate-job-card-grid {
+  display: grid;
+  gap: 16px;
+}
+
+/* 搜索框可伸缩：260 是舒适宽，160 是"还能看清关键词"的下限。
+   真正参与收缩的是它外面的 .ant-space-item——.jobs-search-input 自己不是 flex 项，
+   只写 flex 会静默失效（这是 768–991 把筛选行挤成两行的直接原因）。 */
+.jobs-filter-bar > .ant-space-item:has(> .jobs-search-input) {
+  flex: 1 1 200px;
+  min-width: 160px;
+  max-width: 260px;
+}
+
+.jobs-search-input {
+  width: 100%;
+}
+
+.table-text-link {
+  height: auto;
+  padding: 0;
+  white-space: normal;
+  text-align: left;
+}
+
+/* 简历中心标题列：antd Button 默认 inline-flex + justify-content:center，长标题换行后
+   内容比按钮宽时会被居中溢出并裁掉左侧第一个字。改成块级文本、从头换行。 */
+.resume-title-link {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.job-detail-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.job-favorite-button {
+  flex: 0 0 auto;
+  color: var(--rf-text-description);
+}
+
+.job-favorite-button.is-favorite {
+  color: var(--rf-favorite);
+}
+
+.job-detail-text-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.job-detail-text-section {
+  padding: 14px 16px 12px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 8px;
+}
+
+.job-detail-text-section--description {
+  border-color: var(--rf-border-strong);
+  background: var(--rf-surface-alt);
+}
+
+.job-detail-text-section--requirements {
+  border-color: var(--rf-border-strong);
+  background: var(--rf-surface-alt);
+}
+
+.job-detail-text-section--additional {
+  border-color: var(--rf-border-strong);
+  background: var(--rf-surface-alt);
+}
+
+.job-detail-text-section--note {
+  border-color: var(--rf-border-strong);
+  background: var(--rf-surface-alt);
+}
+
+.job-detail-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.job-detail-section-icon {
+  display: inline-flex;
+  color: var(--rf-info);
+}
+
+.job-detail-text-section--requirements .job-detail-section-icon {
+  color: var(--rf-accent-violet);
+}
+
+.job-detail-text-section--additional .job-detail-section-icon {
+  color: var(--rf-accent-green);
+}
+
+.job-detail-text-section--note .job-detail-section-icon {
+  color: var(--rf-accent-amber);
+}
+
+.job-detail-text {
+  margin-bottom: 0 !important;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.8;
+}
+
+/* 操作栏位于 Drawer 的 footer 插槽内，常驻底部：抽屉负责分隔线和内边距，
+   这里只负责两行分档（主行承载会改变状态的动作，辅助行承载分析/投递/跳页）。 */
+.job-detail-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+}
+
+/* 主行：保持原尺寸与图标；窄窗口下三个按钮仍可折行。 */
+.job-detail-actions-primary {
+  width: 100%;
+}
+
+/* 辅助行：小号无边框文字按钮，一行放得下 6 个；多出「前往投递」时允许折行。 */
+.job-detail-actions-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 8px;
+  border-top: 1px solid var(--rf-border-subtle);
+  width: 100%;
+}

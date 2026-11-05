@@ -1,0 +1,39 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+.profile-page:not(.is-editing) .ant-input::placeholder,
+.settings-page:not(.is-editing) .ant-input::placeholder,
+.profile-page:not(.is-editing) .ant-input-number-input::placeholder,
+.settings-page:not(.is-editing) .ant-input-number-input::placeholder {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  opacity: 0 !important;
+}
+
+/* antd 6 起占位符类名由 .ant-select-selection-placeholder 改为
+   .ant-select-placeholder（jsdom 实测 DOM：.ant-select-placeholder 直接挂在
+   .ant-select-content 内），选择器跟着换，规则才不会静默失效。 */
+.profile-page:not(.is-editing) .ant-select-placeholder,
+.settings-page:not(.is-editing) .ant-select-placeholder {
+  color: transparent !important;
+  opacity: 0 !important;
+}
+
+.profile-page:not(.is-editing) .ant-input-disabled,
+.settings-page:not(.is-editing) .ant-input-disabled,
+.settings-page:not(.is-editing) .ant-input-number-disabled .ant-input-number-input {
+  color: var(--rf-text-body) !important;
+  -webkit-text-fill-color: var(--rf-text-body);
+  opacity: 1;
+}
+
+/* 文本域调整大小时只重排当前输入控件，避免拖动手柄牵连整页表单。 */
+.profile-page textarea.ant-input {
+  max-height: 360px;
+  contain: layout;
+  resize: vertical;
+}
+
+/* antd 6 起选中值不再渲染 .ant-select-selection-item，值文本落在
+   .ant-select-content 内（jsdom 实测），选择器同步更新。 */
+.settings-page:not(.is-editing) .ant-select-disabled .ant-select-content {
+  color: var(--rf-text-body) !important;
+}

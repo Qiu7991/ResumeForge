@@ -1,0 +1,350 @@
+// SPDX-License-Identifier: Apache-2.0
+/** 自动投递与采集接口封装（`/api/apply`、`/api/collect`）。 */
+import type {
+  ApplyConfig,
+  ApplyConfigOut,
+  ApplyQueueAddItem,
+  ApplyQueueItem,
+  ApplyQueueList,
+  ApplyRecord,
+  ApplyRecordBatch,
+  ApplyTask,
+  ApplyTaskDetail,
+  BrowserStatus,
+  CollectConfig,
+  CollectConfigOut,
+  CollectFilterOptions,
+  CollectFilterTestResult,
+  GreetingPreview,
+  Page,
+  QueueConflictDetail,
+  SiteHealthList,
+  SiteList,
+} from "../types";
+import { ApiError, buildQuery, extractError, request } from "./client";
+import { datasetScopeHeaders } from "./datasetScope";
+
+// ===== 配置 =====
+
+export function getApplyConfig(): Promise<ApplyConfigOut> {
+  return request("/apply/config");
+}
+
+export function updateApplyConfig(payload: ApplyConfig): Promise<ApplyConfigOut> {
+  return request("/apply/config", { method: "PUT", body: JSON.stringify(payload) });
+}
+
+export function getCollectConfig(): Promise<CollectConfigOut> {
+  return request("/collect/config");
+}
+
+export function updateCollectConfig(payload: CollectConfig): Promise<CollectConfigOut> {
+  return request("/collect/config", { method: "PUT", body: JSON.stringify(payload) });
+}
+
+/**
+ * 当前站点的**站点侧筛选项**清单（求职类型 / 薪资待遇 / 工作经验 / 学历要求 / 公司行业 /
+ * 公司规模 / 融资阶段）。
+ *
+ * 清单由后端从站点自己那里读，**不是前端写死的**：写死的一份在站点改编码之后会静默筛错。
+ * 每项带 `source` 说明来源——浏览器在跑就是"你这个账号可见"的完整清单，没跑就是全网通用清单。
+ */
+export function getCollectFilterOptions(): Promise<CollectFilterOptions> {
+  return request("/collect/filters");
+}
+
+/**
+ * 「测试筛选是否实际生效」：在真实站点页面上逐项校验当前选中的站点筛选条件。
+ * 浏览器没启动时后端返回 409，`detail` 里有中文提示。
+ */
+export function testCollectFilters(
+  filters: Record<string, string>,
+): Promise<CollectFilterTestResult> {
+  return request("/collect/filters/test", {
+    method: "POST",
+    body: JSON.stringify({ filters }),
+  });
+}
+
+// ===== 招聘网站（当前站点）=====
+
+/** 已注册的招聘网站 + 当前选中项。界面据此展示当前站点，不写死站点名。 */
+export function listSites(): Promise<SiteList> {
+  return request("/apply/sites");
+}
+
+// ===== 投递专用浏览器 =====
+
+export function getBrowserStatus(): Promise<BrowserStatus> {
+  return request("/apply/browser/status");
+}
+
+/**
+ * 启动专用浏览器。
+ *
+ * `openEntry` 决定这次启动要不要打开站点入口页：投递台要（默认，用户得在那个页面上登录）；
+ * 只是把浏览器当渲染引擎借用的调用方传 `false`，由调用方自己导航到要渲染的页面。
+ */
+export function startBrowser(openEntry = true): Promise<BrowserStatus> {
+  return request(`/apply/browser/start${buildQuery({ open_entry: openEntry })}`, {
+    method: "POST",
+  });
+}
+
+/** 在已启动的专用浏览器里重新打开招聘网站入口（标签页被关掉或跳走后使用）。 */
+export function openBrowserSite(): Promise<BrowserStatus> {
+  return request("/apply/browser/open", { method: "POST" });
+}
+
+export function refreshBrowser(): Promise<BrowserStatus> {
+  return request("/apply/browser/refresh", { method: "POST" });
+}
+
+export function restartBrowser(): Promise<BrowserStatus> {
+  return request("/apply/browser/restart", { method: "POST" });
+}
+
+export function stopBrowser(): Promise<void> {
+  return request("/apply/browser/stop", { method: "POST" });
+}
+
+// ===== 队列 =====
+
+/**
+ * 队列列表（P2-2）：响应改为 { items, total, truncated }——列表封顶 500 条
+ *（按 sort_order 倒序，最新入队的优先），队列更长时靠 truncated 提示缩小范围。
+ */
+export function listQueue(): Promise<ApplyQueueList> {
+  return request("/apply/queue");
+}
+
+/**
+ * 入队被准入闸门拦下时抛出：`detail` 是后端给出的结构化原因。
+ *
+ * 用自定义错误而不是普通 `ApiError`，是因为界面要据此决定**弹哪种确认**——
+ * "未分析"和"真实缺口"是两种不同的确认，需要拿到 `unanalyzed` / `gaps` 才能分辨。
+ * 普通 `ApiError` 只保留一句文本，会把这两种情况混成一个笼统的 409。
+ */
+export class QueueConflictError extends Error {
+  constructor(public detail: QueueConflictDetail) {
+    super(detail.message);
+    this.name = "QueueConflictError";
+  }
+}
+
+export async function addToQueue(items: ApplyQueueAddItem[]): Promise<ApplyQueueItem[]> {
+  const resp = await fetch("/api/apply/queue", {
+    method: "POST",
+    headers: datasetScopeHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ items }),
+  });
+  if (resp.status === 409) {
+    const body = (await resp.json().catch(() => null)) as { detail?: QueueConflictDetail } | null;
+    const detail = body?.detail;
+    if (detail && typeof detail === "object") throw new QueueConflictError(detail);
+  }
+  if (!resp.ok) throw new ApiError(await extractError(resp), resp.status);
+  return (await resp.json()) as ApplyQueueItem[];
+}
+
+export function reorderQueue(order: number[]): Promise<ApplyQueueItem[]> {
+  return request("/apply/queue/reorder", { method: "PATCH", body: JSON.stringify({ order }) });
+}
+
+export function updateQueueItem(
+  itemId: number,
+  payload: { greeting?: string; resume_id?: number },
+): Promise<ApplyQueueItem> {
+  return request(`/apply/queue/${itemId}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export function removeQueueItem(itemId: number): Promise<void> {
+  return request(`/apply/queue/${itemId}`, { method: "DELETE" });
+}
+
+/** 按岗位生成一版招呼语（不落库）；给了 item_id 就基于队列里的当前值。
+ *  `signal` 供面板上的「停止」用：断开连接即不再等这条生成。 */
+export function previewGreeting(
+  payload: {
+    job_id: number;
+    item_id?: number;
+  },
+  signal?: AbortSignal,
+): Promise<GreetingPreview> {
+  return request("/apply/greeting/preview", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    signal,
+  });
+}
+
+// ===== 执行批次（轮询模型）=====
+
+export function createApplyTask(payload: {
+  job_ids?: number[];
+  use_queue: boolean;
+}): Promise<ApplyTask> {
+  return request("/apply/tasks", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function getCurrentTask(): Promise<ApplyTask | null> {
+  return request("/apply/tasks/current");
+}
+
+export function getTaskDetail(taskId: number): Promise<ApplyTaskDetail> {
+  return request(`/apply/tasks/${taskId}`);
+}
+
+export function pauseTask(taskId: number): Promise<ApplyTask> {
+  return request(`/apply/tasks/${taskId}/pause`, { method: "POST" });
+}
+
+export function resumeTask(taskId: number): Promise<ApplyTask> {
+  return request(`/apply/tasks/${taskId}/resume`, { method: "POST" });
+}
+
+export function stopTask(taskId: number): Promise<ApplyTask> {
+  return request(`/apply/tasks/${taskId}/stop`, { method: "POST" });
+}
+
+// ===== 记录 =====
+
+export interface ApplyRecordParams {
+  keyword?: string;
+  result?: string;
+  /** #39：按失败分类筛选（空 = 不过滤；枚举同后端 failure_category）。 */
+  failure_category?: string;
+  page?: number;
+  page_size?: number;
+  /** false = 轻量分页：批次不带明细，只返回 matched_count（B4 按需加载）。 */
+  include_items?: boolean;
+}
+
+export function listRecords(params: ApplyRecordParams = {}): Promise<Page<ApplyRecord>> {
+  return request(`/apply/records${buildQuery(params)}`);
+}
+
+/**
+ * 投递记录按批次分组：一页返回若干批次（默认 5 组），每组带自己的记录。
+ * 筛选作用在记录上；分页按批次计。
+ */
+export function listRecordBatches(params: ApplyRecordParams = {}): Promise<Page<ApplyRecordBatch>> {
+  return request(`/apply/records/grouped${buildQuery(params)}`);
+}
+
+/**
+ * 展开某个批次时分页拉取组内明细（B4 按需加载）。
+ * 过滤语义与 listRecordBatches 完全同源：传同样的 keyword/result/failure_category，
+ * 组内记录与组头 matched_count 对得上（#39：旧版漏传 failure_category，导致组头 1 条、
+ * 明细仍 6 条）。
+ */
+export function listRecordBatchItems(
+  taskId: number,
+  params: ApplyRecordParams = {},
+): Promise<Page<ApplyRecord>> {
+  return request(`/apply/records/batches/${taskId}/items${buildQuery(params)}`);
+}
+
+export function retryRecord(itemId: number): Promise<ApplyTask> {
+  return request(`/apply/records/${itemId}/retry`, { method: "POST" });
+}
+
+/**
+ * 「只重试这 N 条」（#39）：把某批次里命中当前筛选的失败记录一起重投。
+ *
+ * 传筛选条件而不是 record_ids：明细是服务端分页的，前端手上没有全集；服务端按同一套
+ * 筛选重新选，选出的条数与组头的 retryable_count 一致。
+ */
+export function retryFailedRecords(params: {
+  task_id: number;
+  keyword?: string;
+  result?: string;
+  failure_category?: string;
+}): Promise<{ retried: number; task: ApplyTask }> {
+  return request("/apply/records/retry-batch", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+/** 删掉单条投递记录（**软删**：进回收站，可恢复；也从统计与每日上限里去掉）。 */
+export function deleteRecord(itemId: number): Promise<void> {
+  return request(`/apply/records/${itemId}`, { method: "DELETE" });
+}
+
+/** 删掉整批投递记录（软删）。**只删记录，不删批次本身**。 */
+export function deleteRecordBatch(taskId: number): Promise<void> {
+  return request(`/apply/records/batches/${taskId}`, { method: "DELETE" });
+}
+
+/** 批量删除勾选的投递记录（软删）：与简历批量删除同一口径，后端缺失任一 id 即整体 404。 */
+export function batchDeleteRecords(recordIds: number[]): Promise<{ deleted: number }> {
+  return request("/apply/records/batch-delete", {
+    method: "POST",
+    body: JSON.stringify({ record_ids: recordIds }),
+  });
+}
+
+// ===== 采集 =====
+
+/**
+ * 开始一次采集。
+ *
+ * `saveSiteSamples` 为真时保存本次抓到的站点原文（搜索与详情两个接口的响应原文），
+ * 供排查解析问题 / 做真实样例回归用。**默认关闭**——往磁盘写站点数据必须由用户每次显式勾选，
+ * 且只在不勾选时也保持旧请求形状（不带 `save_site_samples` 字段）。
+ */
+export function createCollectTask(saveSiteSamples = false): Promise<ApplyTask> {
+  const body = saveSiteSamples ? { save_site_samples: true } : {};
+  return request("/collect/tasks", { method: "POST", body: JSON.stringify(body) });
+}
+
+/**
+ * 按岗位 id 只补抓详情（修历史遗留的空 JD）。
+ *
+ * 与采集共用同一个任务机制：它同样是 `kind=collect` 的批次，进度 / 暂停 / 停止都出现在
+ * 「投递台 → 自动采集」的任务面板里，所以调用方必须告诉用户去那里看进度。
+ */
+export function startBackfill(jobIds: number[]): Promise<ApplyTask> {
+  return request("/collect/backfill", {
+    method: "POST",
+    body: JSON.stringify({ job_ids: jobIds }),
+  });
+}
+
+export function getCollectTaskDetail(taskId: number): Promise<ApplyTaskDetail> {
+  return request(`/collect/tasks/${taskId}`);
+}
+
+/**
+ * 站点健康度：把"采集悄悄抓不到东西"（站点改版后能翻到列表却读不出岗位/详情）
+ * 变成用户看得见的 degraded 标记。判据在后端，前端只展示。
+ */
+export function getSiteHealth(): Promise<SiteHealthList> {
+  return request("/collect/site-health");
+}
+
+/**
+ * 历史批次列表（按时间倒序）。「采集记录」用它回看每次采集的条件与结果。
+ *
+ * 采集是个"跑完就看不见过程"的动作：没有这份记录，第二天就不知道上次按什么条件采的、
+ * 采到了几条、跳过多少重复。
+ */
+export function listApplyTasks(
+  params: { kind?: "collect" | "apply"; limit?: number } = {},
+): Promise<ApplyTask[]> {
+  return request(`/apply/tasks${buildQuery(params)}`);
+}
+
+/**
+ * 分页列出历史批次（RF-08 收口）：过滤（kind）与排序（id desc）与旧列表完全一致，
+ * 批次历史超过旧端点 limit 100 的窗口后仍然全部可达。响应 `Page{items, total}`，
+ * 行 DTO 与旧列表同款。
+ */
+export function listApplyTasksPage(
+  kind: "collect" | "apply",
+  page: number,
+  pageSize: number,
+): Promise<Page<ApplyTask>> {
+  return request(`/apply/tasks/page${buildQuery({ kind, page, page_size: pageSize })}`);
+}

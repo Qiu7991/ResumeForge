@@ -1,0 +1,80 @@
+#!/bin/sh
+# ResumeForge pre-commit hook (fast gate only; full check: scripts/Check-All.ps1)
+# Install: git config core.hooksPath scripts/hooks
+
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT" || exit 1
+
+# Collect staged files
+STAGED_P=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.py$' || true)
+STAGED_P_NEW=$(git diff --cached --name-only --diff-filter=A | grep '\.py$' || true)
+STAGED_TS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|tsx)$' || true)
+
+FAIL=0
+
+# 1) Ruff on staged Python files
+if [ -n "$STAGED_P" ]; then
+  RUFF=""
+  if [ -x "backend/.venv/Scripts/ruff.exe" ]; then RUFF="backend/.venv/Scripts/ruff.exe"; fi
+  if [ -z "$RUFF" ]; then RUFF=$(command -v ruff || true); fi
+  if [ -n "$RUFF" ]; then
+    echo "[pre-commit] ruff check..."
+    # 逐批传参：暂存文件多时（如批量加了文件头）一次性把路径铺进 argv 会撞
+    # Windows 的命令行长度上限，报 "Argument list too long" 而不是真的 lint 失败。
+    printf '%s\n' "$STAGED_P" | xargs -n 200 "$RUFF" check || FAIL=1
+    # 格式检查只覆盖本次新增的文件。仓库存量代码有数百个文件不符合
+    # `ruff format`（2026-10-20 实测 HEAD 就有 462 个），对「批量改已有文件」
+    # 一律要求格式化，会把无关的格式 churn 混进提交。新文件仍必须格式化。
+    if [ -n "$STAGED_P_NEW" ]; then
+      printf '%s\n' "$STAGED_P_NEW" | xargs -n 200 "$RUFF" format --check || FAIL=1
+    fi
+  else
+    echo "[pre-commit] WARNING: ruff not found, skipped"
+  fi
+fi
+
+# 2) eslint on staged frontend files (only if node_modules exists)
+STAGED_TS_REL=""
+for f in $STAGED_TS; do
+  STAGED_TS_REL="$STAGED_TS_REL ${f#frontend/}"
+done
+if [ -n "$STAGED_TS_REL" ] && [ -d "frontend/node_modules" ]; then
+  echo "[pre-commit] eslint on staged files..."
+  # 同上，分批传参避免 argv 超长
+  printf '%s\n' $STAGED_TS_REL | (cd frontend && xargs -n 100 ./node_modules/.bin/eslint) || FAIL=1
+fi
+
+# 3) Backend structural guards (fast tests)
+if [ -n "$STAGED_P" ] || [ -n "$STAGED_TS" ]; then
+  PY=""
+  if [ -x "backend/.venv/Scripts/python.exe" ]; then PY="backend/.venv/Scripts/python.exe"; fi
+  if [ -z "$PY" ]; then PY=$(command -v python || true); fi
+  if [ -n "$PY" ]; then
+    echo "[pre-commit] structural guards (file size budget / import direction)..."
+    # 退出码必须先落到变量上：`pytest ... | tail -3` 的退出码是 tail 的（恒为 0），
+    # 于是 `|| FAIL=1` 永远不会触发——2026-10-27 实测，超 500 行预算的文件一路
+    # commit 成功，日志里只有一行 FAILED 而没有 abort。输出仍只留最后 3 行。
+    GUARD_OUT=$(cd backend && "$ROOT/$PY" -m pytest tests/test_file_size_budget.py tests/test_import_direction.py -q -x --no-header -p no:cacheprovider 2>&1) || FAIL=1
+    printf '%s\n' "$GUARD_OUT" | tail -3
+  fi
+fi
+
+# 4) Frontend i18n guards（cjkRatchet / 订阅 / key 契约 / product-copy 指纹）
+# 2026-10-27：此前这里只守后端，前端四条 i18n 守卫一条都不跑。实测一次
+# `cjkRatchet` 明确的红测试被提交成功——"pre-commit OK" 因此不可信。
+# 约 10 秒，值得。
+if [ -n "$STAGED_TS" ] && [ -x "frontend/node_modules/.bin/vitest" ]; then
+  echo "[pre-commit] frontend i18n guards (cjkRatchet / locale subscription / key contract)..."
+  I18N_OUT=$(cd frontend && ./node_modules/.bin/vitest run src/i18n --reporter=dot 2>&1) || FAIL=1
+  printf '%s\n' "$I18N_OUT" | tail -4
+fi
+
+if [ $FAIL -ne 0 ]; then
+  echo ""
+  echo "[pre-commit] FAILED - commit aborted."
+  echo "  Bypass (not recommended): git commit --no-verify"
+  echo "  Full check: scripts/Check-All.ps1"
+  exit 1
+fi
+echo "[pre-commit] OK"
+exit 0

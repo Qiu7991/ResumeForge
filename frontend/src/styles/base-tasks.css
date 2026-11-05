@@ -1,0 +1,166 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 全局基础（4/5）：后台任务入口/面板/常驻任务条、岗位解读弹窗与内容区高度链。
+拆分自 base.css，纯搬迁、规则内容与顺序不变。 */
+
+/* 页头的「后台任务」入口：只在真有任务在跑时渲染，所以它出现即意味着"有活在干"。 */
+/* antd-override: 尺寸压 antd Button 的 CSS-in-JS，去 !important 需渲染验证（见审计报告 §P2-3 待定） */
+.background-tasks-button {
+  flex: 0 0 auto;
+  height: 32px !important;
+  padding: 0 8px;
+  color: var(--rf-brand);
+  font-size: 12px;
+}
+
+.background-tasks-panel {
+  width: 320px;
+}
+
+.background-task-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rf-border-subtle);
+}
+
+.background-task-row:last-of-type {
+  border-bottom: 0;
+}
+
+.background-task-spin {
+  margin-top: 3px;
+  color: var(--rf-info);
+}
+
+.background-task-label,
+.background-task-progress {
+  display: block;
+  font-size: 13px;
+}
+
+.background-task-progress {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.background-tasks-hint {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+/* 页头下方的常驻任务条（T1）：无任务时组件不渲染，所以它出现即意味着"有活在跑"。 */
+.background-task-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--rf-border-subtle);
+  background: var(--rf-surface-alt);
+}
+
+.background-task-bar-title {
+  font-size: 12px;
+}
+
+.background-task-bar-chip {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 2px 8px;
+}
+
+.background-task-bar-spin {
+  color: var(--rf-info);
+}
+
+.background-task-bar-label {
+  font-size: 12px;
+}
+
+.background-task-bar-meta {
+  font-size: 12px;
+}
+
+/* 批量 AI 的跨页浮条（问题 15）：任务在跑、用户已切到别的页面时的唯一出口。
+   只在非岗位页渲染（岗位页有工具栏内联进度），空闲时组件自身 return null。
+   - 贴内容区左下（`--rf-sider-width` 与 `.app-main` 的 margin-left 同源，折叠/手机档自动对齐）；
+   - `bottom: 88px` 让开右下角投投悬浮球（距底 24 + 高 64）与「我的资料」底部编辑条（高 56）；
+   - 层级 40：高于页头（10）与页面局部浮层（个位数），远低于弹层基座（3100）。 */
+.bulk-ai-floating-bar {
+  position: fixed;
+  left: calc(var(--rf-sider-width) + 24px);
+  bottom: 88px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  max-width: min(520px, calc(100vw - var(--rf-sider-width) - 120px));
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--rf-border);
+  border-radius: 10px;
+  background: var(--rf-surface);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--rf-brand) 16%, transparent);
+}
+
+.bulk-ai-floating-spin {
+  flex: 0 0 auto;
+  color: var(--rf-info);
+}
+
+/* 进度文案可能很长（岗位名）：让它自己省略，不把按钮挤出浮条。 */
+.bulk-ai-floating-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.bulk-ai-floating-actions {
+  flex: 0 0 auto;
+}
+
+/* 岗位解读弹窗：计时文案与操作按钮（此前是内联 style，颜色/间距统一收到这里）。 */
+.job-analysis-elapsed {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.job-analysis-actions {
+  margin-top: 12px;
+  text-align: right;
+}
+
+/* 完成弹窗（`utils/taskNotify` 的 modal 分支）的动作区。
+   必须真的存在：此前动作按钮挂的 `.task-notice-actions` 全项目零命中，`Space` 保持
+   inline-flex 嵌在说明句子中间，把一句话挤断。这里让它自成一行并靠右，与 antd 弹窗
+   footer 的惯例一致；间距用 gap 而不是给每颗按钮加 margin，换行后也不会糊在一起。 */
+.task-notice-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* 「上下文」与「全局动作」之间的一根细线：四个元素排一行时，靠它分组才不糊成一片。 */
+.app-header-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--rf-border);
+}
+
+.app-content {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  /* 顶部常驻元素的真实高度由变量给出：公告条出现时多 40px，不扣掉就会多出一屏滚动量。
+     两个 fallback 保证"没有公告条"时计算值与历史完全一致（64px）。 */
+  /* 内边距读 --rf-content-pad：这一处取代了 responsive.css 与 mobile.css 里各自的
+     16px 写法，D 档自动收紧，不需要再写媒体查询。 */
+  min-height: calc(100vh - var(--rf-header-height, 64px) - var(--rf-announcement-h, 0px));
+  padding: var(--rf-content-pad);
+  overflow-x: hidden;
+}

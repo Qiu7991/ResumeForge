@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * 放宽模式快捷入口卡。
+ *
+ * 守两条：风险文案常驻（不是只在开启瞬间提醒一次）；开关状态来自后端设置
+ * （mock 掉取数层，断言 UI 忠实反映状态与保存意图）。
+ */
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { App as AntApp } from "antd";
+import webFormPageZh from "../../i18n/messages/zh-CN.webFormPage";
+
+// vi.mock 会被提升到文件顶部，工厂在静态导入期执行——可变状态必须经 vi.hoisted
+// 携带，否则 `enabledMock` 还在 TDZ 里。
+const mocks = vi.hoisted(() => ({
+  enabled: (): boolean => false,
+  toggle: vi.fn(),
+}));
+
+vi.mock("../../features/settings/useWebFormRelaxedMode", () => ({
+  useWebFormRelaxedMode: () => ({
+    enabled: mocks.enabled(),
+    loading: false,
+    saving: false,
+    toggle: mocks.toggle,
+    reload: vi.fn(),
+  }),
+}));
+
+import { RelaxedModeCard } from "./RelaxedModeCard";
+
+function renderCard() {
+  return render(
+    <AntApp>
+      <RelaxedModeCard />
+    </AntApp>,
+  );
+}
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  mocks.enabled = () => false;
+});
+
+describe("RelaxedModeCard", () => {
+  beforeEach(() => {
+    mocks.enabled = () => false;
+  });
+
+  it("风险文案常驻，开启状态下额外说明当前行为", () => {
+    // 卡片已 memo（无 props）：父级重渲不再驱动它，状态由 `useWebFormRelaxedMode` 提供，
+    // 所以这里用「全新渲染」来切换 mock 状态，而不是靠 rerender（后者会被 memo 正确拦下）。
+    const closed = renderCard();
+    expect(screen.getAllByText(/存在选错可能/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/已开启/)).toBeNull();
+    closed.unmount();
+
+    mocks.enabled = () => true;
+    renderCard();
+    expect(screen.getAllByText(/存在选错可能/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/已开启/)).toBeTruthy();
+  });
+
+  it("默认态就渲染完整风险说明（四类始终不代填的边界含在其中）", () => {
+    renderCard();
+    const risk = webFormPageZh["webFormPage.relaxed.risk"];
+    expect(screen.getByText(risk)).toBeTruthy();
+    // 四类边界按「日期 / 文件 / 凭据 / 无弹层只读点选」四段写在同一条文案里；
+    // 用文案自身的分句计数，避免在测试里复述中文。
+    expect(risk.split("、").length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("切换开关会保存并把用户意图传给后端设置", async () => {
+    mocks.toggle.mockResolvedValue(true);
+    renderCard();
+
+    fireEvent.click(screen.getByRole("switch", { name: "网申填表放宽模式" }));
+    await waitFor(() => expect(mocks.toggle).toHaveBeenCalledWith(true));
+  });
+});

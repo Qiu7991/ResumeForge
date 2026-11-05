@@ -1,0 +1,98 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.tmp_*_venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.egg-info/
+
+# ===== Node =====
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+node_modules/.tmp/
+# vite build 的临时输出目录。docs/AGENTS 里的构建绕行方案**要求输出到仓库外面**
+# （`--outDir D:\rf_build_tmp`），但真有人写进仓库时（一度出现过
+# `frontend/rf_build_tmp/`），构建产物不该被误提交——加一条兜住。
+# 构建产物本身可随时用 `npm run build` 重建，留着只会污染 `git status`。
+rf_build_*/
+frontend/rf_build_*/
+# 审计验收时的一次性构建输出（2026-10-19 快照），同样不该被提交。
+frontend/rf_audit_build/
+# 手动导出的前端产物包（如 `frontend/dist-1.0.2-20261026.zip`）：`dist/` 只忽略目录，
+# 这类打好的 zip 会以未跟踪文件一直挂在 `git status` 里。产物可由 `npm run build` 重建，
+# 要分发请走 Release 资产，不进仓库。
+frontend/dist-*.zip
+
+# ===== 环境与本地数据 =====
+.env
+.env.*
+!.env.example
+# 在线体验构建的模板：只含 `VITE_DEMO_MODE=1`，没有本机信息，需要进仓库
+# （`scripts/Build-Demo.ps1` 靠 `--mode demo` 读它）。
+!.env.demo
+backend/data/
+# 投递专用浏览器的 user-data-dir：含登录态（Cookie / 本地存储），体积可能很大。
+# 绝不进 Git（也不进数据库备份包——登录态由 Chromium 自己持久化，应用不读取）。
+backend/data/browser-profile/
+backend/*.db
+backend/*.db-*
+backend/*.sqlite
+backend/*.sqlite-*
+backend/*.sqlite3
+backend/*.sqlite3-*
+backend/backups/
+backend/test_resume_forge.db
+/runtime/
+# 后端运行期产物：本机调查脚本会在 backend/runtime/ 下写导出件。
+# 上面那行 `/runtime/` 是根锚定，挡不住 `backend/runtime/`，这里单独补一条。
+backend/runtime/
+# 验证期把 pytest / importer 的输出重定向到文件留下的日志，不是产物也不是输入。
+backend/rf_inv.txt
+# 脚本里变量未赋值时写出的字面 `undefined` 目录（历史遗留）。
+undefined/
+
+# ===== 编辑器 =====
+.vscode/
+.idea/
+.DS_Store
+# 本地 AI 代理工具目录（技能与运行脚本），不属于项目代码
+.claude/
+.workbuddy/
+
+# ===== 过程产出 =====
+# 造型/插画探索阶段生成的候选图（本机 AI 生成，仓库里没有任何代码或文档引用）。
+# 这类图一次十几张、单张几百 KB，进公开仓库历史后很难干净移除。真要启用，
+# 挑定稿压好尺寸放进 `docs/images/` 再单独入库。
+generated-images/
+
+# 需求/设计/评审等协作过程文档，不属于产品代码；如需纳入版本管理可自行移除本行。
+deliverables/
+
+# ===== 本地调试产物 =====
+# 排查问题时的临时诊断输出与自动化工具的本地工作目录，反复出现、随时可删，
+# 不属于项目代码；不要提交。
+.playwright-cli/
+diag_*.txt
+qa_repro_*
+qa_full_pytest.txt
+mokahr_apply_controls.json
+
+# ===== 日志 =====
+*.log
+# 运行日志目录（backend-*.log 等）：`*.log` 只拦文件名后缀，拦不住目录里
+# 其它名目的日志/临时输出。只忽略仓库根的 `logs/`（`/logs/`），不影响
+# frontend/desktop 等子目录里可能出现、但另有用途的同名目录。
+/logs/
+
+# Desktop shell build artifacts
+desktop/payload/
+desktop/out/
+desktop/python-runtime.zip

@@ -1,0 +1,271 @@
+# SPDX-License-Identifier: Apache-2.0
+"""个人资料基本字段的标签和值提取。"""
+
+import re
+from functools import lru_cache
+
+from .entry_constants import (
+    _BASIC_ENGLISH_NAME_RE,
+    _BASIC_NAME_RE,
+    _BASIC_UNLABELED_CITY_RE,
+    _EMAIL_RE,
+    _INLINE_LABEL_SEPARATOR_RE,
+    _NON_NAME_MARKERS,
+    _PHONE_RE,
+    _PROFILE_ENGLISH_TITLE_RE,
+    _URL_RE,
+)
+from .identity_constants import (
+    _BASIC_LABELS,
+)
+from .normalization import _COMPACT_RESET_ALIASES, _clean_line, _compact_heading, _heading_key
+
+# 常见于「姓名：张三␣␣␣␣年龄：21」这类列排布、但**不进资料页**的字段标签。
+# 只作为同一行的列边界（终止上一个字段的值），不产生字段——年龄换算出生年份
+# 不可靠，识别器刻意忽略（截图抄录里最常见的就是它把姓名吞成半行）。
+_IGNORED_INLINE_LABELS = ("年龄", "age")
+
+# 出生年月的取值前缀：年 + 可选的月（`1998`、`1998-07`、`1998年7月生`、`1998.07`、`1996年8月`）。
+# 「日」即使写了也不保留——资料里这个字段叫**出生年月**，多出来的日无处可放。
+_BIRTH_PREFIX_RE = re.compile(
+    r"^\s*((?:19|20)\d{2})\s*(?:[年./-]\s*(\d{1,2})(?!\d)\s*[月./-]?\s*(?:\d{1,2}\s*[日号])?)?"
+)
+
+
+def _format_birth(value: str) -> str:
+    """出生年月统一成 ``YYYY`` / ``YYYY-MM``。
+
+    解析器此前把命中的原样文字直接当值（``2001年生``、``2002年``），这类值在日期控件里
+    **认不出来**（"当前日期格式无法识别"），写进新资料模型也只是原样保留；而有月份时
+    又只留了年（``1998年7月生`` → ``1998年``），用户看到"出生年月"少了一半。这里一次收敛到
+    与 ``normalize_partial_date`` 相同的短横线格式，无月份就仍是四位年份。
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    match = _BIRTH_PREFIX_RE.match(raw)
+    if match is None:
+        return raw
+    year = match.group(1)
+    month_text = match.group(2)
+    if not month_text:
+        return year
+    month = int(month_text)
+    if not 1 <= month <= 12:
+        return year
+    return f"{year}-{month:02d}"
+
+
+@lru_cache(maxsize=64)
+def _label_value_pattern(labels: tuple[str, ...]) -> re.Pattern[str]:
+    alternatives = "|".join(re.escape(label) for label in labels)
+    return re.compile(
+        rf"^(?:{alternatives})(?:\s*[:：]\s*|\s+)(?P<value>.+?)\s*$",
+        re.IGNORECASE,
+    )
+
+
+def _label_value(line: str, labels: tuple[str, ...]) -> str:
+    match = _label_value_pattern(labels).match(line)
+    return match.group("value").strip() if match else ""
+
+
+@lru_cache(maxsize=64)
+def _label_matches_pattern(labels: tuple[str, ...]) -> re.Pattern[str]:
+    alternatives = "|".join(re.escape(label) for label in sorted(labels, key=len, reverse=True))
+    return re.compile(rf"(?<![\w\u4e00-\u9fff])(?:{alternatives})(?=\s*[:：]|\s+|$)", re.IGNORECASE)
+
+
+def _label_matches(line: str, labels: tuple[str, ...]) -> list[tuple[int, int, str]]:
+    """返回一行中所有字段标签的位置，支持 ``姓名 张三 手机 138...``。"""
+    matches = list(_label_matches_pattern(labels).finditer(line))
+    return [(match.start(), match.end(), match.group(0)) for match in matches]
+
+
+def _extract_inline_labeled_values(line: str) -> dict[str, str]:
+    """解析同一行的多个基本字段，不把后续标签吞进当前字段值。"""
+    matches: list[tuple[int, int, str, str]] = []
+    labeled: dict[str, tuple[str, ...]] = {**_BASIC_LABELS}
+    # 被忽略的标签（年龄等）以 None 字段参与同一场定位：它们终止前面的值，
+    # 但自己不产出字段。
+    labeled[""] = _IGNORED_INLINE_LABELS
+    for field, labels in labeled.items():
+        for start, end, label in _label_matches(line, labels):
+            # ``Project Name:``/``Company Name:`` 中的裸 ``Name`` 不是候选人
+            # 姓名字段；完整的 ``project name``/``candidate name`` 别名会在
+            # 更长匹配中优先保留，因此这里只过滤带英文前缀的短别名。
+            if field == "name" and label.casefold() == "name":
+                prefix = line[:start].rstrip()
+                if prefix and prefix[-1].isalnum():
+                    continue
+            matches.append((start, end, field, label))
+    # 同一位置可能同时匹配大小写别名，最长别名优先；之后按文本位置排序。
+    matches.sort(key=lambda item: (item[0], -(item[1] - item[0])))
+    selected: list[tuple[int, int, str, str]] = []
+    for match in matches:
+        if selected and match[0] < selected[-1][1]:
+            continue
+        selected.append(match)
+
+    values: dict[str, str] = {}
+    for index, (_start, end, field, _label) in enumerate(selected):
+        if not field:
+            continue
+        value_start = end
+        while value_start < len(line) and line[value_start] in " \t:：":
+            value_start += 1
+        value_end = selected[index + 1][0] if index + 1 < len(selected) else len(line)
+        value = line[value_start:value_end].strip(" \t:：|｜丨;；,，")
+        if value and field not in values:
+            values[field] = value
+    return values
+
+
+def _extract_unlabeled_basic(lines: list[str], values: dict[str, str]) -> None:
+    """从简历模板常见的联系方式行补齐没有字段标签的基本信息。"""
+    preamble: list[str] = []
+    for line in lines:
+        if _heading_key(line) is not None:
+            break
+        if _compact_heading(_clean_line(line)) in _COMPACT_RESET_ALIASES:
+            continue
+        preamble.append(_clean_line(line))
+
+    full_text = "\n".join(preamble)
+    if not values["gender"]:
+        match = re.search(r"(?<![男女])([男女])(?:性)?(?:\s|$|[|｜丨,，;；])", full_text)
+        if match:
+            values["gender"] = match.group(1)
+        else:
+            match = re.search(
+                r"(?<![A-Za-z])(?P<gender>female|male|woman|man|non[- ]binary)(?![A-Za-z])",
+                full_text,
+                re.IGNORECASE,
+            )
+            if match:
+                values["gender"] = match.group("gender")
+    if not values["birth_year"]:
+        # 带月份的中文写法（`1998年7月生` / `1998年7月出生`）必须整段吃掉：此前只捕获
+        # 「年 + 年出生|年生|年|出生」这一段，月份留在原地——用户看到的出生年月只有 1998。
+        # 两处 `(?>\s*)` 原子组用于消除多项式回溯（CodeQL py/polynomial-redos）：
+        #   其一在年份之后——年份与可选月份组之间、可选组与后缀「年生/年/生」之间的两个
+        #   `\s*` 可以被一个整体可选组隔开，输入「1998」+ n 个空白且无后缀时，空白段有
+        #   n+1 种分割方式，每种分割后都要做一次后缀字面量匹配失败，回溯代价 O(n²)；
+        #   其二在可选月份组内 `[月./-]?` 之前——它匹配 0 字符时与组外的 `\s*` 相邻，
+        #   同样产生空白分割歧义。原子化后 `\s*` 贪吃整段空白且不交还，空白段只由靠前的
+        #   一处消费，失败判定回到线性；匹配语义不变（后续锚点本来就停在第一个非空白字符）。
+        match = re.search(
+            r"((?:19|20)\d{2})(?>\s*)(?:[年./-]\s*(\d{1,2})(?!\d)(?>\s*)[月./-]?)?(?>\s*)"
+            r"(?:年出生|年生|出生|年|生)",
+            full_text,
+        )
+        if match:
+            month = match.group(2)
+            values["birth_year"] = f"{match.group(1)}年{month}月" if month else match.group(1)
+        else:
+            # 只有身份首行明确出现 born，或首行同时包含姓名/联系方式等
+            # 身份信号时，才把独立四位年份当作出生年；否则项目/任职日期
+            # 中的年份不应污染基本资料。
+            identity_line = preamble[0] if preamble else ""
+            has_identity_signal = bool(
+                _PHONE_RE.search(identity_line)
+                or _EMAIL_RE.search(identity_line)
+                or re.search(r"(?:男|女|male|female|born|出生)", identity_line, re.IGNORECASE)
+            )
+            year_source = identity_line if has_identity_signal else ""
+            match = re.search(
+                r"(?:\bborn\s*)?((?:19|20)\d{2})(?:\s*(?:year|born))?\b",
+                year_source,
+                re.IGNORECASE,
+            )
+            if match:
+                values["birth_year"] = match.group(1)
+    if not values["city"]:
+        # 只接受独立城市 token，避免把“意向城市：北京”误写为现居城市。
+        for line in preamble:
+            for token in re.split(r"[\s|｜丨,，;；]+", line):
+                city_match = _BASIC_UNLABELED_CITY_RE.fullmatch(token.rstrip("市"))
+                if city_match:
+                    values["city"] = city_match.group(0)
+                    break
+            if values["city"]:
+                break
+
+    if not values["name"]:
+        has_identity_context = bool(
+            _PHONE_RE.search(full_text)
+            or _EMAIL_RE.search(full_text)
+            or values["gender"]
+            or values["birth_year"]
+            or values["city"]
+        )
+        for line in preamble:
+            # 常见简历首行会用空格排列“姓名 性别 城市 电话”；先只取行首
+            # 的短中文姓名，避免把后面的学校或岗位描述当成姓名。
+            leading_name = re.match(r"^([\u4e00-\u9fff]{2,6})(?=\s+|[|｜丨,，;；]|$)", line)
+            if (
+                leading_name
+                and (has_identity_context or line == preamble[0])
+                and not any(marker in leading_name.group(1) for marker in _NON_NAME_MARKERS)
+            ):
+                values["name"] = leading_name.group(1)
+                return
+            candidate = line
+            candidate = _PHONE_RE.sub("", candidate)
+            candidate = _EMAIL_RE.sub("", candidate)
+            candidate = _URL_RE.sub("", candidate)
+            tokens = [
+                token.strip()
+                for token in _INLINE_LABEL_SEPARATOR_RE.split(candidate)
+                if token.strip()
+            ]
+            for token in tokens:
+                token = re.sub(r"(?:男|女)(?:性)?$", "", token).strip()
+                token = re.sub(r"(?:19|20)\d{2}\s*年?(?:出生|年生)?$", "", token).strip()
+                if (
+                    (has_identity_context or line == preamble[0])
+                    and (_BASIC_NAME_RE.fullmatch(token) or _BASIC_ENGLISH_NAME_RE.fullmatch(token))
+                    and not _PROFILE_ENGLISH_TITLE_RE.search(token)
+                    and not any(marker in token for marker in _NON_NAME_MARKERS)
+                ):
+                    values["name"] = token
+                    return
+
+
+def _extract_basic(lines: list[str]) -> dict[str, str]:
+    values = {field: "" for field in _BASIC_LABELS}
+    for line in lines:
+        inline_values = _extract_inline_labeled_values(line)
+        for field, value in inline_values.items():
+            if value and not values[field]:
+                values[field] = value
+        for field, labels in _BASIC_LABELS.items():
+            value = _label_value(line, labels)
+            if value and not values[field]:
+                values[field] = value
+
+    full_text = "\n".join(lines)
+    # “联系方式：手机 / 邮箱”可能被整体识别为一个标签值；二次提取保证
+    # phone/email 字段始终只保存对应格式，不把另一字段或分隔符带进去。
+    phone_source = values["phone"] or full_text
+    phone_match = _PHONE_RE.search(phone_source)
+    if phone_match:
+        phone_digits = re.sub(r"\D", "", phone_match.group(0))
+        values["phone"] = phone_digits[2:] if phone_digits.startswith("86") else phone_digits
+    else:
+        values["phone"] = ""
+    email_source = values["email"] or full_text
+    email_match = _EMAIL_RE.search(email_source)
+    values["email"] = email_match.group(0) if email_match else ""
+    if not values["github"]:
+        match = re.search(r"https?://(?:www\.)?github\.com/[^\s<>\"']+", full_text, re.IGNORECASE)
+        values["github"] = match.group(0).rstrip(".,;，。；") if match else ""
+    if not values["personal_website"]:
+        urls = _URL_RE.findall(full_text)
+        values["personal_website"] = next(
+            (url.rstrip(".,;，。；") for url in urls if "github.com" not in url.lower()), ""
+        )
+    _extract_unlabeled_basic(lines, values)
+    # 两条路径（标签值 / 无标签推断）都可能留下非规范写法，出口统一一次。
+    values["birth_year"] = _format_birth(values["birth_year"])
+    return values

@@ -1,0 +1,393 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * 知识库页面：列表渲染、筛选、新建、编辑、删除确认与 Markdown 预览。
+ *
+ * 删除走 RowActions 的「更多」菜单 + 二次确认（modal.confirm），编辑/删除用图标按钮而非裸文字。
+ */
+import { App as AntdApp } from "antd";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Knowledge, KnowledgeSummary } from "../types";
+import { t } from "../i18n";
+import KnowledgePage from "./KnowledgePage";
+
+const apiMocks = vi.hoisted(() => ({
+  listKnowledgePage: vi.fn(),
+  listKnowledgeCategories: vi.fn(),
+  listKnowledgeTags: vi.fn(),
+  getKnowledge: vi.fn(),
+  createKnowledge: vi.fn(),
+  updateKnowledge: vi.fn(),
+  deleteKnowledge: vi.fn(),
+  batchDeleteKnowledge: vi.fn(),
+}));
+
+vi.mock("../api/knowledge", () => apiMocks);
+
+function makeKnowledge(overrides: Partial<Knowledge> = {}): Knowledge {
+  return {
+    id: 1,
+    title: "STAR 法则",
+    category: "简历技巧",
+    tags: ["简历", "STAR"],
+    content: "# 核心要点\n\n用 **STAR 法则** 组织经历，给出**量化结果**。",
+    source: "手动录入",
+    created_at: "2026-09-18T00:00:00",
+    updated_at: "2026-09-18T00:00:00",
+    ...overrides,
+  };
+}
+
+/** 列表行摘要（分页端点响应）：与 Knowledge 的差别是没有 content 全文。 */
+function makeSummary(entry: Knowledge): KnowledgeSummary {
+  const { content, ...rest } = entry;
+  return { ...rest, content_excerpt: content.slice(0, 200) };
+}
+
+function makePage(items: Knowledge[], total = items.length) {
+  return { items: items.map(makeSummary), total };
+}
+
+function renderPage() {
+  return render(
+    <MemoryRouter>
+      <AntdApp>
+        <KnowledgePage />
+      </AntdApp>
+    </MemoryRouter>,
+  );
+}
+
+beforeEach(() => {
+  for (const mock of Object.values(apiMocks)) mock.mockReset();
+  apiMocks.listKnowledgePage.mockResolvedValue(makePage([makeKnowledge()]));
+  apiMocks.getKnowledge.mockResolvedValue(makeKnowledge());
+  apiMocks.listKnowledgeCategories.mockResolvedValue(["面经", "简历技巧", "求职策略"]);
+  apiMocks.listKnowledgeTags.mockResolvedValue({ tags: ["简历", "STAR", "求职策略"] });
+  apiMocks.createKnowledge.mockImplementation(async (payload) =>
+    makeKnowledge({ id: 2, ...payload, tags: payload.tags }),
+  );
+  apiMocks.updateKnowledge.mockImplementation(async (id, payload) =>
+    makeKnowledge({ id, ...payload }),
+  );
+  apiMocks.deleteKnowledge.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  cleanup();
+  document.body.innerHTML = "";
+});
+
+describe("KnowledgePage", () => {
+  it("keeps a failed load distinct from empty data and recovers on retry", async () => {
+    apiMocks.listKnowledgePage.mockRejectedValueOnce(new Error("服务暂不可用"));
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("服务暂不可用");
+    expect(screen.queryByText(/还没有知识条目/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /重\s*试/ }));
+    expect(await screen.findByText("STAR 法则")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(apiMocks.listKnowledgePage).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders entries with title, category and tags", async () => {
+    renderPage();
+
+    expect(await screen.findByText("STAR 法则")).toBeInTheDocument();
+    expect(screen.getByText("简历技巧")).toBeInTheDocument();
+    expect(screen.getByText("简历")).toBeInTheDocument();
+    expect(screen.getByText("STAR")).toBeInTheDocument();
+    expect(apiMocks.listKnowledgePage).toHaveBeenCalledWith(
+      { q: "", category: "", tag: "" },
+      1,
+      15,
+    );
+  });
+
+  it("passes the search keyword to the API", async () => {
+    renderPage();
+    await screen.findByText("STAR 法则");
+
+    const searchInput = screen.getByPlaceholderText("搜索标题或正文");
+    fireEvent.change(searchInput, { target: { value: "量化" } });
+    fireEvent.keyDown(searchInput, { key: "Enter", code: "Enter", keyCode: 13 });
+
+    await waitFor(() => {
+      expect(apiMocks.listKnowledgePage).toHaveBeenLastCalledWith(
+        { q: "量化", category: "", tag: "" },
+        1,
+        15,
+      );
+    });
+  });
+
+  it("标签筛选走服务端：选择标签后带 tag 参数重新请求并回到第 1 页", async () => {
+    // 收口轮：标签从「当前页内再筛选」改为服务端筛选（分页前过滤）。
+    // 先翻到第 2 页，再选标签——应回第 1 页并以 tag 重新拉取。
+    const pageOne = Array.from({ length: 15 }, (_, index) =>
+      makeKnowledge({ id: index + 1, title: `条目-${index + 1}` }),
+    );
+    apiMocks.listKnowledgePage
+      .mockResolvedValueOnce(makePage(pageOne, 16))
+      .mockResolvedValueOnce(makePage([makeKnowledge({ id: 16, title: "第 16 条" })], 16))
+      .mockResolvedValueOnce(makePage([makeKnowledge({ title: "标签命中" })], 1));
+    renderPage();
+
+    expect(await screen.findByText("条目-1")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByTitle("2")[0]);
+    expect(await screen.findByText("第 16 条")).toBeInTheDocument();
+
+    const combobox = screen.getByRole("combobox", { name: "标签筛选" });
+    fireEvent.mouseDown(combobox);
+    const option = await screen.findByText(
+      (content, element) => content === "简历" && !!element?.closest(".ant-select-item-option"),
+    );
+    fireEvent.click(option);
+
+    await waitFor(() => {
+      expect(apiMocks.listKnowledgePage).toHaveBeenLastCalledWith(
+        { q: "", category: "", tag: "简历" },
+        1,
+        15,
+      );
+    });
+    expect(await screen.findByText("标签命中")).toBeInTheDocument();
+  });
+
+  it("标签下拉选项来自全库标签端点 /knowledge/tags，而非当前页条目的标签", async () => {
+    // 「全库专属标签」不属于当前页任何条目（列表里只有 简历/STAR/求职策略 的条目），
+    // 只有选项来自 listKnowledgeTags 时它才会出现在下拉里。
+    apiMocks.listKnowledgeTags.mockResolvedValue({
+      tags: ["简历", "STAR", "求职策略", "全库专属标签"],
+    });
+    renderPage();
+    await screen.findByText("STAR 法则");
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "标签筛选" }));
+    expect(
+      await screen.findByText(
+        (content, element) =>
+          content === "全库专属标签" && !!element?.closest(".ant-select-item-option"),
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("creates a new entry through the form modal", async () => {
+    renderPage();
+    await screen.findByText("STAR 法则");
+
+    fireEvent.click(screen.getByRole("button", { name: /新建知识/ }));
+    fireEvent.change(screen.getByPlaceholderText("如：STAR 法则 / 自我介绍模板"), {
+      target: { value: "自我介绍模板" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
+
+    await waitFor(() => {
+      expect(apiMocks.createKnowledge).toHaveBeenCalledTimes(1);
+    });
+    const payload = apiMocks.createKnowledge.mock.calls[0][0];
+    expect(payload.title).toBe("自我介绍模板");
+    expect(payload.category).toBe("其他"); // 未改分类时使用表单默认值
+  });
+
+  it("edits an entry through the row menu", async () => {
+    renderPage();
+    await screen.findByText("STAR 法则");
+
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(await screen.findByText("编辑"));
+
+    // 行操作菜单渲染在 portal 里，点击曾沿 React 树冒泡回卡片的 DetailTrigger，
+    // 把详情预览一起弹出来；「编辑」只应打开编辑弹窗。
+    expect(screen.queryByRole("heading", { name: "核心要点" })).toBeNull();
+
+    fireEvent.change(await screen.findByPlaceholderText("如：STAR 法则 / 自我介绍模板"), {
+      target: { value: "STAR 法则（修订）" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
+
+    await waitFor(() => {
+      expect(apiMocks.updateKnowledge).toHaveBeenCalledTimes(1);
+    });
+    const [id, payload] = apiMocks.updateKnowledge.mock.calls[0];
+    expect(id).toBe(1);
+    expect(payload.title).toBe("STAR 法则（修订）");
+  });
+
+  it("编辑态改选另一个分类能生效", async () => {
+    renderPage();
+    await screen.findByText("STAR 法则");
+
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(await screen.findByText("编辑"));
+
+    // 编辑弹窗里的「分类」下拉（tags 模式）：曾因 maxCount={1} 把所有未选中项
+    // 置灰禁用，导致改选不了其他分类；现在点「求职策略」应正常选中。
+    const modal = (await screen.findByText("编辑知识条目")).closest(".ant-modal")!;
+    const categorySelect = within(modal as HTMLElement)
+      // 弹窗里分类在前、标签在后。
+      .getAllByRole("combobox")[0];
+    fireEvent.mouseDown(categorySelect);
+    fireEvent.click(await screen.findByText("求职策略"));
+
+    fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
+
+    await waitFor(() => {
+      expect(apiMocks.updateKnowledge).toHaveBeenCalledTimes(1);
+    });
+    const [, payload] = apiMocks.updateKnowledge.mock.calls[0];
+    expect(payload.category).toBe("求职策略");
+  });
+
+  it("renders markdown content in the preview modal", async () => {
+    renderPage();
+    await screen.findByText("STAR 法则");
+
+    // 「查看」按钮已移除：点卡片本身（DetailTrigger）打开预览。
+    fireEvent.click(screen.getByText("STAR 法则"));
+
+    // AssistantMessageContent 把「# 核心要点」解析成 h4，而不是显示原始井号。
+    expect(await screen.findByRole("heading", { name: "核心要点" })).toBeInTheDocument();
+    // 正文里的加粗被解析成 <strong>。
+    expect(screen.getByText("量化结果").tagName).toBe("STRONG");
+  });
+
+  it("deletes an entry immediately and offers undo", async () => {
+    renderPage();
+    await screen.findByText("STAR 法则");
+
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(await screen.findByText("删除"));
+
+    // 软删不再二次确认：点「删除」即执行，回头路是 Toast 上的撤销（useDeleteUndo）。
+    await waitFor(() => {
+      expect(apiMocks.deleteKnowledge).toHaveBeenCalledWith(1);
+    });
+    expect(await screen.findByText(t("toast.deleted.single"))).toBeInTheDocument();
+  });
+
+  it("shows the empty state when there are no entries", async () => {
+    apiMocks.listKnowledgePage.mockResolvedValue({ items: [], total: 0 });
+    renderPage();
+
+    expect(await screen.findByText(/还没有知识条目/)).toBeInTheDocument();
+  });
+
+  it("翻到第 2 页取到旧全量之外的新页记录", async () => {
+    const pageOne = Array.from({ length: 15 }, (_, index) =>
+      makeKnowledge({ id: index + 1, title: `条目-${index + 1}` }),
+    );
+    apiMocks.listKnowledgePage
+      .mockResolvedValueOnce(makePage(pageOne, 16))
+      .mockResolvedValueOnce(makePage([makeKnowledge({ id: 16, title: "第 16 条" })], 16));
+    renderPage();
+
+    expect(await screen.findByText("条目-1")).toBeInTheDocument();
+    expect(screen.queryByText("第 16 条")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByTitle("2")[0]);
+
+    await waitFor(() => {
+      expect(apiMocks.listKnowledgePage).toHaveBeenLastCalledWith(
+        { q: "", category: "", tag: "" },
+        2,
+        15,
+      );
+    });
+    expect(await screen.findByText("第 16 条")).toBeInTheDocument();
+  });
+
+  it("批量选择：右键进多选 → 勾 2 条 → 删除所选（直接删，撤销在 Toast）→ 一次批量删除请求带全部 id 并重拉", async () => {
+    apiMocks.listKnowledgePage.mockResolvedValue(
+      makePage([
+        makeKnowledge({ id: 1, title: "条目一" }),
+        makeKnowledge({ id: 2, title: "条目二" }),
+      ]),
+    );
+    apiMocks.batchDeleteKnowledge.mockResolvedValue({ deleted: 2 });
+    renderPage();
+
+    await screen.findByText("条目一");
+    fireEvent.contextMenu(screen.getByText("条目一"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /批量选择/ }));
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择知识条目 条目一" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择知识条目 条目二" }));
+    expect(screen.getByText("已选 2 项")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "删除所选" }));
+    // 软删可撤销：不再前置确认，点一下就直接发请求（撤销在 Toast 上）。
+
+    await waitFor(() => {
+      expect(apiMocks.batchDeleteKnowledge).toHaveBeenCalledTimes(1);
+    });
+    expect(apiMocks.batchDeleteKnowledge).toHaveBeenCalledWith([1, 2]);
+    // 成功后清空选择并重拉当前页。
+    expect(await screen.findByText(/已删除 2 条知识/)).toBeInTheDocument();
+    expect(screen.queryByText(/已选/)).not.toBeInTheDocument();
+  });
+
+  it("批量删除失败：保留选择不退出多选，可直接重试（PR-14）", async () => {
+    // 失败时悄悄清空选择 + 重拉，会让用户以为删成功了——失败必须原样保留现场。
+    apiMocks.listKnowledgePage.mockResolvedValue(
+      makePage([
+        makeKnowledge({ id: 1, title: "条目一" }),
+        makeKnowledge({ id: 2, title: "条目二" }),
+      ]),
+    );
+    apiMocks.batchDeleteKnowledge.mockRejectedValue(new Error("网络错误"));
+    renderPage();
+
+    await screen.findByText("条目一");
+    fireEvent.contextMenu(screen.getByText("条目一"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /批量选择/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择知识条目 条目一" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择知识条目 条目二" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除所选" }));
+    // 软删可撤销：不再前置确认，点一下就直接发请求（撤销在 Toast 上）。
+
+    // 删除请求确实发出去了（确认按钮已生效）。
+    await waitFor(() => expect(apiMocks.batchDeleteKnowledge).toHaveBeenCalledTimes(1));
+    // 提示文案是接口给的原因（error.message），不是笼统的批量删除失败。
+    expect(await screen.findByText(/网络错误/)).toBeInTheDocument();
+    // 选择还在：操作条仍显示已选 2 项，且没有触发重拉。
+    expect(screen.getByText("已选 2 项")).toBeInTheDocument();
+    expect(apiMocks.listKnowledgePage).toHaveBeenCalledTimes(1);
+  });
+
+  it("删除最后一页最后一条后自动回上一页，分页控件不消失（PR-14）", async () => {
+    const pageOne = Array.from({ length: 15 }, (_, index) =>
+      makeKnowledge({ id: index + 1, title: `条目-${index + 1}` }),
+    );
+    // 按调用次序演进：初始第 1 页（total 16）→ 翻到第 2 页（孤条）→ 删除后按旧页码
+    // 重拉返回空（total 15，第 2 页已不存在）→ 页码校正回第 1 页重拉。
+    apiMocks.listKnowledgePage
+      .mockResolvedValueOnce(makePage(pageOne, 16))
+      .mockResolvedValueOnce(makePage([makeKnowledge({ id: 16, title: "末页孤条" })], 16))
+      .mockResolvedValueOnce({ items: [], total: 15 })
+      .mockResolvedValue(makePage(pageOne, 15));
+    renderPage();
+
+    expect(await screen.findByText("条目-1")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByTitle("2")[0]);
+    expect(await screen.findByText("末页孤条")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(await screen.findByText("删除"));
+
+    // 回到第 1 页并按正确页码重拉；条目与分页控件都在。
+    await waitFor(() => {
+      expect(apiMocks.listKnowledgePage).toHaveBeenLastCalledWith(
+        { q: "", category: "", tag: "" },
+        1,
+        15,
+      );
+    });
+    expect(await screen.findByText("条目-1")).toBeInTheDocument();
+    // 回到的是有数据的页：空态不出现（hideOnSinglePage 下单页时翻页条本就隐藏，
+    // 关键是用户不再被困在删空的页码上）。
+    expect(screen.queryByText(/还没有知识条目/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/没有符合筛选条件的条目/)).not.toBeInTheDocument();
+  });
+});

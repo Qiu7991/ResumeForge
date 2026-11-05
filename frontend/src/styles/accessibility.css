@@ -1,0 +1,139 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Text-bearing state colors also need to work on their tinted surfaces. */
+.ant-tag.ant-tag-gold,
+.ant-tag.ant-tag-yellow,
+.ant-tag.ant-tag-orange,
+.ant-tag.ant-tag-warning {
+  color: var(--rf-warning-text) !important;
+}
+
+.ant-tag.ant-tag-red,
+.ant-tag.ant-tag-error,
+.ant-tag.ant-tag-volcano {
+  color: var(--rf-error-text) !important;
+}
+
+.ant-tag.ant-tag-green,
+.ant-tag.ant-tag-success {
+  color: var(--rf-success-text) !important;
+}
+
+.tracker-funnel-index {
+  color: var(--rf-brand);
+  background: var(--rf-brand-tint);
+}
+
+.track-card-next-label,
+.claim-card-label {
+  color: var(--rf-text-secondary);
+}
+
+.claim-card-warnings {
+  color: var(--rf-warning-text);
+}
+
+/*
+ * 助手空态「深夜关怀语」：此前用 antd Typography 的 type="warning"，取 colorWarning
+ * #faad14，在白/浅底上对比度仅 ~1.9:1，过不了 axe color-contrast 的 AA（4.5:1）。
+ * 改用站内 warning 文字 token（#875300，theme/tokens.ts palette.warning，深浅底均 ≥6:1），
+ * 语义仍是「关怀/提醒」，只是深到可读。
+ */
+.assistant-empty-state-care.ant-typography {
+  color: var(--rf-warning-text);
+}
+
+/*
+ * 网申填表页「放宽模式」卡：风险常驻文案与开启态提示同样用 antd `type="warning"`，
+ * 取 colorWarning #faad14，白底对比度 ~1.9:1，过不了 axe color-contrast 的 AA（4.5:1）
+ * ——`tests/smoke/a11y.spec.ts` / `ui-quality.spec.ts` 会因此变红。同上一条，改用站内
+ * warning 文字 token（#875300，theme/tokens.ts palette.warning，深浅底均 ≥6:1）；
+ * 语义仍是「风险提醒」，只是深到可读。不要改回 colorWarning。
+ */
+.relaxed-mode-risk.ant-typography,
+.relaxed-mode-enabled-hint.ant-typography {
+  color: var(--rf-warning-text);
+}
+
+.tt-profile-prompt-card-title {
+  color: var(--rf-text-secondary);
+}
+
+/* A native details button is a sibling of the card's other controls. */
+.detail-trigger {
+  position: relative;
+}
+
+.detail-trigger-open {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--rf-radius-panel);
+  background: transparent;
+}
+
+.detail-trigger .row-actions,
+.detail-trigger .ant-checkbox-wrapper {
+  position: relative;
+  z-index: 2;
+}
+
+.detail-trigger:has(> .detail-trigger-open:focus-visible) {
+  outline: 2px solid var(--rf-focus-visible);
+  outline-offset: 3px;
+  border-radius: var(--rf-radius-panel);
+}
+
+/* 弹窗/抽屉为了无障碍会把焦点搬到**内容容器**上（`tabindex="-1"`）。它不是可交互
+   控件，不该画聚焦环——容器的 2px 轮廓会被 body 的 `overflow: hidden` 裁掉左右下三边，
+   只在标题下面留一条蓝线（2026-10-20 用户截图里的"欢迎使用简历通"下方那条）。
+   这里显式取消，键盘用户仍然能看到里面第一个控件的焦点。 */
+.ant-modal [tabindex="-1"]:focus,
+.ant-modal [tabindex="-1"]:focus-visible,
+.ant-drawer [tabindex="-1"]:focus,
+.ant-drawer [tabindex="-1"]:focus-visible {
+  outline: none;
+}
+
+.app-shell :where(button, a, input, textarea, select, [tabindex]):focus-visible,
+.ant-modal :where(button, a, input, textarea, select, [tabindex]):focus-visible,
+.ant-drawer :where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline-color: var(--rf-focus-visible);
+}
+
+/* 文本输入框的聚焦环：**1px 描边 + 一圈很淡的光晕**。
+   2026-10-20 曾用 `outline: 2px solid` + `outline-offset: 1px` 取代 antd 的半透明光晕
+   （后者在圆角处会透出底色，像一圈毛边）。但实色 2px 叠在 1px 边框上，肉眼看到的是
+   一道约 4px 的纯蓝框——在浅色表单里像"报错"，比毛边更难受（2026-10-24 用户口径：
+   "太扎眼，不和谐"）。
+   现在：描边交给边框本身（1px，antd 已经把它染成主题色），再补一圈 14% 的混色光晕，
+   边界仍然清楚，但不再抢走视线。去掉 outline 是安全的——聚焦态同时还有边框变色与
+   光晕两重提示，键盘用户不会失去焦点位置。 */
+.app-shell .ant-input:focus,
+.app-shell .ant-input-affix-wrapper:focus-within,
+.app-shell .ant-input-number:focus-within,
+.app-shell .ant-picker:focus-within,
+.ant-modal .ant-input:focus,
+.ant-modal .ant-input-affix-wrapper:focus-within,
+.ant-modal .ant-input-number:focus-within,
+.ant-modal .ant-picker:focus-within,
+.ant-drawer .ant-input:focus,
+.ant-drawer .ant-input-affix-wrapper:focus-within,
+.ant-drawer .ant-input-number:focus-within,
+.ant-drawer .ant-picker:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rf-focus-visible) 14%, transparent);
+}
+
+/* 带前缀/后缀图标的输入框：外框（`.ant-input-affix-wrapper`）已经画了聚焦光晕，
+   里面的 `<input>` 仍是 `.ant-input`，会**再画一层**贴在里面——两层叠起来比原来的
+   2px 实色还花。这里把它彻底按住。 */
+.app-shell .ant-input-affix-wrapper .ant-input:focus,
+.ant-modal .ant-input-affix-wrapper .ant-input:focus,
+.ant-drawer .ant-input-affix-wrapper .ant-input:focus {
+  outline: none;
+  box-shadow: none;
+}

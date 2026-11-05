@@ -1,0 +1,450 @@
+# SPDX-License-Identifier: Apache-2.0
+"""E5 求职助手知识审计：改为对 ``feature_catalog``（单一事实来源）做一致性守卫。
+
+能力地图不再是手写静态清单，而是运行时从 ``feature_catalog`` 渲染。这个文件把三向一致
+钉住，防止"加了功能 / 加了工具却忘了同步助手"时静默退化：
+
+1. 目录渲染要覆盖每个已注册工具名（助手才能如实说"我能查 XX"而不是猜）；
+2. 目录渲染要覆盖每个功能域；
+3. 目录 FEATURES 要覆盖白名单 UI 功能 key（水印/脱敏/版本对比/风险检测 ATS/质量检测/
+   分享包/模板/美化/自动采集/内推）——这些是**前端 UI 功能**，不在后端工具注册表里，
+   正是"问水印答没有"的根因；
+4. 写入类工具与 ``build_write_tools_line()`` **双向一致**——单靠 ``Tool.writes`` 或单靠
+   目录都不可靠，两边互相校验，新增写工具忘任何一边都会变红；
+5. 目录 domain 与前端导航配置的 label、``userGuideSteps.ts`` 的 title
+   **双向静态断言**（读取前端源文件文本正则提取）——前端仍是 UI 唯一事实来源。
+
+再加上几个新工具的冒烟测试，确认读工具 live_only、写工具真的落库。
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+from app.services.assistant_tools import execute_tool, tool_names
+from app.services.feature_catalog import (
+    FEATURES,
+    FUNCTIONAL_DOMAINS,
+    build_capability_map,
+    build_write_tools_line,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_DIR = REPO_ROOT / "frontend"
+NAVIGATION_CONFIG_TSX = FRONTEND_DIR / "src" / "components" / "navigation" / "navigationConfig.ts"
+GUIDE_STEPS_TS = FRONTEND_DIR / "src" / "components" / "userGuideSteps.ts"
+# FE3（2026-10-25）把指南步骤数据拆到 components/user-guide/*.ts，userGuideSteps.ts 只剩
+# ≤100 行门面（类型再导出 + 组装）。标题从分域模块提取；门面里已没有 title 字面量。
+GUIDE_MODULES_DIR = FRONTEND_DIR / "src" / "components" / "user-guide"
+ZH_MESSAGES_DIR = FRONTEND_DIR / "src" / "i18n" / "messages"
+README_MD = REPO_ROOT / "README.md"
+
+# README「功能特性」表每一行 → 目录里覆盖它的功能 key（可一对多）。
+#
+# **这张表就是"助手跟不上新功能"的防呆闸门**：README 是本仓库对用户可见功能的权威清单，
+# 而 AGENTS.md 已要求用户可见行为变化必须更新 README。守卫测试双向断言这张表与 README
+# 的表格行完全一致、且每个 key 都真实存在于 FEATURES——于是"加了功能、写了 README、
+# 却没登记给助手"会直接变红，而不是等用户问到才发现助手答"没有这个功能"。
+README_FEATURE_KEYS: dict[str, tuple[str, ...]] = {
+    "岗位管理": ("job_manage",),
+    "备选岗位": ("candidate_jobs",),
+    "拖拽导入": ("drag_drop",),
+    "模拟面试": ("interview",),
+    "个性化题库": ("question_bank", "interview_review"),
+    "工作台": ("skills", "style_format_template", "template_import"),
+    "试用与对比": ("template_trial",),
+    "个人资料库": ("profile", "profile_library"),
+    "简历照片": ("profile_photo",),
+    "资料方案与当前方案": ("profile_groups",),
+    "旧资料升级说明": ("profile_upgrade_notice",),
+    "职业场景": ("career_scenario",),
+    "事实台账": ("claims",),
+    "面试深挖": ("drill",),
+    "资料箱": ("materials",),
+    "文件副本库": ("user_files",),
+    "批量设置状态": ("job_batch_status",),
+    "保存位置": ("export_save_location",),
+    "导出形式": ("export_bundle_delivery",),
+    "助手放宽模式": ("assistant_relaxed_mode",),
+    "AI 定制简历": ("resume_generate",),
+    "自行编写简历": ("resume_manual",),
+    "简历写作增强": ("writing_enhance", "version_diff"),
+    "AI 修改简历": ("resume_revise",),
+    "生成说明": ("resume_generation_notes",),
+    "质量与合规检查": ("quality_check",),
+    "简历历史": ("resume_history",),
+    "岗位关联": ("job_resume_link",),
+    "收藏夹": ("favorites",),
+    "岗位需求解读": ("job_analysis",),
+    "岗位匹配度分析": ("job_match",),
+    "批量岗位适配度分析": ("job_match_batch",),
+    # AI 对比选岗（横向对比 2–12 个岗位）与批量逐一分析共用 job_match_batch 这张批次表
+    # （对比结论也挂在批次行上），所以映射到同一个 key。
+    "AI 对比选岗": ("job_match_batch",),
+    "匹配度参考分": ("match_reference_score",),
+    "求职进度": ("tracker", "tracker_import"),
+    "日历提醒": ("reminders",),
+    "内推管理": ("referral",),
+    "求职数据看板": ("analytics",),
+    "面经知识库": ("interview_experience",),
+    "知识库": ("knowledge",),
+    "自动投递台": (
+        "collect",
+        "apply_queue",
+        "apply_progress",
+        "apply_records",
+        "browser_setting",
+        "current_site",
+    ),
+    "网申填表": ("web_form_fill", "web_form_browser", "web_form_records"),
+    "放宽模式": ("web_form_fill",),
+    "网申专用资料": ("web_form_fields",),
+    "网申资料": ("web_form_extra_profile",),
+    "填表时学到的": ("web_form_learning",),
+    "AI 求职助手": ("assistant_chat",),
+    "技能": ("skills",),
+    "会话管理": ("conversation_manage",),
+    "投投剪贴板": ("tou_tou_clipboard",),
+    "批量选择与批量删除": ("batch_selection",),
+    "通用简历": ("general_resume",),
+    "截图与文档识别": ("recognition",),
+    "多格式导出": ("export_formats", "watermark", "redact", "resume_exact_preview"),
+    "导出交付包": ("export_bundle_delivery",),
+    "离线分享包": ("share_package", "review_annotations"),
+    "首页": ("home_shortcuts", "home_todo"),
+    "界面细节": ("ui_details", "navigation_visibility"),
+    "全局搜索": ("global_search",),
+    "防虚构校验": ("consistency_check",),
+    "检查与更新": ("update_check", "dataset"),
+    "回收站": ("trash",),
+    "你的 Key 你做主": ("own_api_key", "llm_config"),
+    "保存冲突三选一": ("save_conflict",),
+    "文档大纲": ("outline",),
+    "制作台检查": ("preflight",),
+    "专业视图": ("proview",),
+    "局部排版": ("typography",),
+    "分页控制": ("pagination",),
+    "表达资产库": ("resume_assets",),
+    "撤销与恢复": ("history",),
+    "命名版本与岗位变体": ("named_versions", "job_variants"),
+    "科研简历": ("research_sections", "long_cv"),
+    "版面优化": ("layout_optimizer",),
+    "来源核对与事实锁": ("provenance", "fact_locks"),
+    "外发预览与用量": ("outbound_preview", "usage_summary"),
+    "双语版本与术语表": ("bilingual_variants", "glossary"),
+}
+
+
+def _readme_feature_names() -> set[str]:
+    """从 README「功能特性」表的第一列取出功能名（去掉行首 emoji）。"""
+    text = README_MD.read_text(encoding="utf-8")
+    section = text.split("## ✨ 功能特性", 1)[1].split("\n## ", 1)[0]
+    names: set[str] = set()
+    for line in section.splitlines():
+        if not line.startswith("|"):
+            continue
+        cell = line.split("|")[1].strip()
+        if not cell or set(cell) <= set("-: "):
+            continue
+        cleaned = re.sub(r"^[^\w]+", "", cell).strip()
+        if cleaned and cleaned != "模块":
+            names.add(cleaned)
+    return names
+
+
+# 数据域 → 至少要有一个对应的只读工具（与能力地图无关，但同样不能静默退化）。
+DOMAIN_READ_TOOLS = {
+    "岗位/收藏": ["list_jobs", "get_job"],
+    "简历": ["list_resumes", "get_resume"],
+    "个人资料": ["get_profile"],
+    "资料箱": ["list_materials", "get_material"],
+    "事实台账": ["list_claims", "get_claim"],
+    "备选岗位": ["list_candidate_jobs", "get_candidate_job"],
+    "模拟面试": ["list_interview_sessions", "get_interview_report"],
+    "面试深挖": ["list_drill_sessions", "get_drill_report"],
+    "技能": ["list_skills", "get_skill"],
+    "提醒": ["list_reminders"],
+    "内推": ["list_referrals"],
+    "面经": ["list_interview_experiences"],
+    "题库历史": ["list_question_banks"],
+    "复盘历史": ["list_reviews"],
+    "知识库": ["list_knowledge", "get_knowledge"],
+    "求职统计": ["get_analytics_overview"],
+    "求职进度": ["list_application_tracks", "get_application_track"],
+    "分享包": ["list_share_packages"],
+}
+
+# 指南步骤标题 → 它讲授的功能域（用于「目录 ↔ 指南标题」双向守卫）。
+GUIDE_TITLE_DOMAINS = {
+    "配置 AI": "设置",
+    "完善资料": "我的资料",
+    "导入岗位与投递": "岗位广场",
+    "跟进求职进度": "求职进度",
+    "制作简历": "简历中心",
+    "求职助手": "求职助手",
+    "资料箱、知识库与工作台": "工作台",
+    "数据备份与更新": "设置",
+}
+
+
+# 语言包条目：键是文案 key（字母开头、带点号），值是普通 TS 字符串（可能跨行）。
+_LOCALE_ENTRY_RE = re.compile(r'"([A-Za-z][\w.]*)":\s*\n?\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _zh_copy() -> dict[str, str]:
+    """解析 zh-CN 语言包，得到「文案 key → 中文」。
+
+    导航与使用指南在 2026-10-28 完成双语化后，数据文件里只剩 `labelKey` / `titleKey`，
+    中文在语言包里；守卫要断言的是"用户看到的中文"，所以先把 key 还原成 zh 值再比较。
+    """
+    copy: dict[str, str] = {}
+    for path in sorted(ZH_MESSAGES_DIR.glob("zh-CN.*.ts")):
+        if path.name.endswith("namespaces.ts"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match in _LOCALE_ENTRY_RE.finditer(text):
+            copy[match.group(1)] = match.group(2).replace('\\"', '"').replace("\\\\", "\\")
+    return copy
+
+
+def _resolve_copy(
+    copy: dict[str, str], keys: list[str], literals: list[str]
+) -> set[str]:
+    """key 还原成 zh 文案；同时兼容尚未迁走的字面量写法。"""
+    resolved = {copy[key] for key in keys if key in copy}
+    resolved.update(literals)
+    return resolved
+
+
+def _menu_labels() -> set[str]:
+    text = NAVIGATION_CONFIG_TSX.read_text(encoding="utf-8")
+    keys = re.findall(r'labelKey:\s*"([^"]+)"', text)
+    literals = re.findall(r'(?<!Key)label:\s*"([^"]+)"', text)
+    return _resolve_copy(_zh_copy(), keys, literals)
+
+
+def _guide_titles() -> set[str]:
+    """指南步骤标题：FE3 起从 components/user-guide/ 的分域数据模块提取。
+
+    双语化后数据模块只存 `titleKey`，这里经 zh 语言包还原成标题原文再比对。
+    """
+    copy = _zh_copy()
+    titles: set[str] = set()
+    for path in sorted(GUIDE_MODULES_DIR.glob("*.ts")):
+        text = path.read_text(encoding="utf-8")
+        keys = re.findall(r'titleKey:\s*"([^"]+)"', text)
+        titles.update(copy[key] for key in keys if key in copy)
+        titles.update(re.findall(r'(?<!Key)title:\s*"([^"]+)"', text))
+    return titles
+
+
+def _catalog_write_tools() -> set[str]:
+    """从 ``build_write_tools_line()`` 解析出写入工具名单。"""
+    line = build_write_tools_line()
+    assert line.startswith("写入类工具："), "写入清单必须以「写入类工具：」开头"
+    segment = line.split("：", 1)[1]
+    return {name for name in re.split(r"[、，\s]+", segment) if name}
+
+
+def test_catalog_indexes_every_ui_feature():
+    """能力地图是功能索引：登记过的界面功能名必须全部出现。
+
+    2026-10-26 方案 A（Lead 批准）：能力地图不再逐字重复工具清单（「可用工具」清单与
+    每条功能的「可配合工具」提示），因为工具名/参数/描述已经由 function calling 的
+    tools 声明逐字下发给模型——重复一份只会让每轮固定 prompt 多烧约 5 千字符。
+    因此完整性断言从"每个工具名都在地图里"改为"每个界面功能/功能域都在地图里"，
+    并单独守住写入类行为指引仍在（模型要知道哪些操作会改数据）。
+    """
+    rendered = build_capability_map()
+    missing = [feature.name for feature in FEATURES if feature.name not in rendered]
+    assert not missing, f"能力地图漏了这些界面功能：{missing}"
+    assert "写入类工具：" in rendered, "写入类工具的行为指引不能被删掉"
+    assert "可配合工具" not in rendered, "工具名不应在地图里重复渲染"
+    assert "## 可用工具" not in rendered, "工具清单不应在地图里重复渲染"
+
+
+def test_catalog_renders_every_domain():
+    rendered = build_capability_map()
+    missing = [domain for domain in FUNCTIONAL_DOMAINS if domain not in rendered]
+    assert not missing, f"能力地图漏了这些功能域：{missing}"
+
+
+def test_catalog_covers_every_readme_feature():
+    """README 功能表的每一行都必须被目录覆盖——这是"助手跟不上新功能"的防呆闸门。
+
+    加了用户可见功能、按 AGENTS.md 更新了 README，却没登记进 feature_catalog 时，
+    这条会立刻变红，而不是等用户问到才发现助手答"没有这个功能"。
+    """
+    keys = {feature.key for feature in FEATURES}
+    missing = sorted(
+        name for name, mapped in README_FEATURE_KEYS.items() if not (set(mapped) & keys)
+    )
+    assert not missing, f"README 里有、目录里没有对应功能：{missing}"
+
+    dangling = sorted(
+        f"{name} → {key}"
+        for name, mapped in README_FEATURE_KEYS.items()
+        for key in mapped
+        if key not in keys
+    )
+    assert not dangling, f"映射表指向了目录里不存在的 key：{dangling}"
+
+
+def test_readme_table_and_mapping_are_bidirectionally_aligned():
+    """README 的表格行与映射表必须一一对应：改任一边都会变红。"""
+    readme_names = _readme_feature_names()
+    assert readme_names, "未能从 README「功能特性」表提取到功能名"
+    assert set(README_FEATURE_KEYS) == readme_names, (
+        f"README 功能表与映射表不一致：\n"
+        f"  README 有而映射无：{sorted(readme_names - set(README_FEATURE_KEYS))}\n"
+        f"  映射有而 README 无：{sorted(set(README_FEATURE_KEYS) - readme_names)}"
+    )
+
+
+def test_every_catalog_feature_is_claimed_by_a_readme_row():
+    """反向：目录里不能有 README 功能表没写的条目——两边互为完整。
+
+    否则目录会攒下"只有助手知道、文档里查不到"的功能，用户无从核对助手说得对不对。
+    """
+    claimed = {key for mapped in README_FEATURE_KEYS.values() for key in mapped}
+    orphans = sorted(feature.key for feature in FEATURES if feature.key not in claimed)
+    assert not orphans, f"这些目录功能没有被任何 README 功能行认领：{orphans}"
+
+
+def test_catalog_feature_keys_are_unique():
+    keys = [feature.key for feature in FEATURES]
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    assert not duplicates, f"目录里有重复的 key：{duplicates}"
+
+
+def test_every_feature_belongs_to_a_known_domain():
+    domains = set(FUNCTIONAL_DOMAINS)
+    stray = [feature.key for feature in FEATURES if feature.domain not in domains]
+    assert not stray, f"这些功能挂到了不存在的功能域上：{stray}"
+
+
+def test_every_data_domain_has_a_read_tool():
+    names = set(tool_names())
+    missing: list[str] = []
+    for domain, tools in DOMAIN_READ_TOOLS.items():
+        if not any(tool in names for tool in tools):
+            missing.append(f"{domain}（期望 {tools} 至少其一）")
+    assert not missing, f"这些数据域没有对应的只读工具：{missing}"
+
+
+def test_write_tools_are_bidirectionally_consistent_with_catalog():
+    """写入工具与目录的 ``build_write_tools_line()`` 双向一致：漏标 writes 或漏渲染都会变红。"""
+    from app.services.assistant_tools import _TOOLS as registry
+
+    write_tools = {tool.name for tool in registry if tool.writes}
+    assert write_tools, "没有任何工具被标记为写入类，writes 字段可能全部漏标"
+
+    catalog_tools = _catalog_write_tools()
+    assert catalog_tools, "目录的「写入类工具」清单解析为空"
+
+    assert write_tools == catalog_tools, (
+        f"写入工具与目录清单不一致：\n"
+        f"  只在注册表：{sorted(write_tools - catalog_tools)}\n"
+        f"  只在目录：{sorted(catalog_tools - write_tools)}"
+    )
+
+
+def test_catalog_domains_match_menu_labels_bidirectionally():
+    """目录 domain 与前端导航 label 双向相等：任一方向多/少一项都会变红。"""
+    menu_labels = _menu_labels()
+    assert menu_labels, "未能从 navigationConfig.ts 提取到导航 label"
+    domains = set(FUNCTIONAL_DOMAINS)
+    assert domains == menu_labels, (
+        f"目录功能域与菜单不一致：\n"
+        f"  菜单有而目录无：{sorted(menu_labels - domains)}\n"
+        f"  目录有而菜单无：{sorted(domains - menu_labels)}"
+    )
+
+
+def test_catalog_domains_and_guide_titles_are_bidirectionally_linked():
+    """指南步骤标题必须逐条映射到目录里的功能域；映射表多/漏一项都会变红。
+
+    反向（每个功能域都有一条专属指南步骤）不成立：指南按"一段旅程"聚合，多个功能域会
+    并进同一步（如「资料箱、知识库与工作台」），因此这里只要求"指南 → 目录"这一向严格
+    对齐，另一向由上面的"目录 ↔ 菜单"保证。
+    """
+    titles = _guide_titles()
+    assert titles, "未能从 userGuideSteps.ts 提取到指南步骤 title"
+    assert set(GUIDE_TITLE_DOMAINS) == titles, (
+        f"指南步骤标题与映射表不一致：\n"
+        f"  指南有而映射无：{sorted(titles - set(GUIDE_TITLE_DOMAINS))}\n"
+        f"  映射有而指南无：{sorted(set(GUIDE_TITLE_DOMAINS) - titles)}"
+    )
+    domains = set(FUNCTIONAL_DOMAINS)
+    stray = [
+        f"{title} → {domain}"
+        for title, domain in GUIDE_TITLE_DOMAINS.items()
+        if domain not in domains
+    ]
+    assert not stray, f"指南步骤指向了不存在于目录的功能域：{stray}"
+
+
+# ===== 新工具冒烟测试 =====
+
+
+def test_create_and_list_knowledge(db_session):
+    result = execute_tool(
+        db_session,
+        "create_knowledge",
+        {"title": "STAR 法则", "category": "简历技巧", "content": "# STAR 法则"},
+    )
+    assert result.changed is True
+    entry_id = json.loads(result.text)["id"]
+
+    listing = json.loads(execute_tool(db_session, "list_knowledge", {"q": "STAR"}).text)
+    assert listing["总数"] == 1
+    assert listing["知识库"][0]["id"] == entry_id
+
+    detail = json.loads(execute_tool(db_session, "get_knowledge", {"knowledge_id": entry_id}).text)
+    assert detail["content"] == "# STAR 法则"
+
+
+def test_create_and_list_reminder(db_session):
+    result = execute_tool(
+        db_session,
+        "create_reminder",
+        {"title": "参加某司二面", "remind_at": "2026-09-20T10:00:00", "kind": "interview"},
+    )
+    assert result.changed is True
+
+    listing = json.loads(execute_tool(db_session, "list_reminders", {}).text)
+    assert listing["总数"] == 1
+    assert listing["提醒"][0]["title"] == "参加某司二面"
+
+
+def test_new_list_tools_report_zero_when_empty(db_session):
+    for tool in (
+        "list_referrals",
+        "list_interview_experiences",
+        "list_question_banks",
+        "list_reviews",
+        "list_share_packages",
+    ):
+        payload = json.loads(execute_tool(db_session, tool, {}).text)
+        assert payload["总数"] == 0, f"{tool} 空库时应返回总数 0"
+
+
+def test_analytics_overview_reports_zero_when_empty(db_session):
+    payload = json.loads(execute_tool(db_session, "get_analytics_overview", {}).text)
+    assert payload["total_applications"] == 0
+    assert payload["offer_count"] == 0
+    assert isinstance(payload["funnel"], list)
+
+
+def test_soft_deleted_knowledge_is_not_listed(db_session):
+    from app.services.knowledge_service import delete_knowledge
+
+    result = execute_tool(db_session, "create_knowledge", {"title": "要删的一条"})
+    entry_id = json.loads(result.text)["id"]
+
+    delete_knowledge(db_session, entry_id)
+
+    listing = json.loads(execute_tool(db_session, "list_knowledge", {}).text)
+    assert listing["总数"] == 0

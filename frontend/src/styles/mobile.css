@@ -1,0 +1,189 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Phone layout is separate from the 768px tablet's compact sidebar. */
+@media (max-width: 767px) {
+  :root {
+    --rf-header-height: 120px;
+    --rf-modal-body-max-h: calc(100dvh - 184px);
+  }
+
+  #root,
+  .app-shell,
+  .app-main {
+    height: 100dvh;
+  }
+
+  .app-sider {
+    display: none;
+  }
+
+  .app-main {
+    margin-left: 0;
+  }
+
+  .app-header {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: 8px;
+    height: auto;
+    min-height: var(--rf-header-height);
+    padding: 8px 16px;
+    line-height: normal;
+  }
+
+  .app-mobile-menu-button {
+    display: inline-flex;
+    width: 48px;
+    height: 48px;
+  }
+
+  .app-header-title {
+    font-size: 14px;
+    white-space: normal;
+  }
+
+  .app-header-page-label {
+    display: block;
+    color: var(--rf-text-secondary);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.5;
+  }
+
+  .app-header-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .app-header-context {
+    flex: 1 1 120px;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .app-dataset-chip {
+    flex: 1;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 48px;
+    border-radius: var(--rf-radius-control);
+  }
+
+  .app-space-menu-button,
+  .app-user-avatar-button,
+  .app-repo-button,
+  .app-exit-button {
+    width: 48px !important;
+    min-width: 48px;
+    height: 48px !important;
+    padding: 0;
+    justify-content: center;
+  }
+
+  /* 方形成 48×48 时必须同时把文字设为 0：原来只在 ≤700px 那档隐藏文字，
+     701–767px 之间文字仍以 12px 渲染，会顶出圆形边框（用户截图）。 */
+  .app-space-menu-button {
+    font-size: 0;
+  }
+
+  .app-space-menu-button .anticon {
+    font-size: 18px;
+  }
+
+  .app-exit-label,
+  .app-header-divider {
+    display: none;
+  }
+
+  .app-header-context-error {
+    flex-basis: 100%;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .app-content {
+    min-height: calc(100dvh - var(--rf-header-height));
+    /* 内边距统一由 --rf-content-pad 给（≤1092 档为 16px），这里不再重复写死。 */
+  }
+
+  .app-content :is(.ant-btn, .ant-select-single, .ant-input-affix-wrapper, .ant-input-number) {
+    min-height: 48px;
+  }
+
+  .app-content :is(input.ant-input, .ant-input-number-input) {
+    min-height: 46px;
+    font-size: 16px;
+  }
+
+  .app-content :is(.ant-btn-icon-only, .ant-pagination-item-link, .ant-checkbox-wrapper) {
+    min-width: 48px;
+    min-height: 48px;
+  }
+
+  .app-content .ant-checkbox-wrapper {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .rf-filter-bar {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .rf-filter-bar > .ant-space-item {
+    flex: 1 1 100%;
+  }
+
+  .rf-filter-bar > .ant-space-item > :is(.ant-input-search, .ant-select, .ant-btn) {
+    width: 100% !important;
+  }
+
+  :is(.tracker-page-head, .claims-page-head, .skills-page-header, .trash-page-head) > .ant-space {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px !important;
+  }
+
+  .webform-browser-status-row {
+    flex-wrap: wrap;
+  }
+
+  .webform-browser-status {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+
+  .webform-browser-actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  .materials-grid,
+  .knowledge-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ant-modal {
+    max-width: calc(100vw - 16px);
+  }
+
+  /* antd 6.6.5 的容器类名是 .ant-modal-container（旧 content 容器类名已删除）。
+     手机上几乎不留垂直边距：一屏本来就矮，弹窗要尽量把高度用满。 */
+  .ant-modal-container {
+    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
+  }
+
+  .ant-modal-header,
+  .ant-modal-body,
+  .ant-modal-footer {
+    padding-inline: 16px;
+  }
+
+  .ant-modal-footer .ant-btn,
+  .ant-drawer-footer .ant-btn {
+    min-height: 48px;
+  }
+}

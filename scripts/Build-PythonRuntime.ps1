@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: Apache-2.0
+# Build-PythonRuntime.ps1 - build the bundled Python runtime for the desktop app.
+#
+# Produces desktop/python-runtime.zip containing python/ (<interpreter> +
+# site-packages with backend requirements preinstalled). The shell unpacks it
+# on first launch into %LOCALAPPDATA%\ResumeForge\runtime, so the packaged
+# app never bootstraps a venv or downloads anything at user time.
+#
+# Python version is pinned to the same 3.12.10 the console flow uses
+# (scripts/Start-ResumeForge.ps1). The embeddable distribution + get-pip +
+# requirements install happens ONCE here, on the build machine.
+
+param(
+    [string]$PythonVersion = "3.12.10"
+)
+
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+$projectRoot = Split-Path -Parent $PSScriptRoot
+$staging = Join-Path $projectRoot "desktop\runtime-staging"
+$zipPath = Join-Path $projectRoot "desktop\python-runtime.zip"
+
+Write-Host "Building bundled Python runtime $PythonVersion..."
+if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
+New-Item -ItemType Directory -Force $staging | Out-Null
+
+# 1. Embeddable distribution (curl.exe: quiet, fast, no progress flood).
+$embedUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip"
+$embedZip = Join-Path $staging "python-embed.zip"
+Write-Host "Downloading $embedUrl"
+curl.exe -sSL -o $embedZip $embedUrl
+if ($LASTEXITCODE -ne 0) { throw "download embeddable python failed ($LASTEXITCODE)" }
+Expand-Archive -LiteralPath $embedZip -DestinationPath (Join-Path $staging "python") -Force
+Remove-Item $embedZip
+
+# 2. Enable site-packages imports (embeddable ships with them disabled).
+$pth = Get-ChildItem (Join-Path $staging "python") -Filter "python*._pth" | Select-Object -First 1
+if (-not $pth) { throw "python ._pth file not found in embeddable package" }
+$pthContent = Get-Content $pth.FullName -Raw
+$pthContent = $pthContent -replace "#import site", "import site"
+$pthContent = $pthContent -replace "#Lib/site-packages", "Lib/site-packages"
+Set-Content -LiteralPath $pth.FullName -Value $pthContent -Encoding ASCII -NoNewline
+
+# 3. pip bootstrap.
+# 2026-11-03: the rolling get-pip.py (bootstrap.pypa.io/pip/get-pip.py) now
+# extracts its bundled pip and runs it as "python <tmpdir>\pip". On Windows,
+# sys.argv[0] basename "pip" trips pip's own self-modification guard
+# (pip/_internal/utils/misc.py::protect_pip_from_modification_on_windows,
+# pypa/pip#1299), which aborts with CommandError before pip is installed, so
+# every one-time rebuild on CI failed. Bypass get-pip entirely: pip is a pure
+# Python wheel, so unpack a pinned wheel into site-packages and "python -m pip"
+# (argv[0] is pip/__main__.py) just works. Pin + SHA-256 keeps rebuilds
+# reproducible; bump only after re-verifying the pair below together.
+$pipWheelVersion = "25.3"
+$pythonExe = Join-Path $staging "python\python.exe"
+$pipWheelUrl = "https://files.pythonhosted.org/packages/44/3c/d717024885424591d5376220b5e836c2d5293ce2011523c9de23ff7bf068/pip-25.3-py3-none-any.whl"
+$pipWheelSha256 = "9655943313a94722b7774661c21049070f6bbb0a1516bf02f7c8d5d9201514cd"
+# Expand-Archive validates the extension and rejects ".whl" on older PowerShell
+# 7.x (CI: InvalidArgument/IOException), so download the wheel under a .zip
+# name. The archive contents (pip/ + pip-<version>.dist-info/) are what matters;
+# the file name is never used by pip because this wheel is only ever unpacked.
+$pipWheel = Join-Path $staging "pip-$pipWheelVersion-wheel.zip"
+Write-Host "Downloading pip $pipWheelVersion wheel..."
+curl.exe -sSL -o $pipWheel $pipWheelUrl
+if ($LASTEXITCODE -ne 0) { throw "download pip wheel failed ($LASTEXITCODE)" }
+$pipWheelHash = (Get-FileHash -LiteralPath $pipWheel -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($pipWheelHash -ne $pipWheelSha256) { throw "pip wheel sha256 mismatch ($pipWheelHash)" }
+Expand-Archive -LiteralPath $pipWheel -DestinationPath (Join-Path $staging "python\Lib\site-packages") -Force
+Remove-Item -LiteralPath $pipWheel
+& $pythonExe -m pip --version
+if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed with $LASTEXITCODE" }
+
+# 4. Backend requirements.
+Write-Host "Installing backend requirements..."
+& $pythonExe -m pip install -r (Join-Path $projectRoot "backend\requirements.txt") -q --no-warn-script-location
+if ($LASTEXITCODE -ne 0) { throw "pip install failed with $LASTEXITCODE" }
+
+# 5. Sanity check: the exact import set the console launcher verifies.
+& $pythonExe -c "import fastapi, uvicorn, sqlalchemy, alembic, pydantic, pydantic_settings, PIL, pypdf, fpdf, websocket, docx, multipart"
+if ($LASTEXITCODE -ne 0) { throw "backend import verification failed" }
+
+# 6. Compress (layout: python/... at zip root, matching resolveRuntimePython).
+# 7za over Compress-Archive: faster, and PS 5.1's archive module intermittently
+# hits PermissionDenied on freshly-written executables (AV scan race).
+Write-Host "Compressing to python-runtime.zip..."
+if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+$sevenZip = Join-Path $projectRoot "desktop\node_modules\7zip-bin\win\x64\7za.exe"
+if (Test-Path $sevenZip) {
+    & $sevenZip a -tzip -mx=7 $zipPath (Join-Path $staging "python") | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "7za compression failed with $LASTEXITCODE" }
+} else {
+    Compress-Archive -Path (Join-Path $staging "python") -DestinationPath $zipPath -CompressionLevel Optimal
+}
+Remove-Item -Recurse -Force $staging
+
+# 7. Stamp the dependency manifest INTO the zip. Build-Desktop.ps1 reads this
+# entry to decide whether a cached zip may be reused: a runtime that predates a
+# backend\requirements.txt change must not be handed to the packager (the 1.0.1
+# incident shipped exactly that and the app crashed on 'import pypdfium2').
+# Embedding it in the archive keeps the marker self-contained -- the zip carries
+# its own fingerprint through copies and re-distribution.
+. (Join-Path $PSScriptRoot "PythonRuntimeManifest.ps1")
+$manifest = Add-PythonRuntimeManifest -ZipPath $zipPath -PythonVersion $PythonVersion -RequirementsPath (Join-Path $projectRoot "backend\requirements.txt")
+Write-Host "Stamped runtime manifest: python $($manifest.pythonVersion), requirements $($manifest.requirementsSha256.Substring(0, 12))..."
+
+$size = "{0:N1} MB" -f ((Get-Item $zipPath).Length / 1MB)
+Write-Host "Done: $zipPath ($size)"

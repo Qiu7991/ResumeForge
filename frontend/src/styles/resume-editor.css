@@ -1,0 +1,254 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 简历编辑器（2/3）：手写简历的编辑/参考双栏、岗位参考面板、生成流文字与字体预览。
+拆分自 resume.css，纯搬迁、规则内容与顺序不变。 */
+
+/* 手写简历在桌面端并排显示岗位参考；**左右两栏各自独立滚动**。
+ *
+ * 为什么不是"整块 body 一起滚"：编辑一栏可以长到几十屏，岗位要求却只有一屏。整块滚时
+ * 用户一改到下面的条目就再也看不到参考内容——而那正是他需要对照的东西（"这条要求我
+ * 有没有写到"）。所以桌面端让 body 不滚，两栏各滚各的。
+ *
+ * `height: 100%` 依赖 Modal body 有确定高度：`ResumeEditorModal` 在宽屏时把 body 设成
+ * `display:flex; flex-direction:column` + `max-height`，grid 作为 flex item 拿到
+ * 剩余高度（`min-height: 0` 才允许它缩到内容以下），子栏的 `overflow-y: auto` 才真的
+ * 出现滚动条，而不是把内容撑出弹窗被裁掉。
+ */
+.resume-editor-layout--with-reference {
+  display: grid;
+  grid-template-areas: "editor reference";
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  align-items: stretch;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  gap: 20px;
+}
+
+.resume-editor-main {
+  grid-area: editor;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  /* `overflow-y: auto` 会把 `overflow-x` 的可见值抬成 auto（CSS 规范：两个轴不能一个
+     visible 一个非 visible），于是长内容会在这个栏里多出一条横向滚动条。这里显式裁掉。 */
+  overflow-x: hidden;
+  /* 右侧留一点空隙，避免滚动条贴住参考栏的分隔线。 */
+  padding-right: 8px;
+}
+
+/* 说明文字与「填入我的资料全部数据」同一行（项 9）：说明占满剩余宽度，按钮贴最右。
+   原来两者是两段独立 DOM，各带 margin-bottom，等于白白多占一行高度。 */
+.resume-editor-description {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.resume-editor-hint-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.resume-editor-hint-row > .resume-editor-description {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.resume-editor-hint-row > .ant-btn {
+  flex: 0 0 auto;
+}
+
+/* 窄屏：说明通常要占两三行，按钮跟在后面挤在同一行会把它压成一条窄柱，所以允许换行。 */
+@media (max-width: 640px) {
+  .resume-editor-hint-row {
+    flex-wrap: wrap;
+  }
+}
+
+/* ===== 「从我的资料追加一条」/「从资料填入本条」 ===== */
+/* 三段一行：文字 / 下拉 / 按钮（条目模式再加一句「只填空字段」）。
+   为什么不用 antd 的 `Space`：它给每一项都写 `flex: none`，宽度不够时既不缩也不换行，
+   整段直接溢出容器——在中栏里表现成「填入」按钮被推出右边界、压在标签条上
+   （用户 2026-10-23 截图："后面的内容穿透出来了"）。
+   这里改成 flex：下拉吃掉剩余宽度，文字与按钮不缩，最窄时换行而不是溢出。 */
+.resume-profile-fill {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* 上边距 10px 来自用户口径「和上面的边界挨得太近」：它上面是模块标题或上一条的卡片，
+   原来是 0（`Space` 只贡献自身的行高），视觉上两块粘在一起。 */
+.resume-profile-fill[data-fill-variant="append"] {
+  margin: 10px 0 2px;
+}
+
+.resume-profile-fill-label,
+.resume-profile-fill-hint {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* 下拉是唯一可伸缩的一段。`min-width` 不能省：再窄就只剩一个箭头，用户看不出要选什么。 */
+.resume-profile-fill-select {
+  flex: 1 1 160px;
+  min-width: 120px;
+  max-width: 100%;
+}
+
+.resume-editor-reference {
+  grid-area: reference;
+  /* 曾经是 sticky：那时整块 body 一起滚，参考栏靠 sticky 跟手。现在两栏各自滚动，
+     sticky 既没有意义也会把参考栏顶出可视区，所以回到普通流式定位。 */
+  position: static;
+  max-height: none;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 窄屏（单列）：回到"整块一起滚"，参考内容收进「查看岗位要求」折叠面板里。 */
+@media (max-width: 1092px) {
+  .resume-editor-layout--with-reference {
+    display: block;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .resume-editor-main {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .resume-editor-reference {
+    overflow: visible;
+    max-height: none;
+  }
+}
+
+.job-reference-panel {
+  padding-left: 18px;
+  border-left: 1px solid var(--rf-border-subtle);
+}
+
+.job-reference-header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--rf-border-subtle);
+}
+
+.job-reference-eyebrow {
+  display: block;
+  color: var(--rf-info);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.job-reference-title.ant-typography {
+  margin: 4px 0 2px;
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.job-reference-meta {
+  margin-top: 12px;
+}
+
+.job-reference-meta .ant-descriptions-item {
+  padding-bottom: 4px;
+}
+
+.job-reference-meta .ant-descriptions-item-label {
+  width: 44px;
+  color: var(--rf-text-secondary);
+}
+
+.job-reference-section {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--rf-border-subtle);
+}
+
+.job-reference-section:last-child {
+  border-bottom: none;
+}
+
+.job-reference-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.job-reference-section-icon {
+  color: var(--rf-info);
+  line-height: 1;
+}
+
+.job-reference-section-content.ant-typography {
+  margin-bottom: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+
+/* 生成过程的流式文本区域：等宽字体、可滚动 */
+.stream-text {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.profile-page {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.settings-page {
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+/* 字体预览（2026-10-20）：示例文字使用用户字体，容器仍是应用表面。 */
+/* 字体样张（P1-1）：只读弹窗，内置字体与历史字体共用。
+   四行的字号 22 / 14 / 14 / 14 与行高 1.7 **写死在这四条规则里**，不引入变量：
+   它是"看字"的标尺，随主题或断点浮动就失去了比较意义。
+   旧的一套 `.font-preview-sample*` 随预览弹窗一起撤掉（本批换成同一个样张组件）。 */
+.font-sample {
+  padding: 18px 20px;
+  color: var(--rf-text-body);
+  background: var(--rf-surface-alt);
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 12px;
+}
+
+.font-sample-title {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.7;
+}
+
+.font-sample-mixed {
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.font-sample-punct {
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* 粗体行：缺粗体字面时这一行会"发虚"（浏览器/fpdf2 都用描边顶替），
+   所以它的字重必须是 700，且不继承上面的 600。 */
+.font-sample-bold {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.7;
+}

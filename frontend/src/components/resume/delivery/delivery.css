@@ -1,0 +1,241 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 「导出交付包 / 交付原件」（W19 / D18–D20）样式。全部挂在 .resume-delivery* 自定义类名下，
+   颜色只用 --rf-* 语义 token，不覆写 antd 原生类名。 */
+
+.resume-delivery {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--rf-text-body);
+  font-size: 13px;
+}
+
+.resume-delivery-label {
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+.resume-delivery-hint {
+  margin: 0;
+  color: var(--rf-text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.resume-delivery-preset-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.resume-delivery-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.resume-delivery-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.resume-delivery-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.resume-delivery-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 6px;
+}
+
+.resume-delivery-format {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.resume-delivery-capability {
+  margin: 0;
+  border-color: var(--rf-border);
+  background: var(--rf-surface-alt);
+  color: var(--rf-text-secondary);
+  font-size: 11px;
+}
+
+.resume-delivery-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.resume-delivery-preview {
+  margin: 0;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+.resume-delivery-preview code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--rf-surface-alt);
+  color: var(--rf-text-body);
+}
+
+.resume-delivery-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+
+.resume-delivery-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--rf-text-body);
+  font-size: 12px;
+}
+
+.resume-delivery-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 原生 footer（R-21）：进度在左、动作在右；按钮不再随 body 滚动。 */
+.resume-delivery-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.resume-delivery-progress {
+  margin-right: auto;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+/* 导出形式：与预设条同一条横排，窄栏自动折行。 */
+.resume-delivery-mode {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.resume-delivery-mode .resume-delivery-hint {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* ===== 核对卡 ===== */
+.resume-delivery-check {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: var(--rf-radius-control);
+  padding: 10px;
+  background: var(--rf-surface);
+}
+
+.resume-delivery-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.resume-delivery-section-title {
+  font-weight: 600;
+}
+
+.resume-delivery-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+
+.resume-delivery-check-row {
+  display: flex;
+  gap: 8px;
+}
+
+.resume-delivery-check-row dt {
+  flex: 0 0 84px;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+.resume-delivery-check-row dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* R-22：带悬停说明的标签（目前只有「投递目标」）。
+   虚线下划线是"这里可以悬停看解释"的通用暗示；没有它，用户不会想到去 hover 一个
+   静态文本。cursor: help 与浏览器对 abbr[title] 的处理一致。 */
+.resume-delivery-check-label {
+  border-bottom: 1px dashed var(--rf-border-strong);
+  cursor: help;
+}
+
+/* ===== 交付原件 ===== */
+.resume-delivery-archive {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resume-delivery-archive-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.resume-delivery-archive-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: var(--rf-radius-control);
+  padding: 6px 8px;
+}
+
+.resume-delivery-archive-name {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+
+/* 配置预览（W04-config）：内联 iframe 显示带水印/脱敏的产物，不新开弹层。 */
+.resume-delivery-config-preview {
+  margin-top: 12px;
+  border-top: 1px solid var(--rf-border-subtle);
+  padding-top: 10px;
+}
+
+.resume-delivery-config-preview-body {
+  margin-top: 6px;
+}
+
+.resume-delivery-config-preview-frame {
+  width: 100%;
+  height: 420px;
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius-control);
+  background: #fff;
+}

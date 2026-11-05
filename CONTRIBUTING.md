@@ -1,0 +1,132 @@
+# 参与贡献
+
+感谢你帮助改进 ResumeForge。项目采用渐进式维护方式：优先保留现有行为，用小而可验证的改动解决一个明确问题。
+
+提交修改前请先阅读项目根目录的 [AGENTS.md](AGENTS.md)，其中包含长期维护原则、Windows 环境约定、验证命令和安全边界。
+
+## 开始之前
+
+- Python 3.11 或更高版本。
+- Node.js 20.19.0 或更高版本，并使用随 Node 提供的 npm。
+- Windows 中文环境运行 Python 命令前建议设置 `PYTHONUTF8=1`。
+- 不要提交 `.env`、数据库、真实简历、API Key、构建产物、虚拟环境或其他个人数据。
+
+## 本地开发
+
+后端（PowerShell）：
+
+```powershell
+cd backend
+$env:PYTHONUTF8 = "1"
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+```
+
+前端：
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+开发环境由 Vite 将 `/api` 转发到 `http://127.0.0.1:8000`。
+
+以上是手动开发流程的默认端口；根目录 `start.cmd` 一键启动时默认使用后端 8005，并会在进程内自动注入对应的 Vite 代理。
+
+## 修改原则
+
+- API 路由负责参数校验和业务编排，核心逻辑优先放在 `backend/app/services/`。
+- Pydantic Schema 与前端 TypeScript 类型需要同步维护。
+- 新增配置必须提供安全默认值，并同步更新 `.env.example` 和相关文档。
+- SQLite 表结构变更必须新增 `backend/migrations/versions/` 下的 Alembic revision，并有旧数据保留、重复启动和备份测试；不要修改已经发布的 revision。
+- 不要在日志、异常消息、测试夹具或截图中泄露 API Key 和个人资料。
+- 不做与当前问题无关的全量重构或格式化，避免掩盖行为变化。
+- 提交信息里不要添加 AI 或工具的联合署名（`Co-Authored-By:` 等）：GitHub 会把它解析成账号并计入贡献者列表。原因与清理方式见 [AGENTS.md](AGENTS.md) 的「提交署名」。
+- 2.x 每次新增迁移，必须同时附一条"升级前后数据不变"的测试：用上一版 schema 建库并灌固定样本，跑 upgrade 后断言逐表行数与内容指纹相同。
+- 单基线（`0001_baseline_v2`）一旦随 2.0 发布，**不许再改写**；结构变化只能通过新增迁移。
+- 闸门按 `app_schema_epoch` 判定，不许改成"revision 字符串比较"或"等不等于 head"。
+
+## 提交前检查
+
+推荐直接运行一键全量检查（覆盖下方全部内容，外加 npm audit 与生产构建）：
+
+```powershell
+.\scripts\Check-All.ps1
+```
+
+此外，仓库启用了 pre-commit 钩子（快闸门：ruff、eslint、结构守卫测试）。首次克隆后执行一次：
+
+```powershell
+git config core.hooksPath scripts/hooks
+```
+
+手动检查命令如下。
+
+后端：
+
+```powershell
+cd backend
+$env:PYTHONUTF8 = "1"
+.venv\Scripts\python.exe -m ruff check .
+.venv\Scripts\python.exe -m pytest --cov=app --cov-config=../pyproject.toml
+```
+
+前端：
+
+```powershell
+cd frontend
+npm test
+npm run format:check
+npm run lint
+npm run build
+```
+
+涉及界面交互时，还应手动验证对应流程及常见空状态、错误状态和窄屏布局。涉及用户可见行为、依赖、配置或数据库兼容性的改动，请同步更新 `README.md`、相关 `docs/` 文档及 `CHANGELOG.md`。
+
+## 演示数据与截图
+
+`README.md` 与 `docs/` 里的截图必须来自**真实运行**的应用，而截图里的数据必须**全是虚构的**。两件事各有一个入口：
+
+```powershell
+# 生成虚构演示数据，并把 58 个只读接口跑一遍自检（会写到 runtime/demo/demo.db）
+backend\.venv\Scripts\python.exe scripts\seed_demo_data.py --check
+```
+
+演示数据的人物、公司、学校统一用「示例」前缀，手机号固定 `0000`、邮箱走 `example.com` 保留域；这条由
+`backend/tests/test_seed_demo_data.py` 守着。改演示数据后请跑它。截图流程（用隔离的 `DATABASE_URL` 启
+后端、前端指向它、截完压到 1440 宽）写在 [AGENTS.md](AGENTS.md) 的「README（项目主页）与截图」里。
+
+**不要**把自己的真实资料、真实简历或真实岗位链接填进演示数据，也不要直接拿 `backend/data/resume_forge.db`
+截图——那等于把个人信息发到公开仓库首页上。
+
+## 安全敏感改动的审查要求
+
+以下路径承载网申填表安全界限、外部请求边界与数据备份语义，错误改动的代价是"把用户的简历投错、填错或泄露"，而不是普通的功能回归。触及这些路径的 PR，除自动化检查外**必须做一次人工安全审查**：
+
+- `backend/app/services/webform/**`（网申填表引擎）
+- `backend/app/services/apply/**`（投递链路与采集）
+- `backend/app/services/update_sources.py`（外部更新源）
+- `backend/app/middleware/**`（入站请求边界）
+- `backend/app/services/data_backup/**`（备份与恢复）
+
+审查清单（对照 `deliverables/webform-safety-boundaries-2026-10-06.md` 的界限全景图逐条核对）：
+
+- 网申填表的守卫语义没有被放松：同意/声明类不代填、密码/验证码/银行卡拦截、只填不点、超长值不填、页面已有值不覆盖、高风险歧义宁可不猜——这些是"宁可漏填不可错填"的单向界限，调整任何一条都要在 PR 里醒目标注理由；
+- 新增外部输入（页面控件、岗位描述、用户粘贴内容、响应字段）全部按不可信输入处理：验证、限长、安全编码，不进入 `eval`/模板/SQL 拼接；
+- 日志、异常消息与诊断导出不新增敏感字段（Cookie、prompt 原文、完整个人资料）；
+- 备份/恢复路径不引入新的删除语义或路径拼接；
+- 中间件放行的入站来源没有扩大（Host/Origin/CORS 白名单）。
+
+改动者无法自查的边界问题，请按 [SECURITY.md](SECURITY.md) 的渠道先沟通，不要在公开 Issue 里描述可利用细节。
+
+## Pull Request
+
+- 一个 PR 聚焦一个主题，并说明原因、影响范围和验证结果。
+- 对破坏性变更、数据迁移、安全边界变化或新的外部网络请求作醒目标注。
+- 界面变化提供修改前后截图。
+- 新功能和缺陷修复应提供与风险相称的自动化测试。
+- 保持 lockfile 与依赖清单一致，但不要提交本地虚拟环境或 `node_modules`。
+
+安全问题请不要提交公开 Issue，按 [SECURITY.md](SECURITY.md) 的方式报告。

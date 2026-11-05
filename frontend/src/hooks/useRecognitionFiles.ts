@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * 识别用的文件暂存：选择、粘贴、移除与限额。
+ *
+ * 岗位识别和个人资料识别共用。截图与文档（pdf/docx）在提交前只存在于前端，读取成
+ * data URL 后随 JSON 一起发给后端——与助手附件同一条路子（仓库里没有 multipart）。
+ * 文档的文字提取在后端完成，前端只负责把原始文件传过去。
+ */
+
+import { App } from "antd";
+import { useCallback, useRef, useState } from "react";
+import { t } from "../i18n";
+import {
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_COUNT,
+  MAX_TOTAL_ATTACHMENT_BYTES,
+  classifyAttachment,
+  clipboardImages,
+  readAsDataUrl,
+} from "../utils/attachments";
+
+export interface StagedFile {
+  id: number;
+  name: string;
+  mime_type: string;
+  /** 识别只收截图与文档；文本文件请直接粘进输入框。 */
+  kind: "image" | "document";
+  /** base64 data URL，直接进请求体。 */
+  data: string;
+  size: number;
+}
+
+/** 把暂存区里的文件按类型拆成请求体需要的两组入参（图片与文档是两个字段）。 */
+export function attachmentInputs(files: StagedFile[], kind: StagedFile["kind"]) {
+  return files
+    .filter((file) => file.kind === kind)
+    .map(({ name, mime_type, data }) => ({ name, mime_type, data }));
+}
+
+export function useRecognitionFiles() {
+  const { message } = App.useApp();
+  const [files, setFiles] = useState<StagedFile[]>([]);
+  const [reading, setReading] = useState(false);
+  // 先占位再读：并发选入多个文件时，后面的判断必须看得到前面已经占掉的额度。
+  const usageRef = useRef({ count: 0, bytes: 0 });
+  const sequenceRef = useRef(0);
+
+  const addFiles = useCallback(
+    async (incoming: File[]) => {
+      const accepted: File[] = [];
+      let occupied = usageRef.current;
+
+      for (const file of incoming) {
+        if (occupied.count >= MAX_ATTACHMENT_COUNT) {
+          message.warning(
+            t("hooksUi.recognition.warning.tooMany", { count: MAX_ATTACHMENT_COUNT }),
+          );
+          break;
+        }
+        const classification = classifyAttachment(file);
+        if (!classification || classification.kind === "text") {
+          message.warning(t("hooksUi.recognition.warning.unsupported", { name: file.name }));
+          continue;
+        }
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+          message.warning(t("hooksUi.recognition.warning.tooLarge", { name: file.name }));
+          continue;
+        }
+        if (occupied.bytes + file.size > MAX_TOTAL_ATTACHMENT_BYTES) {
+          message.warning(t("hooksUi.recognition.warning.totalTooLarge"));
+          continue;
+        }
+        accepted.push(file);
+        occupied = {
+          count: occupied.count + 1,
+          bytes: occupied.bytes + file.size,
+        };
+      }
+
+      if (accepted.length === 0) return;
+      usageRef.current = occupied;
+
+      setReading(true);
+      try {
+        const staged = await Promise.all(
+          accepted.map(async (file) => {
+            const classification = classifyAttachment(file);
+            return {
+              id: ++sequenceRef.current,
+              name: file.name,
+              mime_type: classification?.mimeType ?? "image/png",
+              kind: (classification?.kind ?? "image") as StagedFile["kind"],
+              data: await readAsDataUrl(file),
+              size: file.size,
+            };
+          }),
+        );
+        setFiles((current) => [...current, ...staged]);
+      } catch (error) {
+        // 读取失败要把占位还回去，否则额度会被白白吃掉
+        usageRef.current = {
+          count: usageRef.current.count - accepted.length,
+          bytes: usageRef.current.bytes - accepted.reduce((sum, file) => sum + file.size, 0),
+        };
+        message.error(error instanceof Error ? error.message : t("hooksUi.recognition.error.read"));
+      } finally {
+        setReading(false);
+      }
+    },
+    [message],
+  );
+
+  const removeFile = useCallback((id: number) => {
+    setFiles((current) => {
+      const target = current.find((item) => item.id === id);
+      if (target) {
+        usageRef.current = {
+          count: Math.max(0, usageRef.current.count - 1),
+          bytes: Math.max(0, usageRef.current.bytes - target.size),
+        };
+      }
+      return current.filter((item) => item.id !== id);
+    });
+  }, []);
+
+  const clear = useCallback(() => {
+    usageRef.current = { count: 0, bytes: 0 };
+    setFiles([]);
+  }, []);
+
+  const onPaste = useCallback(
+    (event: React.ClipboardEvent<HTMLElement>) => {
+      const pasted = clipboardImages(event.clipboardData);
+      // 只在确实剪贴到图片时拦截，否则会把正常的文本粘贴吃掉
+      if (pasted.length === 0) return;
+      event.preventDefault();
+      void addFiles(pasted);
+    },
+    [addFiles],
+  );
+
+  return { files, reading, addFiles, removeFile, clear, onPaste };
+}

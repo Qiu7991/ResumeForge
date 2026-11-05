@@ -1,0 +1,235 @@
+// SPDX-License-Identifier: Apache-2.0
+/** AI 求职助手会话、消息和流式事件类型。 */
+
+export interface AssistantConversationBrief {
+  id: number;
+  title: string;
+  surface: AssistantSurface;
+  pinned: boolean;
+  favorite: boolean;
+  /** 已归档的会话默认收进「已归档」筛选，不参与置顶排序。 */
+  archived: boolean;
+  /** 分组名（"移动到项目"）；空串表示未分组。 */
+  group_name: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 助手入口作用域：侧栏主助手与投投悬浮球历史彼此隔离。 */
+export type AssistantSurface = "page" | "floating";
+
+/** 会话列表筛选：全部 / 收藏 / 已归档。 */
+export type ConversationFilter = "all" | "favorite" | "archived";
+
+/**
+ * 思考强度：空串表示不发送该参数，沿用服务商默认。
+ *
+ * **不是白名单**——各家的档位词汇不一样（`minimal`/`xhigh`/`max`…），所以界面上允许
+ * 自定义填写，这里只约束格式（见 `isValidReasoningEffort`）。
+ */
+export type ReasoningEffort = string;
+
+export const REASONING_EFFORT_OPTIONS: { value: ReasoningEffort }[] = [
+  { value: "" },
+  { value: "none" },
+  { value: "low" },
+  { value: "medium" },
+  { value: "high" },
+];
+
+/** 选「自定义…」时给 Select 用的哨兵值：它不是真的档位，只是让输入框冒出来。 */
+export const CUSTOM_EFFORT_OPTION = "__custom__";
+
+/** 自定义档位的长度上限；与后端 `MAX_REASONING_EFFORT_CHARS` 一致。 */
+export const MAX_REASONING_EFFORT_CHARS = 32;
+
+/**
+ * 自定义档位的格式校验，规则与后端 `normalize_reasoning_effort` 一致。
+ *
+ * 挡住的是空白、中文、超长串这类一定发不出去的值；放行的是服务商自创的词。
+ */
+export function isValidReasoningEffort(value: string): boolean {
+  const effort = value.trim();
+  if (effort.length > MAX_REASONING_EFFORT_CHARS) return false;
+  return /^[A-Za-z0-9._-]*$/.test(effort);
+}
+
+export interface AssistantConversationForkPayload {
+  title?: string;
+  message_limit?: number;
+}
+
+export interface AssistantAttachment {
+  name: string;
+  mime_type: string;
+  /** document：pdf/docx，正文已由后端在本机提取进 `text`。 */
+  kind: "text" | "image" | "document";
+  size_bytes: number;
+  text: string;
+  data_url: string;
+  /** 提取过程中的说明（例如内容过长只取了前一部分）。 */
+  notes: string[];
+}
+
+export interface AssistantSource {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+/**
+ * 一次回答里 [来源N] 的「编号 → url」映射条目。
+ *
+ * 后端在来源**首次收集时**分配全局单调递增编号并持久化到助手消息的
+ * `context.source_map`；前端渲染正文里的 [来源N] 时按这个映射解析链接，
+ * 而不是拿"去重后的参考来源"数组下标去对——那会跳错来源。
+ */
+export interface AssistantSourceNumber {
+  number: number;
+  url: string;
+}
+
+/**
+ * 写入提案的字段差异（后端 authorization.FieldChange）。
+ * before 为 null 表示新增字段，after 为 null 表示删除字段。
+ */
+export interface AssistantWriteFieldChange {
+  field: string;
+  before?: string | null;
+  after?: string | null;
+}
+
+/** 写工具的写入预览：目标 / 影响范围 / 字段差异。 */
+export interface AssistantWritePreview {
+  target: string;
+  scope: string;
+  changes: AssistantWriteFieldChange[];
+}
+
+/**
+ * 待用户确认的写入提案（RF-01）。
+ *
+ * 助手在用户未同意写入时不会执行写工具，而是生成提案等待确认；批准/拒绝走
+ * REST 端点，用服务端存储的参数执行（模型给的参数不作数）。token 只在服务端
+ * 流转，前端永远拿不到——这里也没有 token 字段。
+ */
+export interface AssistantWriteProposal {
+  proposal_id: string;
+  tool_name: string;
+  dataset_id: string;
+  preview: AssistantWritePreview;
+  created_at: string;
+  expires_at: string;
+  /**
+   * 提案终态。``unknown`` = 后端在执行**中途失败但已经提交过**（RR-05）：数据可能
+   * 已经落库，所以文案是"结果未知、先在数据里核对"，而不是"执行失败"。
+   */
+  status: "pending" | "approved" | "executed" | "expired" | "rejected" | "failed" | "unknown";
+  /**
+   * 执行结果摘要（只有 executed 之后才有值）：写工具真正做了什么、以及简历文档写入
+   * 自动留下的「助手修改前」撤销点版本名。可选：更早存下的历史消息里没有它。
+   */
+  result_summary?: string;
+}
+
+/** 助手调用过一次工具的记录；写在助手消息的 context 里，供历史回看。 */
+export interface AssistantToolCall {
+  name: string;
+  arguments: Record<string, unknown>;
+  summary: string;
+  link: string;
+  ok: boolean;
+  error: string;
+  /**
+   * 这次调用是否真的改动了用户的数据（后端 `ToolResult.changed`）。
+   *
+   * 可选是因为它随功能一起加的：更早存下的历史消息里没有这个字段，缺失按"没改动"处理，
+   * 不能据此**主动**声称改动过——这类信息只有后端说了才算数。折叠标题里的「改动了 N 项」
+   * 就靠它，所以前端不再自己按工具名猜哪些是写操作（猜一份就会与后端漂移）。
+   */
+  changed?: boolean;
+  /**
+   * 写入提案（RF-01，可选）：这次调用被转成了待确认提案而没有执行。
+   * 更早存下的历史消息里没有这个字段。
+   */
+  proposal?: AssistantWriteProposal;
+}
+
+/** 被引用的那条消息的快照：原消息删掉之后这里仍然可读。 */
+export interface AssistantQuotedMessage {
+  id: number;
+  role: "user" | "assistant";
+  excerpt: string;
+}
+
+export interface AssistantMessage {
+  id: number;
+  conversation_id: number;
+  role: "user" | "assistant";
+  content: string;
+  /** 引用追问：这条消息引用的是哪一条。 */
+  quoted_message_id: number | null;
+  attachments: AssistantAttachment[];
+  context: {
+    job_id?: number | null;
+    resume_id?: number | null;
+    include_profile?: boolean;
+    web_search?: boolean;
+    sources?: AssistantSource[];
+    /** [来源N] 的「编号 → url」映射（可选：更早存下的历史消息里没有它）。 */
+    source_map?: AssistantSourceNumber[];
+    tool_calls?: AssistantToolCall[];
+    /**
+     * 模型的思考过程（开启思考强度时才有），供用户点开查看。
+     *
+     * 后端对它有存储上限，超限会截断并把 `reasoning_truncated` 置真——界面据此在
+     * 结尾补一句"已截断"，不假装这就是全部。可选：更早存下的历史消息里没有它。
+     */
+    reasoning?: string;
+    /** 上面的思考过程是否因超过存储上限被截断。 */
+    reasoning_truncated?: boolean;
+    quoted?: AssistantQuotedMessage;
+  };
+  status: "pending" | "complete" | "error" | "cancelled";
+  error: string;
+  model: string;
+  created_at: string;
+}
+
+export interface AssistantConversationDetail extends AssistantConversationBrief {
+  messages: AssistantMessage[];
+  /** 会话消息总数（B5 按需加载：messages 被截断到最新 N 条时也如实给全量数）。可选：旧响应没有。 */
+  messages_total?: number;
+  /** 是否还有更早的消息未加载（has_earlier=true 时列表顶部出「加载更早」）。可选：旧响应没有。 */
+  has_earlier?: boolean;
+}
+
+export interface AssistantAttachmentInput {
+  name: string;
+  mime_type: string;
+  data: string;
+}
+
+export type AssistantStreamEvent =
+  | {
+      type: "start";
+      user_message_id: number;
+      assistant_message_id: number;
+      conversation_title: string;
+    }
+  | { type: "progress"; message: string }
+  | {
+      type: "sources";
+      sources: AssistantSource[];
+      source_map?: AssistantSourceNumber[];
+      error: string;
+    }
+  | ({
+      type: "tool";
+    } & AssistantToolCall)
+  | { type: "write_proposal"; proposal: AssistantWriteProposal }
+  | { type: "delta"; text: string }
+  | { type: "reasoning"; text: string }
+  | { type: "done"; message: AssistantMessage }
+  | { type: "error"; message: string };

@@ -1,0 +1,123 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * 简历版式目录的测试夹具。
+ *
+ * 形状必须和后端 `GET /api/resumes/templates` 一致（`services/resume_templates.py`）。
+ * 放在这里而不是每个测试文件各写一份，是因为这份形状会随功能变——散在各处时，
+ * 后端加一个档位就要记得改六份，实际情况是没人记得。
+ *
+ * ## `templates` 为什么是 5 条（2026-11）
+ *
+ * `template_options()` 只吐 5 套（`classic` / `modern` / `compact` / `elegant` / `minimal`，
+ * 顺序固定），`GET /api/resume-templates/builtin` 与 `GET /api/resumes/templates` 同源。
+ * 夹具要跟着**生产会返回的东西**走：留 8 条会让组件测试跑在真机永远不会出现的状态上
+ * （例如"选择器一屏 8 张卡片"的布局断言，实际只有 5 张）。
+ *
+ * **技术 / 社论 / 分栏**三套已不再出现在选择器里，但**没有删除**：`RESUME_TEMPLATES`
+ * 仍保留 8 条的解析、`.j2` 与 `TEMPLATE_LAYOUT_DEFAULTS` 一律没动，引用它们的旧简历
+ * 仍按原模板渲染。夹具描述的是"选择器里有什么"，所以这里也不列它们。
+ */
+
+import type { ResumeTemplateCatalog, ResumeLayout } from "../types";
+
+export const TEMPLATE_CATALOG: ResumeTemplateCatalog = {
+  templates: [
+    { name: "classic", label: "经典", description: "深蓝标题与左侧色条，稳重的通用款式" },
+    { name: "modern", label: "现代", description: "青绿配色与圆角标签，适合互联网岗位" },
+    { name: "compact", label: "精简", description: "细线分隔、排版紧凑，适合内容多、想压在一页" },
+    { name: "elegant", label: "优雅", description: "居中标题与衬线字，留白舒展" },
+    { name: "minimal", label: "极简", description: "只用黑灰与字号层级，没有色块与装饰" },
+  ],
+  font_scales: [
+    {
+      name: "small",
+      label: "小字号",
+      description: "字更小、信息密度更高，适合内容偏多",
+      base_px: 11,
+    },
+    { name: "standard", label: "标准字号", description: "默认档位，兼顾可读性与篇幅", base_px: 14 },
+    { name: "large", label: "大字号", description: "字更大更醒目，适合内容较少", base_px: 18 },
+  ],
+  section_options: [
+    { key: "education", label: "教育经历" },
+    { key: "experience", label: "实习/工作经历" },
+    { key: "projects", label: "项目经历" },
+    { key: "skills", label: "专业技能" },
+    { key: "campus_experience", label: "校园经历" },
+    { key: "awards", label: "荣誉奖项" },
+    { key: "summary", label: "个人总结" },
+  ],
+  default_section_order: [
+    "education",
+    "experience",
+    "projects",
+    "skills",
+    "campus_experience",
+    "awards",
+    "summary",
+  ],
+  // 默认夹具里资料顺序与内置默认一致："没调过资料顺序"的用户看到的就是这一份。
+  // 需要验证"跟随资料页"的用例自己覆盖这个字段。
+  profile_section_order: [
+    "education",
+    "experience",
+    "projects",
+    "skills",
+    "campus_experience",
+    "awards",
+    "summary",
+  ],
+  format_fields: [
+    { key: "accent", label: "强调色", type: "color" },
+    { key: "line_height", label: "行高", type: "number", min: 1.2, max: 2.2, step: 0.05 },
+  ],
+  style_fields: [
+    { key: "accent", label: "强调色", type: "color" },
+    { key: "text_color", label: "正文颜色", type: "color" },
+    { key: "muted_color", label: "辅助文字颜色", type: "color" },
+    { key: "line_color", label: "分隔线颜色", type: "color" },
+    {
+      key: "font_scale_adjust",
+      label: "字号系数",
+      type: "number",
+      min: 0.88,
+      max: 1.16,
+      step: 0.02,
+    },
+    { key: "line_height", label: "行高", type: "number", min: 1.2, max: 2.2, step: 0.05 },
+    { key: "page_padding", label: "页边距（mm）", type: "number", min: 0, max: 26, step: 0.1 },
+    { key: "section_gap", label: "区块间距", type: "number", min: 0.6, max: 2.2, step: 0.1 },
+    {
+      key: "font_family",
+      label: "字体风格",
+      type: "select",
+      options: [{ value: "sans", label: "无衬线" }],
+    },
+    { key: "column_count", label: "正文栏数", type: "number", min: 1, max: 2, step: 1 },
+  ],
+  format_presets: [
+    { name: "standard", label: "标准", description: "不改动样式模板自身的版式", config: {} },
+    {
+      name: "compact",
+      label: "紧凑",
+      description: "行高与间距收紧、页边距变小，适合想压进一页",
+      config: { line_height: 1.45, page_padding: 11, section_gap: 0.85 },
+    },
+  ],
+  defaults: { template: "classic", font_scale: "standard", page_limit: 1, format_name: "" },
+  // 版式默认值：行距控件在"没设过覆盖"时显示这里的值（后端由 TEMPLATE_LAYOUT_DEFAULTS 下发）。
+  template_layouts: {
+    classic: { line_height: 1.7, padding_mm: 14, section_gap: 1.3 },
+    modern: { line_height: 1.72, padding_mm: 14, section_gap: 1.25 },
+    compact: { line_height: 1.55, padding_mm: 12, section_gap: 0.9 },
+  },
+  pdf_direct_available: true,
+  market: [],
+};
+
+export const DEFAULT_LAYOUT: ResumeLayout = {
+  template: "classic",
+  format_name: "",
+  page_limit: 1,
+  font_scale: "standard",
+};

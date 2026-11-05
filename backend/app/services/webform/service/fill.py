@@ -1,0 +1,320 @@
+# SPDX-License-Identifier: Apache-2.0
+"""填充互斥与执行（_fill_lock / is_filling / apply_fill / _rebuild_mapping）与字段目录查询。"""
+from __future__ import annotations
+
+import threading
+import time
+from collections.abc import Iterable
+from dataclasses import replace
+from typing import Any
+from urllib.parse import urlsplit
+
+from sqlalchemy.orm import Session
+
+from ...browser.cdp_client import CdpClient
+from .._base import WebFormBadRequest, WebFormConflict
+from ..engine import ApplyOutcome, Control, FieldMapping, FormEngine
+from ..engine.recovery import REASON_VALUE_MISMATCH
+from ..extra_profile import CUSTOM_GROUP, custom_fields_of
+from ..field_types import normalize_group_id
+from ..fields import FORM_FIELDS, SOURCE_EXTRA
+from ..matching import (
+    date_component,
+    format_date,
+    meaningful_options,
+    resolve_select_option,
+)
+from ..repeated_fields import field_key_for_block, split_repeated_key
+from ..session import Snapshot
+from .models import FillSelection
+
+# 同一时刻只允许一次填充：两个请求交错会往同一个页面里写两套值。
+_fill_lock = threading.Lock()
+
+# 批量填充收尾时等多久再复读"已填"的控件（见 ``_downgrade_reverted``）。
+# **默认关闭**（``apply_fill(settle_recheck=...)`` 的默认值是 0）：逐项模式与离线测试
+# 都不该为它付等待；整页填充那条路显式传这个常量。测试里不要传非零值。
+SETTLE_RECHECK_SECONDS = 1.2
+
+
+def _page_matches(snapshot_url: str, current_url: str) -> bool:
+    """同一页判定：host、路径、查询串一致（忽略 scheme 与 #fragment）。
+
+    切标签页 / 跳到别的步骤页都会改 path 或 query；scheme 升级（http→https）与页内
+    锚点跳动不构成"换页"。
+    """
+    a, b = urlsplit(snapshot_url), urlsplit(current_url)
+    return (a.netloc, a.path.rstrip("/"), a.query) == (b.netloc, b.path.rstrip("/"), b.query)
+
+
+def ensure_same_page(client: CdpClient, snapshot: Snapshot) -> None:
+    """填充前确认页面还是读取快照时的那一页；已经切走则拒绝写入（409）。
+
+    旧快照在换了标签页 / 页面跳转后仍能按索引"写入"，但写的已是另一张表单——结果就是
+    一批 unverified。这里在写入前读一次当前地址（与快照创建用同一个 ``rf:page-info``
+    探针），host 或整 URL（path+query）不一致就显式报「页面已切换，请重新读取表单」。
+
+    两类情况**不拦**、保持既有行为：
+    - 旧快照没有 URL（live 逐项 / 部分离线测试替身直接构造 Snapshot）；
+    - 当前地址读不出来（页面/浏览器已死）——随后真正的写入调用会以同样的原因失败，
+      用户看到的错误不会比现在更含糊；这里只拦"读得到、但不是那一页"。
+    """
+    snapshot_url = (snapshot.url or "").strip()
+    if not snapshot_url:
+        return
+    from .preview import _PAGE_INFO_SCRIPT  # 延迟导入：preview 传递依赖本模块，模块级会成环
+
+    try:
+        payload = client.evaluate(_PAGE_INFO_SCRIPT)
+    except Exception:  # noqa: BLE001 - 读不到当前地址交给写入路径自然失败
+        return
+    current_url = str(payload.get("url") or "").strip() if isinstance(payload, dict) else ""
+    if not current_url or _page_matches(snapshot_url, current_url):
+        return
+    raise WebFormConflict("页面已切换，请重新读取表单")
+
+
+def is_filling() -> bool:
+    """当前是否有填充正在进行（供投递链路做互斥）。"""
+    return _fill_lock.locked()
+
+
+def is_apply_running() -> bool:
+    """投递/采集任务是否在跑。
+
+    两条链路会驱动**同一个受控浏览器窗口**，同时跑会互相抢页面。这里做单向检查
+    （填充前看投递），反向的那一半在 ``apply/_tasks.py`` 里（建批次前看填充）——
+    两套互斥各管一头，两边都要有才闭合。**残留风险**：先点「开始投递」再立刻点「填充」
+    时，检查通过后投递线程才起来。窗口极小但存在，所以文档里也写明了不要同时用。
+    """
+    from ...apply.task_runner import get_task_runner
+
+    try:
+        return get_task_runner().is_running()
+    except Exception:  # noqa: BLE001 - 取不到运行器不该拦住填充
+        return False
+
+
+def list_fields() -> dict[str, Any]:
+    """字段目录（供界面渲染录入表单）。"""
+    groups: list[str] = []
+    for field_item in FORM_FIELDS:
+        group_id = normalize_group_id(field_item.group)
+        if group_id not in groups:
+            groups.append(group_id)
+    return {
+        "fields": [
+            {
+                "key": field_item.key,
+                "label": field_item.label,
+                "group": normalize_group_id(field_item.group),
+                "kind": field_item.kind,
+                "options": list(field_item.options),
+                "sensitive": field_item.sensitive,
+            }
+            for field_item in FORM_FIELDS
+        ],
+        "groups": groups,
+    }
+
+
+def list_extra_fields(db: Session | None = None) -> dict[str, Any]:
+    """「网申资料」要用户自己录的那批字段（``source="extra"``）。
+
+    与 ``list_fields()`` 共用同一份目录，只是筛出 ``extra`` 那一批——**加字段仍然只改
+    ``fields.py`` 一处**，两个界面同时生效。
+
+    ``db`` 给了就**再把库里攒出来的自定义字段并进去**（``CUSTOM_`` 前缀那些）。它们没有
+    目录条目，但用户记下了就得在「网申资料」里看得见、改得掉、删得掉——只存在库里而界面
+    不显示，等于"记住了却找不着"，那比不记还糟。
+
+    自定义字段统一归到 ``自定义`` 那一组（放最后），``kind`` 给 ``text``：它们是用户在填表
+    时攒的，没有目录里那份"这是长文本还是电话"的信息。它们只在用户主动开启放宽模式时参与
+    受约束的文本匹配；普通模式保持保守。
+
+    **``自定义`` 组无条件出现在 ``groups`` 里**（字段清单仍然只含真实存在的 ``CUSTOM_``
+    行）。界面默认就要有这张空卡片——用户可以在里面加自定义字段；只在"已经有自定义字段"
+    时才给组，会让人以为没有这个功能。空组不产生任何字段，所以整份覆盖保存、识别与填充
+    链路都拿不到多余的东西。
+    """
+    groups: list[str] = []
+    for field_item in FORM_FIELDS:
+        if field_item.source != SOURCE_EXTRA:
+            continue
+        group_id = normalize_group_id(field_item.group)
+        if group_id not in groups:
+            groups.append(group_id)
+
+    fields: list[dict[str, Any]] = [
+        {
+            "key": field_item.key,
+            "label": field_item.label,
+            "group": normalize_group_id(field_item.group),
+            "kind": field_item.kind,
+            "options": list(field_item.options),
+            "sensitive": field_item.sensitive,
+            "matchable": True,
+        }
+        for field_item in FORM_FIELDS
+        if field_item.source == SOURCE_EXTRA
+    ]
+
+    if db is not None:
+        fields.extend(custom_fields_of(db, groups))
+
+    if CUSTOM_GROUP not in groups:
+        groups.append(CUSTOM_GROUP)
+
+    return {"fields": fields, "groups": groups}
+
+
+def apply_fill(
+    client: CdpClient,
+    snapshot: Snapshot,
+    selections: Iterable[FillSelection],
+    *,
+    engine: FormEngine | None = None,
+    timeout: float | None = None,
+    settle_recheck: float | None = None,
+) -> list[ApplyOutcome]:
+    """按用户确认过的选择写入页面。
+
+    ``selections`` 里出现快照中不存在的控件索引一律拒绝——那说明前端的预览与后端这份
+    快照对不上了，继续写就是往未知的框里填值。
+
+    ``settle_recheck`` **不给默认值（None = 不复读）**：给了秒数就在整批写完后等这么久
+    再回读一遍"已填"的控件——有些组件会事后重渲染、把外来值还原（字节页实测：意向城市框
+    当场回读有值，几秒后组件把它清空）。整页填充那条路显式传 ``SETTLE_RECHECK_SECONDS``；
+    逐项模式与离线测试不传，保持即时反馈且不吃墙钟。
+    """
+    ensure_same_page(client, snapshot)
+    engine = engine or FormEngine()
+    by_index = {control.index: control for control in snapshot.controls}
+    mappings: list[FieldMapping] = []
+    for selection in selections:
+        control = by_index.get(selection.index)
+        if control is None:
+            raise WebFormBadRequest(
+                f"页面上的第 {selection.index + 1} 个控件已不在这次读取的表单里，请重新读取"
+            )
+        mapping = _rebuild_mapping(control, selection.field, selection.value)
+        if mapping is None:
+            # 值对不上页面的选项（例如联动下拉换了内容）——跳过并如实说明，不硬填。
+            continue
+        mappings.append(mapping)
+    # 按 DOM 顺序写入：级联/依赖控件（省份先于城市、父下拉先于子下拉）只有在父级
+    # 先选中时子级的选项才会出现。放宽模式的代点控件尤其依赖这一点。对纯文本控件
+    # 这只是把写入顺序定死，不改变任何一条的结果。
+    mappings.sort(key=lambda mapping: mapping.control.index)
+
+    if not _fill_lock.acquire(blocking=False):
+        raise WebFormConflict("另一次填充正在进行，请稍候")
+    try:
+        outcomes = engine.apply(client, mappings, timeout=timeout)
+    finally:
+        _fill_lock.release()
+    if settle_recheck is not None:
+        outcomes = _downgrade_reverted(client, outcomes, mappings, settle_recheck)
+    return outcomes
+
+
+def _downgrade_reverted(
+    client: CdpClient,
+    outcomes: list[ApplyOutcome],
+    mappings: list[FieldMapping],
+    delay: float,
+) -> list[ApplyOutcome]:
+    """复读一遍"已填"的控件，把被页面事后还原的降级为未验证。
+
+    这类"伪已填"当场回读是抓不到的：写入立刻回读有值，组件随后自己重渲染又清掉。
+    批量填充在收尾多花一次等待（默认 1.2 秒）把这件事说清楚，比让用户对着一个
+    看起来填好了、其实空着的框提交要好。
+    """
+    by_index = {mapping.control.index: mapping for mapping in mappings}
+    filled_indexes = {
+        outcome.index
+        for outcome in outcomes
+        if outcome.status == "filled" and outcome.index in by_index
+    }
+    if not filled_indexes:
+        return outcomes
+    time.sleep(delay)
+    revised: list[ApplyOutcome] = []
+    for outcome in outcomes:
+        if outcome.index not in filled_indexes:
+            revised.append(outcome)
+            continue
+        mapping = by_index[outcome.index]
+        try:
+            payload = FormEngine._read_back_payload(client, mapping, timeout=None)
+        except Exception:  # noqa: BLE001 - 复读失败就保留原判定，别把成功改成失败
+            revised.append(outcome)
+            continue
+        if FormEngine._judge(payload, mapping).status == "filled":
+            revised.append(outcome)
+        else:
+            revised.append(
+                replace(
+                    outcome,
+                    status="unverified",
+                    detail="填写后页面又把它还原了，这个框需要你在页面上自己选/填",
+                    reason=REASON_VALUE_MISMATCH,
+                )
+            )
+    return revised
+
+
+def _rebuild_mapping(control: Control, field_name: str, value: str) -> FieldMapping | None:
+    """把用户在预览里给的值重新整理成可写入的形状（下拉要重新落到某个选项上）。"""
+    text = (value or "").strip()
+    if not text:
+        return None
+    if control.type == "select":
+        resolution = resolve_select_option(control.options, text)
+        if (
+            resolution.status == "no_option"
+            and control.linked_select
+            and not meaningful_options(control.options)
+        ):
+            # 联动原生下拉在父级选中前只有占位项；保留映射，填充阶段会重新读取
+            # 当前 DOM 的选项，而不是把这条安全的延迟匹配误报成“资料没有”。
+            return FieldMapping(control=control, field=field_name, value=text, select=resolution)
+        if resolution.status != "matched":
+            return None
+        return FieldMapping(control=control, field=field_name, value=text, select=resolution)
+    if control.type in ("date", "month"):
+        resolution = format_date(text, kind=control.type)
+        if resolution.status != "matched":
+            return None
+        return FieldMapping(control=control, field=field_name, value=text, date=resolution)
+    # 「年 / 月 / 日」拆分组件（文本框形态）：AI 兜底或手动改值给的可能是完整日期
+    # （"2023-06"），写进「年」框的必须是属于组件的那部分（"2023"），而不是整串。
+    component = control.date_part()
+    if component:
+        component_value = date_component(text, component)
+        if component_value.status == "matched":
+            return FieldMapping(control=control, field=field_name, value=component_value.value)
+    return FieldMapping(control=control, field=field_name, value=text)
+
+
+def resolve_value_for(control: Control, field_name: str, data: dict[str, str]) -> str:
+    """资料里 ``field_name`` 的值，整理成**这个控件真正能接受的字符串**。
+
+    整理不出来时返回空串。两种情况要分得开，调用方靠"资料里到底有没有这一项"来区分：
+    资料里没有（用户还没填）／资料里有但这个框装不下（下拉没这个选项、日期解不出来）。
+
+    走的是 ``_rebuild_mapping``——**与用户手动改值、与真正写入时是同一条路径**，
+    所以"面板上显示的值"和"填进去的值"不可能对不上。
+    """
+    base_field, explicit_index = split_repeated_key(field_name)
+    dynamic_field = field_key_for_block(
+        base_field, control.block_family, control.block_index
+    )
+    lookup_key = field_name
+    if explicit_index is None and dynamic_field in data:
+        lookup_key = dynamic_field
+    value = (data.get(lookup_key) or data.get(field_name) or "").strip()
+    if not value:
+        return ""
+    mapping = _rebuild_mapping(control, lookup_key, value)
+    return mapping.write_value() if mapping is not None else ""

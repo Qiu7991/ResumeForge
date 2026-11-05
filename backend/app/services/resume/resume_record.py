@@ -1,0 +1,211 @@
+# SPDX-License-Identifier: Apache-2.0
+"""简历记录的落库与版式解析。
+
+这里收拢了简历生成 / 手写 / 导出 / 分享包共用的几段逻辑，避免它们散落在路由层：
+
+- ``save_record``：生成结果落库（流式与后台任务共用）。
+- ``record_format_config``：一份简历**实际生效**的版式配置（具名版式 + 覆盖）。
+  预览、导出、PDF、分享包都必须走这一个函数——各解析一次就会出现"预览收紧了、
+  导出的 PDF 没变"，而用户只在下载后才看得到。
+- ``resolved_format_name`` / ``resolved_style_name``：模板名按"能不能解析"归一，
+  自制模板按**用户起的名字**存，不能拿 ``template_spec`` 偷偷换成内置模板。
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
+from ...models.job import Job
+from ...models.resume import ResumeRecord
+from ...schemas.job import JobOut
+from ...schemas.resume import ResumeContent
+from ...schemas.resume_document import DocumentValidationError
+from ...schemas.resume_generation import RESUME_MODES, UNLIMITED_PAGE_LIMIT, ResumeLanguage
+from ..exporter import normalize_page_limit
+from . import document_io
+from .document_conversion_types import ConversionError
+from .document_view import header_text
+from .resume_sections import default_section_order_config, persistable_format_config
+from .resume_template_store import (
+    resolve_format_config,
+    resolve_style_config,
+    resolve_style_template,
+)
+from .resume_templates import (
+    DEFAULT_FONT_SCALE,
+    DEFAULT_TEMPLATE,
+    font_scale_spec,
+    validated_format_config,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def record_format_config(db: Session, record: ResumeRecord) -> dict:
+    """这份简历实际生效的版式配置：具名版式 + 只属于它的覆盖。"""
+    config = dict(validated_format_config(resolve_style_config(db, record.template)))
+    config.update(resolve_format_config(db, record.format_name))
+    config.update(validated_format_config(record.format_config))
+    return config
+
+
+def resolved_format_name(db: Session, name: str) -> str:
+    """版式名只有在能解析出配置时才存进记录；否则存空串（用模板默认的版式）。"""
+    key = (name or "").strip()
+    if not key:
+        return ""
+    return key if resolve_format_config(db, key) else ""
+
+
+def resolved_style_name(db: Session, name: str) -> str:
+    """模板名：内置的存规范化名字，自制模板存**用户起的名字**。"""
+    key = (name or "").strip()
+    if not key:
+        return DEFAULT_TEMPLATE
+    builtin_name, user_html = resolve_style_template(db, key)
+    return key if user_html else builtin_name
+
+
+def build_manual_title(content: ResumeContent | dict, job: Job | None, requested_title: str) -> str:
+    """生成手写简历默认标题；允许用户传入标题以便在简历中心区分版本。"""
+    title = requested_title.strip()
+    if title:
+        return title[:256]
+    name = (header_text(content, "name") if isinstance(content, dict) else content.name).strip()[:48] or "未命名"
+    company = (job.company.strip() if job else "").strip()[:80]
+    job_title = (job.title.strip() if job else "").strip()[:80]
+    target = "-".join(part for part in (company, job_title) if part) or "自定义简历"
+    timestamp = datetime.now().strftime("%Y%m%d%H%M")
+    return f"{name}-{target}-{timestamp}"[:256]
+
+
+def save_record(
+    db: Session,
+    content: dict,
+    warnings: list[str],
+    job: JobOut | None,
+    raw: str,
+    model: str,
+    enhancement_enabled: bool,
+    enhancement_level: str,
+    source: str = "ai",
+    requested_title: str = "",
+    template: str = DEFAULT_TEMPLATE,
+    format_name: str = "",
+    page_limit: int = 1,
+    font_scale: str = DEFAULT_FONT_SCALE,
+    custom_instruction: str = "",
+    coverage_notes: list[dict] | None = None,
+    rationale: str = "",
+    fact_annotations: list[dict] | None = None,
+    format_config: dict | None = None,
+    document_mode: str = "resume",
+    context_snapshot: dict | None = None,
+    commit: bool = True,
+    language: ResumeLanguage = "zh-CN",
+    document: dict | None = None,
+) -> ResumeRecord:
+    """生成结果落库（在流结束后的同一请求内调用）。
+
+    ``job is None`` 是通用简历：没有公司与岗位，``job_title`` 沿用正文里的求职意向
+    （与 ``POST /manual`` 在无岗位时已有的约定一致），标题回退到「…-通用简历-时间戳」。
+    ``coverage_notes`` / ``rationale`` 是生成时的筛选说明与生成说明（可为空：手写
+    简历、旧测试调用方都没有它们）；``fact_annotations`` 是事实来源标注（RF-13，
+    可为空：手写/旧调用方）。
+
+    ``format_config`` 是生成时就定下来的版式覆盖（板块顺序、字号系数等）。必须在这里
+    过一遍 ``validated_format_config``：请求体里的这个字段只做了形状校验（见
+    ``schemas/resume.py``），未知键与越界数值都要在落库前丢掉——否则一份"存了却渲染
+    时不生效"的配置会让用户以为自己的调整丢了。
+
+    落库前还补一道 **P0-5 的兜底**：``section_order`` 缺键时用「我的资料」的顺序物化一次
+    （``default_section_order_config``，等于内置默认则不写键）。放在这里而不是各自的
+    调用点，是因为生成有两条链路（SSE 与后台任务 runner）都走本函数，而"卡片显示的顺序
+    必须等于渲染顺序"这条不变量对两条链路同样成立；前端已经写好快照时这个键存在，
+    **原样保留、绝不覆盖**。
+
+    ``document_mode`` 是本次生成的文档形态（W14：普通简历 1–3 页 / 长 CV 1–10 页）；
+    页数上限按模式夹紧，**不自动切换模式**——缺省 resume 与旧行为逐字一致。
+
+    ``context_snapshot`` 是本次生成冻结的职业场景上下文（A5）：server-owned 独立列，
+    不塞进 content / format_config / render_context；None = 未使用（旧调用方不变）。
+    """
+    name = str(content.get("name") or "简历").strip()[:48]
+    timestamp = datetime.now().strftime("%Y%m%d%H%M")
+    merged_config = dict(format_config or {})
+    if "section_order" not in merged_config:
+        merged_config = {**(default_section_order_config(db) or {}), **merged_config}
+    if job is None:
+        company = ""
+        job_title = str(content.get("job_intent") or "").strip()[:128]
+        title = f"{name}-通用简历-{timestamp}"
+    else:
+        company = (job.company.strip() or "未命名公司")[:80]
+        job_title = job.title.strip()[:80]
+        title = f"{name}-{company}-{job_title}-{timestamp}"
+    title = requested_title.strip()[:256] or title
+    mode = document_mode if document_mode in RESUME_MODES else "resume"
+    # 需求 7B：``0`` = 「不限篇幅」，是**语义值**，原样落库。交给 ``normalize_page_limit``
+    # 会被折成渲染保护上限 10，于是"用户选了不限"在库里变成"最多 10 页"——读回来、
+    # 存档、重放全都按 10 页走，用户再也找不回自己选的那一项。只有真正的页数才夹紧。
+    stored_page_limit = (
+        UNLIMITED_PAGE_LIMIT
+        if page_limit is not None and int(page_limit) == UNLIMITED_PAGE_LIMIT
+        else normalize_page_limit(page_limit, mode)
+    )
+    # 落库的永远是 v2：生成链路内部仍按 v1（模型只写值），在唯一落库点一次性转换。
+    # 标题/岗位意图在上面已按 v1 视图取过，不受影响；自定义字段位置来自当前方案定义。
+    # document 参数供 SSE 复用**同一个转换结果**（done 事件与落库内容 id 一致）。
+    if document is None:
+        try:
+            document = document_io.prepare_document_for_save(
+                content,
+                language=language,
+                format_config=merged_config,
+                custom_fields=document_io.custom_field_definitions(db),
+            )
+        except (ConversionError, DocumentValidationError) as exc:
+            raise HTTPException(status_code=422, detail=f"生成内容无法落库：{exc}") from exc
+    record = ResumeRecord(
+        title=title,
+        job_id=job.id if job is not None else None,
+        job_title=job_title,
+        company=company,
+        content=document,
+        warnings=warnings,
+        source=source,
+        model=model,
+        enhancement_enabled=enhancement_enabled,
+        enhancement_level=enhancement_level,
+        template=resolved_style_name(db, template),
+        format_name=resolved_format_name(db, format_name),
+        page_limit=stored_page_limit,
+        document_mode=mode,
+        font_scale=font_scale_spec(font_scale)["name"],
+        # T7：section_order 只服务本次 v1→v2 转换（上面已用它排出 document.sections），
+        # 不再落库——v2 的分区顺序唯一真相是 document.sections。
+        format_config=validated_format_config(persistable_format_config(merged_config)),
+        custom_instruction=custom_instruction.strip()[:2000],
+        coverage_notes=coverage_notes or [],
+        rationale=rationale or "",
+        fact_annotations=fact_annotations or [],
+        context_snapshot=context_snapshot,
+        language=language,
+    )
+    db.add(record)
+    if commit:
+        db.commit()
+        db.refresh(record)
+        logger.info(
+            "简历生成完成 record_id=%s model=%s job=%s",
+            record.id,
+            model,
+            job.title if job is not None else "通用简历",
+        )
+    else:
+        db.flush()
+    return record

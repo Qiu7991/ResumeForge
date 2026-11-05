@@ -1,0 +1,304 @@
+# SPDX-License-Identifier: Apache-2.0
+"""简历 AI 编辑端点（域⑥）：岗位化修改建议与按指令修订。
+
+从原 ``api/resumes.py`` 原样搬运。**patch 锚点契约**：测试通过
+``monkeypatch.setattr("app.api.resumes.create_provider" / "…get_llm_config", …)`` 在**包
+命名空间**替换这两个符号，因此本模块对它们的读取必须是调用期的 ``_api.<name>`` 属性
+访问（``from app.api import resumes as _api``），**禁止** from-import 具名绑定。
+"""
+
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+
+from app.api import resumes as _api  # patch 锚点：调用期从包命名空间读取
+
+from ...database import get_db
+from ...models.job import Job
+from ...models.resume import ResumeRecord
+from ...schemas.job import JobOut
+from ...schemas.resume import (
+    ResumeOut,
+    ResumeReviseRequest,
+    ResumeSuggestionsOut,
+)
+from ...schemas.resume_append import (
+    AppendProfileEntriesOut,
+    AppendProfileEntriesRequest,
+)
+from ...services import trash
+from ...services.llm import usage_ledger
+from ...services.llm.base import LLMError
+from ...services.profile.ai_profile import load_ai_profile
+from ...services.resume import document_io, fact_locks
+from ...services.resume.document_identity import sanitize_document_ids
+from ...services.resume.document_revision import (
+    REVISION_NOT_APPLIED_CODE,
+    RevisionNotApplied,
+)
+from ...services.resume.document_save import (
+    RevisionConflict,
+    revision_conflict_response,
+    save_ai_revision,
+)
+from ...services.resume.resume_profile_append import (
+    AppendError,
+    append_profile_entries,
+)
+from ...services.resume.resume_revision import revise_resume
+from ...services.resume.resume_suggestions import generate_suggestions
+from ._shared import _to_resume_out
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+@router.post("/{resume_id}/suggestions", response_model=ResumeSuggestionsOut)
+async def suggest_resume_edits(resume_id: int, db: Session = Depends(get_db)):
+    """按需生成当前简历针对关联岗位的修改建议，不修改简历内容。"""
+    record = db.get(ResumeRecord, resume_id)
+    if record is None or trash.is_deleted(record):
+        raise HTTPException(status_code=404, detail="简历记录不存在或已被删除")
+    if record.job_id is None:
+        raise HTTPException(status_code=400, detail="这份简历没有关联的岗位，无法生成岗位化建议")
+    job = db.get(Job, record.job_id)
+    if job is None or trash.is_deleted(job):
+        raise HTTPException(status_code=400, detail="关联岗位已被删除，无法生成岗位化建议")
+
+    # 经包命名空间调用期读取，保住 test_resume_suggestions 对
+    # app.api.resumes.get_llm_config 的 patch 契约。
+    config = _api.get_llm_config(db)
+    if not config.base_url or not config.model:
+        raise HTTPException(status_code=400, detail="尚未配置大模型 API")
+    try:
+        # 建议也是"读我的资料"的 AI 功能：当前组 + 去隐藏（与匹配/助手同一口径）。
+        profile = load_ai_profile(db)
+        resume, _conversion = document_io.document_for_record(db, record)
+        job_out = JobOut.model_validate(job)
+        # 经包命名空间调用期读取，保住 test_resume_suggestions 对
+        # app.api.resumes.create_provider 的 patch 契约。
+        provider = _api.create_provider(config)
+        db.close()
+        suggestions = await generate_suggestions(
+            provider,
+            resume,
+            job_out,
+            profile,
+        )
+    except LLMError as exc:
+        logger.warning("简历岗位建议生成失败：%s", exc)
+        raise HTTPException(status_code=502, detail=f"生成修改建议失败：{exc}") from exc
+    except Exception as exc:  # noqa: BLE001 - 为用户提供可理解的失败提示
+        logger.exception("简历岗位建议发生内部错误")
+        raise HTTPException(status_code=502, detail="生成修改建议失败") from exc
+    return ResumeSuggestionsOut(
+        job_id=job.id,
+        job_title=job.title,
+        company=job.company,
+        suggestions=suggestions,
+    )
+
+
+REVISION_NOT_APPLIED_DETAIL = "模型没有执行这条修改要求，正文未改动"
+
+
+def _blocked_fields(
+    db: Session, record: ResumeRecord, instruction: str, targets: list[dict]
+) -> list[dict]:
+    """把"用户点名的事实值"与"这份简历上已有的事实锁"合并成一份可展示清单。
+
+    两路合并的原因：前者说明用户想改什么（模型没说，只能从要求里认出来），后者说明
+    服务端确实锁了什么。只给其中一路，用户都会觉得"列出来的不是我提的那一项"。
+    """
+    fields = list(targets)
+    seen = {str(item.get("path") or "") for item in fields}
+    for lock in fact_locks.list_fact_locks(db, record.id):
+        if not lock.locked_value or lock.locked_value not in instruction:
+            continue
+        if lock.path in seen:
+            continue
+        seen.add(lock.path)
+        fields.append(
+            {
+                "path": lock.path,
+                "label": lock.label or lock.field,
+                "value": lock.locked_value[:200],
+                "kind": lock.lock_kind,
+            }
+        )
+    return fields
+
+
+def _not_applied_response(fields: list[dict]) -> JSONResponse:
+    """「模型没有执行」的明确响应：409 + 业务码 + 被挡住的字段。
+
+    不能回 200：正文一个字都没改却报成功，用户无法判断是"被拦了"还是"没生效"。
+    """
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": REVISION_NOT_APPLIED_DETAIL,
+            "code": REVISION_NOT_APPLIED_CODE,
+            "blocked_fields": fields,
+        },
+    )
+
+
+@router.post("/{resume_id}/revise", response_model=ResumeOut)
+async def revise_existing_resume(
+    resume_id: int, payload: ResumeReviseRequest, db: Session = Depends(get_db)
+):
+    """按用户指令修订简历并更新当前记录。
+
+    指令为空 = 整体重新生成（事实口径不变，表达重写）；非空 = 只改提出的部分。
+    修订**不新建记录**：预览界面里的"这份简历"始终是同一条记录，用户不满意时
+    可以继续改或手动调整。旧的内容告警基于修订前的正文，一并清空。
+    """
+    record = db.get(ResumeRecord, resume_id)
+    if record is None or trash.is_deleted(record):
+        raise HTTPException(status_code=404, detail="简历记录不存在或已被删除")
+    job = db.get(Job, record.job_id) if record.job_id is not None else None
+    if record.job_id is not None and (job is None or trash.is_deleted(job)):
+        # 关联岗位被删不该挡住修订：修订只需要简历本身，岗位只是可选的上下文。
+        job = None
+
+    # 经包命名空间调用期读取，保住 test_resume_revision 对
+    # app.api.resumes.get_llm_config 的 patch 契约。
+    config = _api.get_llm_config(db)
+    if not config.base_url or not config.model:
+        raise HTTPException(status_code=400, detail="尚未配置大模型 API")
+    try:
+        resume, _conversion = document_io.document_for_record(db, record)
+        job_out = JobOut.model_validate(job) if job is not None else None
+        # 经包命名空间调用期读取，保住 test_resume_revision 对
+        # app.api.resumes.create_provider 的 patch 契约（FakeProvider 演练）。
+        provider = _api.create_provider(config)
+        # 这里**不**像建议接口那样先 close：修订要更新这条记录，模型返回后还要
+        # 用同一个 session 落库；先关再重取反而容易拿到过期的对象状态。
+        revised = await revise_resume(provider, resume, job_out, payload.instructions)
+    except RevisionNotApplied as exc:
+        # 模型回了一堆空 updates（或原值不动）——不能再当成"没什么要改的"落库并报成功。
+        logger.info("AI 修订未执行 record_id=%s fields=%s", resume_id, len(exc.targets))
+        return _not_applied_response(
+            _blocked_fields(db, record, payload.instructions, exc.targets)
+        )
+    except fact_locks.FactLockError as exc:
+        return fact_locks.fact_lock_conflict_response(exc.violations)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LLMError as exc:
+        logger.warning("简历修订失败：%s", exc)
+        raise HTTPException(status_code=502, detail=f"修订简历失败：{exc}") from exc
+    except Exception as exc:  # noqa: BLE001 - 为用户提供可理解的失败提示
+        logger.exception("简历修订发生内部错误")
+        raise HTTPException(status_code=502, detail="修订简历失败") from exc
+
+    # 模型可能回显或臆造对象标识；这里**丢弃不合法的**而不是 422——AI 不是可以回
+    # 错误码的客户端，整份修订因为一个 id 被拒会让用户白等一次生成。
+    sanitized = (
+        revised if isinstance(revised, dict) else sanitize_document_ids(revised.model_dump()) or {}
+    )
+
+    # W12 事实锁：AI 可以改表达，不能改姓名/机构/时间/数字/职责边界。校验在**落库前**
+    # 完成且是服务端硬校验（不是提示词约束）；有违规就一个字段都不写，返回 409 让
+    # 用户看见哪条被锁的值会被改动。翻译/片段插入/优化器走同一个门（enforce_ai_content）。
+    try:
+        fact_locks.enforce_ai_content(db, record, sanitized, old_content=resume)
+    except fact_locks.FactLockError as exc:
+        logger.info("AI 修订被事实锁拒绝 record_id=%s locks=%s", record.id, len(exc.violations))
+        return fact_locks.fact_lock_conflict_response(exc.violations)
+
+    # 模型调用期间**不持写事务**（到这里才第一次写库）：条件写 + 版本推进 + 清空
+    # 与正文绑定的告警/来源标注，全在 ``save_ai_revision`` 的同一条 UPDATE 里。
+    #
+    # ``base_revision`` 没命中（期间别处保存过）→ 409，这次模型结果**直接丢弃**：
+    # 既不覆盖别人刚存的正文，也不清掉那份正文的 ``fact_annotations``——"内容没换、
+    # 标注被清了"是比覆盖更难解释的状态。
+    try:
+        outcome = save_ai_revision(
+            db,
+            record_id=record.id,
+            # 落库的永远是 v2：修订算法产出的 v1 内容在写回前统一转换（带当前方案定义）。
+            content=document_io.prepare_document_for_save(
+                sanitized,
+                language=record.language,
+                format_config=record.format_config or {},
+                custom_fields=document_io.custom_field_definitions(db),
+            ),
+            fact_annotations=[],
+            base_revision=payload.base_revision,
+        )
+    except RevisionConflict as exc:
+        logger.warning(
+            "AI 修订因版本冲突被丢弃 record_id=%s current=%s", resume_id, exc.current_revision
+        )
+        return revision_conflict_response(exc.current_revision)
+    if outcome is None:  # 竞态：模型跑完这一行已被删
+        raise HTTPException(status_code=404, detail="简历记录不存在或已被删除")
+    # R04：记录本次调用的用量（未知 token 落 NULL，不臆造）；失败不影响已提交的正文。
+    # 修订是**唯一保留手工记账**的端点：它需要把 resume_id 关联到用量行；自动记账
+    # （中间件 + provider 上报）对 /revise 路径已关闭，避免同一次调用落两条。
+    # #35：手工记账也必须带上数据边界四字段——自动记账那条路已经从 ContextVar 读它们，
+    # 这里不显式传就会留下一条 input_scope 为空的空洞记录。
+    scope = usage_ledger.ambient_scope()
+    masked = scope.get("masked")
+    budget = scope.get("budget")
+    try:
+        usage_ledger.record_provider_usage(
+            db,
+            task=usage_ledger.TASK_RESUME_REVISE,
+            provider=provider,
+            resume_id=record.id,
+            input_scope=str(scope.get("input_scope") or ""),
+            masked=masked if isinstance(masked, bool) else None,
+            language=str(scope.get("language") or ""),
+            budget=budget if isinstance(budget, int) else None,
+        )
+    except Exception:  # noqa: BLE001 - 账本不能反向破坏保存成功的结果
+        logger.warning("模型用量记录失败 record_id=%s", record.id, exc_info=True)
+    return _to_resume_out(outcome.record, db)
+
+
+@router.post("/{resume_id}/append-profile-entries", response_model=AppendProfileEntriesOut)
+def append_entries_to_resume(
+    resume_id: int,
+    payload: AppendProfileEntriesRequest,
+    db: Session = Depends(get_db),
+):
+    """3-A：把覆盖度清单里点名的资料条目**确定性**补进目标分区（不调模型）。
+
+    与 ``/revise`` 的分工：修订协议只能改写**已有字段的值**，不能新增条目或分区，所以
+    "整条资料没写进简历"这一类要求必须走这里。做法见 ``resume_profile_append``：
+    按生成时同一份投影写出条目、按身份名去重、走 ``save_content`` 推进版本，再把刚补入
+    的几条从 ``coverage_notes`` 里摘掉（不清空 rationale / fact_annotations）。
+
+    同步端点：全程没有模型调用，纯本地读投影 + 一次条件写，不需要 async。
+    """
+    try:
+        outcome = append_profile_entries(
+            db,
+            record_id=resume_id,
+            section_key=payload.section_key,
+            entry_ids=payload.entry_ids,
+            expected_revision=payload.base_revision,
+        )
+    except AppendError as exc:
+        # 可解释的失败（资料已删除 / 组不匹配 / 分区不在当前组 / 结构校验失败）：
+        # 回业务码而不是 500，前端才能给出"去制作台"或"切回资料组"的具体引导。
+        logger.info(
+            "补入资料条目被拒绝 record_id=%s code=%s detail=%s", resume_id, exc.code, exc.detail
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail, "code": exc.code},
+        )
+    except RevisionConflict as exc:
+        return revision_conflict_response(exc.current_revision)
+    return AppendProfileEntriesOut(
+        resume=_to_resume_out(outcome.record, db),
+        appended=outcome.appended,
+        skipped=outcome.skipped,
+    )

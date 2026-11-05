@@ -1,0 +1,390 @@
+// SPDX-License-Identifier: Apache-2.0
+"use strict";
+
+// Probes for desktop/lib/data-migration.js (ADR-0004 legacy-data migration).
+//
+// Pure fs + injected-dialog tests: no Electron, no real backend, no network.
+// Covered:
+//   1. detectMigrationState: legacy db present/new empty -> needs; no legacy
+//      data / new db / migrated marker -> skip.
+//   2. Successful migration: full file-set + SHA-256 verification, marker
+//      contents, untouched legacy copy, backup sibling, no leftover temp.
+//   3. User decline: nothing moved, no marker, backend runs legacy (null).
+//   4. Verification failure (injected corrupt copy): temp cleaned up, no
+//      marker, legacy data intact, error surfaced.
+//   5. Copy-phase failure (injected throwing copy): same safety properties.
+//   6. Idempotency: second call after a successful migration skips without
+//      prompting again.
+
+const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+const { test } = require("node:test");
+const { makeTempRoot, sha256, writeRel, relInventory, hashAll } = require("./testkit");
+
+const {
+  DATABASE_FILENAME,
+  MARKER_FILENAME,
+  MIGRATED_AWAY_FILENAME,
+  detectMigrationState,
+  performMigration,
+  maybeMigrateUserData,
+} = require("../lib/data-migration");
+
+// A realistic legacy payload-era data dir: database + WAL/SHM sidecars,
+// user_files (nested), datasets (with .trash), plus misc dirs from config.py.
+function makeLegacyData(dir) {
+  writeRel(dir, DATABASE_FILENAME, "sqlite-main-page-".repeat(40));
+  writeRel(dir, `${DATABASE_FILENAME}-wal`, "wal-frames-".repeat(16));
+  writeRel(dir, `${DATABASE_FILENAME}-shm`, "shm-index-".repeat(8));
+  writeRel(dir, "user_files/photo.png", "png-bytes-".repeat(30));
+  writeRel(dir, "user_files/docs/note.txt", "user note");
+  writeRel(dir, "datasets/abc123.db", "dataset-db-".repeat(50));
+  writeRel(dir, "datasets/abc123.json", '{"id":"abc123"}');
+  writeRel(dir, "datasets/.trash/old.db", "trashed-dataset");
+  writeRel(dir, "logs/backend.log", "log line\n");
+  writeRel(dir, "captures/page.html", "<html>sample</html>");
+}
+
+function fixtureDirs(root, label) {
+  const oldDataDir = path.join(root, "payload", "backend", "data");
+  const newDataDir = path.join(root, "userdata", label, "data");
+  makeLegacyData(oldDataDir);
+  return { oldDataDir, newDataDir };
+}
+
+const FIXED_NOW = "2026-10-13T08:30:00.000Z";
+
+// --- 1. detection ----------------------------------------------------------------
+
+test("detect: legacy db + empty target -> needs-migration", () => {
+  const root = makeTempRoot("detect-needs");
+  try {
+    const { oldDataDir, newDataDir } = fixtureDirs(root, "new");
+    assert.deepStrictEqual(detectMigrationState(oldDataDir, newDataDir), {
+      status: "needs-migration",
+      reason: null,
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detect: no legacy data / new db exists / marker present -> skip", () => {
+  const root = makeTempRoot("detect-skip");
+  try {
+    const oldDataDir = path.join(root, "old");
+    const newDataDir = path.join(root, "new");
+
+    // Fresh install: nothing under the legacy location.
+    fs.mkdirSync(oldDataDir, { recursive: true });
+    assert.deepStrictEqual(detectMigrationState(oldDataDir, newDataDir), {
+      status: "skip",
+      reason: "no-legacy-data",
+    });
+
+    // Target already holds a database (migrated or manually copied).
+    makeLegacyData(oldDataDir);
+    writeRel(newDataDir, DATABASE_FILENAME, "already-there");
+    assert.deepStrictEqual(detectMigrationState(oldDataDir, newDataDir), {
+      status: "skip",
+      reason: "new-data-exists",
+    });
+
+    // Migrated marker + database in place -> done, never re-prompt.
+    fs.rmSync(newDataDir, { recursive: true, force: true });
+    writeRel(newDataDir, MARKER_FILENAME, "{}");
+    writeRel(newDataDir, DATABASE_FILENAME, "already-there");
+    assert.deepStrictEqual(detectMigrationState(oldDataDir, newDataDir), {
+      status: "skip",
+      reason: "already-migrated",
+    });
+
+    // RR-06: a marker whose database is GONE is not "already migrated". With
+    // the legacy copy still around the migration is offered again (nothing was
+    // lost); with nothing anywhere it fails closed instead of letting the app
+    // create an empty database where real data used to live.
+    fs.rmSync(path.join(newDataDir, DATABASE_FILENAME));
+    assert.deepStrictEqual(detectMigrationState(oldDataDir, newDataDir), {
+      status: "needs-migration",
+      reason: "marker-without-database",
+    });
+    fs.rmSync(oldDataDir, { recursive: true, force: true });
+    assert.deepStrictEqual(detectMigrationState(oldDataDir, newDataDir), {
+      status: "inconsistent",
+      reason: "marker-without-database",
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- 2. successful migration -------------------------------------------------------
+
+test("migration success: full copy verified, marker written, legacy copy untouched", async () => {
+  const root = makeTempRoot("migrate-ok");
+  try {
+    const { oldDataDir, newDataDir } = fixtureDirs(root, "new");
+    const legacyBefore = hashAll(oldDataDir);
+
+    const confirmCalls = [];
+    const result = await maybeMigrateUserData({
+      oldDataDir,
+      newDataDir,
+      showConfirm: async (details) => {
+        confirmCalls.push(details);
+        return true;
+      },
+      showError: async () => assert.fail("showError must not fire on success"),
+      now: () => FIXED_NOW,
+      log: () => {},
+    });
+
+    assert.strictEqual(result.outcome, "migrated");
+    assert.strictEqual(result.userDataDir, newDataDir);
+    assert.deepStrictEqual(confirmCalls, [
+      { from: oldDataDir, to: newDataDir, reason: null },
+    ]);
+
+    // The new location holds exactly the legacy file set, byte-identical
+    // (plus the marker, which is not part of the migrated content; the legacy
+    // dir in turn gains the archival marker, which is not user content).
+    const legacyInventory = relInventory(oldDataDir).filter(
+      (rel) => rel !== MIGRATED_AWAY_FILENAME,
+    );
+    assert.deepStrictEqual(
+      relInventory(newDataDir).filter((rel) => rel !== MARKER_FILENAME),
+      legacyInventory,
+    );
+    for (const rel of legacyInventory) {
+      assert.strictEqual(
+        sha256(path.join(newDataDir, rel)),
+        sha256(path.join(oldDataDir, rel)),
+        `content must match for ${rel}`,
+      );
+    }
+
+    // Marker: timestamp + both paths, sitting inside the new data dir.
+    const marker = JSON.parse(fs.readFileSync(path.join(newDataDir, MARKER_FILENAME), "utf-8"));
+    assert.strictEqual(marker.migratedAt, FIXED_NOW);
+    assert.strictEqual(marker.from, oldDataDir);
+    assert.strictEqual(marker.to, newDataDir);
+
+    // Archival marker inside the LEGACY dir: the NSIS rescue hook reads it on the
+    // next upgrade to tell "already migrated" from "still the live data".
+    const away = JSON.parse(
+      fs.readFileSync(path.join(oldDataDir, MIGRATED_AWAY_FILENAME), "utf-8"),
+    );
+    assert.strictEqual(away.migratedAt, FIXED_NOW);
+    assert.strictEqual(away.to, newDataDir);
+    assert.match(away.backup, /pre-migration/, "the marker must point at the backup");
+
+    // Backup sits under the user-writable tree (sibling of the data dir), NOT
+    // inside the install payload where a read-only install would fail (RR-06).
+    const backupDir = path.join(
+      path.dirname(newDataDir),
+      "backups",
+      "pre-migration-2026-10-13T08-30-00-000Z",
+    );
+    assert.ok(fs.existsSync(backupDir), "backup must exist under the user data tree");
+    assert.strictEqual(
+      fs.existsSync(`${oldDataDir}.pre-migration-2026-10-13T08-30-00-000Z`),
+      false,
+      "the backup must not land next to the (possibly read-only) legacy dir",
+    );
+    // Backup == the legacy tree as it was BEFORE the migration: it must not carry
+    // the archival marker (written only after a successful migration).
+    assert.deepStrictEqual(
+      relInventory(backupDir).sort(),
+      relInventory(oldDataDir)
+        .filter((rel) => rel !== MIGRATED_AWAY_FILENAME)
+        .sort(),
+    );
+    assert.strictEqual(
+      fs.readdirSync(path.dirname(newDataDir)).filter((n) => n.includes(".migrating-")).length,
+      0,
+      "no temp dir may survive a successful migration",
+    );
+
+    // The legacy copy is untouched apart from the archival marker the migration is
+    // required to leave behind (ADR: nothing is ever cleaned up here).
+    const legacyAfter = hashAll(oldDataDir);
+    const { [MIGRATED_AWAY_FILENAME]: _awayMarker, ...legacyContent } = legacyAfter;
+    assert.deepStrictEqual(legacyContent, legacyBefore);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- 3. user declines ----------------------------------------------------------------
+
+test("user decline: nothing migrated, no marker, backend keeps the legacy location", async () => {
+  const root = makeTempRoot("migrate-declined");
+  try {
+    const { oldDataDir, newDataDir } = fixtureDirs(root, "new");
+    const legacyBefore = hashAll(oldDataDir);
+
+    const result = await maybeMigrateUserData({
+      oldDataDir,
+      newDataDir,
+      showConfirm: async () => false,
+      showError: async () => assert.fail("decline is not an error"),
+      now: () => FIXED_NOW,
+      log: () => {},
+    });
+
+    assert.strictEqual(result.outcome, "declined");
+    assert.strictEqual(result.userDataDir, null, "null -> no RF_DATA_DIR injected");
+    assert.strictEqual(fs.existsSync(newDataDir), false, "target must not be created");
+    assert.deepStrictEqual(hashAll(oldDataDir), legacyBefore);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- 4. verification failure ----------------------------------------------------------
+
+test("verification failure: temp cleaned, no marker, legacy data intact, error shown", async () => {
+  const root = makeTempRoot("migrate-verify-fail");
+  try {
+    const { oldDataDir, newDataDir } = fixtureDirs(root, "new");
+    const legacyBefore = hashAll(oldDataDir);
+    const corruptRel = path.join("datasets", "abc123.db");
+
+    // Corrupt exactly one file while copying INTO the temp dir (the backup
+    // and legacy copies are left alone); verification must catch it.
+    const copyFileFn = (src, dest) => {
+      if (dest.includes(".migrating-") && dest.endsWith(corruptRel)) {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.writeFileSync(dest, "corrupted-by-injection");
+        return;
+      }
+      fs.copyFileSync(src, dest);
+    };
+
+    const errorMessages = [];
+    const result = await maybeMigrateUserData({
+      oldDataDir,
+      newDataDir,
+      showConfirm: async () => true,
+      showError: async (title, message) => errorMessages.push({ title, message }),
+      now: () => FIXED_NOW,
+      log: () => {},
+      copyFileFn,
+    });
+
+    assert.strictEqual(result.outcome, "failed");
+    assert.strictEqual(result.userDataDir, null, "backend must fall back to the legacy location");
+    assert.strictEqual(
+      fs.readdirSync(path.dirname(newDataDir)).filter((n) => n.includes(".migrating-")).length,
+      0,
+      "the half product must be rolled back",
+    );
+    assert.strictEqual(fs.existsSync(path.join(newDataDir, MARKER_FILENAME)), false,
+      "a failed migration must not write the marker");
+    assert.deepStrictEqual(hashAll(oldDataDir), legacyBefore, "legacy data must be untouched");
+    assert.strictEqual(errorMessages.length, 1, "the user must see the failure");
+    assert.match(errorMessages[0].message, /重试/, "the message must offer a retry");
+    // The backup stays as a safety artifact (user-writable location).
+    assert.ok(
+      fs.existsSync(
+        path.join(path.dirname(newDataDir), "backups", "pre-migration-2026-10-13T08-30-00-000Z"),
+      ),
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- 5. copy-phase failure --------------------------------------------------------------
+
+test("copy failure (locked file): same safety properties as a verification failure", async () => {
+  const root = makeTempRoot("migrate-copy-fail");
+  try {
+    const { oldDataDir, newDataDir } = fixtureDirs(root, "new");
+    const legacyBefore = hashAll(oldDataDir);
+
+    // Simulate an antivirus/lock error right after the backup step.
+    const copyFileFn = (src, dest) => {
+      if (dest.includes(".migrating-")) {
+        throw Object.assign(new Error("EBUSY: resource busy"), { code: "EBUSY" });
+      }
+      fs.copyFileSync(src, dest);
+    };
+
+    const errorMessages = [];
+    const result = await maybeMigrateUserData({
+      oldDataDir,
+      newDataDir,
+      showConfirm: async () => true,
+      showError: async (title, message) => errorMessages.push({ title, message }),
+      now: () => FIXED_NOW,
+      log: () => {},
+      copyFileFn,
+    });
+
+    assert.strictEqual(result.outcome, "failed");
+    assert.strictEqual(result.userDataDir, null);
+    assert.strictEqual(
+      fs.readdirSync(path.dirname(newDataDir)).filter((n) => n.includes(".migrating-")).length,
+      0,
+    );
+    assert.strictEqual(fs.existsSync(newDataDir), false);
+    assert.strictEqual(fs.existsSync(path.join(newDataDir, MARKER_FILENAME)), false);
+    assert.deepStrictEqual(hashAll(oldDataDir), legacyBefore);
+    assert.strictEqual(errorMessages.length, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- 6. idempotency -----------------------------------------------------------------------
+
+test("idempotency: a second run after a successful migration skips without prompting", async () => {
+  const root = makeTempRoot("migrate-idempotent");
+  try {
+    const { oldDataDir, newDataDir } = fixtureDirs(root, "new");
+    const options = {
+      oldDataDir,
+      newDataDir,
+      showConfirm: async () => {
+        throw new Error("must not prompt again after a successful migration");
+      },
+      showError: async () => assert.fail("no error expected"),
+      now: () => FIXED_NOW,
+      log: () => {},
+    };
+
+    const first = await maybeMigrateUserData({ ...options, showConfirm: async () => true });
+    assert.strictEqual(first.outcome, "migrated");
+
+    const second = await maybeMigrateUserData(options);
+    assert.strictEqual(second.outcome, "already-migrated");
+    assert.strictEqual(second.userDataDir, newDataDir);
+
+    // And a bare detect agrees.
+    assert.deepStrictEqual(detectMigrationState(oldDataDir, newDataDir), {
+      status: "skip",
+      reason: "already-migrated",
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- 7. performMigration guard rails ---------------------------------------------------
+
+test("performMigration refuses a non-empty target instead of overwriting it", async () => {
+  const root = makeTempRoot("migrate-target-not-empty");
+  try {
+    const { oldDataDir, newDataDir } = fixtureDirs(root, "new");
+    writeRel(newDataDir, "stray.txt", "not ours to delete");
+
+    await assert.rejects(() => performMigration({ oldDataDir, newDataDir, nowIso: FIXED_NOW }));
+    assert.strictEqual(fs.readFileSync(path.join(newDataDir, "stray.txt"), "utf-8"),
+      "not ours to delete", "an unexpected non-empty target must never be clobbered");
+    assert.strictEqual(fs.existsSync(path.join(newDataDir, MARKER_FILENAME)), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

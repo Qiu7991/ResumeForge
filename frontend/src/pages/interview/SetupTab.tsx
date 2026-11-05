@@ -1,0 +1,326 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * 面试官设定卡：类型/难度/风格/轮数/考察重点/人设，提交后由页面发起面试。
+ * （自 InterviewPage 拆出：SetupForm 接口随迁，提示语改由语言包
+ * `interviewPage.setup.confidenceTip` 提供；form 实例由页面持有，
+ * 供题库「开始模拟面试」的 startFromBank 联动写回考察重点。）
+ *
+ * 类型/难度/风格的显示名来自 `i18n/enum/interview.ts`（协议值 → 语言包 key），
+ * 提交给后端的仍是 `types/interview.ts` 的协议值，不随语言变。
+ */
+import { PlayCircleOutlined } from "@ant-design/icons";
+import { App, Button, Card, Form, Input, Select, Space, Typography } from "antd";
+import type { FormInstance } from "antd";
+import { useEffect, useState } from "react";
+import type {
+  InterviewDifficulty,
+  InterviewMaterialExtract,
+  InterviewType,
+  InterviewerStyle,
+} from "../../types";
+import {
+  useJobSearchSelect,
+  useResumeSearchSelectForJobOrGeneral,
+} from "../../hooks/remoteSearchOptions";
+import { t, type MessageKey } from "../../i18n";
+import {
+  INTERVIEW_DIFFICULTY_LABEL_KEYS,
+  INTERVIEW_TYPE_LABEL_KEYS,
+  INTERVIEWER_STYLE_LABEL_KEYS,
+} from "../../i18n/enum/interview";
+import { useLocale } from "../../i18n/i18nContext";
+import { JANE_FACE_SOURCES } from "./janeFaces";
+import { MaterialSourceField, type MaterialSourceMode } from "./MaterialSourceField";
+import {
+  INTERVIEW_DIFFICULTIES,
+  INTERVIEW_TYPES,
+  INTERVIEWER_STYLES,
+  MAX_INTERVIEW_ROUNDS,
+  MIN_INTERVIEW_ROUNDS,
+} from "../../types";
+
+/** 轮数选择框的「自动」档值：AI 按表现决定何时收尾（区间不向用户/模型展示）。 */
+export const AUTO_ROUNDS_OPTION = "auto";
+
+const ROUNDS_OPTIONS: { value: number | typeof AUTO_ROUNDS_OPTION; labelKey: MessageKey }[] = [
+  { value: AUTO_ROUNDS_OPTION, labelKey: "interviewPage.setup.roundsAuto" },
+  ...Array.from({ length: MAX_INTERVIEW_ROUNDS - MIN_INTERVIEW_ROUNDS + 1 }, (_, index) => ({
+    value: MIN_INTERVIEW_ROUNDS + index,
+    labelKey: "interviewPage.setup.roundsOption" as const,
+  })),
+];
+
+export interface SetupForm {
+  /** 关联岗位：与 `jobMaterial` 二选一（选了文件时这一项不出现在表单里）。 */
+  jobId?: number;
+  /** 关联简历：与 `resumeMaterial` 二选一。 */
+  resumeId?: number;
+  /** 导入的岗位材料（#41）：已在上传时提取成文本，非空表示这一侧用文件。 */
+  jobMaterial?: InterviewMaterialExtract | null;
+  /** 导入的简历材料（#41）：已在上传时提取成文本。 */
+  resumeMaterial?: InterviewMaterialExtract | null;
+  interviewType: InterviewType;
+  difficulty: InterviewDifficulty;
+  interviewerStyle: InterviewerStyle;
+  /** 具体轮数，或 "auto" = 自动收尾（AI 按表现判断何时结束）。 */
+  rounds: number | typeof AUTO_ROUNDS_OPTION;
+  focus: string;
+  persona: string;
+}
+
+export function SetupTab({
+  form,
+  initialJobId,
+  starting,
+  onStart,
+}: {
+  form: FormInstance<SetupForm>;
+  /** 深链带来的预填（RF-11）：岗位详情跳过来时关联岗位已选好。
+   *  id 不在候选里时由远程搜索 hook 按 id 回查补进候选（P0-1）。 */
+  initialJobId?: number;
+  starting: boolean;
+  onStart: (values: SetupForm) => void;
+}) {
+  // 本卡用模块级 t()：必须订阅语言变化，否则切语言后表单文案不重渲染。
+  useLocale();
+  const { message } = App.useApp();
+  // 关联岗位下拉改为远程搜索（P0-1）：不再由页面预拉"前 100 条"当全量。
+  const jobSelect = useJobSearchSelect();
+  // 关联简历（0066）：候选 = 所选岗位关联的简历 **+** 通用简历。岗位没选之前不给候选
+  // （面试官要读的就是"这份简历 + 那个岗位的 JD"，脱离岗位挑简历没有意义）。
+  const watchedJobId = Form.useWatch("jobId", form) as number | undefined;
+  const resumeSelect = useResumeSearchSelectForJobOrGeneral(watchedJobId ?? null);
+  // 材料来源（#41）：每侧都是"从记录选 / 导入文件"二选一。文件与记录是**互斥**的，
+  // 所以两者的状态分开存：切到文件时记录那一栏整个不渲染（连校验规则一起消失），
+  // 反过来切回记录时也不会把上一份文件悄悄带进面试。
+  const [jobSource, setJobSource] = useState<MaterialSourceMode>("record");
+  const [jobMaterial, setJobMaterial] = useState<InterviewMaterialExtract | null>(null);
+  const [resumeSource, setResumeSource] = useState<MaterialSourceMode>("record");
+  const [resumeMaterial, setResumeMaterial] = useState<InterviewMaterialExtract | null>(null);
+
+  // 岗位一变就重拉简历候选：上一次的候选属于上一个岗位，留着会让用户挑到不该出现的简历。
+  // hook 的 fetch 闭包跟随 jobId，`reload` 引用因此每次渲染都不同，只在 jobId 变化时执行。
+  useEffect(() => {
+    void resumeSelect.reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchedJobId]);
+
+  // 深链预填的岗位按 id 回查补进候选（P0-1），否则第 101 条之后的岗位只显示 id；
+  // 设定卡常驻可见，挂载时同时预拉第一页候选。
+  useEffect(() => {
+    void jobSelect.ensure(initialJobId);
+    void jobSelect.reload();
+    // hook 的回调引用稳定，只跟随预填目标变化。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialJobId]);
+
+  /**
+   * 提交前补齐"文件这一侧到底有没有材料"。
+   *
+   * 表单校验只能看到**渲染出来**的字段：切到"导入文件"时那条 `required` 规则随下拉框
+   * 一起消失，所以这里必须自己判一次——否则用户能在没选文件的情况下开出一场"没有材料"
+   * 的面试（后端会 422，但那时候点的是"开始面试"，体验很差）。
+   */
+  const submit = (values: SetupForm) => {
+    if (jobSource === "file" && !jobMaterial) {
+      message.error(t("interviewPage.setup.material.jobRequired"));
+      return;
+    }
+    if (resumeSource === "file" && !resumeMaterial) {
+      message.error(t("interviewPage.setup.material.resumeRequired"));
+      return;
+    }
+    onStart({
+      ...values,
+      jobMaterial: jobSource === "file" ? jobMaterial : null,
+      resumeMaterial: resumeSource === "file" ? resumeMaterial : null,
+    });
+  };
+
+  return (
+    <Card size="small" className="settings-card">
+      <div className="jane-intro">
+        <img
+          className="jane-avatar jane-avatar--intro"
+          src={JANE_FACE_SOURCES.idle}
+          alt={t("interviewPage.avatarAlt")}
+        />
+        <div>
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            {t("interviewPage.setup.title")}
+          </Typography.Title>
+          <Typography.Text type="secondary">{t("interviewPage.setup.greeting")}</Typography.Text>
+        </div>
+      </div>
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={{
+          // 默认「综合面」而不是「技术面」：技术面只是其中一种类型，
+          // 把它当默认会让非技术岗的用户每次都要先改一次。
+          // 下面三个初始值是提交给后端的协议值（不随语言变），显示名走 i18n/enum/interview.ts。
+          interviewType: "综合面",
+          difficulty: "中级",
+          interviewerStyle: "严谨专业",
+          rounds: 6,
+          focus: "",
+          persona: "",
+          ...(initialJobId !== undefined ? { jobId: initialJobId } : {}),
+        }}
+        onFinish={(values) => void submit(values)}
+        // 岗位变了就清掉已选简历：岗位与简历必须成对，"上一个岗位的简历"不该被带过来。
+        // 用事件而不是 effect 守卫，避免"清空 → 校验失败 → 再清空"的渲染循环。
+        onValuesChange={(changed) => {
+          if (Object.prototype.hasOwnProperty.call(changed, "jobId")) {
+            form.setFieldValue("resumeId", undefined);
+          }
+        }}
+      >
+        <div className="interview-setup-grid">
+          {/* 材料行（问题 7）：两个材料字段单独成组并横跨整行。容器自己也是 auto-fit
+              栅格（宽屏两等分、窄屏塌成一列），外侧栅格因此不再为这一行留空位；
+              不包这层容器时，首行只有两个字段、其余格子空着，窗口越宽空白越大。 */}
+          <div className="interview-setup-materials">
+            {/* 岗位材料（#41）：从记录选 / 导入文件二选一，两侧接受同一组格式
+                （问题 6：图片 / PDF / TXT / Word / Markdown）。切到"导入文件"时下拉框
+                禁用且不再校验（材料由文件提供），文件区在 extra 里显示解析结果。 */}
+            <Form.Item
+              label={t("interviewPage.setup.jobLabel")}
+              name="jobId"
+              className="interview-material-field"
+              rules={
+                jobSource === "record"
+                  ? [{ required: true, message: t("interviewPage.setup.jobRequired") }]
+                  : []
+              }
+              extra={
+                <MaterialSourceField
+                  kind="job"
+                  mode={jobSource}
+                  material={jobMaterial}
+                  disabled={starting}
+                  onModeChange={(mode) => {
+                    setJobSource(mode);
+                    if (mode === "file") form.setFieldValue("jobId", undefined);
+                  }}
+                  onMaterialChange={setJobMaterial}
+                />
+              }
+            >
+              <Select
+                allowClear
+                disabled={jobSource === "file"}
+                placeholder={t("interviewPage.setup.jobPlaceholder")}
+                {...jobSelect.selectProps}
+              />
+            </Form.Item>
+            {/* 简历材料（#41）：从记录选 / 导入文件二选一（与岗位侧同一组格式）。
+                extra 与左列**同结构**（都只有 `MaterialSourceField`），两侧 extra 的起点与
+                底部才能对齐；边界文案因此移到两列之外，见下方 `.interview-setup-hint`。 */}
+            <Form.Item
+              label={t("interviewPage.setup.resumeLabel")}
+              name="resumeId"
+              className="interview-material-field"
+              rules={
+                resumeSource === "record"
+                  ? [{ required: true, message: t("interviewPage.setup.resumeRequired") }]
+                  : []
+              }
+              extra={
+                <MaterialSourceField
+                  kind="resume"
+                  mode={resumeSource}
+                  material={resumeMaterial}
+                  disabled={starting}
+                  onModeChange={(mode) => {
+                    setResumeSource(mode);
+                    if (mode === "file") form.setFieldValue("resumeId", undefined);
+                  }}
+                  onMaterialChange={setResumeMaterial}
+                />
+              }
+            >
+              <Select
+                allowClear
+                disabled={
+                  resumeSource === "file" || watchedJobId === undefined || watchedJobId === null
+                }
+                placeholder={
+                  watchedJobId === undefined || watchedJobId === null
+                    ? t("interviewPage.setup.resumePlaceholderNoJob")
+                    : t("interviewPage.setup.resumePlaceholder")
+                }
+                {...resumeSelect.selectProps}
+              />
+            </Form.Item>
+          </div>
+          {/* #41：边界文案对两种材料来源都成立——不管这一侧是从记录选来的还是导入的文件，
+              面试官看到的都只是"这两份"。放在两列之外并横跨整行：留在某一列的 extra 里
+              会让两侧底部不齐，也容易被读成只针对简历。 */}
+          <Typography.Text type="secondary" className="interview-setup-hint">
+            {t("interviewPage.setup.scopeHint")}
+          </Typography.Text>
+          <Form.Item label={t("interviewPage.setup.typeLabel")} name="interviewType">
+            <Select
+              options={INTERVIEW_TYPES.map((value) => ({
+                value,
+                label: t(INTERVIEW_TYPE_LABEL_KEYS[value]),
+              }))}
+            />
+          </Form.Item>
+          <Form.Item label={t("interviewPage.setup.difficultyLabel")} name="difficulty">
+            <Select
+              options={INTERVIEW_DIFFICULTIES.map((value) => ({
+                value,
+                label: t(INTERVIEW_DIFFICULTY_LABEL_KEYS[value]),
+              }))}
+            />
+          </Form.Item>
+          <Form.Item label={t("interviewPage.setup.styleLabel")} name="interviewerStyle">
+            <Select
+              options={INTERVIEWER_STYLES.map((value) => ({
+                value,
+                label: t(INTERVIEWER_STYLE_LABEL_KEYS[value]),
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            label={t("interviewPage.setup.roundsLabel")}
+            name="rounds"
+            extra={t("interviewPage.setup.roundsExtra")}
+          >
+            {/* 「自动」档的文案不含 {round}，多传的参数不会被替换。 */}
+            <Select
+              options={ROUNDS_OPTIONS.map((option) => ({
+                value: option.value,
+                label: t(option.labelKey, { round: option.value }),
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            label={t("interviewPage.setup.focusLabel")}
+            name="focus"
+            extra={t("interviewPage.setup.focusExtra")}
+          >
+            <Input maxLength={255} placeholder={t("interviewPage.setup.focusPlaceholder")} />
+          </Form.Item>
+        </div>
+        <Form.Item
+          label={t("interviewPage.setup.personaLabel")}
+          name="persona"
+          extra={t("interviewPage.setup.personaExtra")}
+        >
+          <Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} maxLength={2000} />
+        </Form.Item>
+        <Space wrap>
+          <Button type="primary" htmlType="submit" icon={<PlayCircleOutlined />} loading={starting}>
+            {t("interviewPage.setup.start")}
+          </Button>
+          <Typography.Text type="secondary">
+            {t("interviewPage.setup.confidenceTip")}
+          </Typography.Text>
+        </Space>
+      </Form>
+    </Card>
+  );
+}

@@ -1,0 +1,451 @@
+# SPDX-License-Identifier: Apache-2.0
+"""简历模板体系：内置样式、格式模板校验、用户自制模板的清洗与渲染。"""
+
+import pytest
+from app.database import SessionLocal
+from app.services.exporter import render_html
+from app.services.resume.resume_sample import sample_resume_content
+from app.services.resume.resume_template_store import (
+    TemplateError,
+    sanitize_template_html,
+    validate_template_name,
+)
+from app.services.resume.resume_template_style import validated_style_config
+from app.services.resume.resume_templates import (
+    FORMAT_PRESETS,
+    RESUME_TEMPLATES,
+    format_css,
+    validated_format_config,
+)
+
+CUSTOM_STYLE = """<!DOCTYPE html>
+<html><head><title>{{ resume.name }}</title>
+<style>body { font-size: var(--fs); } .section-title { color: #123456; }</style>
+</head><body>
+<script>alert("删除我")</script>
+{% include "_resume_sections.j2" %}
+</body></html>
+"""
+
+
+# 设计上**给技能加"小框"**的模板（底色或边框）。其余两个是刻意的**无框**设计：
+# compact 用 `·` 分隔、minimal 纯文本。这份清单是"快照"——某个模板的框被误删时会立刻红。
+SKILL_TAG_BOX_TEMPLATES = {"classic", "elegant", "modern", "technical", "split"}
+
+
+@pytest.mark.parametrize("name", sorted(RESUME_TEMPLATES))
+def test_every_builtin_template_renders(name):
+    html = render_html(sample_resume_content(), template=name)
+    assert "<html" in html
+    # 页数自适应脚本必须存在：预览靠它判断"内容塞不下"。
+    assert "body.dataset" in html or "dataset" in html
+
+
+@pytest.mark.parametrize("name", sorted(RESUME_TEMPLATES))
+def test_every_template_sets_the_font_size_verbatim(name):
+    """逐模板钉住"字号 = 参数"：**没有**任何整体缩放的挂钩。
+
+    历史背景：这里原来断言 `--fs: calc(基准 * var(--fit-scale, 1))`，因为模板靠这个变量把
+    整份简历按比例压小，好塞进页数上限。代价是用户调的 18px 在纸面上可能是 9px——滑杆与
+    呈现不一致（2026-10-21 用户明确要求改掉）。现在 `--fs` 就是基准字号的字面量。
+
+    同时保留原来的两条防线：
+    - 不许用 `transform: scale()` 做"只改视觉、不改版式"的缩放（那会让打印/导出再次分页
+      与预览不一致）；
+    - 分页的唯一来源是唯一的 `@page` 规则。
+    """
+    html = render_html(sample_resume_content(), template=name)
+
+    # ① 字号是字面量，且不再有任何缩放变量
+    assert "--fit-scale" not in html
+    assert "calc({{ base_px }}px" not in html  # 模板不该残留未渲染的变量
+    # ② 不再有"只改视觉"的 transform 缩放，而且是整个文档里都没有
+    assert "style.transform" not in html
+    assert "transform = `scale(" not in html
+    # ③ 分页的唯一来源：只有一份 @page 规则
+    assert html.count("@page { size: A4; margin: 0; }") == 1
+
+
+@pytest.mark.parametrize("name", sorted(RESUME_TEMPLATES))
+def test_overflow_probe_never_touches_the_layout(name):
+    """模板里的脚本只准**量**，不准改字号/行距/页边距。
+
+    2026-10-21 之前这段脚本会迭代地把 `--fit-scale` 压到 0.5，是"字号被悄悄缩小"的实现处。
+    这条断言盯住它不许回来：既不能有 `setProperty`（改样式），也不能再出现缩放系数。
+    """
+    html = render_html(sample_resume_content(), template=name)
+
+    assert "dataset.overflow" in html  # 探针确实在
+    assert 'setProperty("--fit-scale"' not in html
+    assert "setProperty(" not in html
+    assert "minScale" not in html
+
+
+@pytest.mark.parametrize("name", sorted(RESUME_TEMPLATES))
+def test_overflow_probe_stands_down_when_preview_splits_into_columns(name):
+    """多列预览里必须跳过测量。
+
+    预览把连续流切成 N 个 A4 列后 `body.scrollHeight` 只剩一页高（高度被列折叠了），
+    这时量出来的 `data-overflow` 没有意义；列形态由前端自己量（`layout.ts`）。
+    守卫必须写在赋值之前，否则会先写一个错的结论再退出。
+    """
+    html = render_html(sample_resume_content(), template=name)
+
+    assert 'page.dataset.previewColumns === "1"' in html
+    assert html.index('page.dataset.previewColumns === "1"') < html.index("dataset.overflow")
+
+
+@pytest.mark.parametrize("name", sorted(RESUME_TEMPLATES))
+def test_every_template_keeps_backgrounds_when_printing(name):
+    """打印时要保留背景/边框：技能标签的底色就靠它。
+
+    浏览器默认**不打印背景图形**，这正是"预览里有蓝色小框、打印出来没有"的原因。
+    `print-color-adjust: exact` 强制按屏幕样式绘制，不依赖用户去打印对话框里勾选。
+    """
+    html = render_html(sample_resume_content(), template=name)
+
+    assert "print-color-adjust: exact" in html
+    # 页面几何只应有**一份**声明（base 的 body 规则）。在 @media print 里再抄一遍，
+    # 迟早会出现"改了一处忘了另一处"，而症状就是预览与打印的页边距突然不一致。
+    print_block = html.split("@media print", 1)[1]
+    assert "body { width: 210mm" not in print_block
+
+
+@pytest.mark.parametrize("name", sorted(RESUME_TEMPLATES))
+def test_skill_tag_box_design_is_kept(name):
+    """给技能加框的模板**必须**留着框；无框设计的模板不该被"顺手补上"。
+
+    两个方向都要断言：少了框是用户报告过的缺陷，多出框则是把别人的设计改掉了。
+    """
+    html = render_html(sample_resume_content(), template=name)
+    rule = next(
+        line
+        for line in html.splitlines()
+        if line.strip().startswith(".skill-list li {") and "::after" not in line
+    )
+
+    has_box = "background:" in rule or "border" in rule
+    assert has_box is (name in SKILL_TAG_BOX_TEMPLATES), (name, rule)
+
+
+def test_format_config_is_validated():
+    config = validated_format_config(
+        {
+            "accent": "#0F766E",
+            "line_height": 9.9,  # 超出范围 → 丢弃
+            "page_padding": 20,
+            "font_scale_adjust": 1.05,
+            "evil": "x",  # 不在清单里 → 丢弃
+            "text_color": "javascript:alert(1)",  # 不是十六进制 → 丢弃
+        }
+    )
+    assert config == {"accent": "#0f766e", "page_padding": 20.0, "font_scale_adjust": 1.05}
+
+
+def test_format_css_contains_root_and_rules():
+    css = format_css({"accent": "#123456", "line_height": 1.9, "page_padding": 18})
+    assert "--accent: #123456;" in css
+    assert "line-height: 1.9 !important" in css
+    assert "padding: 18mm !important" in css
+    # 没有配置时不该产出任何样式块（否则会平白覆盖模板自身版式）。
+    assert format_css({}) == ""
+
+
+def test_style_config_is_whitelisted_and_renders_visual_controls():
+    config = validated_style_config(
+        {
+            "accent": "#1F4E79",
+            "column_count": 2,
+            "section_title_style": "accent_box",
+            "badges": [{"label": "作品集"}],
+            "evil_css": "body { display:none }",
+        }
+    )
+    assert config["accent"] == "#1f4e79"
+    assert config["column_count"] == 2
+    assert config["badges"][0]["label"] == "作品集"
+    assert "evil_css" not in config
+
+
+def test_format_config_scales_font_and_accent():
+    html = render_html(
+        sample_resume_content(),
+        template="classic",
+        font_scale="standard",
+        format_config={"font_scale_adjust": 1.1, "accent": "#abcdef"},
+    )
+    # 标准字号 14px × 1.1 = 15.4px，同时强调色被覆盖。
+    # 字号是**字面量**、外面没有 `calc(--fit-scale)`：参数与纸面必须一比一
+    # （2026-10-21 起不再有任何整体缩放）。
+    assert "--fs: 15.4px" in html
+    assert "--accent: #abcdef" in html
+
+
+def test_font_scale_adjust_has_no_css_mapping():
+    """字号系数**只**通过 `base_px` 生效，不能再给一条 CSS 覆盖。
+
+    给两条路会叠乘：界面上调 1.1 会实得 1.21 倍。而这种偏差只有拿尺子量才看得出来，
+    所以在这里钉死——`format_css` 对它必须什么都不产出。
+    """
+    css = format_css({"font_scale_adjust": 0.9})
+    assert css == ""
+    # 但 base_px 那条路要照常生效（它是对内置模板与用户自制模板都有效的唯一路径）。
+    html = render_html(
+        sample_resume_content(),
+        template="classic",
+        font_scale="standard",
+        format_config={"font_scale_adjust": 0.9},
+    )
+    assert "--fs: 12.6px" in html
+
+
+def test_sanitize_removes_scripts_and_adds_csp():
+    cleaned = sanitize_template_html(CUSTOM_STYLE)
+    assert "alert(" not in cleaned
+    assert "Content-Security-Policy" in cleaned
+
+
+def test_template_name_validation():
+    assert validate_template_name("我的 模板-1") == "我的 模板-1"
+    with pytest.raises(TemplateError):
+        validate_template_name("")
+    with pytest.raises(TemplateError):
+        validate_template_name("<script>")
+
+
+def test_builtin_template_list_has_six_items(client):
+    """「选择模板」只列 6 套；下线的三套仍能渲染，但不再出现在清单里。"""
+    builtin = client.get("/api/resume-templates/builtin").json()
+
+    assert [item["name"] for item in builtin] == [
+        "classic",
+        "modern",
+        "compact",
+        "elegant",
+        "minimal",
+        # 2026-10 新增的第 6 套（学术）：参考一份学术简历的版式移植，
+        # 与前面 5 套在配色 / 标题形状 / 短条目排法上都明显不同，所以进入可选清单。
+        "scholar",
+    ]
+    # 下线的三套保留在 catalog 里（老简历继续按原模板渲染）。
+    for name in ("technical", "editorial", "split"):
+        assert name in RESUME_TEMPLATES
+        assert name not in [item["name"] for item in builtin]
+
+
+def test_style_template_cannot_be_created_or_copied(client, db_session):
+    """自制样式模板已下线：创建 400，目录里也不再出现「自制」条目。"""
+    created = client.post(
+        "/api/resume-templates",
+        json={"name": "我的深色模板", "kind": "style", "html": CUSTOM_STYLE, "description": "测试"},
+    )
+    assert created.status_code == 400
+    assert created.json()["detail"] == "自制模板已下线，只能创建版式"
+
+    catalog = client.get("/api/resumes/templates").json()
+    assert [item for item in catalog["templates"] if item["custom"]] == []
+    assert [item["name"] for item in catalog["templates"]] == [
+        "classic",
+        "modern",
+        "compact",
+        "elegant",
+        "minimal",
+        "scholar",
+    ]
+
+
+def test_preview_ignores_html_and_style_config(client):
+    """预览端点保留（版式缩略图还在用），但 `html` / `style_config` 不再生效。
+
+    字段仍留在 schema 里：删字段会让还没更新的前端直接 422。这里钉住「传了也不生效」，
+    而不是「传了报错」——后者会把缩略图请求打成 400。
+    """
+    preview = client.post(
+        "/api/resume-templates/preview",
+        json={
+            "template_name": "modern",
+            "html": "<html><head></head><body>{% if %}</body></html>",
+            "style_config": {
+                "accent": "#8b3a3a",
+                "column_count": 2,
+                "badges": [{"label": "作品集"}],
+            },
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    # 坏 HTML 没有被渲染（渲染了会 400），自定义视觉配置也没生效。
+    assert "作品集" not in preview.text
+    assert "#8b3a3a" not in preview.text
+    assert "示例" in preview.text or "张" in preview.text
+
+
+def test_user_format_template_changes_layout(client):
+    created = client.post(
+        "/api/resume-templates",
+        json={
+            "name": "紧凑版式",
+            "kind": "format",
+            "config": {"line_height": 1.4, "page_padding": 10, "accent": "#111827"},
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["config"]["page_padding"] == 10.0
+
+    # 空配置的格式模板没有意义（用户以为设了什么，实际什么都没生效）。
+    empty = client.post("/api/resume-templates", json={"name": "空版式", "kind": "format"})
+    assert empty.status_code == 400
+
+    html = render_html(
+        sample_resume_content(),
+        template="classic",
+        format_config=created.json()["config"],
+    )
+    assert "padding: 10mm !important" in html
+    assert "--accent: #111827" in html
+
+
+def test_layout_update_stores_builtin_name_and_ignores_unknown(client):
+    created = client.post(
+        "/api/resumes/manual",
+        json={"title": "版式测试", "content": {"name": "张三"}},
+    )
+    record_id = created.json()["id"]
+
+    patched = client.patch(
+        f"/api/resumes/{record_id}/layout",
+        json={
+            "template": "elegant",
+            "format_name": "不存在",
+            "page_limit": 2,
+            "font_scale": "small",
+        },
+    )
+    assert patched.status_code == 200
+    assert patched.json()["template"] == "elegant"
+    # 无法解析的格式模板名不会写进记录，否则导出时会拿到一个空配置。
+    assert patched.json()["format_name"] == ""
+    assert patched.json()["page_limit"] == 2
+
+
+def test_template_preview_uses_sample_content(client):
+    response = client.post(
+        "/api/resume-templates/preview",
+        json={"template_name": "modern", "page_limit": 1, "font_scale": "standard"},
+    )
+    assert response.status_code == 200
+    assert "示例" in response.text or "张" in response.text
+
+
+def test_template_preview_no_longer_renders_user_html(client):
+    """坏的自制 HTML 不会再让预览 400——那段 HTML 根本不再参与渲染。"""
+    response = client.post(
+        "/api/resume-templates/preview",
+        json={"html": "<html><head></head><body>{% if %}</body></html>"},
+    )
+    assert response.status_code == 200
+    assert "模板渲染失败" not in response.text
+
+
+def test_format_presets_are_valid():
+    for preset in FORMAT_PRESETS:
+        # 预设自身必须能通过校验，否则用户选它等于什么都没设。
+        validated = validated_format_config(preset["config"])
+        assert validated == validated_format_config(validated)
+        assert not (preset["name"] != "standard" and preset["config"] and not validated)
+
+
+def test_resolved_style_name_falls_back_after_the_shutdown(client, monkeypatch):
+    """记录的模板名解析：内置名字原样保留，其余一律退回 classic。
+
+    自制模板下线后，「其余」包括用户以前建的那些模板名——它们的 HTML 已经不参与渲染，
+    记录里继续存着那个名字只会让一条已下线的路径看起来还活着。
+    """
+    from app.services.resume.resume_record import resolved_style_name, save_record
+
+    # 直接走落库那一步（生成接口要流式调模型，这里不引入假 provider 也测得到同一行代码）。
+    with SessionLocal() as db:
+        record = save_record(
+            db,
+            content=sample_resume_content().model_dump(mode="json"),
+            warnings=[],
+            job=None,
+            raw="",
+            model="test-model",
+            enhancement_enabled=False,
+            enhancement_level="balanced",
+            template="elegant",
+            requested_title="模板名解析测试",
+        )
+        assert record.template == "elegant"
+        # 内置模板名仍然规范化，未知名字（含已下线的自制模板名）退回默认内置模板。
+        assert resolved_style_name(db, "modern") == "modern"
+        assert resolved_style_name(db, "我的深色模板") == "classic"
+        assert resolved_style_name(db, "不存在的模板") == "classic"
+
+
+# ===== R6/R7：生成界面的默认顺序跟随「我的资料」，字号下限放宽到 5px =====
+
+
+def test_font_scale_adjust_lower_bound_matches_the_five_pixel_slider():
+    """字段下限 0.35 必须能装下"最小档 11px 拖到 5px"（5/11≈0.455）。
+
+    下限留在 0.88 时，用户把滑块拖到 5px 会被 ``validated_format_config`` **静默丢弃**：
+    存下来的是他没调过的字号，而界面上滑块停在 5px——最典型的一类"看不见的错"。
+    """
+    from app.services.resume.resume_template_format import format_field_options
+    from app.services.resume.resume_templates import FORMAT_FIELD_KEYS, _format_field
+
+    field = _format_field("font_scale_adjust")
+    assert field is not None
+    assert field["min"] == 0.35
+    # 上限与步长不动：滑块只放宽了"更小"这一个方向。
+    assert field["max"] == 1.16
+    assert field["step"] == 0.02
+
+    # 5px / 最小档 11px ≈ 0.455 必须能落库，且渲染时真的参与计算。
+    assert validated_format_config({"font_scale_adjust": 0.455}) == {"font_scale_adjust": 0.455}
+    assert validated_format_config({"font_scale_adjust": 0.35}) == {"font_scale_adjust": 0.35}
+    # 再小就越界：字段范围不是"无下限"。
+    assert validated_format_config({"font_scale_adjust": 0.34}) == {}
+
+    # 目录下发的选项也要是同一个数：前端读的是这一份。
+    option = next(item for item in format_field_options() if item["key"] == "font_scale_adjust")
+    assert option["min"] == 0.35
+    assert "font_scale_adjust" in FORMAT_FIELD_KEYS
+
+    # 不只是"能存"：这个系数真的参与渲染。最小档 11px × 0.455 = 5.005px ≈ 滑块最左端，
+    # 这正是"拖到 5px"在纸面上兑现的地方。
+    html = render_html(
+        sample_resume_content(), font_scale="small", format_config={"font_scale_adjust": 0.455}
+    )
+    assert "--fs: 5.0px;" in html
+
+
+def test_templates_catalog_exposes_profile_section_order(client):
+    """`GET /templates` 额外下发 `profile_section_order`，而 `default_section_order` 不变。
+
+    两者刻意分开：`default_section_order` 是"内置默认"，已保存简历在没有自己的
+    `section_order` 时读的是它；跟着资料页一起变，等于让一次拖动悄悄改掉用户已经导出过的
+    简历。所以这里既断言新字段跟着资料走，也断言老字段**逐字不变**。
+    """
+    from app.services.resume.resume_sections import DEFAULT_SECTION_ORDER
+
+    # 把「项目经历」拖到教育前面：资料页的顺序就是生成界面的默认顺序。
+    updated = client.put(
+        "/api/profile",
+        json={"section_order": ["basic_info", "projects", "educations", "summary"]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["section_order"][:3] == ["basic_info", "projects", "educations"]
+
+    catalog = client.get("/api/resumes/templates")
+    assert catalog.status_code == 200
+    body = catalog.json()
+    # 用户动过的那几项按资料顺序排在最前，其余由归一化补在后面（完整排列）。
+    assert body["profile_section_order"][:3] == ["projects", "education", "summary"]
+    assert sorted(body["profile_section_order"]) == sorted(DEFAULT_SECTION_ORDER)
+    assert len(body["profile_section_order"]) == len(DEFAULT_SECTION_ORDER)
+    # 页眉（basic_info）不参与正文排序。
+    assert "basic_info" not in body["profile_section_order"]
+    # 老字段逐字不变——它是"老简历外观不追溯改变"的那条承诺。
+    assert body["default_section_order"] == list(DEFAULT_SECTION_ORDER)

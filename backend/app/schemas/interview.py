@@ -1,0 +1,462 @@
+# SPDX-License-Identifier: Apache-2.0
+"""模拟面试的请求/响应结构。"""
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from ..models.interview import (
+    INTERVIEW_DIFFICULTIES,
+    INTERVIEW_STATUS_ACTIVE,
+    INTERVIEW_STATUS_FINISHED,
+    INTERVIEW_TYPES,
+    INTERVIEWER_STYLES,
+    MESSAGE_PHASE_INTERVIEW,
+)
+from .interview_material import InterviewMaterialIn
+from .resume import ResumeSuggestion
+
+MAX_INTERVIEW_ROUNDS = 12
+MIN_INTERVIEW_ROUNDS = 3
+MAX_ANSWER_CHARS = 8000
+MAX_PERSONA_CHARS = 2000
+MAX_FOCUS_CHARS = 255
+
+InterviewType = Literal[
+    "技术面",
+    "项目深挖",
+    "行为面（STAR）",
+    "HR 面",
+    "综合面",
+    "案例分析",
+    "英语面试",
+    "压力面",
+]
+InterviewDifficulty = Literal["初级", "中级", "高级"]
+InterviewerStyle = Literal["严谨专业", "温和引导", "持续追问", "压力质询"]
+InterviewStatus = Literal["active", "finished"]
+
+
+class InterviewCreate(BaseModel):
+    """开一场模拟面试。
+
+    每一侧材料都是**二选一**（0071 / #41）：要么指向一条记录（``job_id`` /
+    ``resume_id``），要么带一份导入的材料（``job_material`` / ``resume_material``）。
+    真实面试里面试官只拿得到这两份内容，所以两侧都**必须**各有一份来源；具体校验在
+    接口层做（那里能给出"缺哪一侧"的完整原因，schema 只能给一条泛泛的校验错误）。
+
+    **回滚兼容**：老客户端只传 ``job_id`` + ``resume_id``，行为与 0066 完全一致。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(default="", max_length=128)
+    job_id: int | None = Field(default=None, ge=1)
+    resume_id: int | None = Field(default=None, ge=1)
+    # 导入的材料（#41）：给了材料就不再读那条记录。
+    job_material: InterviewMaterialIn | None = None
+    resume_material: InterviewMaterialIn | None = None
+    interview_type: InterviewType = "技术面"
+    difficulty: InterviewDifficulty = "中级"
+    interviewer_style: InterviewerStyle = "严谨专业"
+    rounds: int = Field(default=6, ge=MIN_INTERVIEW_ROUNDS, le=MAX_INTERVIEW_ROUNDS)
+    # 自动收尾的模式开关：非空 = 何时结束完全由 AI 按表现判断（提示词/界面都不出现
+    # 轮数范围；rounds 只作为服务端的硬性保险）；NULL = 固定轮数模式。
+    rounds_min: int | None = Field(default=None, ge=MIN_INTERVIEW_ROUNDS, le=MAX_INTERVIEW_ROUNDS)
+    # 自定义面试官人设（会拼进系统提示，优先级高于默认风格）。
+    persona: str = Field(default="", max_length=MAX_PERSONA_CHARS)
+    focus: str = Field(default="", max_length=MAX_FOCUS_CHARS)
+
+    @field_validator("interview_type")
+    @classmethod
+    def type_must_be_supported(cls, value: str) -> str:
+        return _validate_choice(value, INTERVIEW_TYPES, "面试类型")
+
+    @field_validator("difficulty")
+    @classmethod
+    def difficulty_must_be_supported(cls, value: str) -> str:
+        return _validate_choice(value, INTERVIEW_DIFFICULTIES, "难度")
+
+    @field_validator("interviewer_style")
+    @classmethod
+    def style_must_be_supported(cls, value: str) -> str:
+        return _validate_choice(value, INTERVIEWER_STYLES, "面试官风格")
+
+    @model_validator(mode="after")
+    def auto_rounds_interval_is_valid(self) -> "InterviewCreate":
+        if self.rounds_min is not None and self.rounds_min >= self.rounds:
+            raise ValueError("自动轮数的下限必须小于上限（rounds_min < rounds）")
+        return self
+
+
+class InterviewAnswerCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(min_length=1, max_length=MAX_ANSWER_CHARS)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("回答不能为空")
+        return cleaned
+
+
+class InterviewMessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    role: str
+    # 阶段（0071）：``interview`` = 正式问答，``followup`` = 结束后的追问。
+    # 前端据此把追问区**独立渲染**，正式对话区不受影响。
+    phase: str = MESSAGE_PHASE_INTERVIEW
+    content: str
+    context: dict[str, Any] = Field(default_factory=dict)
+    status: str
+    error: str
+    created_at: datetime
+
+    @field_validator("phase", mode="before")
+    @classmethod
+    def phase_defaults_to_interview(cls, value: Any) -> str:
+        """列默认值是 ``interview``；对象还没 flush 时属性可能是 ``None``，按默认处理。"""
+        text = str(value or "").strip()
+        return text or MESSAGE_PHASE_INTERVIEW
+
+
+class InterviewDurationUpdate(BaseModel):
+    """累计「有效面试时长」上报。
+
+    语义是**绝对累计值**（不是增量）：前端每次把"本次已累计的有效秒数"整份发上来，
+    服务端 ``max()`` 取大值，网络乱序或重试都不会让时长回退。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    elapsed_seconds: int = Field(ge=0, le=86_400)
+
+
+class InterviewBrief(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    job_id: int | None
+    job_title: str
+    company: str
+    # 关联简历（0066）：面试官只读这份简历 + 关联岗位的 JD。
+    resume_id: int | None = None
+    resume_title: str = ""
+    # 导入的材料文件名（0071）：列表/详情要显示"这场面试用的是哪个文件"。
+    # 空串表示该侧材料来自记录（或历史会话没有材料）。
+    job_material_name: str = ""
+    resume_material_name: str = ""
+    # 累计有效面试时长（秒）：界面在「准备好了」之后计时、离开暂停。
+    duration_seconds: int = 0
+    interview_type: str
+    difficulty: str
+    interviewer_style: str
+    rounds: int
+    # 自动轮数下限：非空表示这场面试是自动收尾模式（界面据此显示"第 N 轮"而非"第 N/M 轮"）。
+    rounds_min: int | None = None
+    status: InterviewStatus
+    created_at: datetime
+    updated_at: datetime
+    # 追问区收起的时刻（0072 / #41）：非空表示用户点了「停止追问」，界面收起输入框，
+    # 只留一个「继续追问」把人放回来。它不改 status，也不影响 answered_rounds。
+    follow_up_closed_at: datetime | None = None
+    # 已完成的问答轮数，列表里显示"第 3/6 轮"。
+    answered_rounds: int = 0
+
+
+class InterviewDetail(InterviewBrief):
+    persona: str = ""
+    focus: str = ""
+    model: str = ""
+    report: dict[str, Any] = Field(default_factory=dict)
+    messages: list[InterviewMessageOut] = Field(default_factory=list)
+
+
+class InterviewAnswerResult(BaseModel):
+    """一轮问答的结果：点评 + 下一题（或收尾）。"""
+
+    session: InterviewDetail
+    feedback: str = ""
+    # 为真表示**正式问答**已经结束（达到计划轮数，或模型/候选人要求收尾）。
+    finished: bool = False
+    # 为真表示正式问答已收尾但**报告还没生成**：由用户在决策卡上决定"继续追问"还是
+    # "结束并生成报告"。默认 False，旧调用方（不涉及自动收尾的产物）形状不变。
+    needs_report: bool = False
+
+
+class InterviewFollowUpCreate(BaseModel):
+    """面试结束后的「追问」（#41）：不占正式轮次，只就这场面试继续聊。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(min_length=1, max_length=MAX_ANSWER_CHARS)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("追问不能为空")
+        return cleaned
+
+
+class InterviewFollowUpResult(BaseModel):
+    """一次追问的结果：面试官的回答 + 刷新后的整场会话（含追问记录）。"""
+
+    session: InterviewDetail
+    answer: str = ""
+
+
+class InterviewFollowUpStateUpdate(BaseModel):
+    """收起 / 重新打开追问区（#41）。
+
+    只有两个状态，用布尔而不是时间戳：客户端不该能指定"关闭于何时"，那个时间由
+    服务端在关闭那一刻记下来（它只用于留痕，不参与任何排序或评分）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    closed: bool
+
+
+def _validate_choice(value: str, allowed: tuple[str, ...], label: str) -> str:
+    cleaned = (value or "").strip()
+    if cleaned not in allowed:
+        raise ValueError(f"无效的{label}，可选值：{'、'.join(allowed)}")
+    return cleaned
+
+
+# ===== R-11 个性化题库 / 答题思路分析 / 反向优化简历 =====
+# 题库三类固定：基础题（岗位通识与自我介绍）、项目深挖题（基于简历/台账逐条追问）、
+# 反问 HR 题（候选人反向了解公司与岗位）。三类即时生成、不落库。
+QUESTION_BANK_TYPES = ("基础题", "项目深挖题", "反问HR题")
+
+# 参考答案（单题）字段的长度上限，复用于题库历史里持久化的参考答案。
+MAX_QUESTION_ANSWER_CHARS = 10_000
+MAX_SAMPLE_PHRASING_CHARS = 5_000
+# 自己写的作答上限：比面试里一轮回答（8000）宽一点，允许把思路写全再交批改。
+MAX_MY_ANSWER_CHARS = 12_000
+
+MAX_QUESTION_BANK_PER_TYPE = 8
+MAX_ANALYSIS_QUESTION_CHARS = 2000
+MAX_ANALYSIS_CONTEXT_CHARS = 20_000
+MAX_OPTIMIZE_ITEMS = 20
+
+
+class InterviewQuestionItem(BaseModel):
+    """题库里的一道题：问题本身 + 考察意图 + 一句话回答提示。
+
+    可选携带已生成的参考答案（answer/key_points/sample_phrasing）：从历史记录打开题库时，
+    这些字段若已存在会被直接渲染，不必重新生成。
+    """
+
+    question: str = Field(default="", max_length=2000)
+    purpose: str = Field(default="", max_length=1000)
+    answer_hint: str = Field(default="", max_length=2000)
+    answer: str | None = Field(default=None, max_length=MAX_QUESTION_ANSWER_CHARS)
+    key_points: list[str] | None = Field(default=None, max_length=20)
+    sample_phrasing: str | None = Field(default=None, max_length=MAX_SAMPLE_PHRASING_CHARS)
+    # 候选人自己写的作答，以及它的批改结果（``InterviewAnswerReviewOut`` 的 JSON）。
+    # 用 ``dict`` 而不是强类型：这两个字段既要随题库历史存下来，又要能容纳旧记录里
+    # 没有它们的形态；结构由批改接口写入、由前端按 ``InterviewAnswerReview`` 读。
+    my_answer: str = Field(default="", max_length=MAX_MY_ANSWER_CHARS)
+    review: dict = Field(default_factory=dict)
+
+
+class QuestionBankGroup(BaseModel):
+    """按类型分组的一批题。``type`` 取值见 ``QUESTION_BANK_TYPES``。"""
+
+    type: str = Field(default="", max_length=32)
+    questions: list[InterviewQuestionItem] = Field(
+        default_factory=list, max_length=MAX_QUESTION_BANK_PER_TYPE
+    )
+
+
+class QuestionBankOut(BaseModel):
+    """个性化题库的即时结果。"""
+
+    job_id: int | None = None
+    job_title: str = ""
+    company: str = ""
+    resume_id: int | None = None
+    groups: list[QuestionBankGroup] = Field(
+        default_factory=list, max_length=len(QUESTION_BANK_TYPES)
+    )
+    llm_used: bool = True
+    notes: list[str] = Field(default_factory=list)
+
+
+class InterviewQuestionGenerateRequest(BaseModel):
+    """生成题库的输入：岗位与简历都可选，至少给一个才有针对性。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: int | None = Field(default=None, ge=1)
+    resume_id: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def require_a_target(self) -> "InterviewQuestionGenerateRequest":
+        if self.job_id is None and self.resume_id is None:
+            raise ValueError("请至少关联一个岗位或一份简历，题库才能有针对性")
+        return self
+
+
+class InterviewAnalysisRequest(BaseModel):
+    """输入一道真实问题，分析答题思路。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=MAX_ANALYSIS_QUESTION_CHARS)
+    job_id: int | None = Field(default=None, ge=1)
+    resume_id: int | None = Field(default=None, ge=1)
+    # 用户补充的背景（如"这是二面的追问"）。
+    context: str = Field(default="", max_length=MAX_ANALYSIS_CONTEXT_CHARS)
+
+    @field_validator("question")
+    @classmethod
+    def question_must_not_be_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("问题不能为空")
+        return cleaned
+
+
+class InterviewAnalysisOut(BaseModel):
+    """答题思路：框架 + 要点 + 可能的追问 + 常见误区。"""
+
+    question: str = ""
+    framework: str = Field(default="", max_length=10_000)
+    key_points: list[str] = Field(default_factory=list, max_length=20)
+    follow_up: list[str] = Field(default_factory=list, max_length=20)
+    pitfalls: list[str] = Field(default_factory=list, max_length=20)
+
+
+class InterviewQuestionAnswerRequest(BaseModel):
+    """为单道题生成详细参考答案：题目必填，岗位与简历可选（给背景）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=MAX_ANALYSIS_QUESTION_CHARS)
+    job_id: int | None = Field(default=None, ge=1)
+    resume_id: int | None = Field(default=None, ge=1)
+
+    @field_validator("question")
+    @classmethod
+    def question_must_not_be_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("问题不能为空")
+        return cleaned
+
+
+class InterviewQuestionAnswerOut(BaseModel):
+    """单题的详细参考答案：正文 + 要点 + 一句可套用的话术。"""
+
+    question: str = ""
+    answer: str = Field(default="", max_length=MAX_QUESTION_ANSWER_CHARS)
+    key_points: list[str] = Field(default_factory=list, max_length=20)
+    sample_phrasing: str = Field(default="", max_length=MAX_SAMPLE_PHRASING_CHARS)
+
+
+class InterviewAnswerReviewRequest(BaseModel):
+    """把自己的作答交给 AI 批改：题目与作答必填，岗位 / 简历 / 参考答案可选（给背景）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=MAX_ANALYSIS_QUESTION_CHARS)
+    my_answer: str = Field(min_length=1, max_length=MAX_MY_ANSWER_CHARS)
+    job_id: int | None = Field(default=None, ge=1)
+    resume_id: int | None = Field(default=None, ge=1)
+    # 已生成参考答案时一并带上：让批改能对照"标准答法"指出差在哪，比凭空评判更准。
+    reference_answer: str = Field(default="", max_length=MAX_QUESTION_ANSWER_CHARS)
+
+    @field_validator("question")
+    @classmethod
+    def review_question_must_not_be_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("问题不能为空")
+        return cleaned
+
+    @field_validator("my_answer")
+    @classmethod
+    def my_answer_must_not_be_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("回答不能为空")
+        return cleaned
+
+
+class InterviewAnswerReviewOut(BaseModel):
+    """一份作答的批改结果：分数 + 总评 + 亮点 / 差距 / 修改建议 + 改写示范。"""
+
+    question: str = ""
+    score: int = Field(default=0, ge=0, le=100)
+    summary: str = Field(default="", max_length=2_000)
+    strengths: list[str] = Field(default_factory=list, max_length=10)
+    gaps: list[str] = Field(default_factory=list, max_length=10)
+    suggestions: list[str] = Field(default_factory=list, max_length=10)
+    revised_answer: str = Field(default="", max_length=MAX_QUESTION_ANSWER_CHARS)
+
+
+class InterviewOptimizeRequest(BaseModel):
+    """把面试暴露的短板与高频追问，反向转成简历改写建议。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    resume_id: int = Field(ge=1)
+    job_id: int | None = Field(default=None, ge=1)
+    # 面试里暴露的短板（如"项目难点说不清"）。
+    weaknesses: list[str] = Field(default_factory=list, max_length=MAX_OPTIMIZE_ITEMS)
+    # 面试官的高频追问（如"这个指标怎么算出来的"）。
+    follow_ups: list[str] = Field(default_factory=list, max_length=MAX_OPTIMIZE_ITEMS)
+
+    @model_validator(mode="after")
+    def require_some_input(self) -> "InterviewOptimizeRequest":
+        if not self.weaknesses and not self.follow_ups:
+            raise ValueError("请至少填写一条面试暴露的短板或高频追问")
+        return self
+
+
+class InterviewOptimizeOut(BaseModel):
+    """反向优化结果：**只产出建议列表**，不直接修改简历正文（回填由前端走既有编辑流程）。"""
+
+    resume_id: int
+    suggestions: list[ResumeSuggestion] = Field(default_factory=list, max_length=20)
+    llm_used: bool = True
+    notes: list[str] = Field(default_factory=list)
+
+
+__all__ = [
+    "MAX_INTERVIEW_ROUNDS",
+    "MIN_INTERVIEW_ROUNDS",
+    "InterviewAnswerCreate",
+    "InterviewAnswerResult",
+    "InterviewBrief",
+    "InterviewCreate",
+    "InterviewDetail",
+    "InterviewDurationUpdate",
+    "InterviewMessageOut",
+    "INTERVIEW_STATUS_ACTIVE",
+    "INTERVIEW_STATUS_FINISHED",
+    "QUESTION_BANK_TYPES",
+    "InterviewQuestionItem",
+    "QuestionBankGroup",
+    "QuestionBankOut",
+    "InterviewQuestionGenerateRequest",
+    "InterviewAnalysisRequest",
+    "InterviewAnalysisOut",
+    "InterviewQuestionAnswerRequest",
+    "InterviewQuestionAnswerOut",
+    "InterviewAnswerReviewRequest",
+    "InterviewAnswerReviewOut",
+    "InterviewOptimizeRequest",
+    "InterviewOptimizeOut",
+]

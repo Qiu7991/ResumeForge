@@ -1,0 +1,157 @@
+// SPDX-License-Identifier: Apache-2.0
+import { App as AntdApp } from "antd";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { t } from "../../i18n";
+import I18nProvider from "../../i18n/I18nProvider";
+import { selectLocale } from "../../i18n/localeStore";
+import type { WebFormMemoryTarget, WebFormRememberPending } from "../../types";
+import WebFormMemoryDialog from "./WebFormMemoryDialog";
+
+const PENDING: WebFormRememberPending = {
+  field_key: "CUSTOM_导师姓名",
+  field_label: "导师",
+  value: "王教授",
+  control_label: "导师姓名",
+  source: "rule",
+};
+
+// 目标**只有「网申资料」**。以前这里还有 `profile:name`、`educations:1:school`
+// 这类简历资料的落点，2026-09-28 收掉了（理由见 services/webform/profile_targets.py）。
+const TARGETS: WebFormMemoryTarget[] = [
+  {
+    target_id: "extra:student_id",
+    source: "extra",
+    group: "学籍与档案",
+    label: "学号",
+    value: "2022012345",
+    kind: "text",
+    field_key: "student_id",
+  },
+  {
+    target_id: "extra:height",
+    source: "extra",
+    group: "身体情况",
+    label: "身高(cm)",
+    value: "178",
+    kind: "text",
+    field_key: "height",
+  },
+];
+
+function renderDialog(onSubmit = vi.fn()) {
+  render(
+    <AntdApp>
+      <I18nProvider>
+        <WebFormMemoryDialog
+          open
+          pending={PENDING}
+          targets={TARGETS}
+          loading={false}
+          saving={false}
+          onCancel={() => undefined}
+          onSubmit={onSubmit}
+        />
+      </I18nProvider>
+    </AntdApp>,
+  );
+  return onSubmit;
+}
+
+afterEach(() => {
+  cleanup();
+  document.body.innerHTML = "";
+  selectLocale("zh-CN");
+});
+
+describe("WebFormMemoryDialog", () => {
+  it("按模块展示网申资料，并支持非连续字符的模糊搜索", () => {
+    renderDialog();
+
+    expect(
+      screen.getByRole("button", {
+        name: new RegExp(`${t("profileLibrary.tab.webform")} · ${t("webformGroups.school")}`),
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: new RegExp(`${t("profileLibrary.tab.webform")} · ${t("webformGroups.health")}`),
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("专业")).not.toBeInTheDocument();
+    // **简历资料不是落点**：界面上不该再出现「我的资料」这一区。
+    expect(screen.queryByText(t("profileLibrary.page.title"))).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(t("profileLibrary.webform.searchPlaceholder")), {
+      target: { value: "学档" },
+    });
+
+    expect(screen.getByText("学号")).toBeInTheDocument();
+    expect(screen.queryByText("身高(cm)")).not.toBeInTheDocument();
+  });
+
+  it("默认收起已有模块，搜索时展开，清空后恢复收起状态", () => {
+    renderDialog();
+
+    const group = screen.getByRole("button", {
+      name: new RegExp(`${t("profileLibrary.tab.webform")} · ${t("webformGroups.school")}`),
+    });
+    expect(group).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("学号")).not.toBeInTheDocument();
+
+    const search = screen.getByPlaceholderText(t("profileLibrary.webform.searchPlaceholder"));
+    fireEvent.change(search, { target: { value: "学号" } });
+    expect(screen.getByText("学号")).toBeInTheDocument();
+    expect(group).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.change(search, { target: { value: "" } });
+    expect(screen.queryByText("学号")).not.toBeInTheDocument();
+    expect(group).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("不再提供复用档位选择，保存统一按通用资料处理", () => {
+    const onSubmit = renderDialog();
+
+    expect(screen.queryByRole("radio", { name: "场景" })).not.toBeInTheDocument();
+    expect(screen.queryByText("下次怎么复用", { exact: true })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: t("profileLibrary.webform.rememberSave") }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      target_id: "custom",
+      value: "王教授",
+      label: "导师",
+      reuse: "general",
+    });
+  });
+
+  it("没有对应字段时可以新增自定义网申字段并提交", () => {
+    const onSubmit = renderDialog();
+    const inputs = screen.getAllByRole("textbox");
+
+    // 顺序：搜索框、自定义字段名、要保存的值。
+    fireEvent.change(inputs[1], { target: { value: "导师姓名" } });
+    fireEvent.change(inputs[2], { target: { value: "王教授" } });
+    fireEvent.click(screen.getByRole("button", { name: t("profileLibrary.webform.rememberSave") }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      target_id: "custom",
+      value: "王教授",
+      label: "导师姓名",
+      reuse: "general",
+    });
+  });
+
+  it("refreshes visible labels when the UI locale changes", () => {
+    renderDialog();
+    act(() => selectLocale("en-US"));
+    expect(
+      screen.getByRole("dialog", { name: t("profileLibrary.webform.rememberTitle") }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: t("profileLibrary.webform.rememberSave") }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText(t("profileLibrary.webform.searchPlaceholder")),
+    ).toBeInTheDocument();
+  });
+});

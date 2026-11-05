@@ -1,0 +1,15 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 简历编辑器与预览画布：改写面板、工具栏、纸面、岗位参考、设置分页与版式诊断。
+   本文件是聚合清单：规则按下列 @import 顺序生效（@import 必须位于任何规则之前）。
+   2026 年样式表拆分：原文件超过 500 行预算，按分段标题拆成下列平铺在 styles/ 下的分片，
+   均为纯搬迁——选择器、声明、媒体查询与层叠顺序逐字不变。*/
+@import "./resume-canvas.css";
+@import "./resume-editor.css";
+@import "./resume-panels.css";
+@import "./resume-workbench-controls.css";
+/* 2026-10-25 新增的「局部排版面板：行布局」从 controls 拆出（单文件 500 行预算）；
+   排位保持在 controls 之后、resume-workbench 之前，与拆分前的相对顺序一致。 */
+@import "./resume-workbench-typography.css";
+@import "./resume-workbench.css";
+@import "./resume-workbench-tabs.css";
+@import "./workbench-left-tabs.css";

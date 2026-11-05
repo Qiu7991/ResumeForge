@@ -1,0 +1,337 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 投递台：进度面板、浏览器状态条、采集与队列的排版与响应式。 */
+
+.apply-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.apply-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.apply-browser-bar {
+  padding: 12px 16px;
+  background: var(--rf-surface, var(--rf-surface));
+  border: 1px solid var(--rf-border, var(--rf-border));
+  border-radius: 8px;
+}
+
+.apply-browser-hint,
+.apply-browser-path {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+/*
+ * 浏览器设置弹窗（BrowserSettingsModal）：两枚浏览器字段换行显示时，
+ * Form.Item 默认 marginBottom 24 与 Space 行距 16 会叠出 40px 的大空行
+ * （用户截图反馈），统一收紧到 8。只作用于该弹窗，不影响投递台同字段组件。
+ */
+.browser-settings-form .ant-form-item {
+  margin-bottom: 8px;
+}
+
+.apply-progress-panel {
+  padding: 12px 16px;
+  background: var(--rf-surface, var(--rf-surface));
+  border: 1px solid var(--rf-border, var(--rf-border));
+  border-radius: 8px;
+}
+
+/* 批次状态卡移进「自动采集」页签后，与上方采集表单按钮之间留出间距（顶格会贴死）。 */
+.apply-collect-panel .apply-progress-panel {
+  margin-top: 12px;
+}
+
+.apply-progress-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.apply-progress-alert {
+  margin: 12px 0;
+}
+
+.apply-progress-counts {
+  margin: 12px 0;
+}
+
+.apply-progress-company {
+  font-size: 12px;
+}
+
+.apply-progress-detail {
+  padding: 4px 8px;
+}
+
+.apply-progress-empty {
+  margin-bottom: 0;
+}
+
+.apply-queue-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+/* 队列的入口说明：与「自动采集」用同一套写法（浅色说明块 + 有序步骤），
+   用户在这个页面反馈过两次「不知道下一步做什么」，所以步骤要留得住视线。 */
+.apply-queue-flow {
+  margin-bottom: 16px;
+}
+
+.apply-queue-flow ol {
+  line-height: 1.9;
+}
+
+.apply-queue-flow-em {
+  font-weight: 600;
+  color: var(--rf-info-strong);
+}
+
+.apply-collect-unmapped {
+  margin-top: 12px;
+}
+
+/* 岗位匹配度分析 */
+.job-match-subtitle {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.job-match-conditions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.job-match-condition {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rf-border, var(--rf-border));
+}
+
+.job-match-condition:last-child {
+  border-bottom: none;
+}
+
+.job-match-quote,
+.job-match-evidence {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.job-match-notes {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--rf-text-body);
+}
+
+/* 匹配度参考分：放在五类结论之后作补充，所以视觉上也比上面的结论区轻一档。 */
+.job-match-score {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rf-border, var(--rf-border));
+}
+
+.job-match-score-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.job-match-score-disclaimer {
+  margin: 0;
+  font-size: 12px;
+}
+
+.job-match-score-dimensions {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.job-match-score-dimensions > li + li {
+  margin-top: 8px;
+}
+
+/* 一行三项：维度名**定宽**（对齐后条形起点一致，长度才可比），条形自适应，分值定宽右对齐
+   ——数字不随条形长短跳动。
+   定宽取 104px：后端下发的五个维度里最长的是「JD 关键词覆盖」（约 95px），给足余量并
+   `nowrap`，否则它会折成两行、那一行的条形起点就跟其它行对不齐了。 */
+.job-match-score-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.job-match-score-label {
+  flex: 0 0 104px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.job-match-score-line .ant-progress {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.job-match-score-value {
+  flex: 0 0 32px;
+  text-align: right;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== 采集闭环：流程说明 / 本次采集结果 / 采集记录 ===== */
+
+/* 采集之后还有两步才轮到投递——这段说明是用户明确反馈"不知道下一步做什么"的回应，
+   所以给它一点存在感（浅色底 + 与表单之间留白），但不用弹窗，避免每次都要关一次。 */
+.apply-collect-flow {
+  margin-bottom: 16px;
+}
+
+.apply-collect-flow ol {
+  line-height: 1.9;
+}
+
+.apply-collect-flow-em {
+  font-weight: 600;
+  color: var(--rf-info-strong);
+}
+
+/* 「本次采集结果」：与上面的条件表单明确分开，避免被当成"又一次输入"。 */
+.apply-collect-result {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rf-border-subtle);
+}
+
+.apply-collect-result .ant-typography {
+  margin-bottom: 0;
+}
+
+.apply-collect-records .ant-collapse-header {
+  align-items: center !important;
+}
+
+/* ===== 投递记录：按批次分组 ===== */
+
+/* 每个批次是一张浅色卡片：组头可点击展开/收起，展开后是组内记录表。 */
+.apply-records-batch {
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+/* 组头那一行：左边是展开按钮（铺满），右边「删除本批」在外面——
+   按钮不能嵌套按钮，所以删除必须与它同级。 */
+.apply-records-batch-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--rf-surface-alt);
+}
+
+.apply-records-batch-head-row .apply-records-batch-head {
+  flex: 1;
+  min-width: 0;
+}
+
+.apply-records-batch-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: var(--rf-surface-alt);
+  cursor: pointer;
+  text-align: left;
+}
+
+.apply-records-batch-head:hover {
+  background: var(--rf-surface-alt);
+}
+
+.apply-records-batch-head:focus-visible {
+  outline: 2px solid var(--rf-focus-visible);
+  outline-offset: -2px;
+}
+
+.apply-records-batch-stats {
+  margin-left: auto;
+}
+
+/* 批次展开/收起的高度过渡：grid 0fr→1fr 插值（内容条件渲染，收起后不留 DOM）。
+   仅动 grid-template-rows，不碰 transform/opacity，动画中间态不影响行为断言。 */
+.apply-records-batch-body-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 200ms ease;
+}
+
+.apply-records-batch-body-wrap.is-expanded {
+  grid-template-rows: 1fr;
+}
+
+.apply-records-batch-body-wrap > .apply-records-batch-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .apply-records-batch-body-wrap {
+    transition: none;
+  }
+}
+
+.apply-records-batch-body {
+  padding: 8px 12px 12px;
+}
+
+@media (max-width: 768px) {
+  .apply-page-head,
+  .apply-progress-head,
+  .apply-queue-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* 「未生效条件」/「站点筛选账目」等 Alert 与上面的条件表单之间留白：成功/警告框不再和
+   「开始采集」按钮贴在一起。 */
+.apply-collect-outcomes {
+  margin-top: 12px;
+}
+
+.apply-collect-outcomes .ant-alert {
+  margin-bottom: 12px;
+}
+
+/* 投递设置弹窗的底部操作条：贴在滚动区底部（sticky，不是 fixed），
+   背景与弹窗面一致，滚过去时字段不会从按钮下面透出来。 */
+.apply-settings-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px 0 4px;
+  background: var(--rf-surface);
+  border-top: 1px solid var(--rf-border-subtle);
+}

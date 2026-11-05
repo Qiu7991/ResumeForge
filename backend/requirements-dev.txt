@@ -1,0 +1,37 @@
+-r requirements.txt
+
+# Repository quality checks used locally and in CI.
+pytest==9.2.0
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+# Parallel test execution. The suite is >1000 tests and the only reason a change
+# takes minutes to verify; conftest keys its temp database and dataset directory
+# by PID, so workers are already isolated. Keep the ASCII-only rule for this file.
+pytest-xdist==3.8.0
+# Nightly flaky marking: failed tests rerun up to twice, reruns stay visible
+# in the summary instead of silently masking flakes.
+pytest-rerunfailures==16.7
+# Windows ships no system tz database: zoneinfo (timezone regression tests)
+# must resolve on every CI matrix entry.
+tzdata==2026.5
+ruff==0.16.10
+pip-audit==2.10.1
+# Third-party notices / dependency list for releases (scripts/Generate-Sbom.ps1).
+pip-licenses==5.5.5
+# Gradual type checking: only app/models + app/schemas are in scope for now
+# (see backend/pyrightconfig.json); extend include as annotations land.
+pyright==1.1.414
+# Cross-engine parity tests (tests/test_cross_engine_height.py,
+# tests/test_export_page_parity.py) drive a real Chromium to measure the draft
+# preview and compare it with the server-side PDF layout. The version is pinned
+# because Playwright's browser build is version-locked: 1.63.0 expects
+# chromium-1248, which is what `%LOCALAPPDATA%/ms-playwright` already had
+# (1.55.0 asked for chromium-1187 and made launch() fail). Browser binaries are
+# NOT installed here -- run `python -m playwright install chromium` (or let the
+# cross-engine CI job do it); without them the browser tests skip with the real
+# launch error instead of silently passing.
+# NOTE: this dependency was previously declared nowhere (not here, not in
+# requirements.txt), so it only existed in hand-built dev venvs. Any clean
+# environment therefore degraded the parity tests to a skip -- which reads like
+# "no browser available" while the actual cause is a missing declaration.
+playwright==1.64.1

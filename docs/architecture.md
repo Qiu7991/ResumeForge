@@ -1,0 +1,1111 @@
+# 架构设计
+
+## 总体架构
+
+前后端分离：React（Vite + TypeScript + Ant Design）+ FastAPI（Python），本地 SQLite 存储，单用户本地部署。除用户主动配置的大模型 API 外，不依赖额外的数据库或业务服务。自动投递链路额外通过**浏览器桥接层**驱动一个由应用自己拉起的「投递专用浏览器」访问招聘网站——这是项目里唯一会主动访问外部站点的地方，且只在用户显式触发时运行。
+
+```mermaid
+flowchart LR
+    subgraph Frontend["前端 (React)"]
+        UI[页面与组件]
+        API[api/ 接口层]
+    end
+    subgraph Backend["后端 (FastAPI)"]
+        ROUTES[api/ 路由层]
+        SVC[services/ 业务层]
+        LLM[services/llm/ 模型抽象]
+        PARSER[岗位文本与 JD 规则解析]
+        ASSISTANT[求职助手与岗位需求解读]
+        APPLY[services/apply/ 采集与投递编排]
+        BROWSER[services/browser/ 浏览器桥接]
+        SITES[services/sites/ 站点适配器]
+        PROMPTS[prompts/ 提示词模板]
+        DB[(SQLite)]
+    end
+    LLMAPI[大模型 API<br/>DeepSeek/豆包/OpenAI/...]
+    BING[Bing RSS<br/>公开搜索摘要]
+    JOBSITE[招聘网站<br/>经投递专用浏览器]
+
+    UI --> API --> ROUTES --> SVC
+    SVC --> LLM --> LLMAPI
+    SVC --> PARSER
+    SVC --> ASSISTANT
+    ASSISTANT --> LLM
+    ASSISTANT -. 用户显式开启联网 .-> BING
+    SVC --> APPLY
+    APPLY --> SITES
+    APPLY --> BROWSER
+    BROWSER -. CDP 驱动 .-> JOBSITE
+    SITES -. 选择器与流程 .-> BROWSER
+    SVC --> PROMPTS
+    ROUTES --> DB
+```
+
+## 目录结构
+
+```
+backend/app/
+├── main.py            # 兼容入口：重新导出应用实例与公共启动符号
+├── application.py     # FastAPI 应用工厂、路由/中间件与生命周期装配
+├── config.py          # 服务端配置（.env）
+├── database.py        # 数据库连接、会话与 SQLite 缺列补齐
+├── database_compat.py  # 早期未版本化 SQLite 的兼容字段定义
+├── database_migrations.py # Alembic 编排与 SQLite 升级前备份
+├── models/            # ORM 模型（profile/profile_definition/profile_entry/profile_group/profile_usage_snapshot/job/resume/setting/assistant/apply/claim/tracker/drill/referral/reminder/interview_experience/share_package/official）
+├── schemas/           # Pydantic 数据结构（前后端契约；resume_document.py 是 v2 简历文档模型）
+├── api/               # 路由层：校验参数、编排服务、组装响应
+├── middleware/        # 请求关联 ID 与请求体大小限制
+├── services/          # 业务层：核心逻辑，与框架解耦
+│   ├── resume/         # 简历域：生成/落地/一致性/版式/模板/写作增强/风险/建议/分享；文档模型 v2（catalog/converter/planner）
+│   ├── profile/        # 资料域：13 板块定义/条目/方案/消费快照/纸面投影（→ v2 items）/升级检测 + 读写/相关性/上下文/预算/照片/引用/匹配
+│   ├── job/            # 岗位域：服务/匹配/多源解析/需求解读
+│   ├── jd/             # JD 规则：常量/匹配/过滤/要求提取
+│   ├── assistant/      # 助手域：服务/技能/来源/联网搜索
+│   ├── interview/      # 面试域：模拟面试/题库/面经/历史
+│   ├── apply/          # 采集与投递编排：apply_service / collector / task_runner
+│   ├── webform/        # 网申填表：engine 表单引擎（含 relaxed_kind 判类）/ service 填充与放宽执行 / data 字段目录与资料映射
+│   ├── browser/        # 浏览器桥接层：cdp_client + browser_manager + page_ready + network_capture
+│   ├── sites/          # 站点适配器层（写路径）：base + registry + boss（单站点实现）+ boss_network
+│   │                   #   / feeds 各招聘系统适配器 / probe 站源探测 / reconcile 完整性对账 / collector 编排
+│   │                   #   / generic 通用路径：dom 元素事件流 / jsonld 结构化数据 / recipe 结构签名配方
+│   │                   #     / induce 归纳与重放校验 / llm_extract 模型兜底 / memory 站点抽取记忆
+│   ├── llm/            # 大模型抽象（base + openai_compat + structured_output）
+│   ├── assistant_tools/ # 助手工具注册表与 handler（读/写项目数据）
+│   ├── profile_parser/  # 个人资料分区、条目、技能与边界解析
+│   ├── job_parser/      # 岗位文本字段、元数据、候选值与章节解析
+│   ├── search/          # 受限联网搜索聚合
+│   ├── profile_text_parser.py # 个人资料解析兼容门面
+│   ├── job_text_parser.py     # 粘贴招聘文本解析兼容门面
+│   ├── jd_parser.py           # JD 规则解析兼容门面（技能标签/学历/年限）
+│   ├── pdf_exporter/ docx_document_render.py / docx_exporter.py / txt_exporter.py # 服务端多格式导出（消费同一份 DocumentPlan）
+│   ├── exporter.py / export_pipeline.py / watermark.py / privacy.py # 导出管线（渲染→水印→脱敏）
+│   ├── data_backup/ datasets.py # 备份包导出、校验、恢复与多数据集切换
+│   ├── analytics.py / tracker.py / tracker_extract.py # 求职统计与进度
+│   ├── claims.py / claim_draft.py # 事实台账（草拟 + 校验）
+│   ├── text_extraction.py / document_text.py / attachments.py / image_conversion.py # 识别与附件处理
+│   ├── materials.py / candidate_jobs.py # 资料箱与备选岗位
+│   ├── referral_service.py / reminder_service.py # 内推 / 提醒
+│   ├── knowledge_service.py / skill_archive.py / feature_catalog*.py # 知识库 / 技能包 / 能力目录（门面 + 三个数据段）
+│   ├── match_scoring.py / ats_check.py # 参考分 / ATS 检测
+│   ├── share_package.py # 离线分享包
+│   ├── site_health.py / update_check.py # 站点健康 / 版本检查
+│   ├── conversation_export.py / drill.py / trash.py # 会话导出 / 面试深挖 / 回收站
+│   └── settings_service.py / api_key_crypto.py # 运行时配置 / API Key 静态加密
+├── prompts/           # 提示词模板（独立于代码，方便调参）
+├── templates/         # 简历 HTML 模板（Jinja2；通用外壳 _resume_document.j2 + 9 套主题 CSS）
+└── data/              # 技能词典
+```
+
+## 模块化边界与兼容入口
+
+入口层只负责装配，不承载业务规则：`app/application.py` 提供 `create_app()`、生命周期、路由注册和统一异常响应，`app/main.py` 保留原有 `app.main:app` 启动路径及历史导出符号。早期 SQLite 兼容列集中在 `database_compat.py`，正式结构仍以 Alembic 为唯一来源。这样可以在测试中独立创建应用，同时避免路由、迁移和兼容逻辑互相耦合。
+
+前端页面按领域组件拆分：资料、设置、岗位和简历编辑器的字段编辑器位于各自 `components/*` 目录，共享类型位于 `types/`，样式按视觉域位于 `styles/`；全局投投悬浮球作为独立的 `features/tou-tou/*` 功能模块挂在 `MainLayout`，浮窗直接复用 `AssistantPage` / `AssistantComposer` / `AssistantMessageList` 与助手流式 hook，只在界面层隐藏附件、技能、岗位 / 简历关联等复杂控件，不复制助手业务逻辑；`types/index.ts` 继续 re-export 旧路径，避免外部组件一次性迁移。助手会话通过 `chat_conversation.surface` 区分 `page` 与 `floating`，两种入口共用工具、权限和系统提示，但历史查询、读写、删除、导出和发送接口都按作用域过滤。
+
+## 岗位管理与个人资料
+
+- 岗位备注随岗位保存，并纳入岗位列表的关键词搜索。批量状态更新使用 `POST /api/jobs/batch-status`，批量删除使用 `POST /api/jobs/batch-delete`。
+- `Job.additional_info` 保存职责、要求之外仍对求职有用的福利、团队/公司介绍、职位 ID、部门、工作安排和申请流程等内容；它同时参与关键词搜索、技能标签提取、岗位相关性和生成上下文。规则解析覆盖多个常见行业，但始终先生成可编辑草稿，不承诺对任意招聘模板完全准确。
+- `posted_at` 表示招聘信息明确标注的发布时间。只有“发布/posted/published”等语义会写入该字段，“更新于/last updated”保留在其他信息中，岗位广场不会再用本地记录更新时间冒充招聘发布时间。
+- 岗位与简历均保存独立 `favorite` 状态。列表 API 支持 `favorite` 过滤，收藏夹分别分页读取两类记录；取消收藏只修改状态，不删除原记录。
+- 两个批量接口都会先去重并校验全部岗位 ID；只要有 ID 不存在就不执行任何修改，全部有效时才在单一事务中提交，提交异常会回滚。
+- 个人照片以通过格式、文件签名和体积校验的 data URL 保存在本地资料中。照片不会发送给大模型，而是在模型输出解析完成后注入结构化简历，供 HTML 预览、浏览器打印及导出使用。
+- 每份 `ResumeRecord` 保存可空 `job_id`、岗位快照和来源 `source`。一个岗位可以关联多份 AI 生成或用户编写的简历；简历中心可按岗位筛选并展示来源，岗位详情和简历详情支持双向跳转。岗位删除后保留历史简历，但无法再生成新的岗位化建议。
+- 用户编写简历时，编辑器右侧只读展示目标岗位职责、要求、技能和其他信息；该参考面板不参与保存。预览由 planner 生成的每段文本带 `data-resume-path`（`{section_key}.{entry_id}.{item_id}`，页眉为 `header.{item_id}`），前端在「编辑」模式下把纸面点击或键盘操作映射到三区卡编辑器里对应的 item，保存后重新渲染 HTML。
+- 教育、实习/工作、校园和项目条目各可保存一份 UTF-8 Markdown/TXT 参考文件。浏览器只保存文件名与正文，不保存本机路径；生成器只把与目标 JD 相关的正文片段放入候选上下文。
+
+个人资料粘贴解析采用 `profile_text_parser.py` 兼容门面，具体规则按常量、规范化、分区识别、基本字段、条目头部、技能字段和结果边界拆分到 `services/profile_parser/`。岗位文本规则同样由 `job_text_parser.py` 门面和 `services/job_parser/` 组成。两个粘贴接口会先运行本地规则，再在已配置模型时调用 `text_extraction.py` 的结构化 Prompt 纠正字段分类；模型失败、超时或输出非法 JSON 时自动返回本地草稿，并通过 `recognition_source` 和 warnings 告知前端。门面继续导出原有符号，因此 API 层和外部调用方无需改变导入路径；内部模块不反向依赖门面。
+
+SQLite 启动升级以 Alembic 为唯一结构来源：空库执行完整 revision 链，已版本化数据库只执行待应用 revision。仅当检测到早期未版本化业务表时，才先执行 `create_all` 和 `ensure_sqlite_columns` 补齐历史兼容结构，再标记为基线并交给 `run_database_migrations`。有用户数据且存在待执行 revision 时，使用 SQLite backup API 在数据库同级 `backups/` 目录创建一致性备份，然后升级到 `head`。`0003_job_additional_info`、`0004_resume_favorite`、`0005_chat_assistant`、`0006_chat_conversation_flags`、`0007_assistant_skills` 依次增加岗位其他信息、简历收藏状态、助手会话/消息表、会话置顶和收藏字段以及助手技能表；`0006` 使用原生新增列操作，避免 SQLite 重建会话父表时触发外键级联并删除消息。升级保留既有业务记录并为新增字段提供默认值。降级会按 revision 移除对应的新字段或表，因此执行降级前必须另外备份。后续新增/删除列、改类型、约束变化和数据回填都必须新增 revision，不再扩大临时兼容层。
+
+## 核心数据流：职业场景与补充事实（A1–A5）
+
+> **2026-10-25 更新**：补充事实（`profile_fact` / `profile_fact_field_pref`）已按 v3 裁决**从界面下线**
+> （R-54）。旧表与旧数据继续保留、继续进备份、回收站里仍可见历史条目，但新的资料页不再读取它们；
+> 论文/科研/专利/证照/语言等改由「资料板块」录入，培训不再提供内置入口。本节的映射描述只作为历史实现记录。
+
+职业场景（`career_scenario`）与简历排版对象的 `ROLES`（姓名/正文/元信息等渲染分区）、面试 persona、
+工作区预设、数据集是**五个互不相干的层**。场景只回答"本窗口给什么引导与可选表达建议"，不能写简历正文；
+它的定义保存在当前数据集的 SQLite 里（每数据集独立），当前窗口选中的场景 id 只存 `sessionStorage`。
+
+```mermaid
+flowchart LR
+    UI["本窗口场景选择 / 场景编辑"] -->|"仅GET（零业务写入）"| API["/api/career-scenarios"]
+    UI -->|"显式：用于本次生成"| GEN["生成请求 options.career_context"]
+    GEN --> RESOLVE["services/career_scenarios/resolve.py<br/>校验 revision / 裁剪隐私 / context_sha256"]
+    RESOLVE --> SNAP["不可变快照（server-owned）"]
+    SNAP --> TASK["resume_generate_task.context_snapshot"]
+    SNAP --> PROMPT["scenario_context.build_scenario_prompt_block<br/>≤900 字、默认不含就业状态"]
+    TASK --> RUNNER["runner 只读任务快照，运行中不再查当前场景"]
+    RUNNER --> RECORD["resume_record.context_snapshot"]
+    RECORD --> VERSION["命名版本深拷贝 / 变体继承 / 从版本恢复一起写回"]
+```
+
+硬约束（回归见 `tests/test_generation_context_wiring.py` 与 `tests/test_generation_context.py`）：
+
+- 切换/编辑场景不写任何业务数据；不重置筛选、表单、选中简历与后台任务；不改模型/权限/数据集。
+- `career_context` 缺省/null 时两条生成传输（SSE 与后台任务）的候选资料与提示词逐字节不变。
+- 任务创建时解析并冻结快照；失败/取消不落简历；历史记录 NULL = 未记录，不按当前场景回填。
+- 上下文只放独立列，**不进 content / render_context / format_config**，不参与内容哈希与渲染缓存键。
+- 就业状态默认不发送；证号等私密字段永远不进模型、日志与纸面。
+- 任务创建与 `runner.start` 之间切换数据集由 **HTTP 请求租约 + 长任务租约的交接**封住：
+  请求未结束时切换会 409（排空超时），runner 拿到租约后切换要等任务结束；回归见
+  `tests/test_task_start_dataset_race.py`。场景切换的零业务写入同时有网络断言
+  （`ScenarioSelector.test.tsx`）与 DB 逐表内容哈希证据（`tests/test_scenario_switch_zero_write.py`）。
+- 冻结上下文时只记结构化版本日志（origin / scenario_id / revision / catalog_version /
+  context_sha256 前缀），不记录场景正文与就业状态。
+
+**按职业场景派生变体（A5）**：`POST /api/resumes/{id}/scenario-variants` 先派生独立变体
+（`resume_variant.context_snapshot` 由 resolver 冻结）；`POST …/variants/{vid}/scenario-preview`
+调用 `revise_resume(..., career_context_block=…)` 输出候选且**不落库**；`POST …/scenario-adopt`
+以「变体内容指纹 + 场景上下文哈希」双条件写只改变体。改动基准是这条变体的旧内容（不是母版），
+`lock_content` 违规 409 且一个字段都不写；源简历的内容、revision、锁与来源标注全程不变。
+实现见 `services/resume/scenario_variant.py`、`api/resumes/scenario_variant_routes.py`，
+前端 `components/resume/versions/ScenarioVariantSection.tsx`。
+
+补充事实（`profile_fact`，0062；2026-10-25 灵活化）是**九类补充资料容器**，与旧资料表隔离：旧
+`PUT /api/profile` 是"整体替换"，新事实只由 `/api/profile/facts` 写入，因此旧客户端保存资料不会清空它们。
+每条事实有稳定 `fact_id` 与 `revision`（条件写），`deleted_at` 软删并登记回收站。
+
+**字段设置（`profile_fact_field_pref`，0063）**：每类事实可隐藏默认字段、增加自定义字段定义；事实 payload
+里保存 `custom_fields` 值快照（key+label+value）。隐藏字段只在读写/导出层剔除，旧值保留在 payload，
+恢复默认后重新出现。生成入口用 `fact_context.py` 读快照 + `fact_field_schema.mapping_payload` 剔除隐藏/未定义
+自定义字段；`fact_mapping.py` 纯映射：论文/科研项目/专利/资格证照独立栏目，作品项目并入 `projects`、实践
+并入 `experiences`，荣誉并入 `awards`、语言并入 `skills`、培训并入 `projects`（artifact_type=培训）；
+资格证照编号永不进候选，链接只留 http(s)。网申侧 `services/webform/facts.py` 把可见字段作为
+`CUSTOM_FACT_` 条目并入 catalog/data/custom_labels（私密与隐藏字段排除，已有资料优先），供人工挑选、
+批量预填与放宽匹配使用。
+
+**跨行业筛选兜底（A4/§8.5）**：非技术岗位（DOMAIN_SIGNALS 未识别）且没有任何条目直接命中时，
+`profile_matching` 会按资料顺序保留少量真实经历/项目/技能作为候选，并在生成说明里如实标注
+"交集较少、资料中未提供的岗位要求不会编写"；识别出领域但资料确实无证据时仍返回空候选（诚实筛选）。
+回归见 `tests/test_profile_matching_cross_industry.py`。
+
+## 核心数据流：资料板块与方案（F1–F3）
+
+2026-10-25 起「我的资料」改为**板块 + 方案 + 消费快照**三层（迁移 `0064_profile_groups`，只加表）：
+
+- **定义**：13 个内置板块与 106 个默认字段是**代码目录**（`services/profile/definition_catalog.py` 汇总
+  `catalog_basic/experience/research.py`，导入期自检 key/顺序/计数）；用户自建板块与自定义字段落
+  `profile_custom_section` / `profile_custom_field`，软删只改可见性、不删行。
+- **值**：条目在 `profile_entry`，`values` 是 `{field_id: text}` JSON——**缺键 = 本次未提交**（合并保存），
+  显式空串才是清空；单例（`basic_info` / `summary`）由 CHECK 与部分唯一索引保证至多一条。
+- **方案**：`profile_group` 只记录名称 + `profile_group_member` 板块清单，**不拥有任何资料副本**；
+  `profile_workspace_state` 单行保存当前方案 / 默认方案 / 全局顺序；默认方案不可删，当前方案被删时同事务回落默认方案
+  并写 `pending_notice`（R-20/R-24/R-25）。
+- **偏好**：`profile_field_preference` 是两个独立状态——`hidden` 排除参与，`collapsed_override` 只是展示记忆；
+  把两者合成一个布尔即返工（R-66/R-67）。
+- **快照**：`profile_usage_snapshot` 在任务/简历创建时冻结当时方案名称、板块清单、顺序与修订，父行删除后仍可追溯（F3）。
+
+**读取边界只有一条路**：`group_scope.resolve_current_group_scope(db)`（唯一读「当前方案 → 参与 key」的地方，
+请求体不能指定另一个方案）→ `profile_reader.load_consumed_profile(db, scope)` 产出 `ConsumedProfile`
+（`schemas/profile_projection.py`）。消费 DTO 的 sections 键集合恒等于 `scope.participating_keys`
+（C1：在方案里就出现、没数据就是空元组），hidden 字段的定义与值都被裁掉，**类型里没有 collapsed**；
+已软删定义、软删条目、空壳条目不出现。
+
+**AI 取数只有一条路**：`profile/ai_profile.load_ai_consumed_profile(db)` /
+`load_ai_profile(db)`——**当前方案 + hidden 剔除**。助手上下文、岗位匹配（单岗与横向对比）、
+简历建议、审阅预检都走它，因此切方案后新任务自动跟随，已生成结果各自冻结快照、不受影响。
+`load_all_consumed_profile`（`all_sections_scope`）仍保留，但只服务确实需要全量分区的非 AI
+场景（如网申重叠值裁决），**不得**再用于给模型取资料（R-64 的"三链外不受方案限制"已按
+2026-10-28 用户口径收窄）。
+
+| 链路 | 过滤位置 | 行为 |
+| --- | --- | --- |
+| ① 按岗位 / 通用生成 | 资料 → 候选字典最前端 | 未参与分区整键不出现，不占名额与预算；诊断不误报 |
+| ② 新建简历 / 从资料填充 | 资料 → v2 文档投影入口 | 候选只含参与分区；字段按目录默认位置落 item（lead / trail / body） |
+| ③ 网申填表 | 网申取数最前端 | 简历侧按方案裁剪；网申专用项不受方案过滤（R-39） |
+
+**F9（2026-10-26）起前端消费者与当前方案实时同步**：「新建简历 / 手动调整 / 制作台中栏」的编辑页签由
+`projection.scope.participating_keys` 过滤——当前方案有的分区即使没内容也出现、没有且无内容的不出现、
+正文里已有内容的分区始终保留（R-34），顺序取当前方案全局顺序；新建简历初始内容 = 当前方案投影（岗位模式仅覆盖求职意向），
+页签与内容在资料保存/切换方案后自动刷新；表单有未保存编辑时改为内联「我的资料已更新」二选一，不静默覆盖。
+`projectionCache` 的失效通过 BroadcastChannel（不支持时退回 localStorage 的 storage 事件）广播给同源其它窗口，
+接收端只本地失效并让已挂载消费者重取（不回环），预览「手动调整」/制作台/网申候选因此跟着资料变化。
+板块的「在资料页显示/隐藏」写当前方案板块清单（隐藏 = 移出当前方案），不新增第二套存储。
+
+**F10（2026-10-26）起编辑器视图随简历冻结**：`EditorSchemaOut`（`schemas/profile_editor.py`）由
+`projection_views.editor_schema(consumed)` 从消费快照派生（唯一实现）：可见板块按 `participating_keys`
+顺序，每个板块给出可见字段与它在 `ResumeContent` 里的属性名（`resume_attr` = 槽位属性；隐藏字段在消费
+DTO 读取时已被裁掉）。`GET /api/profile/current/projection` 带 `editor_schema` 供新建简历直接使用；创建 /
+生成时同一份 JSON 冻结进 `profile_usage_snapshot.layout.editor_schema`，简历详情与独立
+`GET /api/resumes/{id}/profile-usage` 原样返回（旧快照没有该键 / 坏数据 → null，不 500）。前端编辑器
+（新建弹窗 / 手动调整 / 制作台中栏）据此渲染页签、页签名（自建板块显示用户起的名字）与字段可见性：
+新简历按当前方案投影，已保存简历按冻结副本——之后改方案只影响此后新增的简历，已保存简历的板块与字段
+不变。写端点（PUT/PATCH）的 `ResumeOut` 有意仍不带 `profile_usage`，前端按 resume id 黏住首次读到的
+快照，保存一次不会跳回当前方案；没有快照的旧简历保持原有完整字段显示。
+
+**纸面投影唯一来源**：`services/profile/paper_projection.py` 把消费者 DTO 确定性投影成
+**v2 简历文档**（`ResumeDocument`；2026-10-30 起，`GET /api/profile/current/projection`、新建简历与 AI
+生成链路共用）。字段的默认纸面位置与「仅素材」标志只在 `services/resume/document_catalog.py`（一处）：
+C1 空字段不产生 item；自建板块**独立成 section**（排在系统板块之后，C2/R-79）；自定义字段成为真实
+`FieldItem`（`custom:<uuid>` + `source`），按定义上的 `default_placement` 落位，空值跳过、超长
+如实 warning（R-44），**不再有「标签：值」承载区文本与 `ensure_custom_field_lines` 补回**；语言能力按
+`language_projection.py` 映射为独立的 `inline` section（语言 / 水平 / 证书 / 分数 / 取得时间），
+HTML / PDF / Word / Markdown / TXT 五条产物都渲染独立「语言能力」小节。证书编号等私密字段在投影前
+就被跳过；`material_only` 字段投影成 hidden item，资料页与制作台都标注「不上纸面，仅生成素材」。
+
+**升级与旧数据**：旧六表 / `profile_fact` / `profile_fact_field_pref` 不删、不迁、也不再被新界面读取
+（R-46）；`services/profile/legacy_status.py` 用 `SELECT 1 ... LIMIT 1` 只探测「旧表里是否还有实际内容」，
+`GET /api/profile/upgrade-status` 与 `GET /api/profile/workspace` 的 `upgrade` 槽位据此提示「旧资料不再显示、
+可从备份取出后手动重填」（R-47）；表存在性按进程缓存，读取异常如实报错而不是冒充「没有旧资料」。
+
+API 增量：`/api/profile/workspace`（编辑视图）、`/api/profile/sections[...]`（自建板块/字段/条目光标）、
+`/api/profile/section-order`、`/api/profile/groups` + `/api/profile/current-group`、`/api/profile/field-preferences`、
+`/api/profile/current/projection`、`/api/profile/upgrade-status`。工作区读取是**编辑 DTO**（含 hidden /
+collapsed_override），投影响应**不得出现 collapsed**。
+
+回归：`test_profile_definition_catalog.py`、`test_profile_*_store.py`、`test_profile_scope_boundaries.py`、
+`test_profile_editor_schema.py`（编辑器视图：可见字段派生 / 自建板块名 / 创建冻结 / 旧快照降级）、
+`test_profile_group_projection.py`、`test_profile_group_paper_contract.py`、`test_profile_upgrade_status.py`、
+`test_profile_legacy_compat.py`、`test_migration_0064.py`。
+
+## 核心数据流：简历文档模型 v2（字段级，2026-10-30 起）
+
+简历内容从「11 个按分区写死的数组 + 承载区文本 + 固定灰行」换成**字段级文档模型 v2**：每个字段是
+一条有序 item，位置（`title/meta/lead/trail/body/hidden`）是 item 上的数据；一个布局规划器产出唯一
+`DocumentPlan`，HTML / PDF / Word / Markdown 四出口只消费它。实现说明见
+[resume-document-model.md](resume-document-model.md)。
+
+```mermaid
+flowchart LR
+    DB[(resume_record.content<br/>v2 JSON)] -->|读取| READ[document_io<br/>ensure_document_version]
+    READ -->|v1| CONV[document_converter<br/>v1→v2，仅内存]
+    READ -->|v2| DOC[ResumeDocument]
+    CONV --> DOC
+    CAT[document_catalog<br/>默认位置/标签/仅素材] --> DOC
+    DOC --> PLAN[document_plan<br/>唯一 planner]
+    PLAN --> HTML[HTML<br/>_resume_document.j2 + 9 套主题]
+    PLAN --> PDF[PDF<br/>document_render]
+    PLAN --> DOCX[Word<br/>docx_document_render]
+    PLAN --> MD[Markdown / TXT / JSON]
+    CFG[format_config<br/>角色/字号/页边距] --> HTML
+    CFG --> PDF
+    CFG --> DOCX
+    HTML --> PIPE[export_pipeline<br/>水印 → 脱敏]
+    PDF --> PIPE
+    DOCX --> PIPE
+    MD --> PIPE
+```
+
+- **读写边界只有一道门**：`services/resume/document_io.py` 是 API / 服务层访问 `resumes.content` 的
+  唯一入口——**读**走 `ensure_document_version`（v2 直通并归一化；v1 在内存里透明转换、不写库）；
+  **写**走 `prepare_document_for_save`（v1 / v2 都接受 → 统一转 v2 → 校验 id → normalize），落库的
+  永远是 v2 dict。详情响应带可选 `document_conversion` 摘要（`conversion_summary(report)`），制作台
+  据此显示一次性升级提示；完整逐条报告只由 `scripts/convert_resume_documents.py` 产出（默认 dry-run）。
+- **分析与写作直接读取 v2**：ATS / 面试 / 风险 / 内容精简提示用 `document_view` 和 `document_analysis`；
+  版本比较直接比较文档；导出 / 分享 / 交付 / 模板预览使用原生文档。AI 修订按稳定路径更新字段值，
+  在源文档上保留 ID、位置、格式、隐藏与仅素材内容；模型不接触身份页眉。
+- **历史路径读时兼容**：`document_paths` 将旧字段路径解析到现有节点，`document_lock_paths` 解释
+  旧相对字段、日期两端与作者属性。新来源关联 / 事实锁 / 批注使用稳定路径；旧行、列和快照不迁移。
+  显式身份失联时不按旧下标猜对象；只有 path-only 旧行采用原可见顺序解析。来源采纳直接写解析出的 item。
+  检查与导出共用可见性过滤、格式化和布局规划，隐藏字段 / 列表值也参与产物泄漏检查。
+- **制作台左栏按 v2 语义分三组**：`模板`（shell + CSS + 版式预设）/ `版面`（文档模式、篇幅上限、分页与页缩略图、
+  联系方式换行）/ `样式`（字体字号、行距、页边距、颜色、角色/对象/文字级别/批量）。分区顺序与条目排版
+  属于**结构**，全部在「本份简历结构」页签（结构树 + 条目字段排版）；`format_config.section_order` 只在
+  v1→v2 转换时读取，**新保存不再写入**（写边界：生成 / 手写创建 / 版式 PATCH 三处剥离）。
+- **字段目录唯一来源**：`services/resume/document_catalog.py` 定义每个字段的标签键、format、
+  `default_placement`、`material_only` 与 `private`；改字段默认上纸面位置只改这里。
+  资料页与制作台通过 `GET /api/profile/field-placement-catalog` 拿同一份目录（含自定义字段的
+  0069 纸面属性），前端不复制映射。
+- **planner 唯一真相**：`services/resume/document_plan.py` 是纯函数（文档 + 语言 → `DocumentPlan`；
+  format_config 里的角色样式由渲染层消费，planner 不碰），负责 head 三种布局、lead / trail 列装箱、
+  正文块、inline / text 板块、页眉联系方式换行、路径与格式化；模板与渲染器不写第二份字段拼装逻辑。
+- **四出口同源**：入口先 `coerce_document()` 归一化、再 `paper_document()` 做纸面过滤，然后**都消费
+  同一份 plan**——`_resume_document.j2` 只遍历 plan 画 `data-role` / `data-resume-path`；PDF 按 plan
+  测宽排表；Word 用 plan 出段落 / 无框表格；Markdown 展平、TXT 由 Markdown 去掉标记、JSON 直接输出
+  v2 document + layout。四格式文本对拍由测试守着（同字段、同顺序，差异只在版式层）。
+- **旧简历兼容只存在 converter 里**：转换保证「文字不丢、条目数不丢、顺序可解释」，识别不了的原文
+  一律变 `TextItem`；批量转换脚本默认 dry-run、只产出报告。本批已删除 v1 渲染 / 导出 / 字段排版路径
+  （旧模板宏、四份分区渲染、字段排版模块）；新建简历与制作台共用 `DocumentEditor`。
+  生成后处理的 v1 中间态辅助函数按 T5 审计保留；它们只服务向前转换，不参与读取已存 v2 文档。
+  旧的反向投影模块和包装已删除；测试专用冻结基线只用于历史兼容断言，生产代码不依赖它。
+
+## 核心数据流：AI 生成简历
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端
+    participant B as 后端 API
+    participant G as ResumeGenerator
+    participant L as 大模型
+
+    U->>F: 选择岗位 + 是否美化拓展 + 拓展程度
+    F->>B: POST /api/resumes/generate (SSE)
+    B->>B: 校验资料与 LLM 配置
+    B->>G: generate(profile, job, options)
+    G->>G: 筛选岗位候选事实与相关参考片段
+    G->>G: 按拓展等级渲染 Prompt（prompts/*.md + Jinja2）
+    G->>L: 流式请求 chat/completions
+    L-->>G: SSE 流式输出（JSON 文本）
+    G-->>B: progress / delta 事件
+    G->>G: 提取 JSON + 宽松校验
+    G->>G: strong + 附件事实时执行内容质量检查
+    opt 项目遗漏、内容过少或只是照抄附件
+        G->>L: 非流式质量重试（最多一次）
+        L-->>G: 完整 JSON
+    end
+    G->>G: 从本地资料注入照片（照片不发送给模型）
+    G->>G: 一致性检查
+    G-->>B: 生成完成（含防虚构 warnings）
+    B->>B: 先落库 ResumeRecord
+    B-->>F: saved 事件（record_id）
+    B-->>F: done 事件（仅在持久化成功后发送）
+    F->>B: POST /api/resumes/render 即时预览
+    F->>U: 展示预览 + 导出按钮
+    opt 用户主动请求岗位化建议
+        F->>B: POST /api/resumes/{id}/suggestions
+        B->>L: 非流式审核简历与 JD
+        L-->>B: 结构化修改建议（仅基于已有事实）
+        B-->>F: 建议列表
+    end
+```
+
+生成结果由 `generation_postprocess` / `resume_generator` 直接写 **v2 items**：模型只填 value / label，
+placement / format 由字段目录补；**渲染与导出链路不再有「承载区补回」**。生成后处理里的 v1 承载区
+辅助函数（`ensure_custom_field_lines_in_resume` 等）仍服务生成中间态并按 T5 审计保留；
+已存 v2 文档的分析、修订与来源采纳不经过该中间态。
+
+## 核心数据流：用户编写简历
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端
+    participant B as 后端 API
+    participant DB as SQLite
+
+    U->>F: 在岗位页选择“自行编写”
+    F->>B: GET /api/profile/current/projection
+    B-->>F: 当前方案投影（v2 文档条目 + 候选 + 板块清单 + snapshot_token）
+    F->>F: 按当前方案投影预填 v2 文档（section / entry / items）；页签按板块清单过滤
+    U->>F: 三区卡编辑条目（标题行 / 元信息 / 正文前灰字 / 正文 / 正文后灰字 / 隐藏，拖拽改位置；修改不回写资料）
+    F->>B: POST /api/resumes/manual（可带 profile_context 创建态快照）
+    B->>B: 校验 v2 文档（normalize + 服务端补 id）、可选 job_id 与快照 token
+    B->>DB: 保存 source=manual、岗位快照与创建态资料快照
+    B-->>F: 返回简历记录
+    F->>U: 在简历中心展示“用户编写”来源
+```
+
+AI 生成与用户编写最终都产出 v2 `ResumeDocument`：AI 只写字段值与标签，placement / format 由字段目录与用户决定；之后共用同一套 planner、预览、编辑与四出口链路，避免维护两套简历格式。用户编写路径不调用大模型；打开期间若资料在其它窗口被修改或切换方案，前端通过投影缓存失效广播自动刷新（已有未保存编辑时提示二选一，不静默覆盖）。
+
+## 岗位需求解读与求职助手
+
+岗位需求解读使用 `POST /api/jobs/{job_id}/analysis` 按需调用当前模型配置。服务只序列化当前岗位快照，在 8,000 字符预算内生成总结、最多 20 条带原文证据的要求和最多 12 条通用建议；响应必须通过严格 JSON Schema 和证据原文校验。该链路不读取个人资料、不写入数据库，前端关闭弹窗后不会把结果作为历史记录保存。
+
+求职助手使用独立的 `ChatConversation` / `ChatMessage` 历史表和 `/api/assistant` API：
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端助手
+    participant B as Assistant API
+    participant S as Bing RSS
+    participant L as 当前配置的模型
+    participant DB as SQLite
+
+    U->>F: 输入问题，显式选择上下文/附件/联网
+    F->>B: POST messages
+    B->>B: 校验附件与上下文 ID、裁剪字符预算
+    B->>DB: 保存用户消息和 pending 助手消息
+    opt 用户开启联网搜索
+        B->>S: 固定端点请求 RSS 摘要
+        S-->>B: 最多 5 条标题、URL、摘要
+    end
+    B->>L: system + 受限历史 + 本次显式上下文
+    L-->>B: 流式 Chat Completions
+    B-->>F: start/progress/sources/delta/done SSE
+    B->>DB: 完成、错误或取消状态
+```
+
+- 助手默认不读取项目数据。岗位、简历和个人资料必须由用户在当前消息前显式选择；资料通过与简历生成相同的脱敏函数移除姓名、联系方式和照片，简历上下文也移除照片。
+- 当前消息可带最多 4 个附件。后端按扩展名、MIME、文件头签名、UTF-8 编码和体积再次校验；单个不超过 2 MB、合计不超过 5 MB。图片以 OpenAI `image_url` 消息格式发送，仅在所选模型支持多模态时可用。BMP/TIFF 先经 `image_conversion` 转成 PNG/JPEG（服务商普遍不接受这两种格式，直接放行等于必然报错）；PDF/DOCX 则由 `document_text` 在**本机**提取文字后按文本附件进入上下文——原始文件不外发，也不需要多模态模型。
+- 会话列表支持置顶、收藏、归档与分组标记（`pinned` / `favorite` / `archived` / `group_name`），置顶会话自动优先显示且归档时会自动取消置顶；前端提供“全部/收藏/已归档”筛选，状态通过会话 PATCH 接口持久化。「在新对话中继续」由 `POST /api/assistant/conversations/{id}/fork` 实现：把原会话最近若干条已完成消息复制成一段新会话，附件只留文件名提示（避免同一份大文件在库里存两份）。聊天中的图片使用受限尺寸缩略图展示，点击后由 Ant Design 图片预览查看大图；发送中的图片先在本地消息气泡中乐观显示，再等待模型流式响应。
+- 模型只接收最近 20 条已完成历史并受 40,000 字符预算限制；历史文本附件只取受限节选，**图片只在紧邻的上一轮里回灌一次**（贴着截图追问的那一步还看得见图，再往后不再重复发送以控制用量），图片不计入字符预算——它本来就是 data URL，体积上限在入库时已卡过。待处理、错误和取消消息不进入后续模型历史。
+- 联网搜索默认使用 Bing RSS 与 DuckDuckGo 两个来源（Bing 走 `https://cn.bing.com/search`，该域不可用时回退 `https://www.bing.com/search`），用户还可以自行配置 SearXNG 实例作为第三个来源；默认只读取受限大小的标题、URL 与摘要，不跟随结果链接、不打开结果页面、不抓取正文（**默认口径**：`fetch_pages=0`）。用户在设置里把「抓取正文条数」调到 1–3 后，才对排序靠前的少数结果主动取正文，且逐跳校验 http/https、拒绝非标准端口与私网/回环/链路本地地址（解析后的全部 IPv4/IPv6）、限制响应体与超时；解析检查与实际建连之间仍有 TOCTOU 时间窗，不能宣称完全防御 DNS rebinding。可识别的求职问题会先压缩为具体求职词；“寻找互联网企业招聘”等发现型问题使用稳定的短查询，并在招聘语义过滤时保留官网常见的 `Careers` / `Jobs` 链接，同时过滤词典、百科、诗歌等无关结果。无直接相关来源时返回明确提示而不展示凑数链接。系统提示要求招聘查询优先参考用人单位官网并标注第三方来源；RSS 摘要可能没有发布日期，搜索结果的时效和官方性质仍需用户核验。开启联网时搜索以**工具**形式下发给模型（`web_search`，未开启则不下发），由模型自行决定查询词并可换词重试；结果按主机名与路径去重、官网与招聘页优先排序，命中来源累积到同一条消息的 sources 里展示。
+- 助手通过工具调用读写项目数据：读工具直接执行，写工具覆盖「新增/修改岗位」「更新个人资料基础字段」「资料箱条目」「备选岗位及其导入」「助手技能」「简历版式参数」「知识库增改」「新增提醒」，**不提供任何删除类工具**，也没有任意 URL 抓取或执行代码的能力。读侧除上述写对象的查询外，还覆盖**提醒 / 内推 / 面经 / 题库历史 / 复盘历史 / 求职统计看板 / 分享包列表**（一律 `live_only`、软删不进结果）。工具参数一律走与 HTTP 接口相同的 Pydantic 校验；`execute_tool` 是同步入口（测试与无网络场景），聊天流走 `execute_tool_async` 以便 await 联网搜索。`Tool` 用 `writes: bool` 标记写工具，系统提示词里的「写入类工具」清单与之**双向一致**（`test_assistant_knowledge_audit.py` 双向比对，漏标任何一边都变红）。
+- 助手「能力地图」的单一事实来源是 `services/feature_catalog.py` 门面（`FUNCTIONAL_DOMAINS` / `FEATURES`）：功能数据按拆分前的原始顺序存在 `feature_catalog_{profile,resume,workflow}.py` 三个数据段里，门面拼回并 re-export；能力地图在运行时渲染进系统提示词，并与前端导航 label、应用内使用指南、README 功能表双向对齐（守卫测试钉住），取代手写静态清单以避免"新增功能漏登记"。
+- 助手可导入**技能**（`assistant_skill` / `assistant_skill_file`）：`.md` 只有提示词，`.zip` 是提示词加一包知识文件。**一个技能包里有两个信任级别**——提示词是用户主动导入的指令，拼进系统提示；知识文件与岗位描述同级，属于不可信资料，只能经清洗后作为参考呈现。知识不预加载，由模型经 `read_skill_knowledge` 工具按需读取，检索直接复用经历参考文件的「清洗注入 → 分块 → 关键词打分 → 按预算选片」流水线，不另建一层。所有启用技能拼进系统提示时有总长度预算，被截断或跳过的技能会在提示里点名，不做静默丢弃。导入链路把 zip bomb、路径穿越、加密成员和非法扩展名都挡在 `services/skill_archive.py` 里，且不使用 `extractall`。技能现在也可以在「技能工作台」里手工新建与编辑（`GET / POST / PUT /api/assistant/skills`）：详情接口会带回知识文件正文供编辑，超出总量上限时置 `files_truncated`，前端据此不覆盖式提交 `files`，避免把没加载到的内容写空。
+
+## 核心数据流：采集、匹配分析与自动投递
+
+自动投递是项目里**唯一会主动访问外部招聘网站**的链路，且**只在用户显式触发时**运行（默认不访问，见「关键设计决策」）。它把最不可控的两件事——驱动真实浏览器、理解陌生表单——封在**浏览器桥接层**与**站点适配器层**之后，业务层只调用「站点无关」的接口，两层都能用假传输层离线测试。
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端投递台
+    participant A as /api/apply 路由
+    participant S as services/apply 编排
+    participant B as services/browser 桥接
+    participant P as 招聘网站(经专用浏览器)
+    participant DB as SQLite
+
+    U->>F: 启动投递专用浏览器并扫码登录一次
+    F->>A: POST /api/apply/browser/start
+    A->>B: 用独立 user-data-dir 拉起浏览器
+    B-->>A: state(=看端口), owned(=归谁), port
+    U->>F: 加入队列(逐条确认) → 点开始投递
+    F->>A: POST /api/apply/queue、/tasks
+    A->>S: 校验准入(admission_of 单源)、装配站点所需资料与招呼语
+    loop 队列逐岗位
+        S->>B: 打开岗位页 / 填表 / 传简历 / 发招呼语
+        B->>P: CDP 驱动(选择器由站点适配器提供)
+        P-->>B: 页面状态
+        B-->>S: 步骤与结果
+        S->>DB: 写任务项状态(待投递/成功/失败/已跳过)
+    end
+    S-->>A: 更新计数与熔断状态
+    A-->>F: 轮询任务详情(进度、状态)
+```
+
+- 采集与投递共用一个**任务运行器**：`services/apply/task_runner.py` 只负责线程生命周期、控制信号与公共收尾，`task_apply.py` 执行逐岗位投递，`task_collect.py` 执行采集批次与样例记录，`task_config.py` 解析任务配置快照。依赖从运行器单向流向执行模块，执行模块不反向导入 `TaskRunner`，避免循环依赖；原私有方法与 monkeypatch 路径保留兼容包装。任务支持暂停 / 继续 / 停止与连续失败熔断，进度按逐岗位状态与「已处理 N/M」展示，**不产出任何百分比**。
+- **准入判断单源**：能投 / 需确认 / 不投只由 `models/apply.py` 的 `admission_of()` 一处判定，匹配分析与投递服务都复用它；前端只读后端返回的 `admission` / `requires_confirm`，**不再判一次**。
+- **匹配分析**（`services/job/job_match.py` + `prompts/job_match.md`）读取个人资料与简历，产出硬性条件、核心能力、加分项三类逐条结论，落在「已匹配 / 表达缺口 / 证据不足 / 真实缺口 / 待确认」五类上并给出建议。它回答「你够不够」，与只读招聘原文、回答「岗位要什么」的岗位需求解读是两条独立链路；结果随岗位持久化，作为投递准入依据。
+- **浏览器桥接层**：`services/browser/cdp_client.py` 只做 CDP 传输（HTTP + WebSocket），`browser_manager.py` 负责按用户选择的浏览器（自动 / Chrome / Edge / 自定义路径，**指定了就只找那一个、找不到不静默回退**）用**独立 `user-data-dir`** 拉起 / 关闭「投递专用浏览器」。Chrome 136+ 会静默忽略默认用户目录上的 `--remote-debugging-port`，因此**不能**去连用户日常浏览器，必须由应用自己拉起一个专用实例。**"在不在跑"看调试端口，不看进程句柄**：浏览器是独立进程，应用退出时**不会**去关它（登录态就持久化在专用目录里，下次启动直接沿用），应用一重启就没有它的句柄了——按句柄判断会把正在运行的窗口误报成"未启动"而拦住采集投递，且再点"启动浏览器"也救不回来（同一 `user-data-dir` 的第二次启动会被 Chromium **转交给已在运行的实例后立刻退出**，句柄依然是死的）。"归谁"是独立于"在不在跑"的另一个事实（`BrowserStatus.owned`）：`stop()` 只终止自己持有的句柄、**绝不按 PID 猜进程**，所以非本次运行拉起的窗口关不掉——界面据此禁用「关闭浏览器」并把原因**写在页面上**（禁用按钮不派发鼠标事件，挂在悬停提示里等于没写）。`page_ready.py` 是**页面就绪等待原语**：`Page.navigate` / 打开标签页只是让浏览器**开始**加载，返回时文档往往还是空的——必须在导航之后轮询到"目标选择器匹配到内容"再动手，否则会在空白文档上抓到空结果并把"什么都没做"伪装成"完成"。等待按调用方给的 `probe` / `is_ready` / `blocker` / `on_timeout` 回调运转，与站点无关、可离线测；轮询步经过 CDP 客户端（外层 `StopAwareCdpClient` 的停止检查点），因此可被用户点的"停止"打断。**超时是唯一的失败时限**：`readyState === 'complete'` 只说明文档与静态资源加载完，SPA（如 BOSS 直聘）的岗位卡片常在它**之后**才由 XHR 异步渲染，所以**不**拿 `readyState` 当"内容该出来了、再没有就是结构变化"的证据（否则首屏稍慢就会误报失败）；就绪只由"匹配到内容（或明确无结果）"判定，出现登录失效 / 验证码仍**立刻**失败，超时则按证据给出对应文案。
+  两条来自真机联调的硬约束（各自都让整条链路静默失效过，见 `test_boss_page_probe.py`）：**就绪选择器不能含会被页面自身结构命中的宽松规则**——`a[href*="/job_detail/"]` 曾命中页头「职位搜索」导航项（`href` 恰为 `/job_detail/`，无 id、不以 `.html` 结尾），它比岗位卡片先渲染，导致就绪在 0.9s 就被判真、网络订阅窗口提前关闭，而 joblist 接口还没发出；现在要求岗位链接以 `.html` 结尾。**拦截判定必须看可见性**——站点把登录弹窗模板（`.sign-form` 等 6 个）与空态容器写在标记里且默认隐藏，`querySelector` 只看存在与否会让"每个详情页都要登录""每次搜索都没结果"，所以统一用 `shown()`（`getClientRects().length`）判定。
+  **"这一页是不是目标页"的判据是"目标地址里的每个查询参数都在当前地址里取到相同的值"**（`same_target_page`），而不是"地址整串相等"。整串相等会被站点的地址规范化打穿——把 `/web/geek/job` 补参数、跳成 `/web/geek/jobs` 之后，**每一次正常导航都被判成"新文档还没接管"**，等满超时后报"页面没有切换到目标地址"，而页面其实早就好了（真实用户反馈就是这句）；反过来"只看路径"又太松：`?page=1` 与 `?page=2` 路径完全相同，会把"还停在上一页"认成"已到位"，翻页于是读到上一页的内容。带参数的比较正好卡在中间，两个方向都有回归测试钉住。
+  另外，页面等待**失败不再直接终止采集**：失败先被记下来，由 `collect_search` 逐级降级（见下条）。
+- **采集只写暂存区，导入是另一个显式动作**：`Collector` 把结果落进**备选岗位**（`candidate_job`），而不是 `job` 表；投递台陈列这批候选，用户勾选后走 `POST /api/candidate-jobs/import` 才建正式岗位。这不是多此一举：采集条件（关键词 + 城市）本来就宽、噪声是常态，直接入库的代价是用户只能事后一条条删。**复用的是既有概念**——备选岗位本来就是"先存着、之后再导入"，只给它加了城市 / 薪资 / 原站链接 / JD 两段 / 批次 id 六列（迁移 `0015`，只加列）。去重判据由 `job_service.find_by_job_identity` **一份实现**同时服务采集、暂存区与导入三处，且**两张表都查**（只查一张必然在另一边堆重复）。导入按批次可回看：`collect_task_id` 指向产生这批候选的 `apply_task`，`GET /api/apply/tasks?kind=collect` 供「采集记录」倒序列历史批次。
+- **采集条件分三类落地，而不是"能映射就映射、不能就算未生效"**：每个关键词由采集器逐个搜索，单批上限与去重覆盖整批；城市名由 `sites/boss_city.py` 动态解析成 BOSS 的 9 位城市编码（常用城市有离线启动缓存），无法识别时明确失败。**站点筛选栏的条件**（求职类型 / 薪资待遇 / 工作经验 / 学历要求 / 公司行业 / 公司规模 / 融资阶段）由 `sites/boss_filters.py` 提供**选项目录与编码校验**、`BossAdapter.build_search_url` 拼进查询参数，即"站点侧筛"；「我的薪资 / 经验 / 学历」走 `services/apply/collect_filters.py` 在**采集之后**按接口返回的岗位字段筛选（`SiteAdapter.post_filter_conditions` 声明哪些条件如此处理）。两者语义不同（前者筛"岗位要求什么"，后者筛"你的条件够不够得上"），可以同时用。三条硬约束：**判断不了就保留并记账**、**只展示用户实际填写并执行的筛选项**、**编码没校验过就不发给站点**（旧编码在站点看来同样"合法"，发出去会静默筛错）。
+- **站点筛选项的清单与编码都来自站点自己**（`sites/boss_filters.py`）。参数名与编码全部由**真实点击**实测得到，不从 HTML 属性推——埋点属性写的是 `sel-job-rec-exp`，地址栏里的参数名却是 `experience`。清单按可信度三级降级：**登录会话**（读页面筛选栏，含"这个账号可见"的选项，例如「求职类型」里的「实习」只对部分账号可见）→ **免登录公开接口** → **内置快照**（只覆盖 6 个短清单，行业 134 条不进代码）。行业的编码**只认接口那份**：页面上的 `ka` 是渲染序号（`sel-industry-23` 的真实编码是 `101407`），照抄会发出一个"合法但不相干"的编码。读取路径也刻意避开一个站点怪癖：**带凭据的 `fetch` 在 geek 页面上永不 resolve**，所以它改成"发出去 + 轮询取结果"，并且在页面筛选栏已经读到清单时根本不发那次请求。
+- **站点适配器层**：`services/sites/base.py` 定义契约（含 `requires_resume` 能力声明，以及 `fetch_filter_options` / `prepare_collect_filters` 两个**可选**能力），`registry.py` 按站点标识或域名分发；`boss.py` 是保持公开导入兼容的薄门面，页面选择器与等待诊断在 `boss_page.py`，搜索/详情采集在 `boss_search.py`，城市编码在 `boss_city.py`，筛选栏目录在 `boss_filters.py`，站内沟通状态机在 `boss_apply.py`，接口字段解析在 `boss_network.py`。上层只依赖 `BossAdapter`，各子模块不反向导入门面，站点改版只影响对应职责文件。
+  **选择器一律多候选并列**，且每类都留一个"结构性锚点"：例如岗位卡片是 `li.job-card-box, .job-card-wrapper, ul.rec-job-list > li, …`，而定位岗位链接用 `a[href*="/job_detail/"]`——改版可以换任何 class，但"点进去看岗位"必须有个链接，所以它是最不容易消失的锚点。只留一套 class 的代价是改版当天直接变成"匹配 0 个"（本项目真实发生过：`job-card-wrapper` → `job-card-box`）。
+- **采集逐级降级（五级）**：`collect_search` 依次尝试 ① 检查目标接口的非零错误码 → ② 接口响应解析 → ③ 已记录的页面等待失败 → ④ 多候选 DOM 卡片 / 搜索结果区域内的岗位链接 → ⑤ 带诊断的失败。`code=19 / 参数值错误` 等明确站点错误不会再被当成“接口结构不认识”后退到 DOM，也不会从错误页的推荐区捞出一条岗位伪装成功。只有页面明确呈现空状态才返回合法的 0 条结果。
+- **采集走「网络响应优先、DOM 兜底」**：岗位列表与详情都是 XHR 渲染的，直接读接口响应比解析 DOM 稳，详情接口还带回完整 JD。`boss_network.py` 的宽容**只给字段、不给容器**：卡片内的字段改名（`jobName`→`jobTitle`、`salaryMin`、`skillList`…）仍能解析，因为字段名足够具体、而且还有岗位名等内容特征把关；而**容器与键只认站点自己的名字**（`zpData` / `jobList` / `jobInfo` / `brandName`）——`data`、`result`、`jobs` 这类泛化名字一律不接受，否则页面上几十个响应里任何一个都更像"岗位列表"，而 `first_json_with` 取的正是**第一个**匹配项，猜错就是静默写进垃圾岗位。容器改名 → 返回 `None` → 退回 DOM（照样采得到，只是字段少些）+ 给出诊断，**绝不返回空列表**（那会被说成"这次真的没搜到"，用户以为关键词太窄）。明确错误码由 `boss_search.py` 抛出。事件订阅仍遵循“导航前订阅、等待结束后取走、停止前 drain”的真实时序，包装层显式转发所有事件能力。
+- **BOSS 自动沟通状态机**：BOSS 声明 `requires_resume=False`，因此没有本地岗位版简历不会在任务层提前跳过；适配器按“打开岗位 → 等待立即/继续沟通入口 → 点击 → 等待聊天输入框 → 填写普通输入框或 `contenteditable` → 点击真实发送按钮 → 等本人消息或成功提示”推进。任一步找不到控件、登录失效或出现验证码都以结构化失败返回，不以“点过按钮”冒充成功。
+- **登录在用户自己的浏览器里完成**：应用不输入账号密码、不读取或保存 Cookie；首次扫码登录后，凭据只存在于专用浏览器的数据目录里。
+
+## 核心数据流：事实台账
+
+个人资料记录**发生过什么**，事实台账记录一条条**可对外表达的主张**。两者是叠加关系：台账控制的是"这句话能不能说、能说多强"，而不是再存一份资料。
+
+```
+资料/粘贴文本 ──(claim_draft.md，仅草拟)──▶ 草稿（一律「待确认」）
+                                            │ 用户逐条核对
+                                            ▼
+                                    claim_record（核实状态决定用途）
+                                            │
+        ┌───────────────────────────────────┼───────────────────────────────┐
+        ▼                                   ▼                               ▼
+  生成简历：只注入「已确认」条目        导出简历：正文含【待补】标记则拦截    求职助手：
+  未确认说法进"禁止使用"清单；          （409 + 指明在哪一节；              可读写内容，
+  承担程度与个人边界约束表述强度        allow_incomplete 可导出草稿）        但改不了核实状态
+```
+
+- **两条闸门函数收口**：`models/claim.py` 的 `can_enter_final()` 与 `has_placeholder()` 是这套规则的唯一实现处；服务层、导出接口与前端都从这里取结论，避免各处各判一次、判得不一致。前端 `types/claim.ts` 镜像同一份中文取值（枚举写死不引 barrel，见 `frontend/src/config.ts` 的历史坑）。
+- **状态决定用途，不是决定好坏**：`已确认` 可进正式材料；`待确认` 只能进草稿且必须带占位符；`已过期` 需先更新；`不采用` 保留原因供复盘。唯一的**硬规则**是「已确认不得含占位符」——两者不能同时为真，在 schema 层用 `model_validator` 挡在保存之前。其余（强主张缺面试细节、已确认缺个人边界、表述强度高于承担程度）走**服务端算出的 `warnings`** 随条目下发：硬拦会让用户放弃维护台账，反而拿不到规则的好处。
+- **台账为空时行为不变**：`build_baseline()` 在台账为空时返回空基线，`resume_generate_user.md` 的 `{% if claim_baseline %}` 整块不渲染，提示词与没有这个功能时**逐字节相同**（`test_claim_integration.py` 钉住）。这是"渐进式改造"在本模块的落点——没启用台账的用户不该因为这次改动而拿到不一样的简历。
+- **导出闸门是确定性的**：只认正文里的四种方括号标记，不做"这句话对应哪条台账"的模糊匹配。模糊匹配判错会拦下本来没问题的简历，而误拦会直接让用户关掉这个功能；宁可少拦、不可误拦。正文里正常出现的"待补充说明"不会被误伤（有测试钉住）。
+- **助手不能替用户确认**：`create_claim` / `update_claim` 的写入路径都不接受 `verification_status`，新建条目一律「待确认」。让模型把自己新建的条目标成「已确认」等于让它自己给自己发通行证，那正是台账要防的事。
+- **用 `subject` 文本关联而不是外键**：台账记的是"关于某段经历的主张"，资料库怎么改都不该连带删掉用户已经整理好的事实基线。这也是 `0011` 迁移只加表、不建外键的原因。
+
+## 核心数据流：求职进度
+
+投递台记录的是**动作**（这个岗位投出去了、失败了），求职进度记录的是**结果**（对方走到哪一步了）。
+两者刻意不合并成一张表：一次投递成功只写一条「已投递」，之后的状态变化来自对方发来的通知。
+
+```
+投递成功 ──(task_runner)──▶ 落一条「已投递」
+                                   │
+邮件/短信/截图 ──(application_status.md)──▶ 识别草稿
+                                   │
+                          /parse 只算不写：返回合并预览
+                                   │ 用户勾选确认
+                          /apply 执行同一份计划
+                                   ▼
+                        application_track（公司+岗位 唯一）
+                                   │
+                    漏斗统计 / 筛选 / CSV·JSON 导出
+```
+
+- **合并规则只写一遍**：`services/tracker.plan_merges()` 算出每条会新增还是更新、为什么；`/parse` 把它原样返回，`/apply` 执行同一份计划。两处各写一遍判断是这类功能最容易出的错——预览说"会更新"、点了确认却没更新（或反过来），用户再也不会相信那个预览（`test_tracker_api.py` 钉住两者一致）。
+- **状态取舍收口在 `models/tracker.resolve_status()`**：**只能前进，拒信除外**。乱序粘贴旧通知不该把进度打回去；拒信是决定性的，任何时候都覆盖。当前是「待确认」时任何明确状态都能覆盖它。界面与接口都从这里取结论。
+- **不做推断**：普通自动回执只能落到「已投递」，不能推断出面试或 Offer；识别不出来就是「待确认」。这是本模块唯一会误导用户的失误来源——用户会照着一个错的「面试中」去准备，所以本地降级（`local_tracker_records`）也只在**同一段里同时找到公司名、岗位名和状态信号**时才产出记录，宁可少给。
+- **同一批先折叠再规划**：一次粘贴整段邮箱记录时，同一个岗位往往连着出现好几封（已投递 → 筛选 → 面试）。`_fold_batch()` 先按合并键折叠成一条（以进展最靠后的那条为代表），再对数据库规划——不折叠的话，后一条会相对前一条（还没落库）判成"更新"，而计划里的"更新"找不到可更新的对象。
+- **归一化只做不会误合并的事**：去空白、统一大小写、全角转半角。加"去掉「有限公司」后缀"之类的规则看着聪明，实际会把两家不同的公司合并到一起，而用户没法撤销一次错误合并。
+- **合并键有唯一约束兜底**：`UniqueConstraint(company_key, title_key)`——"漏斗只有一个口径"由结构保证，而不是只靠服务层的自觉。
+- **识别接口只算不写**：`/parse` 全程不提交任何事务（有测试断言预览后列表仍为空）。
+
+## 核心数据流：版面诊断与「自动一页」
+
+**分工是这一块的全部要点**：规则（多少算满、先动哪个旋钮、字号缩到哪为止）全在后端，
+测量只在浏览器里做。规则放后端是因为它纯是判断，能被 pytest 逐个钉住、也能被助手与导出
+复用；测量放前端是因为**版面只有真正排版之后才存在**——后端既没有浏览器，也不该为了量
+一个高度去引一个无头浏览器依赖。
+
+```
+预览 iframe 排版完成
+      │ measureResumeLayout()：最后一个可见正文元素的底边 − 内容区顶边
+      ▼
+POST /api/resumes/{id}/layout/analyze   ← 两个高度（正文占用 / 一页可用）
+      │ services/resume/resume_layout.diagnose()：结论 + 固定顺序的建议
+      │ build_fit_ladder()：逐档版式 + 每档可直接注入预览的 CSS
+      ▼
+「自动一页」：对每一档 → iframe 注入 css → 量一次 → 够放下就停
+      │ PATCH /api/resumes/{id}/layout（format_config）
+      ▼
+resume_record.format_config ──▶ 预览 / 导出 HTML / 服务端 PDF 三处共用一份
+```
+
+- **溢出判断不能用 `scrollHeight`**：它把 padding 之外的空白和被撑开的容器都算进去，量出来的"内容高度"偏大。正确做法是"固定页高 − 上下 padding"作为可用高度，再比最后一个**可见正文元素**的底边（含其下外边距）。`utils/resumeLayoutMeasure.ts` 里同时处理了另一个坑：预览会给 body 加 `transform: scale()`，而 `getBoundingClientRect` 返回变换后的坐标、`padding` 是未变换的值，两者混用会算出离谱的填充度——所以测量期间先摘掉 transform、量完还原。
+- **只认带直接文本或媒体的元素**：一个只有下边距的空 div 不算正文，否则本来就空的版面会显得更满。
+- **字号下限按绝对像素算，不按比例**：档位本身有大小（小字号 12px、标准 14px），同一个系数在两者上的结果差很多。所以下限是"不低于 12px（≈9pt）"，换算成系数时要除以基准字号（`font_adjust_floor`）。
+- **建议顺序本身就是规则**：重排 → 结构 → 间距/字号 → 精简内容 → 扩页。先让人调间距、调不好再让人删内容等于让人白改一轮；反过来先说"精简内容"，用户又可能删掉本来放得下的经历。版式已到下限时，"间距"那条会换成"已经到下限量"而不是继续让人按自动一页。
+- **按简历的版式覆盖**：`resume_record.format_config`（0013 加列）叠加在具名格式模板之上。自动一页的方案写在这里而不是去改格式模板——后者会让所有引用它的简历一起变，而结果只对当前这份内容成立。**三处渲染共用一个解析函数** `_record_format_config`：各解析一次迟早会出现"预览收紧了、导出的 PDF 没变"，而用户只有在下载之后才会发现。
+- **`font_scale_adjust` 刻意没有 CSS 映射**：它在渲染前就把系数预乘进 `base_px` 交给模板，这是唯一对内置模板与用户自制模板都生效的路径。再给一条 CSS 变量覆盖会叠乘——界面上调 1.1 会实得 1.21 倍。自动一页要逐档试字号时，由后端在那一档的探针 CSS 里直接写算好的绝对像素（`--fs: 12.32px`），而不是去改一个全局变量。
+
+## 核心数据流：面试深挖
+
+与「模拟面试」的分工：那边按轮数推进、结束时给四维度评分报告；这边**一条主张一个契约**，
+全程用证据状态说话，产出的是一份"该去补什么"的清单。
+
+**契约必须在提问之前生成并存库**，判定时再读出来照着判。这不是为了多存一份数据，而是为了
+防住"看到回答之后才定标准"——那是这类功能里最难发现、也最伤信任的一种偏差（用户以为自己
+进步了，其实只是标准变松了）。
+
+```
+台账「已确认」条目 ──(drill_contract.md)──▶ 评分契约
+                                          想验证什么 / 必须讲到的证据
+                                          / 该追问的情况 / 可以结束的条件
+                                                    │ ★ 先落库，再展示问题
+                                                    ▼
+                        用户回答 ──(drill_evaluate.md)──▶ 按契约判定
+                                                    │
+                        ┌───────────────────────────┴──────────────────────┐
+                        ▼                                                  ▼
+              未问完 → 新契约（换一个追问角度）              问完 → 复盘 + 复练队列
+                                                            (drill_review.md)
+```
+
+- **状态机单独成函数**（`models/drill.should_promote`）：只有拿到新证据才算"更好了"。这条规则最容易在实现里被绕过——"用户这次答得比上次流利"看起来像进步，但他没说出任何新事实时状态就不该升级。取值语义：`not_covered` 是**起点**（这道题还没判过）而不是结论，所以从它出发的任何明确判定都成立，但反过来不能升级**到**它；`contradictory` 是决定性的，任何时候都能标记，也能从它恢复。
+- **"有证据"是独立的第二道闸门**：即使状态机允许，`parse_verdict` 还会检查 `evidence_found` 是否为空——模型说"这次算过了"却列不出任何证据时一律不判成「已验证」。一个虚高的「已验证」会让用户以为这条主张讲得清了，然后照着它去投简历。
+- **一轮完整的问答**（含"下一问"）记在 `drill_turn` 上：只把追问留在契约上的话，复盘时追问的原文就只剩最后一次了。
+- **契约的 `id` 要在创建时立刻 flush**：它要给后续轮次做外键，而新对象在 flush 之前 `id` 是 `None`——拿 `None` 当外键会让"这一轮属于哪道题"永远对不上，表现就是追问永久失效（界面一直停在"没有等待回答的问题"）。
+- **反馈策略两档**（`deferred` / `immediate`）：真实模拟默认不在每题后念判定，因为念了会让人按判分标准答题，而不像真面试；判定本身在两种模式下都如实存库，只是不主动展示。
+- **降级不假装**：复盘生成失败时用 `local_review()` 汇总已有判定（"哪些没通过"这件事数据里就有），而不是编一段总结；下一题生成失败时带着原因提前收尾，已有的判定全部保留。
+
+## 核心数据流：匹配度参考分
+
+参考分是**展示层附加品**，与「五类结论 + 准入闸门」完全解耦：结论由 `models/apply.admission_of`
+单源收口，参考分由 `services/match_scoring.score_match_result` 在结论之上**现算**一个 0-100 分。
+
+```
+job_match_analysis.result ──(admission_of 单源)──▶ 五类结论 + 准入闸门
+                                                    │
+                                                    ▼
+score_match_result(result, job_payload, profile_text, resume_text)
+                                                    │
+                           固定 5 维加权求和（技能覆盖 / 年限 / 项目相关度 / 硬性门槛 / JD 关键词覆盖）
+                                                    ▼
+                       0-100 总分 + 分项 + 免责文案（不落库、不回写、不改变准入）
+```
+
+- **只读、不落库、不改变准入**：`reference_score` 是派生值，每次都从当前结论与来源文本现算；接口在
+  `admission_of` 重推结论之后才算分，参考分**不参与**「能投 / 需确认 / 不投」。
+- **信号缺失给中性分 50**：不把"没信息"误报成"不匹配"。
+- **固定免责**：文案写死"不代表真实 ATS 解析结果或投递成功概率，投递准入仍以五类结论为准"。
+
+## 核心数据流：简历写作增强与质量合规
+
+四个 LLM 变换（`services/resume/resume_writing.py`）+ 一个纯本地对比（`services/resume/resume_diff.py`），
+都收口在 `api/resume_writing.py` 的 `POST /api/resumes/{id}/writing/{star|phrases|polish|translate}`
+与 `POST /api/resumes/{id}/diff`。
+
+- **STAR 改写可挂台账主张**：`claim_id` 解析出 `ClaimRecord` 后，把候选表述与个人边界拼成
+  "事实边界"注入提示词，改写不会越过个人边界；未配置模型时接口返回清晰中文错误、**不做本地降级**。
+- **纯空白拦截在 schema 层**：`WritingText = Annotated[str, Field(...), AfterValidator(_strip_writing_text)]`
+  四个请求体共用，空串 / 纯空白直接 422，不把空内容交给模型。
+- **版本对比纯本地**：difflib 三态（added / removed / unchanged），不调用模型。
+- **质量与合规**（`services/resume/resume_risk.py` + `services/ats_check.py`）：查重 / 敏感词 / 夸大风险 /
+  面试深挖风险点（联动事实台账）/ 合规校验 + ATS 本地检测；ATS 只做静态规则检查并带免责。
+
+## 核心数据流：导出管线（多格式 / 水印 / 脱敏）
+
+导出从「每种格式各自拼字段」收敛到「归一化 + 纸面过滤 + 一份 plan + 一条管线」（`services/export_pipeline.py`）：
+
+```mermaid
+flowchart LR
+    DOC[ResumeDocument v2] --> PLAN[document_plan<br/>唯一 planner]
+    PLAN --> R1[HTML<br/>_resume_document.j2 + 主题]
+    PLAN --> R2[PDF<br/>document_render]
+    PLAN --> R3[Word<br/>docx_document_render]
+    PLAN --> R4[Markdown / TXT / JSON]
+    CFG[format_config<br/>角色/字号/页边距] --> R1
+    CFG --> R2
+    CFG --> R3
+    R1 --> W[水印后处理<br/>watermark.apply_watermark]
+    R2 --> W
+    R3 --> W
+    R4 --> W
+    W --> P[脱敏 privacy.redact]
+```
+
+- **六种格式**：`ExportFormat = json | md | html | pdf | docx | txt`。四个有版面的出口都走同两个前置步骤
+  ——`document_html.coerce_document()`（v1 → v2，读时转换）与 `document_html.paper_document()`
+  （剔除 hidden 条目 / 文本块 / placement=hidden，纸面视角的唯一过滤点）——然后消费同一份
+  `DocumentPlan`；纯文本走 `txt_exporter`（由 Markdown 展平），JSON 直接输出 v2 document + layout。
+- **字段拼装只发生在 planner**：日期范围 / 枚举 / 作者 / 列表 / 标签都在 planner 格式化好，渲染器只画
+  `Inline` 段；模板只负责外壳与 CSS。四格式「同字段、同顺序」由文本对拍测试守住。
+- **水印是后处理**（`services/watermark.py`）：输入已经是渲染好的字节，输出加水印后的字节；
+  HTML 覆盖层 / PDF 用 `PdfWriter(clone_from=...)` 叠加 / Word 页眉；纯文本与 JSON 无版面概念、报明确错误。
+- **脱敏是 `privacy.redact`**：姓名 / 电话 / 邮箱 / 公司 / 学校等字段替换为占位符，始终基于脱敏内容导出。
+
+## 核心数据流：离线分享包与本地模板市场
+
+模板相关实现按职责拆分为 `resume_templates.py`（兼容入口）、`resume_template_format.py`（格式字段与 CSS）、`resume_template_market.py`（市场与字号）和 `resume_template_style.py`（视觉配置白名单）。参考模板识别只返回安全配置草稿，前端确认后复用普通模板保存接口，不让模型直接生成可执行 HTML。
+
+
+- **分享包**（`services/share_package.py` + `api/share_packages.py`，`/api/share-packages`）：把一份
+  简历打包成脱敏 HTML/PDF + 只读快照 + 评论回传文件 + 本地 token；权限只读 / 可评论，离线校验
+  token、不做在线鉴权。删除走回收站（软删除，磁盘产物不清理）。
+- **模板市场**（`services/resume/resume_template_market.py` 的 `TEMPLATE_MARKET_PRESETS`）：互联网大厂 /
+  国企事业单位 / 外企 / 应届校园四套预设，`/api/resumes/templates` 返回带 `market` 字段的目录。
+
+## 核心数据流：内推 / 提醒 / 面经 / 求职统计 / 知识库 / 历史记录（迁移 0018 / 0019）
+
+迁移 `0018` 新增 `referral` / `reminder` / `interview_experience` / `share_package` 四张表
+（都带 `deleted_at`，因此一并登记进 `trash.TRASH_SPECS`，删除可恢复）。
+
+- **内推**（`services/referral_service.py` + `api/referrals.py`）：转化率口径由关联的
+  `ApplicationTrack` 派生（`_is_converted`，进入面试及以上才算转化）；`referral.converted` 列是
+  迁移留下的历史占位列，写入侧不接受、读取侧覆盖。迁移 `0019` 再给 `referral` 补两列：
+  `referral_code`（内推码）与 `note_images`（备注图片路径）。
+- **提醒**（`services/reminder_service.py` + `api/reminders.py`）：日历提醒，按时间升序排"接下来要做什么"；
+  首页展示近期提醒并按紧急度分色（逾期 / 24 小时 / 3 天），「打开应用时弹出提醒」开关经
+  `GET/PUT /api/settings/reminder-popup` 持久化。
+- **面经**（`services/interview/interview_experience_service.py` + `api/interview_experiences.py`）：真实面经知识库。
+- **求职统计**（`services/analytics.py` + `api/analytics.py`）：前端路由 `/analytics`，按四个主题分组——
+  转化与卡点、时间与节奏、渠道与去向、简历与健康度。趋势图可选 `trend_months`（接口 1..24，前端提供
+  近 1 / 3 / 6 个月 / 1 年）。该模块的 docstring 是**口径的权威文档**，同时写明了因数据模型不支持而
+  **刻意不提供**的指标（平均推进天数 / 阶段流失率 / 面试通过率——没有状态历史表；行业——没有该字段），
+  别再重复提议。跨模块复用而非各写一份：`services/ratios.py`（比率唯一实现）、`models/tracker.py` 的
+  `STALLED_DAYS` / `is_stalled`（"卡住"口径，与 `/api/stats` 同源，有测试钉住两处一致）、
+  `services/resume/resume_health.py`（简历与台账健康度，复用 `resume_completeness.find_incomplete`）。
+  依赖 `applied_at` 的两张图在日期为空时**显示缺口计数而不是零轴**（`applied_date_gap`），
+  助手侧走 `dashboard_brief` 摘要投影，不把长数组塞进上下文。
+
+迁移 `0019` 在上述四张表之外再增三张表 + 内推两列（同样是**只加表、只加列**，带 `deleted_at`
+软删除并登记进 `TRASH_SPECS`，外键 `SET NULL` + 快照字段）：
+
+- **题库历史**（`question_bank_record`，`services/interview/interview_history.py` + `api/interview_history.py`）：
+  个性化题库的保存历史，可回看、可删除。
+- **复盘历史**（`interview_review_record`，同上）：面试复盘的保存历史。
+- **知识库**（`knowledge_entry`，`services/knowledge_service.py` + `api/knowledge.py`）：成文笔记
+  （面经总结 / 简历技巧 / 求职策略等），带分类、标签与 Markdown 正文；`GET/POST /api/knowledge`、
+  `GET /api/knowledge/categories`、`GET/PUT/DELETE /api/knowledge/{id}`，删除走 `trash.soft_delete`。
+
+## 核心数据流：简历文档的版本、保存与冲突（W02 / A06）
+
+- **content 是 v2 JSON**：`resume_record.content` 存 `ResumeDocument`（`version: 2`）。读取入口对 v1
+  透明转换（不写库）、保存写 v2，详情响应带可选 `document_conversion` 摘要。文档结构本身不新增表 /
+  列；资料侧自定义字段的纸面属性由迁移 `0069` **只加两列**（`default_placement` / `material_only`，
+  旧库兼容、可降级）。
+- **唯一写库出口**：内容/版式/AI 修订三条写路径都走 `services/resume/document_save.py`。它用
+  单条 Core `UPDATE ... WHERE id=? AND revision=?` 做**原子条件写**（`revision = revision + 1`
+  同一条语句），命中才 commit；不命中**一个字段都不写**并返回 409。用 Core 语句而不是
+  ORM 属性赋值，是因为后者是"读-改-写"，两个窗口都读到 7、都写成 8——并发保护会静默退化成后写覆盖。
+- **版本语义**：`resume_record.revision`（迁移 0052，只加列、`server_default="0"`，旧备份仍可导入；
+  旧行保持 0，因为"第几版"在数据里无从得知）。它与撤销层级无关：**revision 是保存次数**，
+  撤销只改内存、保存即新版本。改名/备注/收藏/软删/恢复不推进版本（它们不是文档内容，
+  否则别的窗口改个标题就会让保存 409——假冲突）。
+- **接口**：`GET` 详情/列表返回 `revision`；新 `PUT /api/resumes/{id}/content` 接受
+  `expected_revision`；版式 `PATCH` 与 AI 修订接受可选版本号；旧 `PUT /{id}` 的形状一个字节不改，
+  仍是无条件写并推进一版——于是旧客户端写完后，新客户端下一次条件写必然 409，用户**看见**
+  "别处改过"而不是被静默覆盖。冲突响应为 `409 + {"detail","code":"resume_revision_conflict","revision"}`
+  （与既有 `dataset_scope_changed` 同一形状，前端 `ApiError.businessCode` 已能读取）。
+- **前端**：`features/resume-document/useDocumentSave.ts` 是唯一保存状态机（单飞、token 丢弃过时
+  回包、失败保留草稿、`conflict` 态不自动重试）；`ResumeWorkbenchConflict` 提供"用最新的 / 比较 /
+  另存副本"三选一——不允许"再点一次保存硬覆盖"。`useResumeDocument` 收敛唯一 dirty。
+- **迁移与备份**：0052 与后续 0053（来源/事实锁/用量）、0054（长 CV 文档模式）都是"只加表/只加列、
+  表不存在跳过、完整 downgrade"；`data_backup` 的表清单从 `Base.metadata` 推导，新表自动进包。
+
+## 核心数据流：对象可见性与锁定（W06）
+
+- 条目级可见性与锁定在 v2 模型里是**数据**：`ResumeEntry.hidden / lock_content / lock_layout`、
+  item 的 `hidden` placement 与 `TextItem.hidden`。hidden 的内容保留在文档、内部快照与备份里，
+  **不上纸面**；锁定只约束 AI 改写，不拦用户手动编辑。
+- **唯一纸面过滤入口**：`document_html.paper_document()` 在规划前剔除 hidden 条目、`TextItem.hidden`
+  与 `placement=hidden` 字段；HTML / 精确 PDF / 下载 PDF / Word / Markdown / 交付 JSON 都基于过滤后的
+  文档（planner 另有同语义的 hidden 跳过作为兜底）。源内容、内部快照与备份保留隐藏正文。导出闸门
+  （【待补】409）也只检查可见内容——隐藏条目里的占位符不会被打出来，不该拦住导出。
+- 结构操作（排序、复制、隐藏 / 恢复、锁内容 / 锁排版）在结构面板：复用旧大纲命令 / 多选 / 高亮能力、
+  数据源换成 v2 items——排序不换 id、复制生成全新 id、恢复保留 id；加粗 overlay 与事实标注按 item 路径
+  现算，排序后自动跟着对象走。
+
+## 核心数据流：统一检查与格式能力矩阵（W11 / R03）
+
+- 一个端点 `POST /api/resumes/{id}/preflight` 编排三层：**内容层**（待补标记 blocker、ATS 本地规则
+  high=verify/medium+low=suggestion、可选事实风险本地规则）、**排版层**（版面诊断映射 + 缺字/粗体
+  可用性）、**产物层**（真渲染 PDF/Word → 抽取文本 → 缺失/顺序/隐藏泄漏/截断）。规则全部复用既有
+  实现（`find_incomplete` / `check_ats` / `diagnose` / `build_resume_pdf`），编排层不重写判据。
+- **同一快照**：所有层从同一份 `(content, 生效版式, 字体)` 计算，响应带 `snapshot`
+  （content_sha256 + render_config_sha256 + 模板/页数/字号/语言/文档模式），前端据此丢弃过时回包。
+  每条问题有稳定 id（`sha1(code + 规范化 locator)` 前 12 位），复检按 id 比对"是否消失"。
+- **D08 缺字**：用 fontTools 读字体 cmap（fpdf2 的既有依赖，不新增包）；字体解析失败返回
+  `checked=false`，**不装通过**。**D11 机器文本**：pypdf/zip+XML 抽取，与黄金矩阵共用同一
+  `product_text` 实现；双栏模板的顺序差异标 `verify`（结构性近似），只有文本缺失是 blocker。
+- **格式能力矩阵**：机器可读唯一来源 `services/resume/format_capabilities.py`；W05 的人类文档
+  必须引用同一组 capability key，`tests/test_format_capabilities.py` 解析文档逐格核对（双写守卫）。
+  PDF 无斜体字形 → `italic=approx`、链接不可点 → `link_clickable=unsupported`（决策 D6），
+  这些等级如实下发到检查面板与矩阵文档，跨格式不吹牛。
+
+## 关键设计决策
+
+| 决策                           | 理由                                                                                                |
+| ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| SQLite 本地存储                | 单用户工具，零部署成本；切换多用户数据库时可复用 ORM，但仍需正式迁移、并发和数据库方言适配          |
+| LLM 走 OpenAI 兼容协议         | 文本对话复用一套实现；图片使用 `image_url` 消息格式，仍取决于具体服务商和模型的多模态兼容性         |
+| 用户 API Key 存本地 DB         | 普通接口只返回脱敏引用；显式查看仅限回环客户端、禁止缓存且不写回表单                                 |
+| Prompt 独立成文件              | 模板与代码分离，调参改 `prompts/*.md` 即可，无需动代码                                              |
+| PDF 用浏览器打印实现           | 服务端 PDF 在中文环境依赖系统字体，跨平台极易踩坑；浏览器打印零依赖且排版稳定                       |
+| A4 单页预览与打印              | HTML 模板固定 210×297mm；预览视口只缩放「显示」（整页 / 适宽），不改纸面字号；内容超出按页数上限截断并如实提示，禁止自动缩字号（`noAutoShrinkGuard` 守着） |
+| 岗位化建议按需生成             | 用户确认预览后再调用一次非流式模型，避免每次生成增加成本；建议不覆盖简历内容                        |
+| 模型输出宽松解析 + 修复重试    | 大模型输出不稳定，先容错提取 JSON，失败后用修复 Prompt 重试一次，再失败友好降级                     |
+| 深度美化质量门槛               | 在事实回填前识别合法但空洞的附件项目，最多非流式重试一次，避免前端拼接两份 JSON；失败时保留首轮结果 |
+| 分级美化拓展                   | 关闭时严格回填资料原文；开启后允许基于资料与相关参考片段重组表达，但结构事实和数字仍受校验          |
+| 一致性校验（防 AI 虚构）       | 固定名称、角色、时间、技能等结构事实，并拦截资料或参考文件未支持的量化结果                          |
+| 粘贴文本采用 AI 优先、本地兜底 | 本地规则保证离线可用，大模型负责跨行业语义分区和字段纠错；结果经过来源锚定、白名单和 Pydantic 校验，模型异常不阻断现有流程 |
+| 招聘信息默认粘贴导入、按需才访问站点 | 岗位粘贴识别在已配置模型时优先由大模型用结构化 Prompt 抽取字段，并通过原文锚点验证；未配置模型或模型失败则退回本地规则生成的可编辑草稿。**默认不读取远程岗位详情**；仅当用户显式开启「投递台」的采集或投递时，才由浏览器桥接层访问招聘网站，投递链接仍由用户手动核对并填写 |
+| 输出上限可设为不限制           | 设置页可勾选「不限制」，此时请求体省略 `max_tokens`，把输出上限交回服务商和模型决定（并非真的无限，部分服务商默认值偏小）；本地流式字符硬上限只用于兜住异常响应，不随该选项收紧 |
+| 备份 = 一致性快照 + 元信息 + 按引用收集的附件 | 照片与参考文件以 base64 存库内，但磁盘上**还有**按内容寻址的 `user_files/` 副本与 `referral_images/` 内推备注图（库内只存引用）；所以导出 = 主库快照 + 元信息 JSON + `asset_manifest` 列出的附件（逐文件 SHA-256）。导入侧**先验后发布**：附件在写盘前核对并做冲突检测，绝不覆盖本机同名文件（ADR-0005）；导出物**默认包含** API Key（按本机存储形态随包走，用户可显式取消勾选来剥离；含密钥时格式号升到 3 让老版本明确拒收），且清空密钥必须配合 `VACUUM` 重建文件，只 `UPDATE` 会留下空闲页残留 |
+| 多份数据 = 多份真实数据库文件   | 数据集文件本身就是活动文件，切换只重绑引擎、不搬运数据，因此不存在"改动没写回原数据集"的隐患。重绑手法是有区别的：`engine` 必须新建对象（URL 在 `create_engine` 时就烤进了连接池的 creator 闭包，改属性无效），而 `SessionLocal` 用 `configure(bind=...)` 原地改绑以保持对象 identity——否则按值导入它的模块（助手流式写入、简历保存）会静默继续写旧库 |
+| 数据集身份贯穿 HTTP 与后台任务 | 浏览器挂载编辑器前确认进程实例、数据集 id 与 generation，统一 fetch/XHR/SSE 请求携带 `X-Dataset-Scope`；缺失或失配的浏览器写请求返回 409。普通 API 请求持租约到响应/流完成，后台任务另持冻结身份租约，切换在互斥锁内排空后才 prepare/commit；连接池检查只是兜底，不能替代意图校验。旧标签页 A→B→A 后仍过期，脚本可显式携带同一作用域（ADR-0001） |
+| “其他信息”独立保存             | 避免把福利、团队介绍、职位 ID、流程等内容强塞进职责/要求，同时让搜索和岗位化生成仍能使用这些信息    |
+| 招聘发布时间保持原始语义       | `posted_at` 只接收明确发布语义；无法可靠识别时留空，不用本地更新时间替代                            |
+| 收藏是独立轻量状态             | 岗位复用既有部分更新，简历使用专用 PATCH，避免收藏操作覆盖正文；收藏夹只组合两种过滤列表            |
+| 岗位解读与候选资料隔离         | 只总结招聘原文并校验 evidence，避免把通用建议错误描述成针对用户能力的判断                           |
+| 预览定位结构化编辑             | HTML 仅携带字段路径，不做富文本原地写入；统一编辑器继续承担校验、数组编辑、保存和重新渲染           |
+| 助手上下文必须显式选择         | 默认只发送用户问题和受限历史，项目资料按消息选择，降低无关个人数据暴露                              |
+| 助手可写但不可删               | 助手能新增/修改岗位与资料基础字段，但**没有任何删除类工具**，模型误判也造不成不可逆损失；设置与数据集端点有回环强制校验，不做成工具以免绕过安全边界 |
+| 技能包内分两级信任             | 提示词是用户导入的指令（进系统提示），知识文件是不可信资料（清洗后按需读取）。把知识也当指令就等于"导入一个包即可改写助手规则"，而把提示词也当资料则技能毫无作用 |
+| 图片识别用模型抄录当锚点       | 防虚构靠"字段逐字出现在来源文本里"，而图片没有来源文本。改为让模型在同一次调用里先逐字抄录图片，再把抄录并入锚点。**这个保证比文本路径弱**：证明的是字段与模型自己的抄录一致，而非字段来自用户材料。因此抄录原样回传给用户核对（`recognized_text`），且发了图却没抄录时直接判失败，不放行"文本字段全部命中、图片其实没读"的假成功 |
+| 文档在本机提取文字而非交给模型 | 项目只支持 OpenAI Chat Completions 兼容协议，多数服务商不接受 PDF 入参。本机提取换来三件事：未配置模型时本地规则仍能解析文档、原始文件不外发、识别结果能走**真正的原文锚定**（而不是图片那条"模型自己抄录再核对"的弱保证）。代价是要自己负责解析不可信文件的安全边界：页数/字符数/像素数封顶、DOCX 只读白名单成员 |
+| 文档文字不插来源标记           | 提取结果要和粘贴文本走同一套本地规则，而规则会把开头的孤行当作正文——`[文档：jd.docx]` 这样的标记会直接混进岗位描述。文件来源在界面上本来就以附件形式可见，不值得为此污染解析结果 |
+| 新图片格式先转码再发送         | BMP/TIFF 服务商普遍不认，放行等于让用户收到一个必然失败的 HTTP 400。转码成 PNG/JPEG 后模型与浏览器都能处理；PNG 优先（截图的文字边缘比 JPEG 清楚），超限才退到 JPEG 并逐级降采样 |
+| 附件格式以内容为准             | 扩展名与浏览器给的 MIME 都只是线索：图片站/CDN 常对 `.jpeg` 链接返回 WebP，另存下来名字与内容就对不上，逼用户改名等于把上游的问题转嫁给他。改为按文件头判定真实格式、按真实格式处理（并在 `notes` 里说明），**放宽的只是"名字 vs 内容"这一层**：内容认不出或真实格式不在白名单内仍然拒绝，声明 MIME 与 data URL 前缀的自相矛盾也仍然拒绝。个人照片的校验在 `schemas/profile.py`，与附件不共用实现、仍是旧规则——`schemas` 不依赖 `services`，为复用原语反向依赖得不偿失 |
+| 通用简历另开一条筛选路径       | 通用简历的候选资料既不按岗位筛选、也不重排（`build_general_profile_context` + `_take_entries`）。**不能靠"把 job 传成空"让岗位路径退化**：那条路径在无信号时会静默丢掉校园经历、清空个人总结、只保留被经历提到的技能，还会丢掉全部附件事实（奖项是例外：两条路径都会保留）。两条路径共用 `_assemble_selection` 做预算压缩，保证预算语义只有一处 |
+| 知识不预加载、按需读取         | 一个知识包可能有几十份资料，全部拼进系统提示会挤掉真正有用的上下文；改为模型经 `read_skill_knowledge` 工具按查询取片，复用经历参考文件的检索流水线 |
+| 备份校验前先迁移候选库         | 校验要求备份包含全部应用表，新增数据表会让所有旧备份被"缺少数据表"拒收。先迁移再校验，加表就不再是一次不兼容改动；版本与清单比对必须排在迁移之前，否则迁移后 revision 恒等于 head，比对永远成立 |
+| 备份只拒绝"更新"的格式        | `format` 校验从 `!= BACKUP_FORMAT_VERSION` 改成 `> BACKUP_FORMAT_VERSION`：前者意味着导出格式一升级，用户手里所有历史备份立刻失效。旧格式一律继续接受，新格式给出"请先升级应用" |
+| 应用表清单从模型注册表推导     | 手写的表清单漏掉一张新表，会让**自己导出的备份**因为"缺少数据表"被拒收，而这类故障只有用户真去恢复数据时才会暴露。改为从 `Base.metadata` 生成，加表这件事自动生效 |
+| PDF 直接下载用系统字体         | 服务端用 fpdf2 排版并嵌入系统中文字体（Windows/macOS/Linux 常见路径 + `RESUMEFORGE_PDF_FONT` 覆盖）；找不到字体时接口返回 409 并保留浏览器打印作为替代，而不是产出一份乱码 PDF |
+| 个人资料工具必须 read-modify-write | `PUT /api/profile` 是整份替换语义，只提交模型给出的字段会清空姓名、电话、照片和全部经历条目；工具先取完整快照再叠加改动，且叠加用的是完整数据而不是发给模型的脱敏视图 |
+| 投递配置也必须 read-modify-write，但**不能把 `GET` 的响应体直接回传** | `PUT /api/apply/config` 同样是整份覆盖（不提交的字段会被重置成默认值），所以前端要先取回现值再合并。但 `GET` 返回 `ApplyConfigOut`（输入字段 + `defaults` 出厂默认值回显），`PUT` 收 `ApplyConfigIn`（`extra="forbid"`）——把响应体整个 `{...data}` 回传会多出一个 `defaults`，后端 422「Extra inputs are not permitted」，而这个报错里既没有字段名也没有上下文，用户只看到"点保存就报错"。**提交时显式挑字段**；`tests/test_apply_greeting_and_privacy_qa.py::test_config_out_is_exactly_config_in_plus_defaults` 从 schema 一侧钉住"Out 只许比 In 多 defaults"，将来给 Out 加回显字段时会红 |
+| **读接口的返回值不得整份回传写端点**（同一类错误的第二次发生） | `POST /api/interview` 收 `InterviewMaterialIn`（`extra="forbid"`，只有 `name`/`text`），而 `POST /api/interview/materials` 返回的读取结果还带 `warnings`（给界面警告条用）。前端把读取结果整份存进表单、整份塞进写请求体时，两侧各报一条「包含不支持的字段」，面试直接开不起来；TypeScript 也拦不住——变量赋值不做多余属性检查，"带 `warnings` 的对象"在结构上可赋给 `{name, text}`。改为在「表单值 → 请求体」的边界上走唯一投影函数（`frontend/src/features/interview/materialPayload.ts`），state 继续保留 `warnings` 供展示，只在提交时丢弃。**不放宽后端 `extra="forbid"`**：那会让"客户端字段拼错"一律静默吞掉，正是全仓 175 处 `extra="forbid"` 要防的事。判据：单测断言 `Object.keys(job_material)` 恰好是 `["name","text"]`，而不是只断言某个字段的值 |
+| 「网申资料」独立成表，不并进 `UserProfile` | 用户要求"生成简历模块默认不读这里的信息"。独立一张表（`web_form_profile_entry`）让这条**由结构保证**：简历生成读 `UserProfile`，网申填表读 `build_form_data()`（它才合并）。并进 `UserProfile` 的话简历生成会**自动**带上身高、父母工作单位、紧急联系人——那正好是用户要挡住的，而失败方式**不报错**。键值对形状（而非固定列）则让"字段越多越好"不必每加一个发一次迁移 |
+| 网申页的读取状态放 URL，不放组件内 state | 「去我的资料补上」跳转再回来是这个功能的正常路径，而组件会被卸载。后端快照仍有效（900s TTL）、预览是纯计算，所以只需把 `snapshot_id` 放进查询参数就能完整恢复。URL 而非 `sessionStorage`：可分享、可刷新、可前进后退 |
+| 受限搜索摘要而非网页抓取       | 固定 Bing RSS、限制响应体和结果数，不跟随页面；来源可追溯但完整性、时效和官方性质仍需人工核验       |
+| 照片在模型调用后注入           | 避免把无意义的 base64 内容发送给模型，同时保证预览与导出使用已校验的本地照片                        |
+| 旧 SQLite 库补齐已知列         | 只对未版本化旧库运行兼容建表与幂等补列；空库和已版本化数据库由 Alembic 独立管理                     |
+| Alembic revision + 升级前备份  | 早期数据库平滑进入正式迁移链；有用户数据时先备份，再执行可审查、可测试的版本化变更                  |
+| AI 与手写共用内容结构          | 两种来源只在创建方式和元数据上不同，都产出 v2 `ResumeDocument`：AI 只写 value / label，placement 与 format 由字段目录 + 用户决定；预览、编辑、四出口与岗位关联行为一致 |
+| 发行包只从 git 档案出包         | 手工压缩包漏掉过 `backend/app/data/`：后端在导入阶段抛 `FileNotFoundError`，用户只看到一句 "Backend exited ... See runtime\backend.stderr.log"，无从下手。改为 `scripts/Build-Release.ps1` 用 `git archive` 从标签出包，写完**重新打开压缩包**校验必需文件都在、个人数据库与 `.env` 都不在，校验失败就删掉压缩包而不是发出去。缺文件的另一侧防线在运行时：`backend/app/preflight.py` 由 `app/__init__.py` 在任何子模块导入之前调用，把"缺什么、怎么办"直接写进日志，启动器再把日志尾部打印到控制台 |
+| 对外访问全部封在浏览器桥接层   | 驱动真实浏览器与理解陌生表单最不可测（站点会改版、会风控）。把 CDP 传输与站点选择器分别封在 `services/browser` 与 `services/sites` 之后，业务层只调「站点无关」接口，且两层都可用假传输层离线测试，不必真的连网 |
+| 不伪装身份，需要浏览器就用真的 | UA 如实标识为 `ResumeForge/<版本>`。需要 JS 渲染或登录态的场景走 CDP 用用户本机已装的真实浏览器——那是真的而不是假装。伪装 UA 的唯一作用是让站点无法识别访问者身份，而那恰好也是最不受欢迎的行为，代价是被误伤时连可追溯的联系方式都没有 |
+| 投递用独立 user-data-dir       | Chrome 136+ 在默认用户目录上会静默忽略 `--remote-debugging-port`，因此不能连用户日常浏览器，必须由应用自己拉起一个「投递专用浏览器」；首次由用户在其窗口里扫码登录 |
+| 登录凭据不落库、由用户自持     | 应用不输入账号密码、不读取或保存 Cookie，凭据只存在于专用浏览器的数据目录里；投递与采集日志对凭据脱敏。遇到验证码 / 安全验证不尝试绕过，如实记为失败并提示用户手动处理 |
+| 准入判断单源                   | 「能投 / 需确认 / 不投」只由 `models/apply.py` 的 `admission_of()` 判定，匹配分析与投递服务复用同一处；前端只读 `admission` / `requires_confirm`，不二次判定，避免前后端阈值漂移 |
+| 进度不显示百分比               | 投递成功数受站点与风控影响，百分比会给出虚假的精确感；改用逐岗位状态枚举 +「已处理 N/M」计数。三层约束：schema 用字面量枚举且不含数值字段、提示词「禁止百分比」、前端不给百分比视图 |
+| 任务可暂停 / 停止并自动熔断     | 长队列执行必须可中断：逐岗位落库、随时暂停 / 继续 / 停止；连续失败达到阈值自动熔断并醒目提示，避免站点整体异常时继续空转 |
+| 弹窗确认前后端分权             | 证据不足 / 待确认 / 真实缺口需要逐条确认：后端在入队时返回结构化 409（哪类缺口、缺什么），前端据此弹对应确认并把 `confirm_*` 回传；服务端仍以 `admission_of` 复核，不信任前端传入的确认 |
+| 前端类型镜像后端枚举           | 五类状态、任务 / 队列 / 浏览器状态等字符串字面量联合类型与 `models/apply.py` 的常量**逐字一致**，改一处必须同步另一处；前端只读后端判定结果，镜像仅用于展示与说明 |
+| 参考分只展示、不参与准入       | 参考分是 `match_scoring.score_match_result` 现算的派生值，不落库、不回写分析结果，也**不进入** `admission_of` 的「能投 / 需确认 / 不投」；分数旁固定免责文案，信号缺失给中性分 50，避免"没信息"被读成"不匹配" |
+| Word 复用同一份 plan          | docx 导出消费 `DocumentPlan` + `format_config` 的版式口径、不引入第二套排版引擎，保证 Word 与预览 / PDF / 浏览器打印的行距、页边距、区块间距一致；水印与脱敏作为导出管线里的后处理步骤，不改动版式决策 |
+| 水印是后处理、脱敏在导出前     | `watermark.apply_watermark` 只给已渲染的字节叠加水印（HTML 覆盖层 / PDF 用 `PdfWriter(clone_from=...)` 叠加 / Word 页眉），不参与排版；`privacy.redact` 在导出前把姓名 / 电话 / 邮箱 / 公司 / 学校等替换为占位符，分享产物始终基于脱敏内容 |
+| 离线分享包不带敏感信息         | 分享包由脱敏 HTML/PDF + 只读快照 + 评论回传文件 + 本地 token 组成，token 仅离线校验、不做在线鉴权；删除走回收站软删除、磁盘产物不清理 |
+| ATS 检测带免责                 | `ats_check` 只做格式 / JD 关键词覆盖 / 信息位置三类静态规则检查，**不连接、不模拟真实招聘系统**，结果仅供参考、不构成通过保证 |
+| 内推转化口径派生               | `referral.converted` 是迁移 0018 的历史占位列；真实口径由关联 `ApplicationTrack` 后置位派生（进入面试及以上才算转化），写入侧不接受 `converted`、读取侧覆盖，避免表里手算第二份口径 |
+| 回收站覆盖二十三类内容         | 岗位 / 备选岗位 / 简历 / 投递 / 台账 / 资料 / 会话 + 内推 / 提醒 / 面经 / 分享包 / 题库 / 复盘 / 知识库 / 网申填充 / 表达资产 / 术语表 / 补充事实历史，以及 0064 起新增的方案 / 自建板块 / 自建字段 / 资料条目，全部由 `trash.TRASH_SPECS` 注册表描述；新增一类只加一行，注册表驱动的 `live_only` / `trash_only` 让"哪张表用哪个列名"只写一次 |
+| 方案不拥有数据 / 当前方案唯一       | 方案只记「名称 + 板块清单」，共享同一份 `profile_entry`；当前方案是单行状态表 + `CHECK(id = 1)`，默认方案由 CHECK 保证不可软删。这样"每个方案一份副本"与"无当前方案"在结构上就写不进库，不靠调用方自觉（R-17/R-24/R-25） |
+| 消费 DTO 与折叠态物理隔离       | 资料页编辑 DTO 含 hidden / collapsed_override；投影、生成、网申只吃 `ConsumedProfile`（类型里没有 collapsed）。否则"收起"迟早被某条取数链当成"不参与"，而它只该影响输入框展不展示（R-66/R-67） |
+| 旧资料不迁移、不删除           | 迁移 0064 只加表；旧六表与旧事实表继续存在并进备份，新界面不读；资料页用"旧表有内容且新模型为空"的探测给出重填说明。迁移工具看起来省事，但会改写用户历史且无法回退（R-46/R-47/R-49） |
+| 字段默认位置只有一份定义       | 字段目录 `document_catalog.py` 是标签、format、默认位置、仅素材标志的唯一来源；`paper_projection.py` 与生成链路共用它。第二份映射必然漂移成"生成有、填充没有"（R-37/R-42/R-77） |
+| 字段位置是数据                 | v2 把 title / meta / lead / trail / body / hidden 存在 item 上，拖拽 = 改顺序 + 改 placement；「看起来都能调、实际很多调不了」从模型层消失（D1–D5） |
+| 唯一 planner / 四出口同源      | `document_plan.py` 产出 `DocumentPlan`，HTML / PDF / Word / Markdown 只消费它；模板只负责外壳与 CSS。字段拼装与列装箱只写一次（D10） |
+| 旧简历读取时转换、保存写 v2    | `ensure_document_version` 在内存里把 v1 转 v2、不写库；转换规则只在 converter 里，文字不丢、条目数不丢、顺序可解释（D11/D12） |
+| 六个位置是产品边界             | 不做自由画布 / 任意嵌套 / 逐字符排版；位置只有六个抽屉，装不下就换行 + 按页数上限截断，不自动缩字号 |
+| 库版本闸门按 epoch 判，不按 revision 判 | epoch 表（`app_schema_epoch`，单行 `epoch=2`）由基线迁移创建；启动时先读 epoch 决定「升级 / 归档重置 / 拒绝」，只在 epoch==2 时才用 revision 判断是否在迁移链上。按 revision 判会把"老库 revision 不在新链上"误判成库损坏，也会让每次新增迁移天然变成一次不可升级变更 |
+
+## 部署与安全边界
+
+- 前端只请求同源 `/api`。开发环境由 Vite 代理；生产环境必须由反向代理把 `/api` 转发到 FastAPI，并为 BrowserRouter 配置 `index.html` fallback。
+- 默认定位是本机单用户应用，后端只应监听回环地址。CORS 只限制浏览器跨域读取，不提供身份认证；没有额外认证和 TLS 时不得直接暴露到公网。
+- 请求上下文中间件同时校验声明长度和流式读取的实际长度，超限返回 413；每个响应携带 `X-Request-ID`，日志使用同一 ID 关联排查。
+- API Key 在 Windows 上用系统 DPAPI 加密后保存在本地 SQLite 中（`services/api_key_crypto.py`，密文绑定当前用户与机器），非 Windows 平台保持明文。照片不进入模型上下文，但岗位、资料以及被选中的总结片段会发送给用户选择的大模型服务商。
+- 设置页只在用户点击眼睛时调用 `POST /api/settings/llm/api-key/reveal`；接口校验直接连接来源为回环地址并设置 `no-store`，前端只在临时显示状态保存明文，表单提交继续使用绑定 Base URL 的脱敏引用。
+- 助手会话、附件和来源摘要保存在本地 SQLite；当前消息中的附件、显式选择的岗位/简历/脱敏资料会发送给模型。资料上下文移除身份字段；关联简历只移除照片，其正文中的姓名和联系方式仍可能发送。助手图片附件与资料照片是不同数据路径：资料照片始终留在本地，用户主动添加到助手的图片会发送给支持图片输入的模型。
+- 上传的 PDF/DOCX 是**不可信文件**，解析在本机进行并各自设限：PDF 最多读 30 页、DOCX 只读白名单成员 `word/document.xml` 而不解压整包、提取文字总量封顶（超出时截断并提示）、图片解码像素封顶。文字提取结果只作为文本进入模型上下文，原始文件不落库也不外发；扫描件没有文字层时把页面转为图片走 AI 视觉识别（与截图上传同路径，单份最多 8 页），而不是静默返回空结果。
+- 开启助手联网搜索会把规范化后的当前问题（或附件名兜底）发送给 Bing。RSS 响应按 2 MB 上限读取并拒绝 DTD/实体声明，URL 仅接受无凭据的 HTTP/HTTPS；摘要仍作为不可信外部数据隔离。
+- 采集与投递会**主动访问招聘网站**，但仅限用户显式触发的那一次，不会在后台自动运行。投递专用浏览器使用独立 `user-data-dir` 与日常浏览器隔离；应用不保存招聘网站的账号密码或 Cookie，投递 / 采集日志对凭据脱敏；遇到验证码或安全验证时不尝试绕过。
+- 网申填表的 AI 兜底**只发送页面上本来就有的控件文字**（label / placeholder / aria / autocomplete / name / 选项文本 / 邻近文字）与字段目录的 `key + 标签`，**不发用户的任何资料值**——取值一律在本地完成，模型只回一个字段名。`identify_fields()` 的签名不接受 `data`，测试逐值断言提示词里搜不到资料值。这与"网申专用资料不进 `_LLM_PROFILE_FIELDS` 白名单"是同一条纪律的两个方向。
+- 敏感数据处理和漏洞报告方式见 [SECURITY.md](../SECURITY.md)。
+
+## 扩展点
+
+1. **新增模型提供商**：非 OpenAI 兼容协议时，在 `services/llm/` 新增 Provider 类，并在 `create_provider` 中按 `provider` 字段分发。
+2. **扩展岗位文本识别规则**：在 `services/job_parser/` 对应职责模块增加字段标签、候选值或章节规则，并补充 `tests/test_job_text_parser.py` 或 `tests/test_job_text_parser_edge_cases.py` 离线测试；`services/job_text_parser.py` 仅保留兼容门面和解析流程装配。
+3. **扩展 JD 标签规则**：在 `services/jd/jd_parser_constants.py` 增加学历、年限或技能别名，在 `jd_parser_filters.py` 增加必要的上下文过滤，并补充 `tests/test_jd_parser.py`；`services/jd_parser.py` 仅负责公共入口和流程编排。
+4. **新增导出格式**：在 `services/export_pipeline.py` 写一个 `_render_<格式>` 渲染函数（消费 `DocumentPlan`），挂进 `FORMAT_RENDERERS` 注册表加一行（管线自动接入脱敏与水印），并补充 `tests/test_export_pipeline.py` 测试。
+5. **调整美化拓展策略**：后端 `resume_generator.py` 的分级指令与前端 `config.ts` 的 `RESUME_ENHANCEMENT_LEVELS` 保持一致，并补充 `tests/test_resume_generator.py` 或 `tests/test_resume_quality_retry.py` 测试。
+6. **扩展助手附件格式**：先在 `services/attachments.py` 增加扩展名、MIME 与文件头校验（图片还要在 `image_conversion.py` 补转码），再在 `assistant_service.py` 接入上下文转换并补充边界测试；不要只改前端 `accept`。新增文档类型时把解析放在 `document_text.py`，并同时给识别接口的 `documents` 字段留出入口。
+7. **新增招聘站点适配器**：在 `services/sites/` 增加一个实现 `base.py` 契约的适配器并在 `registry.py` 注册其域名即可，采集与投递业务层不改；站点改版只影响该适配器。表单填写的通用启发式在 `services/webform/engine/`，与具体站点解耦。**前端无需跟着改**：`GET /api/apply/sites` 下发的站点列表（`SiteOptionOut` / `SiteListOut`）是界面展示"当前招聘网站"与站点清单的唯一来源，前端组件里不写死任何站点名，因此新注册的站点会自动出现在界面上；适配器可用 `supports_collect` / `supports_apply` 如实声明本站点支持的能力。
+8. **调整匹配分析或招呼语提示词**：改 `prompts/job_match.md` / `prompts/apply_greeting.md`；若输出结构变化，需同步 `schemas/job_match.py` 的校验 schema 与 `frontend/src/types/apply/` 的类型镜像（前端类型与 `models/apply.py` 常量逐字对应）。
+9. **扩展面试深挖**：证据状态、追问类型、复练题型的取值只在 `models/drill.py` 定义一次，新增要同步 `frontend/src/types/drill.ts`（前端枚举逐字对应）。**改状态机只改 `should_promote()` 一处**——判定、界面、复盘都走它；"有证据才 verified"那道闸门在 `services/drill.parse_verdict`。四个提示词（`drill_contract.md` / `drill_evaluate.md` / `drill_review.md` / 共用的 `drill_common.md`）与 `preflight.py` 的完整性清单要一起维护，漏登记会被测试拦下。
+10. **调整版面诊断规则**：阈值与下限集中在 `services/resume/resume_layout.py` 顶部（`FILL_*` / `MIN_*`），建议文案在 `_suggestions()`，改完补 `tests/test_resume_layout.py`。**模板的版式默认值必须与模板文件一致**——`TEMPLATE_LAYOUT_DEFAULTS` 与 `TEMPLATES_DIR` 下的 CSS 由 `test_resume_templates.py` / `test_resume_layout.py` 逐项核对，改了模板不更新会直接测试失败。新增样式模板要同时加：模板文件、`RESUME_TEMPLATES` 条目、`TEMPLATE_LAYOUT_DEFAULTS` 条目（三处缺一不可，测试会指出来）。
+11. **扩展求职进度**：状态与来源的取值只在 `models/tracker.py` 定义一次，新增要同步 `frontend/src/types/tracker.ts`（前端枚举逐字对应）并在 `api/tracker.py` 的筛选校验里放行。**改合并规则只改 `resolve_status()` 一处**——预览、执行、投递台回写都走它。识别提示词改 `prompts/application_status.md`；本地降级的状态信号表在 `services/tracker_extract.py` 的 `_STATUS_SIGNALS`，顺序是"越明确越优先"，调整时注意别让「感谢投递…安排面试」这类自动回执被判成面试邀请。
+12. **扩展事实台账**：核实状态、承担程度、分类的取值只在 `models/claim.py` 定义一次；新增取值要同步 `frontend/src/types/claim.ts`（前端枚举逐字对应）并在 `api/claims.py` 的过滤校验里放行。改进建议规则集中在 `services/claims.py` 的 `claim_warnings()`——它是单选函数，新增规则不影响其它链路。新增**未完成标记**要同时改 `models/claim.py` 的 `PLACEHOLDER_MARKERS` 与前端同名常量，否则界面不会高亮、导出也不会拦。草拟提示词改 `prompts/claim_draft.md` 与 `schemas/claim.py` 的对应字段。
+13. **新增匹配参考分维度**：在 `services/match_scoring.py` 的 `MATCH_SCORE_DIMENSIONS` 追加一条 `DimensionSpec` 并给 `_SUB_SCORERS` 注册同 key 的打分函数；维度权重与总分口径集中在这一处。参考分**只读、不落库、不参与准入**，新增维度不得改 `admission_of`。
+14. **扩展导出管线 / 水印 / 脱敏**：新增导出格式在 `services/export_pipeline.py` 的格式渲染注册表加一行（渲染函数消费 `DocumentPlan`），并给 `watermark.apply_watermark` 与 `privacy.redact` 声明支持范围（无版面概念的格式报明确错误）；`schemas/export.py` 的 `ExportFormat` 与前端 `types/export.ts` 逐字一致。
+15. **新增回收站类型**：新表若带 `deleted_at` 列，必须在 `services/trash.py` 的 `TRASH_SPECS` 加一行，否则会出现"删了就找不到"的半软删；`tests/test_trash.py::test_every_deleted_at_table_is_registered` 会扫全库钉住这层一一对应。
+16. **扩展简历写作增强**：变换的取值（话术 mode / 润色 style / 翻译 direction）与 `frontend/src/types/resumeWriting.ts` 逐字一致；提示词在 `prompts/resume_{star,phrases,polish,translate}.md`，输出结构变化需同步 `schemas/resume_writing.py`。质量合规的规则在 `services/resume/resume_risk.py` 与 `services/ats_check.py`，新增检查项补 `tests/test_resume_risk.py` / `tests/test_ats.py`。
+17. **调整网申填表的识别**：识别是**四档证据，从强到弱**——① 站点声明的 `autocomplete`
+   属性（`fields.AUTOCOMPLETE_FIELDS`，**唯一不需要猜的信号**，Chrome 也把它当第一优先级）
+   → ② 控件自己说的（label / placeholder / aria / name）→ ③ 周围文字（`nearby_text`，
+   逐层往上收集，但遇到"标签清单"就停）→ ④ 区块限定（`FIELD_BLOCK_HINTS`，多段经历里的
+   短词必须见到区块名才参与）。**改规则时按这个顺序想**，别把弱证据提到强证据前面——
+   实测踩过：`school` 靠旁文抢走了本该属于 `research_direction` 的框（自述强匹配）。
+   否定信号也有两档：站点声明的"别自动填"（`AUTOCOMPLETE_DENY`：密码 / 验证码 / 银行卡）
+   直接拦下；`autocomplete="off"` **既不匹配也不拦**，当"没有信息"（字节简历页给 6 个
+   控件标了 off，其中就有我们能填对的框——当禁令会让它们全废，Chrome 也当提示而非禁令）。
+   另有两道**防错**信号（2026-10 真机实测后加）：**跨族否决**（`engine/families.py`）——
+   日期族的字段不认识"自述是电话 / 区号"的控件，且只认控件**自己说**的话（label /
+   placeholder / name）：mokahr 类页面把整表标签串累积进每个控件的**旁文**，按签名判断
+   会把同页正常的日期框一并漏掉。**跨字段争抢**（`evidence.competing_fields`）——同一控件
+   被两个不同字段同档同分争抢时（旁文「学校名称 专业名称」），照常填但标成"需确认"，
+   不再按字段表顺序静默选一个。**弹层类控件在候选排序里降 2 分**（`_rank_controls`）：
+   字节页实测，+86 区号框（popup）与只读的证件类型选择器分别抢走了手机号和证件号码，
+   两个真输入框一起落空。这条现在只剩排序层的意义——弹层控件的**分配**已被「只填不点」
+   整条挡掉（见扩展点第 27 条），降分影响的是低置信判断里的冠亚军比较：别让一个永远不会
+   被填的框把真输入框挤成"需确认"。
+
+   占位符的**权威性**有三条边界（2026-10-05 四站实测后定，见 `evidence._states_its_field`）：
+   ① 光杆「请输入 / 请选择」不含字段信息，不是陈述——只回退到旁文**开头那一段**
+   （`_leading_label_segment`，京东页的姓名 / 手机 / 邮箱靠它认出来；**不许**拿整段旁文，
+   那会把区块级文本里的"就读时间"带进学历框）；② 长说明文（多行 / "您可以…建议…"）是在
+   教怎么填，不是一对一点名（腾讯「补充信息」）；③ 真正一对一的陈述才走权威分支、并列时
+   弃权。另有三条配套机制：**整表标签串剥离**（`engine/pollution.py`，同一段 ≥60 字文本
+   出现在 ≥3 个控件的旁文里 → 从旁文减掉、保留各自前缀）、**区块准入共用**
+   （`evidence.block_hint_satisfied`，引擎与 `recognize_field` 同一份判据——鹰角「游戏经历」
+   一度在面板上被报成「实习描述」就是因为这里分叉）、**紧邻日期组配对**
+   （`FormEngine._complete_split_date_pairs`：同区块两对年 / 月都只写"就读时间"时，
+   第二对按结构补成 `*_end`；两组之间隔着别的控件则不配——那是可重复区块的第二条）。
+
+18. **给网申填表加字段**：只需在 `services/webform/fields.py` 的 `FORM_FIELDS` 加一条、并在 `FIELD_SYNONYMS` 加同名条目（`tests/test_webform_engine.py::test_catalog_and_synonyms_stay_in_step` 会钉住两者一一对应）。**不需要迁移、不需要改前端**——目录由 `GET /api/webform/fields` 下发，录入界面据此渲染。若值来自资料里的新列，再改 `services/webform/data/profile_map.py::profile_to_form_data`。**判断逻辑（选哪个下拉项、日期怎么写、单选点哪个）一律写在 `services/webform/matching.py` 的纯函数里**，不要塞进注入的 JS：离线测试用的假客户端不执行 JS，塞进去等于没有覆盖——这正是原先四个缺陷能活到生产的原因。字段值对不上页面的选项时**不猜**，如实报 `no_option`。
+
+    多段经历（实习/项目/获奖）的字段带 `derived=True` 且配了 `FIELD_BLOCK_HINTS`：**区块内的短词（"起止时间""职位""描述"）必须见到区块名才参与匹配**。网申表单把这三类做成「可添加多条」的区块，每条的控件长得一模一样——没有区块限定的话，"起止时间"会在教育、实习、项目三个区块上同时命中，谁抢到全看控件序号。区块里成对的日期控件签名完全相同，靠 DOM 顺序区分开始与结束，并标成需确认。**这一版只填第一条、不点页面上的「添加」按钮**（点按钮是改页面，不只是填值）。日期拆成多个年份 / 月份 / 日期**下拉**时，先把它们按共享标签关联成一组（免得当成几个独立字段各自乱配）——但「只填不点」之后这些下拉本身不自动填，**只有文本形态**的年 / 月框才会做组件级日期转换。具备 `role=combobox` / `aria-controls`（或组件库的 select / dropdown 外壳）的可访问自定义下拉由 `services/webform/custom_select.py` 读选项、用可信鼠标事件选唯一匹配项——这条路现在只服务**显式填充**（`/fill`），自动匹配不会走到它。
+
+    实时填表的 `/api/webform/live/enabled` 只切换功能启用状态，不销毁会话和悬浮球；关闭时页面仍保留灰色球，但焦点事件不会显示提示面板。`/api/system/diagnostics` 返回进程内的脱敏运行事件，诊断事件只能记录计数、状态、耗时、错误类型和请求 ID 等元数据，不记录表单值或凭据。
+
+19. **给网申填表加 AI 兜底 / 调整触发策略**：入口在 `services/webform/ai.py`，提示词在
+    `prompts/web_form_match.md`（新增提示词要同时登记 `preflight._REQUIRED_FILES` 与
+    `Build-Release.ps1` 的 `$RequiredFiles`）。三条边界写在实现里，改之前先读 `ai.py` 的
+    模块 docstring：
+
+    - **模型只选字段、不选值。** 它的输出被 `_parse_matches` 收在 `FIELD_LABELS` 的 key
+      集合里（目录外的 key 一律丢弃），取值 / 下拉项 / 日期格式全走 `matching.py` 与
+      `service._rebuild_mapping` 那套与规则模式**完全相同**的纯函数。所以模型**造不出一个
+      值**——它能做错的最坏情况是选错了字段。
+    - **模型看不到资料值。** `identify_fields()` 的签名**不接受 `data`**，从类型上就堵死了；
+      `test_webform_ai.py::test_prompt_never_contains_any_profile_value` 再钉一道。发出去的
+      是页面上本来就有的控件文字 + 字段目录的 `key/标签`。
+    - **`skip_reason` 是终局判定，模型没有投票权。** 顺序不能反：先问模型再拦，等于给它机会
+      说服我们填验证码。触发点因此是"**规则认不出**"（不是"规则没结果"——`suggest_for` 原本
+      把"认得出但资料为空"也报成 `unmatched`，那个已经分开了，否则会白花钱）。
+    - **采纳前与规则共用同一组否决。** 负向词（"紧急联系人姓名"之于姓名）与跨族否决在
+      `preview` 与 `live` 的采纳点会再跑一遍（`engine.evidence.excluded_by_hints` /
+      `engine.families.foreign_marker`）——模型猜的字段**不因为来自模型就免检**。
+      调用失败（网络 / 解析）自动重试一次并记诊断事件；"合法 JSON 但一个都不像"是模型的
+      真实回答，**不重试**（重试只会烧钱，还可能逼它下一轮硬猜一个）。
+
+    实时链路的接缝在 `live.LiveSession._on_focus`，模型调用跑在**单槽工作线程**
+    （`_AiWorker`）里——`_on_focus` 在 350ms 一轮的轮询线程上，在那里同步等一次网络调用会
+    把整个轮询卡死。结果回来要**比对 `seq`**，用户已经点到别的框就丢弃。
+    改 `runtime/_rf_listener.js` 里面板的形状（候选区、来源标记、定位）后**必须重跑
+    `python runtime/_splice_engine.py`**——`engine.py` 的脚本区是生成物，手改会被下次拼接覆盖。
+
+20. **扩展网申填表的历史记录**：新表在 `models/web_form_record.py`，读写在
+    `services/webform/history.py`（照 `services/interview/interview_history.py` 的形状：
+    `list_records` 走 `trash.live_only`、`create_record`、`record_or_none`、`delete_record`），
+    路由挂 `/api/webform/records`。**写入失败绝不能导致填充失败**——`api/webform/fill_routes.py::_record_fill()`
+    吞掉全部异常，历史是附加物、不是填充的前置条件。
+
+    两个接缝要一起看：批量模式的落点在 `api/webform/fill_routes.py::fill`（拿到 `outcomes` 之后落一条），
+    实时模式在 `live.LiveSession.stop_live()` 时**按会话汇总落一条**（不是每个框一条）。
+    `_clean_item` / `_clean_snapshot` 是**白名单**（只留已定义的键），新增明细字段要同时改它们，
+    否则字段会被静默丢掉。
+
+    ⚠️ **这张表含用户填进别人页面的真实值（证件号、手机号）。** 它刻意**不暴露给求职助手**
+    （理由写在 `tests/test_assistant_coverage.py` 的 `COVERAGE` 里）：一旦助手读得到，这些值
+    会随提问进入对话上下文并发往模型服务商，与「只发字段名、不发值」的边界直接冲突。
+    新增工具时不要"顺手"给它加一个。
+
+21. **调整「谁算被删了」的过滤点**：软删（`deleted_at`）的过滤集中在 `trash.live_only(Model)`，
+    但它**不会自动生效**——每一条查询都要显式带上。最危险的漏点是**计数**：它们不报错，
+    只给出偏大的数字。现有的两处独立计数点是 `services/apply/_records.py::daily_success_count`
+    （**每日投递上限的已用量**）与 `api/stats.py` 的成功投递数，各有测试钉住
+    （`tests/test_apply_record_delete.py`）。新增一条"按投递记录计数"的查询时，
+    **先想它属于哪一类**：列表 / 统计 / 准入判定，三类都要过滤。
+
+22. **扩展「网申资料」**：它是**独立的一张表**（`models/web_form_profile.py`，键值对），
+    字段清单在 `services/webform/fields.py` 的 `FORM_FIELDS` 里用 `source=SOURCE_EXTRA` 标出，
+    读写走 `services/webform/extra_profile.py` + `/api/webform/extra-profile`。
+    **加一个字段只改 `fields.py` 一处**（照该文件里的说明：加一行 `FormField`、在
+    `FIELD_SYNONYMS` 加同名条目），不需要迁移、不需要改前端——界面按
+    `GET /api/webform/extra-profile` 下发的目录渲染。
+
+    ⚠️ **不要往 `UserProfile` 加列来"统一一下"**。用户明确要求"生成简历模块默认不读这里的
+    信息"，独立成表让这条**由结构保证**：简历生成读 `get_profile_detail()` → `UserProfile`，
+    网申填表读 `build_form_data()`（它才做合并）。一旦并进 `UserProfile`，简历生成会**自动**
+    带上这些内容（它读整份资料），"别读"就只能靠在生成侧逐列排除——那是"漏一列就静默破防"的
+    形状，而失败表现是简历正文里多出身高、父母工作单位、紧急联系人，**不报错**。
+    `tests/test_webform_extra_profile.py::test_the_resume_generation_path_never_sees_this_table`
+    与 `test_webform_api.py::test_extra_profile_is_invisible_to_the_resume_generation_path`
+    真的去断言这件事；改动这两条之前先想清楚。
+
+    实时会话（「点哪个填哪个」）另有一条必须记住的：**注入的监听与面板活在当前文档里，
+    页面一跳转就全没了**。会话每轮的状态探测里带着 ``installed``，发现没了就自己重装
+    （``LiveSession._attach()``，与 ``start()`` 共用一处）。加字段或改探测时**不要把这个
+    字段丢掉**——丢了不会报错，只会让模式在跳转后静默失效，而界面上仍然显示「运行中」。
+
+    自愈的**副作用要知情**：重装不区分跳到哪一页，所以用户带着模式跨站跳转会跟着注入过去
+    （清单里是用户自己的资料，对页面 JS 可见——这是"面板不能反向请求本地 API"那条设计的
+    既定代价，不是新引入的）。用户关掉模式时按当前页卸载。
+
+    ⚠️ **分界线是「简历上该不该有」**：QQ 号、微信号、四六级分数属于简历资料，所以它们走
+    `source=SOURCE_PROFILE`（QQ/微信在 `user_profile`，四六级在 `education`，见迁移 `0029`），
+    **不在这一区重复一份**——同一个值有两个来源，改哪边都不对。这一区只放简历上**不该出现**
+    的栏目（身高、父母工作单位、紧急联系人…）。
+
+    同义词要**具体**（"英语六级分数"而不是"分数"，"紧急联系人姓名"而不是"姓名"）——
+    这批字段会进 `FIELD_SYNONYMS` 参与匹配，裸词会和页面上的"分数""姓名"互相抢
+    （`school` 抢走 `research_direction` 那次就是这么来的）。**宁可不匹配**（如实列进
+    "没认出来"），也不要匹配错（悄悄填错格）。
+
+23. **网申页的读取状态存在 URL 里**：`WebFormPage` 把 `snapshot` 与 `ai` 两个查询参数当作
+    "当前这次读取"的载体。**别改回组件内 `useState`**——「资料里没有」那块带着
+    「去我的资料补上」的链接，跳过去再回来是这个功能设计上就要走的路径，而组件会被卸载。
+    恢复走 `POST /api/webform/preview`（快照 + 资料的**纯计算**，幂等），所以除了
+    `snapshot_id` 什么都不用存。**勾选与手改的值不持久化**（如实提示"已重置为默认"），
+    写回一律 `replace`（否则读一次塞一条历史）。
+
+24. **给教育经历（或其它子表）加字段要同步三处**：``EducationIn``（否则保存时 422）、
+    ``services/profile_parser/limits.py`` 的 ``_PARSED_ENTRY_FIELD_LIMITS``（**这是白名单**，
+    没列进去的字段在收窄时被**静默丢弃**，表现为"粘贴识别认不出这一项"且不报错）、
+    ``prompts/profile_text_extract.md`` 的输出形状（否则模型根本不输出这个键）。
+    `tests/test_profile_text_parser.py` 把前两处钉成**双向覆盖**（多写会 422、少写会静默丢弃），
+    所以只改 schema 忘改白名单会直接变红。**这个坑真实踩过五次**：``department`` /
+    ``study_mode`` / ``degree_type`` / ``cet4_score`` / ``cet6_score`` 都曾经只加了 schema
+    与界面，粘贴识别一直认不出来。
+
+25. **新增/调整厂商的「思考」写法**：形态判定与档位候选集中在
+    `services/llm/thinking.py` 顶部的 `_TABLE`（按主机 + 模型名正则匹配，先匹配先赢）；
+    翻译成请求体的只有 `thinking_payload`（OpenAI 兼容）与 `thinking_budget`（原生 Messages），
+    所以**改表不需要动 provider、也不需要动前端**。`thinking_style` 的取值同时定义在
+    `schemas/setting.py` 的 `THINKING_STYLES`，加一种写法要两处一起加。
+    `EFFORT_BUDGETS` 是**全项目唯一一份**强度→预算映射，助手页的「思考强度」与设置页的
+    「思考模式」共用它。表只负责"猜形态与给选项"，**判定权威是设置页的实测检测**
+    （`probe_thinking`）——上游没有"查询思考能力"的接口，而很多服务商对不认识的参数是
+    静默忽略的，只有实发一次看响应里有没有思考内容才能分辨。
+
+26. **调整网申填表的写入与恢复**：`engine/core.py::apply` 是"每个控件：写一次 → 回读判定 →
+    按 `engine/recovery.py` 的阶梯最多重试 `MAX_RETRIES` 轮"。几条 2026-10-05 真机实测后
+    定下的规矩：**弹层与选择类控件只服务显式填充**（"只填不点"，见扩展点第 27 条）——
+    只读弹层（自定义下拉/级联）走"点开→选唯一匹配项"，原生 `select` 走
+    `HTMLSelectElement` 的原生 setter，单选/复选走可信鼠标点击且**已勾选的不再点**
+    （再点会反选）；自动匹配已经不会给它们分配字段，所以这些分支只在 `/fill`
+    收到用户确认过的选择时被走到；**电话类字段重试时换纯数字写法**
+    （`_retry_mapping`：字节页会清空带分隔符的值，腾讯页会自己规范化）；**超长值不写**
+    （`_value_over_max_length`：超过控件 `maxlength` 的值会被页面截成残码）；
+    **整页填充收尾复读一次**（`service/fill.py::_downgrade_reverted`，`SETTLE_RECHECK_SECONDS`）
+    把"当场有值、组件随后还原"的伪已填降级——逐项模式与离线测试不传这个参数，保持即时
+    反馈、不吃墙钟。改这块前先读 `recovery.py`
+    的模块 docstring，三条纪律不可放宽：**重试前先探查页面现状**（值已对就判成功、被别的
+    值占住就不覆盖、单选已勾上就不再点——再点会反选，快照里的 `checked` 可能过期，
+    所以重试点击走 `RetryStrategy.force_choice_click`）；`no_option` 只允许"重读选项 +
+    严格匹配"，**永不模糊选**；`no_control` 不重试（页面已重渲染，重写只会再失败一次）。
+    写入脚本（`engine/writers.py`）默认只发 `input + change`，**blur 只进重试路径**
+    （`RetryStrategy.full_events`）——happy path 发 blur 会触发站点校验、个别站点还会在
+    onblur 里清掉未通过校验的值。**回读失败（读不到，而不是"值不对"）一律记 `unverified`
+    而不是 `filled`**：一键填充的"成功率"就建立在这条上，改回去等于让数字说谎。结果里的
+    `reason`（原因码）是闭环的：重试决策、`/fill` 的 `reason_counts` 与诊断事件共用同一组
+    常量。真机上 `focus()` / `blur()` 的**事件**只在文档本身有焦点时派发（后台标签里
+    activeElement 照样设、值照样写，只是没有事件）——排查"填了没反应"时先确认页面在前台。
+
+27. **「只填不点」——自动填充的控件边界**（2026-10-05 维护者定的产品边界；别再放宽回
+    "事实类可以填"）：**自动匹配只产出文本类控件的映射**。`engine/core.py::skip_reason`
+    先按类型挡下 `select` / `radio` / `checkbox` / `date` / `month` 与一切 `has_popup`
+    控件（快照 JS 的 `looksLikePopup`：`aria-haspopup` / `role=combobox`，**外加祖上三层
+    内出现 select / dropdown / picker / cascader 类名**——2026-10-05 鹰角（MokaHR）实测，
+    性别 / 学校名称 / 专业名称 / 年 / 月是 Semi Design 的 Select，`<input>` 上看不到任何
+    aria 标注，不认外壳就会把它们当普通文本框填掉），命中即进 `MatchResult.skipped`
+    并带上给用户看的中文理由；`preview` 把它们列进
+    「不会自动填」，`suggest_for`（实时模式）判 blocked，**AI 也拿不到**——
+    `enrich_preview_with_ai` 只问「没认出来」与低置信两桶。两条理由：这些框的值是
+    **用户的选择**而不是资料里的一行字；程序往只读展示框 / 组件状态里写值，常常是
+    "看着填上了、交上去还是空的"。
+    随之删掉的是匹配层的整套选择逻辑：`_build_mapping` 的 select / 单选复选 / 弹层 / 日期
+    分支、单选组"整组参与匹配"（`matching.py::resolve_choice` 留着，但只服务显式填充一侧）。
+    **显式填充（`/fill`）不在禁令内**：用户在预览里确认过的选择走
+    `service/fill.py::_rebuild_mapping`，引擎的写入 / 回读 / 重试（`_apply_select` /
+    `_apply_choice` / 弹层点选）都保留着；执行语料用 `selections` 字段驱动这条路
+    （见 `tests/fixtures/webform/README.md`）。
+    改这条边界要同时动：`skip_reason`、`test_webform_engine_*` 的边界用例、语料里
+    `forbidden` 的期待、`docs/user-guide.md` 的「它不会做什么」与
+    `frontend/src/components/userGuideSteps.ts`。
+
+28. **放宽模式——「只填不点」唯一的受控例外**（默认关闭；开关存在 `settings_service` 的
+    `webform_relaxed_mode`，`/api/webform/preview` 与实时两条路读同一个开关值）：开启后
+    点选类控件可以由程序代点，判类的**唯一入口**是
+    `engine/core.py::FormEngine.relaxed_kind`（它与 `skip_reason` 共用 `CONSENT_HINTS` /
+    `CLAIM_LABELS` / `AUTOCOMPLETE_DENY` / `FIELD_DENYLIST` 这批判据表，绝不越过终局判定；
+    `service/relaxed.py` 只负责执行与文案，不另立判类标准）。四类放行：
+    - `confirm`——同意 / 声明类勾选，**绝不静默代勾**，逐条确认后才执行；「没有实习
+      经历」这类声明（`is_claim_label`）与「无…」同等待遇，同样进确认制；
+    - `choice`——事实类 checkbox / radio，值必须出现在控件自述里，纯数字不猜；
+    - `select`——原生下拉，写入仍走 `resolve_select_option` 严格口径（精确 → 别名 → 包含）；
+    - `popup`——自定义下拉 / 弹层，点开、严格解析、点选、回读验证；**多值代选**
+      （资料里「上海、北京、广州」这类写法，见 `custom_select.py`）点开**一次**弹层
+      逐个匹配点选，**全部命中才动手**，有一个匹配不上就整体放弃、仍列成需要自己点选。
+    日期 / 月份、文件上传、密码 / 验证码 / 银行卡在 `relaxed_kind` 里直接返回 `None`，
+    没有任何放宽余地；只读且无弹层的点选框也不放宽。程序认得出是点选控件、但资料里
+    没有对应值时，前端如实归进「资料里还没有」（`WebFormPendingPanel`），不静默跳过。
+    改这条要同时动：`skip_reason` / `relaxed_kind` 共用的判据表、
+    `tests/test_webform_engine_*` 的放宽用例与用户侧两份文档。
+
+29. **新增/调整内置资料板块或默认字段**：改 `services/profile/catalog_{basic,experience,research}.py` 的数据行
+    （字段 id 固定为 `<section>.<key>`），`definition_catalog.py` 的导入期自检会核对 13 条 key/顺序/计数/枚举/私密标志，
+    漏改计数会直接 import 失败；字段的默认纸面位置只在 `services/resume/document_catalog.py`（一处），
+    新字段要上纸面时再补一行 FieldSpec（placement / format / material_only），并补 `test_profile_definition_catalog.py` /
+    `test_document_converter.py` / `test_document_plan.py` 的契约用例。**用户级扩展不要改代码**：
+    自建板块与自定义字段走 `/api/profile/sections`，软删与恢复由回收站策略处理。
+
+30. **新增简历字段 / 位置 / 格式 / 模板**（v2 文档模型）：字段默认位置改 `document_catalog.py`；新增 `format`
+    要同时改 `schemas/resume_document.py` 的 `Format`、`document_plan.py` 的格式化分支与前端
+    `types/resumeDocument.ts`；模板只写「外壳 + CSS + include `_resume_document.j2`」。**六个位置是产品边界**，
+    新增位置等于同时改模型 / planner / 四出口 / 编辑器 / 语言包，需要单独评审（本批不做）。
+
+## 测试策略
+
+- 简历文档模型 v2 按层拆测试：`test_document_model.py` 钉住 v2 schema 的 normalize / 校验 / 长度 / 私密字段 / hidden 保留 / 重复 key；`test_document_converter.py` 逐分区 fixtures 钉住「文字不丢、条目数不变、位置符合映射、幂等」与转换报告字段；`test_document_plan.py` 钉住 head 三种布局、lead / trail 列装箱（1/2/3 列、equal/flow、gap=0、solo）、inline / text 板块、页眉联系方式换行与路径唯一性；`test_document_html.py` / `test_document_pdf.py` / `test_document_docx.py` / `test_document_markdown.py` 用文本对拍钉住四出口「同字段、同顺序」，以及 PDF 右对齐 / 分页 / 溢出、Word 制表位、Markdown 展平。旧 v1 分区渲染用例随 v1 渲染路径删除或改写为 v2 等价用例，golden 基线重建。
+
+- 资料板块 / 方案 / 当前方案按层拆测试：`test_profile_definition_catalog.py` 钉住 13 项与 106 个默认字段契约；`test_profile_*_store.py` 钉住定义/条目/方案/偏好的语义与上限；`test_profile_scope_boundaries.py` 钉住消费 DTO 无折叠态、hidden 与 collapsed 的差异、三链外全量读；`test_profile_group_projection.py` / `test_profile_group_paper_contract.py` / `test_profile_group_languages.py` 钉住纸面投影、自建板块与语言映射；`test_profile_upgrade_status.py` 钉住旧表探测与升级提示分支；`test_profile_legacy_compat.py` 钉住旧 /api/profile 适配；`test_migration_0064.py` 钉住只加表、旧表集合与内容不变、downgrade 可用。
+- 后端核心业务（跨行业岗位文本/JD 解析、资料参考文件、岗位相关片段筛选、分级生成、照片校验与渲染、岗位解读、助手附件/历史/搜索摘要解析、导出、防虚构校验）有单元测试；模型链路使用模拟传输或假 Provider，默认不依赖真实网络。较长测试已按主题拆分为 `test_job_text_parser_edge_cases.py`、`test_job_text_parser_metadata.py`、`test_profile_text_parser_inference.py`、`test_assistant_search.py` 和 `test_resume_quality_retry.py`，岗位元数据/英文标题/分隔符规则与核心字段测试分别维护，便于定向回归。
+- 技能链路的测试按层拆开：`test_skill_archive.py` 只管解包与解析（zip bomb、路径穿越、加密成员、非法扩展名、成员数超限都要被拒），`test_assistant_skills.py` 管持久化、系统提示拼装与知识读取（含"知识文件里的注入指令被清洗掉"），`test_skills_api.py` 管 HTTP 面（类型白名单、覆盖更新、临时文件清理、`IMPORT_PATH` 与中间件豁免绑定）。
+- 图片识别同样分单元与接口两层：`test_extraction_images.py` 钉住锚点行为（字段必须出现在抄录里、发了图却无抄录即失败、文本+图片取并集、抄录截断不产生"字段截断"警告），`test_api_extraction_images.py` 钉住接口面（图片以 `image_url` parts 下发、伪造魔数与文本附件被拒、张数与体积上限、超出请求体上限由中间件 413 而服务端的合计校验仍是 422）。
+- 文档与新增图片格式另有三层测试：`test_document_text.py` 钉住提取行为与失败形态（扫描件、加密 PDF、损坏文件、超长截断、预算耗尽后仍校验后续文件），测试用的 PDF/DOCX 由测试自己拼字节——生成库造出来的 PDF 往往没有文字层，恰好测不到提取逻辑；`test_attachment_formats.py` 钉住转码与拒绝文案（bmp/tiff 转 PNG、照片型内容退到 JPEG 且不超限、HEIC/旧版 `.doc` 给可执行的提示）；`test_extraction_documents.py` 钉住接口面（无模型时文档仍能被本地规则解析、文档与文本合并、图片与文档共享 4 个/5 MB 额度、损坏文档在模型调用之前就失败）。
+- API 层有冒烟测试（TestClient），覆盖岗位文本草稿、岗位备注与其他信息搜索、收藏过滤、批量操作原子性、简历收藏、岗位分析、助手会话/SSE、照片往返与其他核心链路。
+- 自动投递链路按层拆测试且**不真的连网或驱动真实浏览器**：`test_apply_cdp_client.py` 用假传输层钉住 CDP 请求 / 响应与超时错误；`test_apply_browser_manager.py` 用假 `subprocess` 钉住拉起 / 关闭 / 健康检查、「只关闭自己拉起的那个进程」与「指定浏览器不静默回退」；`test_apply_boss_adapter.py` 喂脚本化假客户端钉住采集解析、就绪等待、「页面已加载但匹配 0 个必须失败」与「真的没结果才返回空」；`test_boss_network.py` 钉住「网络优先、DOM 兜底」这条链路的两个方向——**走得通时必须用网络结果**（DOM 脚本故意返回另一份数据，用到它说明走错了路）、**走不通时必须安静退回 DOM**，外加只取目标接口的响应体、订阅透传不被包装层吞掉；`test_page_ready.py` 直接驱动等待原语（就绪 / 拦截 / 超时 / 可中断）；`test_apply_collect_guard.py` 钉住「采集抓不到要让任务失败」「真没搜到才完成」与「采集遵循当前站点」；`test_apply_queue_and_api.py` 钉住 HTTP 面（准入冲突 409、入队去重、错误码、显式开始的强制校验、记录与单条重投、站点列表与配置往返）。
+- SQLite 升级测试使用临时旧库验证兼容补列、`0003` 至 `0007` revision 链、索引/外键迁移、幂等执行、备份和原数据保留，不接触真实用户数据库。
+- 备份测试里有一条**旧备份回归闸门**（`test_inspect_accepts_a_backup_exported_before_the_skill_tables`）：伪造一份"技能表出现之前"的备份（少两张表、revision 与清单一起退回旧版），断言它仍能通过校验。新增数据表会静默拒收所有旧备份，只有这条测试能拦住它。
+- 面试深挖按层拆测试：`test_drill.py` 钉住核心规则（状态只能凭新证据前进、矛盾可覆盖、"没有证据的通过"在任何起点都不成立、契约与复盘解析的兜底），`test_drill_api.py` 钉住 HTTP 面（**契约在返回问题之前落库**、状态不能由调用方指定、真实模拟模式不在每题后念判定、下一题失败时提前收尾且保留已有判定、复练不落库），`test_migration_0014.py` 钉住迁移的建表 / 级联 / "主张删了契约仍可读"。前端 `DrillPage.test.tsx` 钉住三条信任基础：契约对用户可见、真实模拟模式不念判定、**界面里不出现任何分数**。
+- 版面诊断按层拆测试：`test_resume_layout.py` 钉住规则（状态边界、建议顺序、字号下限按绝对像素、阶梯只收紧不反弹、**版式默认值与模板文件逐项一致**），`test_resume_layout_api.py` 钉住接口面（溢出才给方案、`PATCH` 的三态语义、**导出与预览用同一份版式配置**），前端 `resumeLayoutMeasure.test.ts` 钉住测量（元素筛选、减去 padding、除以页数、测量期间摘掉 transform），`ResumeLayoutDiagnosisCard.test.tsx` 钉住「够放下就停」与「保存时原样回传版式参数」。
+- 求职进度按层拆测试：`test_tracker.py` 钉住核心规则（归一只做不会误合并的事、状态只能前进、拒信覆盖、同批折叠、合并不抹掉用户填过的字段、投递台回写不把进度打回去），`test_tracker_extract.py` 钉住解析与本地降级（缺公司或岗位就丢掉、「感谢投递」不会被读成面试、公司名取更完整的那一个），`test_tracker_api.py` 钉住 HTTP 面（固定路径不被 `/{id}` 吃掉、**预览不写库**、预览与执行一致、导出与筛选），`test_migration_0012.py` 钉住迁移的建表 / 唯一约束 / 幂等 / downgrade，`test_apply_task_runner.py` 里有一条钉住"投递成功会落一条进度记录"。
+- 事实台账按层拆测试：`test_claims.py` 钉住校验规则（已确认不得含占位符、枚举、日历日、建议规则的"该报才报"），`test_claims_api.py` 钉住 HTTP 面（固定路径不被 `/{id}` 吃掉、422/502、草拟的两条路径与"模型给未知承担程度时退回最保守取值"），`test_migration_0011.py` 钉住迁移的建表 / 幂等 / downgrade / 与模型常量的默认值一致，`test_resume_completeness.py` 钉住每个区块都被扫到与"不误报"，`test_claim_integration.py` 钉住两个接合点（台账为空时提示词逐字节不变、导出闸门与它的显式出路），`test_assistant_claim_tools.py` 钉住"助手改不了核实状态"。
+- 本批新增模块同样按层拆测试：`test_resume_writing.py` 钉住写作增强（STAR 改写注入 claim 事实边界、纯空白在 schema 层 422、未配置模型降级、提示词登记）；`test_match_scoring.py` 钉住参考分（五维加权、中性分、**不改变准入结论**）；`test_resume_diff.py` 钉住版本对比三态；`test_resume_risk.py` / `test_ats.py` 钉住质量合规与 ATS 免责；`test_watermark.py` 钉住水印后处理（HTML 转义、PDF 页数不变、空文本透传、不支持格式报错）；`test_share_package.py` 钉住离线分享包（脱敏快照、文件清单、token 校验、删除→回收站→恢复→再删→彻底删除闭环）；`test_referral.py` 钉住内推转化派生口径；`test_migration_0018.py` 钉住四张新表的建表 / 幂等 / downgrade。
+- 网申填表按层拆测试，**并且刻意补上旧实现缺失的那类覆盖**：`test_webform_matching.py` 穷举取值决策（占位项永不选、别名、多候选判 `ambiguous` 不猜、日期只有年份时拒绝、`至今` 不算日期），`test_webform_engine.py` 钉住控件识别、负向词挡住"紧急联系人姓名"、`file` 控件永不被映射，以及**对着真实缺陷的回归守卫**（`select` 必须用 `HTMLSelectElement` 的 setter 而不是 `HTMLInputElement` 的；`test_webform_engine_*` 另外钉住「只填不点」——下拉 / 单选 / 复选 / 日期控件一律进 `skipped`、显式填充那条路照常能写），`test_webform_data.py` 钉住"取最高学历而不是第一条"，`test_webform_service.py` 钉住冲突项默认不勾选与快照过期语义，`test_webform_api.py` 钉住 HTTP 面。另有两条**机械守卫**把产品边界变成不变量：`test_webform_no_submit.py`（源码里出现 `.submit(` / `requestSubmit` 即红；快照脚本必须跳过提交类控件）与 `test_stop_aware_client_forwarding.py`（反射 `CdpClient` 与 `WindowAwareMixin` 的每个公开方法，断言包装层都转发了——漏转发不报错，只会让该能力在生产里静默失效）。前端 `WebFormPage.test.tsx` 钉住「界面上不存在文案含『提交』的按钮」与「冲突行默认不勾选」。AI 兜底另有四层：`test_webform_ai.py` 钉住**提示词里不含任何资料值**、目录外的字段名被丢弃、`__none__` 与自相矛盾的答案怎么收敛、模型挂了要降级、语义缓存与配额、**一次抖动要重试而"都不像"不重试**；`test_webform_ai_guard.py` 钉住采纳前的共用否决（亲属 / 跨族）；`test_webform_live.py` 钉住触发条件（**只对真正认不出的问**）、**不阻塞轮询**、过期答案丢弃、`skip_reason` 优先于模型；`test_webform_js_canary.py` 在真浏览器里钉住面板**不盖住输入框、离它够近、跟得住页面重排**、拖动保留的是相对偏移、备选逐条可点，以及卸载要停掉重排定时器。另有**离线评测语料**把准确率变成数字：`tests/fixtures/webform/pages/*.json`（一 incident 一文件：真实页面的控件清单 + 人工确认的期望映射，`scripts/collect_webform_sample.py` 从真机采样并自动剥值），`test_webform_match_corpus.py` 跑分回归（**错填为零**、基线单调不可回退——只许变好），`scripts/webform_match_report.py` 出人读报告；执行侧对应 `fixtures/webform/execution/*.json` + `test_webform_execution_corpus.py` 与 `test_webform_engine_recovery.py`（按调用顺序应答的 `ScriptedCdpClient` 钉住重试阶梯：写几次、回读几次、有没有多余的点击）。新增真机 incident 的流程是**先落语料、再补单测**：没有 case 背书的规则不加。
+- 思考模式按层拆测试：`test_llm_thinking.py` 钉住形态解析、档位归一化（换模型后残留的档位不照发）、请求体片段与探测的四种判定（真的生效 / 被静默忽略 / 被上游拒绝 / 压根没跑起来）；`test_openai_compat.py` 与 `test_llm_anthropic.py` 各自钉住**默认关闭时请求体逐字节不变**与 400 降级重试；`test_api_settings.py` 钉住 `/llm/thinking/check` 的两种模式以及"测试连接不受思考设置影响"；`test_assistant.py` 钉住助手不继承设置页的开关；`test_custom_settings_actually_apply.py` 从保存配置一路断到真实请求体。
+- 前端使用 Vitest 覆盖关键请求封装和核心交互（含投递台的队列准入拦截、暂停 / 停止、采集条件「未生效」、空态与错误态，以及匹配分析的五类结论展示（结论区不带百分比）与匹配度参考分区块（总分 + 分项 + 免责文案）），TypeScript strict、ESLint、Prettier 与生产构建提供静态门禁；复杂用户链路仍需按风险逐步补齐组件或端到端测试。
+- GitHub Actions 在 Linux/Python 3.11、3.13 和 Windows/Python 3.12 上运行后端测试、覆盖率与 Ruff，并在 Node 22 上运行前端测试、覆盖率、格式检查、Lint 和构建。
+- Python 与 npm 依赖审计在 CI 中作为提示项运行，避免外部公告服务短暂不可用阻断功能检查；Dependabot 持续提交可审查的依赖更新。

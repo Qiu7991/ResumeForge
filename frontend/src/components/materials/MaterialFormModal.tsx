@@ -1,0 +1,317 @@
+// SPDX-License-Identifier: Apache-2.0
+/** 资料箱条目编辑：标题、分类、正文、链接、附件与备注。 */
+
+import { DeleteOutlined, FileTextOutlined, PictureOutlined, PlusOutlined } from "@ant-design/icons";
+import { Alert, App, Button, Form, Image, Input, Select, Space, Typography, Upload } from "antd";
+import { useId, useState } from "react";
+import { handleEditorSaveKey } from "../../utils/formKeyboard";
+import type { Material, MaterialFile, MaterialPayload } from "../../types";
+import { MATERIAL_CATEGORIES } from "../../types";
+import FileDropZone from "../common/FileDropZone";
+import FormModal from "../common/FormModal";
+import {
+  IMAGE_MIME_BY_EXTENSION,
+  MAX_ATTACHMENT_BYTES,
+  canPreviewImage,
+  readAsDataUrl,
+} from "../../utils/attachments";
+import { t } from "../../i18n";
+import { useLocale } from "../../i18n/i18nContext";
+import { materialCategoryLabel } from "../../i18n/enum/knowledge";
+
+/** 与后端 MAX_MATERIAL_* 保持一致（服务端仍是权威校验）。 */
+const MAX_FILES = 10;
+const MAX_IMAGE_FILES = 4;
+const MAX_TEXT_FILE_CHARS = 100_000;
+
+const IMAGE_ACCEPT = Object.keys(IMAGE_MIME_BY_EXTENSION)
+  .filter((extension) => ["png", "jpg", "jpeg", "webp", "gif", "bmp"].includes(extension))
+  .map((extension) => `.${extension}`)
+  .join(",");
+const TEXT_FILE_ACCEPT = ".txt,.md,.json,.csv";
+
+interface Props {
+  open: boolean;
+  /** 传入资料表示编辑，传 null 表示新建。 */
+  material: Material | null;
+  categories: string[];
+  submitting: boolean;
+  onCancel: () => void;
+  onSubmit: (payload: MaterialPayload) => void;
+}
+
+function filesFromMaterial(material: Material | null): MaterialFile[] {
+  if (!material) return [];
+  return material.files.map((item) => ({ ...item }));
+}
+
+export default function MaterialFormModal({
+  open,
+  material,
+  categories,
+  submitting,
+  onCancel,
+  onSubmit,
+}: Props) {
+  useLocale();
+  const { message } = App.useApp();
+  const fieldId = useId();
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState<string>("其他"); // i18n-ok: 分类兜底值是提交后端的协议值
+  const [content, setContent] = useState("");
+  const [url, setUrl] = useState("");
+  const [note, setNote] = useState("");
+  const [files, setFiles] = useState<MaterialFile[]>([]);
+
+  // 打开时用条目内容（或空值）回填表单。Compiler 规范：随 prop 变化的重置用
+  // 渲染期守卫式调整（key = open + material 引用，与原 deps 同源）。
+  const [prevSync, setPrevSync] = useState<{ open: boolean; material: Material | null } | null>(
+    null,
+  );
+  if (prevSync === null || prevSync.open !== open || prevSync.material !== material) {
+    setPrevSync({ open, material });
+    if (open) {
+      setTitle(material?.title ?? "");
+      setCategory(material?.category || "其他"); // i18n-ok: 分类兜底值是提交后端的协议值
+      setContent(material?.content ?? "");
+      setUrl(material?.url ?? "");
+      setNote(material?.note ?? "");
+      setFiles(filesFromMaterial(material));
+    }
+  }
+
+  const options = Array.from(new Set([...categories, ...MATERIAL_CATEGORIES]));
+
+  const addImage = async (file: File) => {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      message.error(t("materialForm.error.imageTooLarge"));
+      return;
+    }
+    if (files.filter((item) => item.data_url).length >= MAX_IMAGE_FILES) {
+      message.warning(t("materialForm.error.maxImages", { count: MAX_IMAGE_FILES }));
+      return;
+    }
+    if (files.length >= MAX_FILES) {
+      message.warning(t("materialForm.error.maxFiles", { count: MAX_FILES }));
+      return;
+    }
+    try {
+      const dataUrl = await readAsDataUrl(file);
+      setFiles((current) => [
+        ...current,
+        {
+          name: file.name,
+          mime_type: file.type || "image/*",
+          size_bytes: file.size,
+          text: "",
+          data_url: dataUrl,
+        },
+      ]);
+    } catch {
+      message.error(t("materialForm.error.readImage"));
+    }
+  };
+
+  const addTextFile = async (file: File) => {
+    if (files.length >= MAX_FILES) {
+      message.warning(t("materialForm.error.maxFiles", { count: MAX_FILES }));
+      return;
+    }
+    try {
+      const text = await file.text();
+      if (!text.trim()) {
+        message.warning(t("materialForm.warning.noText"));
+        return;
+      }
+      setFiles((current) => [
+        ...current,
+        {
+          name: file.name,
+          mime_type: file.type || "text/plain",
+          size_bytes: file.size,
+          text: text.slice(0, MAX_TEXT_FILE_CHARS),
+          data_url: "",
+        },
+      ]);
+    } catch {
+      message.error(t("materialForm.error.readFile"));
+    }
+  };
+
+  const submit = () => {
+    if (submitting) return;
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle && !content.trim() && !url.trim() && files.length === 0) {
+      message.warning(t("materialForm.warning.needContent"));
+      return;
+    }
+    onSubmit({
+      title: trimmedTitle,
+      category: category.trim() || "其他", // i18n-ok: 分类兜底值是提交后端的协议值
+      content,
+      url: url.trim(),
+      note,
+      files,
+    });
+  };
+
+  return (
+    <FormModal
+      title={material ? t("materialForm.title.edit") : t("materialForm.title.create")}
+      open={open}
+      width={720}
+      onCancel={onCancel}
+      submitting={submitting}
+      onSubmit={submit}
+      okText={t("materialForm.action.save")}
+    >
+      <Alert type="info" showIcon style={{ marginBottom: 16 }} title={t("materialForm.intro")} />
+      <Typography.Paragraph type="secondary">
+        {t("materialForm.hint.shortcut")}
+      </Typography.Paragraph>
+      <Form
+        layout="vertical"
+        disabled={submitting}
+        onKeyDown={(event) => handleEditorSaveKey(event, submit)}
+      >
+        <Form.Item label={t("materialForm.label.title")} htmlFor={`${fieldId}-title`}>
+          <Input
+            id={`${fieldId}-title`}
+            showCount
+            value={title}
+            maxLength={256}
+            placeholder={t("materialForm.placeholder.title")}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+        </Form.Item>
+        <Form.Item label={t("materialForm.label.category")} htmlFor={`${fieldId}-category`}>
+          <Select
+            id={`${fieldId}-category`}
+            // tags 模式的取值是数组，这里始终只放一项，对外仍当单个字符串用。
+            value={category ? [category] : []}
+            showSearch
+            options={options.map((item) => ({ value: item, label: materialCategoryLabel(item) }))}
+            // 允许输入新分类：资料类型很个人化，固定的那几个只能算起点。
+            // 不加 maxCount={1}：antd 在已选数达到 maxCount 时会把下拉里所有
+            // 未选中项置灰禁用，导致编辑时改选不了其他分类；onChange 只取
+            // 最后一位，多选的一瞬间也会收敛回单个分类。
+            mode="tags"
+            // i18n-ok: 分类兜底值是提交后端的协议值
+            onChange={(values: string[]) => setCategory(values[values.length - 1] ?? "其他")}
+            placeholder={t("materialForm.placeholder.category")}
+          />
+        </Form.Item>
+        <Form.Item label={t("materialForm.label.content")} htmlFor={`${fieldId}-content`}>
+          <Input.TextArea
+            id={`${fieldId}-content`}
+            value={content}
+            autoSize={{ minRows: 4, maxRows: 12 }}
+            placeholder={t("materialForm.placeholder.content")}
+            onChange={(event) => setContent(event.target.value)}
+          />
+        </Form.Item>
+        <Form.Item label={t("materialForm.label.url")} htmlFor={`${fieldId}-url`}>
+          <Input
+            id={`${fieldId}-url`}
+            value={url}
+            placeholder={t("materialForm.placeholder.url")}
+            onChange={(event) => setUrl(event.target.value)}
+          />
+        </Form.Item>
+        <Form.Item
+          label={t("materialForm.label.attachments", {
+            count: MAX_FILES,
+            images: MAX_IMAGE_FILES,
+          })}
+        >
+          {/* 拖进来的文件按类型分流：图片走图片校验，其余按文本文件读取。 */}
+          <FileDropZone
+            accept={`${IMAGE_ACCEPT},${TEXT_FILE_ACCEPT}`}
+            disabled={files.length >= MAX_FILES}
+            hint={t("materialForm.hint.drop")}
+            onFiles={(dropped) =>
+              dropped.forEach((file) => {
+                if (IMAGE_MIME_BY_EXTENSION[`${file.name.split(".").pop()?.toLowerCase()}`]) {
+                  void addImage(file);
+                } else {
+                  void addTextFile(file);
+                }
+              })
+            }
+            onRejected={() => message.error(t("materialForm.error.unsupported"))}
+          >
+            <Space wrap>
+              <Upload
+                accept={IMAGE_ACCEPT}
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void addImage(file as File);
+                  return Upload.LIST_IGNORE;
+                }}
+              >
+                <Button icon={<PictureOutlined />}>{t("materialForm.action.addImage")}</Button>
+              </Upload>
+              <Upload
+                accept={TEXT_FILE_ACCEPT}
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void addTextFile(file as File);
+                  return Upload.LIST_IGNORE;
+                }}
+              >
+                <Button icon={<FileTextOutlined />}>{t("materialForm.action.addText")}</Button>
+              </Upload>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {t("materialForm.hint.dropNote")}
+              </Typography.Text>
+            </Space>
+          </FileDropZone>
+          {files.length > 0 && (
+            <div className="material-file-list">
+              {files.map((item, index) => (
+                <div key={`${item.name}-${index}`} className="material-file-item">
+                  {item.data_url && canPreviewImage(item.mime_type) ? (
+                    <Image src={item.data_url} alt={item.name} width={64} />
+                  ) : (
+                    <PlusOutlined className="material-file-icon" />
+                  )}
+                  <div className="material-file-meta">
+                    <Typography.Text ellipsis={{ tooltip: item.name }}>{item.name}</Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {item.data_url
+                        ? t("materialForm.file.image", {
+                            size: Math.round(item.size_bytes / 1024),
+                          })
+                        : t("materialForm.file.text", { count: item.text.length })}
+                    </Typography.Text>
+                  </div>
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    aria-label={t("materialForm.aria.removeFile", { name: item.name })}
+                    icon={<DeleteOutlined />}
+                    onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </Form.Item>
+        <Form.Item
+          label={t("materialForm.label.note")}
+          htmlFor={`${fieldId}-note`}
+          style={{ marginBottom: 0 }}
+        >
+          <Input.TextArea
+            id={`${fieldId}-note`}
+            value={note}
+            autoSize={{ minRows: 2, maxRows: 5 }}
+            placeholder={t("materialForm.placeholder.note")}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </Form.Item>
+      </Form>
+    </FormModal>
+  );
+}

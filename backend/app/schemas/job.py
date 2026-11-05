@@ -1,0 +1,389 @@
+# SPDX-License-Identifier: Apache-2.0
+"""岗位 Schema。"""
+
+from datetime import datetime
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
+
+from ..models.job import JOB_STATUSES
+from .extraction import (
+    MAX_EXTRACTION_DOCUMENT_COUNT,
+    MAX_EXTRACTION_IMAGE_COUNT,
+    MAX_RECOGNIZED_TEXT_CHARS,
+    ExtractionDocumentInput,
+    ExtractionImageInput,
+)
+from .profile import validate_photo_data_url
+
+MAX_SQLITE_INTEGER = 2**63 - 1
+MAX_JOB_TEXT_CHARS = 200_000
+# 备注图片随岗位表单一次性提交，受默认 8 MB 请求体上限约束，所以只放 2 张。
+JOB_NOTE_IMAGE_MAX_BYTES = 2 * 1024 * 1024
+MAX_JOB_NOTE_IMAGES = 2
+
+# 招聘信息的录入方式，用于备注里的溯源标注。
+# 注意顺序：这里既是可选值清单，也是前端下拉的展示顺序。
+RECOGNITION_SOURCES = (
+    "手动填写",
+    "粘贴文本识别",
+    "图片识别",
+    "文档识别",
+    "备选岗位导入",
+    "AI 助手录入",
+    # 投递台的自动采集写入的就是这个来源。它必须在这里，否则采集进来的岗位一旦落到
+    # 库里，读取路径上的 `JobOut` 会因为"来源不在白名单"而校验失败——那会让**整份岗位
+    # 列表与首页统计**一起返回 500（真实故障就是这么发生的），而不是仅仅这一条读不出来。
+    "岗位采集",
+    "官网采集",
+)
+
+# 采集 / 候选导入 / 官网采集写进 ``Job.recognition_source`` 的三个取值。**必须出现在
+# ``RECOGNITION_SOURCES`` 里**（有测试钉住）。在这里定义常量是为了让"采集器"与"候选导入"
+# 共用同一个字面量，而不是各自抄一遍字符串——抄两遍的结果是其中一个改了另一个不知道，
+# 而症状正是上面那条 500。
+RECOGNITION_SOURCE_COLLECT = "岗位采集"
+RECOGNITION_SOURCE_CANDIDATE_IMPORT = "备选岗位导入"
+RECOGNITION_SOURCE_OFFICIAL = "官网采集"
+# 两条自动采集链路的历史值都要被视为“采集”。旧版本的官网采集曾把
+# `官网采集` 写进来源列，新的候选导入统一写 `岗位采集`；读取和筛选不能只认其中一个。
+RECOGNITION_SOURCE_AUTO = (RECOGNITION_SOURCE_COLLECT, RECOGNITION_SOURCE_OFFICIAL)
+
+# 一次粘贴的材料最多拆成多少份岗位草稿；再多就不是"顺手粘了几份"了。
+MAX_MULTI_JOBS = 12
+JobId = Annotated[int, Field(strict=True, ge=1, le=MAX_SQLITE_INTEGER)]
+
+
+def validate_note_images(values: list[str]) -> list[str]:
+    """备注图片沿用资料照片的校验：JPEG/PNG/WebP、单张不超过 2 MB。"""
+    if len(values) > MAX_JOB_NOTE_IMAGES:
+        raise ValueError(f"备注图片最多 {MAX_JOB_NOTE_IMAGES} 张")
+    # 岗位备注沿用资料照片那套校验，但**体积上限单独一档**：一次最多两张，
+    # 若跟着资料照片放宽到 5MB，两张就会超出 8MB 的请求体上限。
+    return [validate_photo_data_url(value, max_bytes=JOB_NOTE_IMAGE_MAX_BYTES) for value in values]
+
+
+def validate_recognition_source(value: str) -> str:
+    value = (value or "").strip()
+    if value and value not in RECOGNITION_SOURCES:
+        raise ValueError("无效的招聘信息来源")
+    return value
+
+
+def _validate_status(value: str) -> str:
+    if value not in JOB_STATUSES:
+        allowed = "、".join(JOB_STATUSES)
+        raise ValueError(f"无效的岗位状态，可选值：{allowed}")
+    return value
+
+
+def _validate_source_url(value: str) -> str:
+    value = value.strip()
+    if not value:
+        return ""
+    try:
+        parsed = urlsplit(value)
+    except ValueError as exc:
+        raise ValueError("投递链接必须是有效的 HTTP 或 HTTPS 地址") from exc
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("投递链接只支持 HTTP 或 HTTPS 地址")
+    return value
+
+
+class SkillTag(BaseModel):
+    name: str = Field(max_length=128)
+    category: str = Field(max_length=64)
+
+
+class JobCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=128)
+    company: str = Field(default="", max_length=128)
+    location: str = Field(default="", max_length=64)
+    salary: str = Field(default="", max_length=64)
+    job_type: str = Field(default="校招", max_length=32)
+    description: str = Field(default="", max_length=MAX_JOB_TEXT_CHARS)
+    requirements: str = Field(default="", max_length=MAX_JOB_TEXT_CHARS)
+    additional_info: str = Field(default="", max_length=MAX_JOB_TEXT_CHARS)
+    source_url: str = Field(default="", max_length=512)
+    posted_at: str = Field(default="", max_length=32)
+    status: str = Field(default="开放中", max_length=16)
+    note: str = Field(default="", max_length=2000)
+    note_images: list[str] = Field(default_factory=list, max_length=MAX_JOB_NOTE_IMAGES)
+    recognition_source: str = Field(default="", max_length=32)
+    # 用户可见、可编辑的「来源」字段（0042 起）：这条招聘信息从哪来的。可留空、可随时
+    # 清空——备注不再自动追加「来源：…」行，溯源信息住在这列里。
+    origin_source: str = Field(default="", max_length=64)
+    favorite: bool = False
+
+    @field_validator("status")
+    @classmethod
+    def status_must_be_supported(cls, value: str) -> str:
+        return _validate_status(value)
+
+    @field_validator("source_url")
+    @classmethod
+    def source_url_must_be_http(cls, value: str) -> str:
+        return _validate_source_url(value)
+
+    @field_validator("note_images")
+    @classmethod
+    def note_images_must_be_safe(cls, value: list[str]) -> list[str]:
+        return validate_note_images(value)
+
+    @field_validator("recognition_source")
+    @classmethod
+    def recognition_source_must_be_supported(cls, value: str) -> str:
+        return validate_recognition_source(value)
+
+
+class JobUpdate(BaseModel):
+    """PUT 语义：只更新提交了的字段。"""
+
+    title: str = Field(default="", max_length=128)
+    company: str = Field(default="", max_length=128)
+    location: str = Field(default="", max_length=64)
+    salary: str = Field(default="", max_length=64)
+    job_type: str = Field(default="", max_length=32)
+    description: str = Field(default="", max_length=MAX_JOB_TEXT_CHARS)
+    requirements: str = Field(default="", max_length=MAX_JOB_TEXT_CHARS)
+    additional_info: str = Field(default="", max_length=MAX_JOB_TEXT_CHARS)
+    source_url: str = Field(default="", max_length=512)
+    posted_at: str = Field(default="", max_length=32)
+    status: str = Field(default="开放中", max_length=16)
+    note: str = Field(default="", max_length=2000)
+    note_images: list[str] = Field(default_factory=list, max_length=MAX_JOB_NOTE_IMAGES)
+    recognition_source: str = Field(default="", max_length=32)
+    # 提交空串 = 用户清空了来源：更新路径必须尊重这个动作，不能当"未提供"。
+    origin_source: str = Field(default="", max_length=64)
+    favorite: bool = False
+
+    @field_validator("status")
+    @classmethod
+    def status_must_be_supported_when_set(cls, value: str) -> str:
+        return _validate_status(value)
+
+    @field_validator("source_url")
+    @classmethod
+    def source_url_must_be_http_when_set(cls, value: str) -> str:
+        return _validate_source_url(value)
+
+    @field_validator("note_images")
+    @classmethod
+    def note_images_must_be_safe_when_set(cls, value: list[str]) -> list[str]:
+        return validate_note_images(value)
+
+    @field_validator("recognition_source")
+    @classmethod
+    def recognition_source_must_be_supported_when_set(cls, value: str) -> str:
+        return validate_recognition_source(value)
+
+
+class JobBatchRequest(BaseModel):
+    # 上限对齐全选全部的真实规模（历史库可到数千条），5000 足够容纳全量又兜底单次请求规模。
+    job_ids: list[JobId] = Field(max_length=5000)
+
+    @field_validator("job_ids")
+    @classmethod
+    def validate_and_deduplicate_ids(cls, value: list[int]) -> list[int]:
+        if not value:
+            raise ValueError("请至少选择一个岗位")
+        unique_ids = list(dict.fromkeys(value))
+        return unique_ids
+
+
+class JobBatchStatusRequest(JobBatchRequest):
+    status: str = Field(min_length=1, max_length=16)
+
+
+class JobBatchStatusResult(BaseModel):
+    updated: int
+
+
+class JobBatchDeleteResult(BaseModel):
+    deleted: int
+
+
+class JobImportRow(BaseModel):
+    """一行待导入数据：``line`` 是预览时的文件真实行号，账目里原样带回。"""
+
+    line: int = Field(ge=1)
+    data: dict[str, str]
+
+
+class JobImportRequest(BaseModel):
+    """CSV 导入的提交步：行数据来自预览接口的解析结果（字段名见 job_csv.CSV_COLUMNS）。"""
+
+    rows: list[JobImportRow] = Field(max_length=500)
+
+    @field_validator("rows")
+    @classmethod
+    def rows_must_not_be_empty(cls, value: list[JobImportRow]) -> list[JobImportRow]:
+        if not value:
+            raise ValueError("没有可导入的岗位行")
+        return value
+
+
+class JobImportResult(BaseModel):
+    """CSV 导入的账目：成功多少、逐行失败原因（含重复跳过）。"""
+
+    imported: int = 0
+    failed: list[dict[str, object]] = Field(default_factory=list)
+
+
+class JobImportPreview(BaseModel):
+    """CSV 预览：可导入的行（带文件真实行号）+ 逐行错误。"""
+
+    rows: list[JobImportRow] = Field(default_factory=list)
+    errors: list[dict[str, object]] = Field(default_factory=list)
+
+
+class JobTextParseRequest(BaseModel):
+    """粘贴的招聘文本、招聘信息截图或招聘文档（可同时给）。"""
+
+    text: str = Field(default="", max_length=50_000)
+    images: list[ExtractionImageInput] = Field(
+        default_factory=list, max_length=MAX_EXTRACTION_IMAGE_COUNT
+    )
+    documents: list[ExtractionDocumentInput] = Field(
+        default_factory=list, max_length=MAX_EXTRACTION_DOCUMENT_COUNT
+    )
+
+    @model_validator(mode="after")
+    def require_text_or_images(self) -> "JobTextParseRequest":
+        if not self.text.strip() and not self.images and not self.documents:
+            raise ValueError("请粘贴招聘信息，或上传至少一张截图或一份文档")
+        return self
+
+
+class JobTextParseResult(BaseModel):
+    """从粘贴文本生成的可编辑草稿，不要求岗位名称已成功识别。"""
+
+    title: str = Field(default="", max_length=128)
+    company: str = Field(default="", max_length=128)
+    location: str = Field(default="", max_length=64)
+    salary: str = Field(default="", max_length=64)
+    job_type: str = Field(default="其他", max_length=32)
+    description: str = ""
+    requirements: str = ""
+    additional_info: str = ""
+    source_url: str = Field(default="", max_length=512)
+    posted_at: str = Field(default="", max_length=32)
+    status: str = Field(default="开放中", max_length=16)
+    warnings: list[str] = Field(default_factory=list)
+    # 识别引擎（AI 还是本地规则）。**不要**和 `JobCreate.recognition_source` 混用：
+    # 那个是"这条招聘信息是怎么录进来的"，会被写进备注做溯源；草稿里的这个字段只
+    # 说明"这次识别是谁做的"，保存岗位时由前端按输入类型决定来源。
+    parse_engine: Literal["ai", "local"] = "local"
+    # 图片识别时模型逐字抄录的原文，供用户对照截图核对；纯文本识别为空。
+    recognized_text: str = Field(default="", max_length=MAX_RECOGNIZED_TEXT_CHARS)
+
+
+class JobMultiTextParseResult(BaseModel):
+    """一次粘贴里含多份招聘信息时的解析结果。
+
+    每一条都是独立的岗位草稿，字段规则与单份解析完全一致（都要求能在原文里找到）。
+    ``items`` 只有一个元素时说明没识别出多份，前端按普通单份流程处理即可。
+    """
+
+    items: list[JobTextParseResult] = Field(default_factory=list, max_length=MAX_MULTI_JOBS)
+    parse_engine: Literal["ai", "local"] = "local"
+    warnings: list[str] = Field(default_factory=list)
+
+
+class JobOut(JobCreate):
+    """岗位的读取模型。
+
+    **它继承 `JobCreate` 只是为了复用字段定义，绝不能因此继承输入侧的校验。**
+    `JobCreate` 的白名单（来源 / 状态 / 备注图片）是"写入时"的规则，会随版本演进；
+    一旦把它们带进读取路径，库里任何一条按旧规则写入、在新规则下"不合法"的历史数据，
+    都会让 `JobOut.model_validate(row)` 抛错——而列表接口是**逐行**构造响应的，
+    于是一条坏数据就让整份岗位列表、首页统计、投递台选岗一起 500。
+    2026-09-18 的线上故障正是这个形态：采集器写入来源 `岗位采集`，而白名单里还没有它。
+
+    所以这里把继承来的校验器**逐个覆盖成直通**（同名方法会替换父类实现），
+    读取只如实回显库里存着什么。
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    source: str = Field(default="手动添加", max_length=64)
+    keywords: list[SkillTag] = Field(default_factory=list, max_length=500)
+    created_at: datetime
+    updated_at: datetime
+    # 输入侧把备注图片限制成 2 张（受单次请求体上限约束），但那是**写入规则**，
+    # 不是这一列能存多少。库里可能存在按旧上限写入的记录，读取不该因为条数变多
+    # 就把整份列表炸掉，所以这里重新声明、去掉上限。
+    note_images: list[str] = Field(default_factory=list)
+
+    @field_validator("status")
+    @classmethod
+    def status_must_be_supported(cls, value: str) -> str:
+        return value
+
+    @field_validator("source_url")
+    @classmethod
+    def source_url_must_be_http(cls, value: str) -> str:
+        return value
+
+    @field_validator("note_images")
+    @classmethod
+    def note_images_must_be_safe(cls, value: list[str]) -> list[str]:
+        return value
+
+    @field_validator("recognition_source")
+    @classmethod
+    def recognition_source_must_be_supported(cls, value: str) -> str:
+        return value
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def apply_supported(self) -> bool:
+        """这个岗位能不能用「投递台」自动投递：来源必须能落到某个已注册站点上。
+
+        为什么放在读取模型上：判据只有一处（``services.sites.registry``），界面据此**禁用**
+        「加入投递台」并把原因写在按钮旁，而不是让用户点一下才被拒。让每个调用方各自判断
+        迟早会判得不一样。
+
+        **延迟导入是刻意的**：``schemas`` 目前不依赖 ``services``，而 ``services.sites.base``
+        会拉进浏览器/CDP 那一整块；只有真的序列化岗位时才需要它。
+
+        **默认语义是"能投"**：万一某条读取路径没有走到这个属性（不应发生），结果是"按钮可用、
+        点了被后端拒绝"，而不是把一个本来能投的岗位藏起来——闸门的权威始终在后端业务层，
+        这里只是把结论提前告诉界面。
+        """
+        from ..services.sites.registry import get_registry
+
+        return get_registry().resolve_for_job(self) is not None
+
+
+class JobListOut(JobOut):
+    """岗位列表的读取模型：与 `JobOut` 字段一致，但**不带 JD 全文**。
+
+    列表页从不需要整份岗位描述（20 行 × 平均 10KB 就是 ~430KB 的响应体），
+    需要 JD 的场景（详情抽屉、编辑表单、生成简历）都走 `GET /jobs/{id}` 单取。
+    所以这里把 `description` 排除出序列化（读取时仍校验、内存里仍有值），
+    并下发 `has_description`——「补齐详情」按钮据此判断哪些岗位缺 JD，
+    不用前端对着缺失字段猜。
+
+    继承 `JobOut` 是刻意的：读取侧的"校验直通 + from_attributes + apply_supported"
+    判据只有一处，列表与详情必须同源，否则又会出现"一条坏数据在列表能读、详情 500"
+    的分叉。
+    """
+
+    # exclude=True：字段参与校验与内存表示，但不进响应 JSON——这是"瘦身后仍能
+    # model_validate(ORM 行)"的最小改动，比复制一份字段清单好维护。
+    description: str = Field(default="", max_length=MAX_JOB_TEXT_CHARS, exclude=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def has_description(self) -> bool:
+        """岗位有没有可用的岗位描述（口径：description 非空白）。"""
+        return bool(self.description.strip())

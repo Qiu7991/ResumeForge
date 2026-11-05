@@ -1,0 +1,858 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    # 测试走 pytest-xdist 并行（-n auto），正常 ~5 分钟；30 分钟是给慢速
+    # 共享 runner 与 coverage 收尾留的宽裕上限，而不是常规耗时。
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 3.11 是支持下限（3.10 已 EOL），3.13 是最新验证过的解释器；
+          # Windows 作业用本机开发所在的 3.12。三个一起构成窗口两端的回归面。
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: windows-latest
+            python-version: "3.12"
+    env:
+      PYTHONUTF8: "1"
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Install a CJK font for PDF export tests
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # fonts-wqy-zenhei：TrueType 轮廓的 CJK 字体。fonts-noto-cjk 是 CFF 轮廓，
+          # fpdf2 对 CFF 的子集化会把提取文本弄丢（页数对、探针全 miss，2026-10-11 实测），
+          # 金样导出测试必须落在 TrueType 字体上（下方 RESUMEFORGE_PDF_FONT 强制指定）。
+          sudo apt-get install -y fonts-noto-cjk fonts-wqy-zenhei
+
+      - name: Run Ruff
+        run: python -m ruff check .
+
+      - name: Run Ruff on root scripts
+        # 仓库根 scripts/*.py 与 backend 共用根 pyproject.toml 的同一份 ruff
+        # 配置（E4/E7/E9/F/I/UP/B/SIM）。此前只查 backend 范围，scripts 里
+        # 攒了 9 个遗留问题（I001/UP017/SIM300）；RF-21 修复后在这里钉住，
+        # 防止再积累。单独一步而不是并进上一条，因为 backend 作业的默认
+        # working-directory 是 backend/。
+        working-directory: .
+        run: python -m ruff check scripts/
+
+      - name: Type check backend (pyright)
+        # pyrightconfig 覆盖全部 app/（2026-10-23 扩面完成，535 个文件 0 error）。
+        # CI 把包装在全局解释器里，显式把解释器交给 pyright 才能解析第三方导入；
+        # 本地开发走 backend/.venv（pyrightconfig 的 venvPath）。
+        shell: bash
+        run: python -m pyright --pythonpath "$(command -v python)"
+
+      - name: Check version sync (config.py vs package.json)
+        run: python ../scripts/check_version_sync.py
+
+      - name: Test Windows launcher, updater and release packaging
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: powershell
+        run: |
+          .\scripts\tests\Test-Start-ResumeForge.ps1
+          .\scripts\tests\Test-Update-ResumeForge.ps1
+          .\scripts\tests\Test-Build-Release.ps1
+          .\scripts\tests\Test-PythonRuntimeGuard.ps1
+
+      - name: Run tests with coverage
+        env:
+          # 强制金样 PDF 用 TrueType 轮廓字体（见上方 apt 安装注释）。该路径在
+          # Windows/macOS runner 上不存在，探测会打一行 warning 后照常回退到
+          # 本机字体（msyh/PingFang），不影响那两个平台。
+          RESUMEFORGE_PDF_FONT: /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
+        run: >-
+          python -m pytest -n auto
+          --cov=app
+          --cov-config=../pyproject.toml
+          --cov-report=term-missing
+          --cov-report=xml
+
+      - name: Upload coverage report
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+          retention-days: 14
+          if-no-files-found: error
+
+  macos-launcher-guards:
+    name: macOS launcher guards
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run the macOS launcher guard tests
+        # 这一份在真 Mac 上跑，用的就是 macOS 自带的 /bin/bash 3.2——
+        # 维护者没有 Mac，这是唯一能自动化验证 macOS 启动链的地方。
+        # 覆盖：换行/编码（CRLF 会让 shebang 变成 "bad interpreter"）、
+        # 可执行位、自举常量（版本号与 SHA-256）、版本窗口与进程记录等纯逻辑。
+        run: bash scripts/tests/test-macos-launcher.sh
+
+  macos-runtimes:
+    name: macOS portable runtimes
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download and verify the pinned portable runtimes
+        # 真正下载一遍便携版 Python 与 Node，用仓库里钉死的 SHA-256 校验。
+        # 这一步专抓"摘要抄错一位"这类错误：那种错误在别处一律表现为
+        # "用户下载后启动失败"，而且每个人的网络环境都不一样，只有跑一次才知道。
+        run: |
+          set -euo pipefail
+          export RF_RUNTIME_DIR="$PWD/runtime"
+          mkdir -p "$RF_RUNTIME_DIR"
+          . scripts/macos/lib/common.sh
+          . scripts/macos/lib/python.sh
+          . scripts/macos/lib/node.sh
+          arch="$(detect_macos_arch)"
+          echo "架构：$arch"
+          rf_install_portable_python "$arch"
+          "$RF_PYTHON" -V
+          "$RF_PYTHON" -c "import sqlite3, ssl, ctypes, zlib; print('标准库自检通过')"
+          rf_install_portable_node "$arch"
+          "$RF_NODE_PATH" --version
+          "$RF_NPM_PATH" --version
+      - name: Verify the pinned digests for the other architecture too
+        # runner 是 arm64，所以只有 arm64 那两包会被真正安装与运行；另一份
+        # 架构的包只能下载 + 校验摘要，但**正是这一条最有价值**：两个架构的
+        # 摘要都是人工抄进仓库的常量，抄错一位在别处一律表现成"用户下载后
+        # 启动失败"，而 Intel Mac 用户不会出现在我们的测试矩阵里。
+        run: |
+          set -euo pipefail
+          export RF_RUNTIME_DIR="$PWD/runtime"
+          . scripts/macos/lib/common.sh
+          . scripts/macos/lib/python.sh
+          . scripts/macos/lib/node.sh
+          scratch="$(mktemp -d)"
+          for foreign_arch in arm64 x64; do
+            if [ "$foreign_arch" = "$(detect_macos_arch)" ]; then
+              continue
+            fi
+            echo "校验 $foreign_arch 的便携版 Python..."
+            # shellcheck disable=SC2086
+            download_verified "$scratch/python-$foreign_arch.tar.gz" \
+              "$(rf_python_bootstrap_sha256 "$foreign_arch")" \
+              "便携版 Python（${foreign_arch}）" "$RF_PYTHON_BOOTSTRAP_APPROX_MB" \
+              $(rf_build_python_bootstrap_urls "$foreign_arch")
+            echo "校验 $foreign_arch 的便携版 Node.js..."
+            # shellcheck disable=SC2086
+            download_verified "$scratch/node-$foreign_arch.tar.gz" \
+              "$(rf_node_bootstrap_sha256 "$foreign_arch")" \
+              "便携版 Node.js（${foreign_arch}）" "$RF_NODE_BOOTSTRAP_APPROX_MB" \
+              $(rf_build_node_bootstrap_urls "$foreign_arch")
+          done
+          rm -rf "$scratch"
+          echo "另一架构的摘要校验通过。"
+      - name: Reuse the already-installed runtimes instead of re-downloading
+        run: |
+          set -euo pipefail
+          export RF_RUNTIME_DIR="$PWD/runtime"
+          . scripts/macos/lib/common.sh
+          . scripts/macos/lib/python.sh
+          . scripts/macos/lib/node.sh
+          arch="$(detect_macos_arch)"
+          rf_install_portable_python "$arch"
+          rf_install_portable_node "$arch"
+          echo "第二次调用直接复用：$RF_PYTHON"
+
+  macos-end-to-end:
+    name: macOS end-to-end (clean checkout)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the production frontend assets
+        # RF-09 方案 A：frontend/dist 存在时启动链走"后端同源静态"模式（不起
+        # Vite）。这个作业要验证的正是发布形态：先构建出 dist，再走完整启动链，
+        # 最后从后端端口真取一次 index.html 引用的入口模块。
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Start the app the way a Mac user does
+        # 维护者没有 Mac，这个作业就是"那台 Mac"：从干净检出开始，
+        # 走 start.sh 的完整链路（准备运行时 → 建 venv → 装依赖 → 启动
+        # uvicorn → 等健康检查），再用 stop.sh 收尾。它比文档更可靠：
+        # 文档只能描述，这里会真的跑。
+        run: |
+          set -euo pipefail
+          # 让 uvicorn 打全日志：这个作业的失败通常是"服务没起来"，而默认的 warning
+          # 级别只会在 stderr 里留下一份空白，没有任何可定位的线索。
+          export RF_UVICORN_LOG_LEVEL=info
+          bash scripts/macos/start.sh --no-browser --backend-port 8123
+          curl -fsS http://127.0.0.1:8123/api/health
+          echo
+          # 端口活着不等于页面能用：同源模式下 index.html 与入口模块都由后端提供，
+          # 这里真取一次页面里引用的 /assets/<entry>.js（dist 已预构建，无需轮询）。
+          # SPA 回退按"浏览器导航语义"判定（Accept 含 text/html 才回落 index.html，
+          # 程序化请求保持 404 原语义），所以探针必须带上浏览器的 Accept 头。
+          entry=$(curl -fsS -H "Accept: text/html" http://127.0.0.1:8123/ | grep -oE 'src="/assets/[^"]+"' | grep -oE '/assets/[^"]+' | tail -n 1)
+          if [ -z "$entry" ]; then
+            echo "同源 index.html 里没有解析到 /assets 入口模块" >&2
+            curl -fsS -H "Accept: text/html" http://127.0.0.1:8123/ >&2
+            exit 1
+          fi
+          echo "入口模块：$entry"
+          curl -fsS "http://127.0.0.1:8123${entry}" -o /dev/null
+          echo "入口模块取回成功"
+      - name: Browser smoke (Playwright)
+        working-directory: frontend
+        env:
+          # 同源模式：页面与 API 都在后端端口上（见上一节的入口模块验证）。
+          SMOKE_FRONTEND_URL: "http://127.0.0.1:8123"
+          SMOKE_BACKEND_URL: "http://127.0.0.1:8123"
+        run: |
+          npx playwright install chromium
+          npx playwright test
+
+      - name: Responsive layout gate (8 viewports x 18 routes)
+        # 多分辨率适配的硬指标（R1/R2/R3）：8 个视口 × 18 条路由 = 144 条断言，
+        # 不复用默认配置——那套的 testDir 是 tests/smoke，断言按 1200px 校准过，
+        # 把 144 次导航塞进去会让"冒烟"失去意义（方案 §7.7）。
+        working-directory: frontend
+        env:
+          SMOKE_FRONTEND_URL: "http://127.0.0.1:8123"
+        run: npx playwright test -c playwright.responsive.config.ts
+
+      - name: Read-only install root (runtime state must leave the payload)
+        # 报告 §1.8 第 4 条的可执行替代，加在本作业里而不新建作业：新建会重复
+        # 下载一遍运行时，而这里要用的正是刚刚验证过的那份工作树。
+        #
+        # 为什么必须有这一步：上面两步跑的是**可写工作树**，而 mac 用户拿到的是
+        # 打包态——payload 里没有 python-runtime.zip（故意如此），桌面壳因此走
+        # 兜底启动器 start.sh；从 dmg 启动的 .app 位于只读卷上（AppTranslocation
+        # 还会把它挂到随机路径），/Applications 里的安装目录同样不可写。
+        # 也就是说"首次启动在项目根下建 runtime/ 与 backend/.venv"这条路径在真实
+        # 用户机器上必然失败，而可写工作树上的 e2e 永远看不见它。
+        #
+        # 这一步把形态真的做出来：复制一份仓库、chmod -R a-w、以 RF_STATE_DIR
+        # 指向临时目录跑同一条 start.sh，断言
+        #   1) 服务真的起来了（/api/health 200）；
+        #   2) 记录/日志/虚拟环境都落在状态目录；
+        #   3) 只读副本**一个文件都没多**（运行期写入没有漏回安装目录）。
+        # 复制时排除 runtime/、node_modules/、backend/.venv：既省时间，也让只读
+        # 副本走一次完整自举——venv 建在错误位置正是要验证的问题之一。
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          ro_root="$tmp/repo"
+          state="$tmp/state"
+
+          cleanup() {
+            status=$?
+            # 先停掉这次起的后端（只在状态目录里有记录，只读副本里没有）。
+            RF_STATE_DIR="$state" bash "$ro_root/scripts/macos/stop.sh" >/dev/null 2>&1 || true
+            if [ "$status" -ne 0 ]; then
+              echo "===== 只读根启动失败：状态目录里的日志 =====" >&2
+              for log in "$state"/runtime/*.log; do
+                [ -f "$log" ] || continue
+                echo "----- $log -----" >&2
+                tail -n 60 "$log" >&2
+              done
+              echo "===== 端口与进程 =====" >&2
+              lsof -nP -iTCP:8124 -sTCP:LISTEN || echo "8124 没有监听者" >&2
+            fi
+            # 只读目录里的 rm -rf 会失败，先恢复写权限。
+            chmod -R u+w "$tmp" 2>/dev/null || true
+            rm -rf "$tmp"
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          mkdir -p "$ro_root"
+          # 排除模式**必须锚定到传输根**：rsync 的 `runtime/` 会匹配任意层级的同名目录，
+          # 而 `backend/app/runtime/` 是业务模块——被它一起排掉的后果是
+          # `ModuleNotFoundError: No module named 'app.runtime'`（2026-10-22 实测）。
+          # 与本次修复的更新器 `dist` 规则是同一个坑：按名字排除只能锚定后再用。
+          # node_modules 反过来要按任意层级排除（frontend/ 里那份几百 MB，静态模式用不到）。
+          rsync -a \
+            --exclude '/runtime/' \
+            --exclude 'node_modules/' \
+            --exclude '/backend/.venv/' \
+            --exclude '/.git/' \
+            ./ "$ro_root/"
+
+          chmod -R a-w "$ro_root"
+          find "$ro_root" | sort >"$tmp/before.txt"
+
+          export RF_STATE_DIR="$state"
+          # 后端的数据目录（数据库、附件、导出）在打包态由桌面壳通过 RF_DATA_DIR
+          # 指定（ADR-0004）；启动器不负责这件事，所以这里照壳的做法给一个可写
+          # 目录，否则 sqlite 会试图在只读安装目录里建库——那是另一个层面的问题，
+          # 不该混进这条用例。
+          export RF_DATA_DIR="$state/data"
+          export RF_UVICORN_LOG_LEVEL=info
+
+          bash "$ro_root/scripts/macos/start.sh" --no-browser --backend-port 8124
+
+          curl -fsS http://127.0.0.1:8124/api/health
+          echo
+
+          for expected in "$state/runtime/backend.macos.pid" \
+                          "$state/runtime/backend.stderr.log"; do
+            if [ ! -f "$expected" ]; then
+              echo "运行期文件没有落在状态目录：$expected" >&2
+              echo "状态目录内容：" >&2
+              ls -la "$state" "$state/runtime" >&2 || true
+              exit 1
+            fi
+          done
+          if [ ! -x "$state/venv/bin/python3" ]; then
+            echo "虚拟环境没有建在状态目录里：$state/venv" >&2
+            ls -la "$state" >&2 || true
+            exit 1
+          fi
+          echo "运行期状态全部落在 $state"
+
+          find "$ro_root" | sort >"$tmp/after.txt"
+          if ! diff -u "$tmp/before.txt" "$tmp/after.txt"; then
+            echo "只读副本里出现了新条目：有运行期写入漏回了安装目录。" >&2
+            exit 1
+          fi
+          echo "只读副本没有任何新增文件，安装目录未被改动。"
+
+      - name: Stop the app
+        if: always()
+        run: bash scripts/macos/stop.sh
+      - name: Show the service logs when something failed
+        if: failure()
+        run: |
+          for log in runtime/backend.stderr.log runtime/frontend.stderr.log \
+                     runtime/backend.stdout.log runtime/frontend.stdout.log; do
+            if [ -f "$log" ]; then
+              echo "===== $log ====="
+              tail -n 60 "$log"
+            fi
+          done
+          echo "===== 端口与进程 ====="
+          # 光有日志还不够："进程还活着但端口没人监听"和"进程早就死了"是两种不同的故障，
+          # 前者多半卡在启动流程里，后者要看上面的报错。
+          lsof -nP -iTCP:8123 -sTCP:LISTEN || echo "8123 没有监听者"
+          pgrep -fl "uvicorn|vite" || echo "没有 uvicorn / vite 进程"
+          echo "===== 健康探针 ====="
+          curl -v --max-time 5 http://127.0.0.1:8123/api/health || echo "8123 健康检查失败"
+
+
+  windows-runtimes:
+    name: Windows portable runtimes
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download and verify the pinned runtimes
+        # 真正下载一遍启动器要用的便携版 Node 与 Python 官方安装包，逐个用仓库里钉死的
+        # SHA-256 校验（Node 还会解压出来跑一次 `node --version`）。专抓"下载地址或摘要
+        # 失效"这类错误——它在别处一律表现为"新用户下载后启动失败"，而每个人的网络环境
+        # 都不一样，只有真跑一次才知道。
+        #
+        # 与 macOS 的 `macos-runtimes` 是镜像作业。注意它和 `windows-end-to-end`
+        # **互补而不是重复**：后者用的是 runner 自带的 Python/Node，恰好把这条路径整个
+        # 遮住了——而"一台什么都没装的电脑"上走的正是这条。
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\scripts\tests\Test-RuntimeDownloads.ps1
+
+  windows-end-to-end:
+    name: Windows end-to-end (clean checkout)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        # 显式装一个窗口内的解释器：这一步不测"找不到 Python 时去下载安装包"那条路
+        # （那条路要走 python.org 的静默安装，在 runner 上会引入与启动链无关的失败），
+        # 测的是纯净检出上的整条启动链：建 venv → 装依赖 → 起 uvicorn 与 vite → 健康检查。
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Build the production frontend assets
+        # RF-09 方案 A：frontend\dist 存在时启动链走"后端同源静态"模式（不起
+        # Vite）。先构建出 dist，再走完整启动链，最后从后端端口真取一次入口模块。
+        working-directory: frontend
+        shell: pwsh
+        run: |
+          npm ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed with $LASTEXITCODE" }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "npm run build failed with $LASTEXITCODE" }
+      - name: Start the app and verify it serves (one step, like a user's session)
+        # 这份作业就是"一台干净的新电脑"：从空检出开始，走和 start.cmd 完全相同的链路。
+        # 它捕的是"新下载的包在这台机器上起不来"这一类问题——2026-09-29 有用户在一台
+        # 虚拟机上解压新版本，双击 start.cmd 之后只看到一片空白的页面，而当时 **CI 只对
+        # macOS 做了端到端启动**，Windows 侧只有启动器的单元测试，捕不到。
+        #
+        # 启动与探活必须**在同一个步骤里**。分开写会间歇性失败：2026-09-29 实测同一个作业
+        # 第一次 1m58s 全过、第二次（同一份启动链代码）就挂在健康检查上，日志里服务是被外部
+        # 收掉的——没有崩溃痕迹、端口只剩 TIME_WAIT。macOS 的端到端作业一开始就是把启动与
+        # curl 写在同一个 run 里，这里照它办。
+        #
+        # 这里不直接调 start.cmd：它在失败时会 pause 等按键，在 CI 里会一直挂到作业超时。
+        # start.cmd 除了那句 pause 只是转发参数，所以少了它并不改变被测的链路。
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Start-ResumeForge.ps1 -NoBrowser -BackendPort 8123
+          if ($LASTEXITCODE -ne 0) { throw "启动器返回了 $LASTEXITCODE" }
+
+          $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8123/api/health" -TimeoutSec 30
+          if ($response.StatusCode -ne 200) { throw "health 返回了 $($response.StatusCode)" }
+          Write-Host "http://127.0.0.1:8123/api/health -> 200"
+
+          # 端口活着不等于页面能用（AGENTS 的教训）：同源模式下 index.html 与入口
+          # 模块都由后端提供，浏览器取不到入口模块就是一片空白。dist 已预构建、
+          # 无需预热，这里真取一次 index.html 里引用的 /assets/<entry>.js。
+          $html = [string](Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8123/" -TimeoutSec 30 -Headers @{ Accept = "text/html" }).Content
+          $entries = @(
+            [regex]::Matches($html, '<script[^>]*src="([^"]+)"') |
+            ForEach-Object { $_.Groups[1].Value } |
+            Where-Object { $_ -match '^/assets/' }
+          )
+          if ($entries.Count -eq 0) { throw "同源 index.html 里没有解析到 /assets 入口模块" }
+          $entry = $entries[-1]
+          $entryResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8123$entry" -TimeoutSec 120
+          Write-Host "$entry -> $($entryResponse.StatusCode)（$($entryResponse.Content.Length) 字符）"
+      - name: Browser smoke (Playwright)
+        # 真实 Chromium 冒烟：jsdom 捕不到的 CSS/构建产物/浏览器 API 差异由这几条
+        # 用例兜住（启动 → 载入示例 → 岗位/简历可见 → 导出 PDF）。同源模式下页面
+        # 与 API 都在后端端口上（见上一节的入口模块验证）。
+        working-directory: frontend
+        env:
+          SMOKE_FRONTEND_URL: "http://127.0.0.1:8123"
+          SMOKE_BACKEND_URL: "http://127.0.0.1:8123"
+        run: |
+          npx playwright install chromium
+          npx playwright test
+
+      - name: Stop the app
+        if: always()
+        shell: cmd
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Stop-ResumeForge.ps1
+      - name: Show the service logs when something failed
+        if: failure()
+        shell: pwsh
+        run: |
+          foreach ($log in @("runtime\backend.stderr.log", "runtime\frontend.stderr.log",
+                             "runtime\backend.stdout.log", "runtime\frontend.stdout.log")) {
+            if (Test-Path $log) {
+              Write-Host "===== $log ====="
+              Get-Content $log -Tail 60
+            }
+          }
+          Write-Host "===== 端口与进程 ====="
+          netstat -ano | Select-String -Pattern ":8123"
+          Get-Process -Name python,node -ErrorAction SilentlyContinue |
+            Select-Object Id, ProcessName, StartTime
+          Write-Host "===== 健康探针 ====="
+          try { Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8123/api/health" -TimeoutSec 5 } catch { "8123 健康检查失败：$_" }
+
+
+  frontend:
+    name: Frontend (Node 22)
+    runs-on: ubuntu-latest
+    # 35 分钟，不是 25。4320 个用例的测试步骤基线本来就在 17~23 分钟（--maxWorkers=2，
+    # 每一步 import 一整个 antd 页面），再叠加 26s 格式化 + 49s lint + build，25 分钟只剩
+    # 两分钟余量：**任何**测试基础设施的正确性修复（比如 2026-10-28 给每个用例补全局
+    # afterEach(cleanup)，把 unhandled ReferenceError 根治掉）都会把 job 顶破。
+    # 更麻烦的是超时表现为"Run lint 那一步 cancelled"，看起来像 lint 坏了——那一轮就被误读成
+    # 了 lint 问题，实际 lint 是 0 error / 25 warning。余量给足，同时保留"真挂住时止损"。
+    timeout-minutes: 35
+    env:
+      CI: "true"
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # 22 起才满足 vitest 5 / jsdom 30 的 engines（>=20.19 只是运行时下限，
+          # 测试工具链需要 22.12+）。与本地开发版本保持一致，避免双环境漂移。
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run tests with coverage
+        # 前端覆盖率门禁（v8 provider，thresholds 见 vitest.config.ts）：
+        # 阈值策略是"基线 −3pt、只升不降"，与后端 fail_under=80 对称。
+        run: npm run test:coverage -- --maxWorkers=2
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Build production bundle
+        run: npm run build
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Audit production Python dependencies (blocking)
+        # 门禁策略（分级）：生产依赖（requirements.txt）发现任何已知漏洞即失败；
+        # 开发工具链继续走 advisory（continue-on-error），噪音不阻断 PR 但留痕。
+        run: |
+          python -m pip install pip-audit==2.10.1
+          python -m pip_audit --requirement backend/requirements.txt --index-url https://pypi.org/simple
+
+      - name: Audit development Python dependencies (advisory)
+        continue-on-error: true
+        run: |
+          python -m pip install pip-audit==2.10.1
+          python -m pip_audit --requirement backend/requirements-dev.txt --index-url https://pypi.org/simple
+
+      - name: Generate third-party notices and frozen dependency list
+        # RF-24 发行可信：每次 CI 产出 THIRD-PARTY-NOTICES.txt 与依赖冻结清单，
+        # 作为 artifact 供发布时随包带走/复核。独立脚本，不进 Build-Release.ps1。
+        shell: pwsh
+        run: |
+          python -m pip install -r backend/requirements.txt pip-licenses==5.5.5
+          .\scripts\Generate-Sbom.ps1 -OutputDir runtime/sbom
+          if ($LASTEXITCODE -ne 0) { throw "Generate-Sbom.ps1 failed with $LASTEXITCODE" }
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: third-party-notices
+          path: |
+            runtime/sbom/THIRD-PARTY-NOTICES.txt
+            runtime/sbom/requirements-frozen.txt
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Audit frontend production dependencies (blocking, high+)
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
+
+  desktop-shell:
+    name: Desktop shell (windows packaging)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - name: Build frontend production assets
+        working-directory: frontend
+        run: |
+          npm ci --registry=https://registry.npmjs.org
+          npm run build
+
+      - name: Install desktop shell dependencies
+        working-directory: desktop
+        run: npm ci --registry=https://registry.npmjs.org
+
+      - name: Run desktop shell unit tests (node:test, audit PR-05/06)
+        working-directory: desktop
+        # VM-based lifecycle probes (tray exit / update install / crash
+        # budget), updater hardening probes (abort signal, bounded download,
+        # checksum gate), BackendManager pure helpers (runtime marker,
+        # RF_DATA_DIR env, launcher handoff, log rotation), bump_version
+        # desktop-sync self-check and the npm-audit gate fixtures. No GUI,
+        # no network, no real processes.
+        # Glob form (not a bare directory): on Windows a directory argument
+        # is treated as a module and fails to load.
+        run: node --test "scripts/test-*.js"
+
+      - name: Print bridge electron smoke (A08 real IPC + Chromium PDF)
+        working-directory: desktop
+        # 真实 Electron 运行时冒烟（不打包、不联网）：真实 ipcMain 通道 + 隐藏 BrowserWindow
+        # + Chromium printToPDF 产出 PDF；同时验证非主窗口 sender 拒绝、非法/超大 payload
+        # 拒绝、超预算快速失败。--disable-gpu：runner 无 GPU 时避免 Chromium 初始化抖动。
+        run: npx electron scripts/smoke-print-bridge-electron.js
+
+      - name: Desktop supply-chain audit gate (audit PR-06)
+        working-directory: desktop
+        # Read-only `npm audit --json` + baseline comparison: fails on any
+        # severity finding that is not registered (with an unexpired
+        # waiver) in desktop/scripts/audit-baseline.json. Unlike the
+        # frontend job there is no --omit=dev here: electron is the desktop
+        # runtime kernel even though it lives in devDependencies.
+        run: node scripts/check-npm-audit.js --baseline scripts/audit-baseline.json
+
+      - name: Check require graph against builder manifest (source, audit PR-04)
+        working-directory: desktop
+        # Static gate: every local module in main.js's recursive require
+        # graph must be covered by electron-builder.yml `files:`. This fails
+        # before packaging when an entry-time require (e.g. ./updater) would
+        # be missing from app.asar -- a failure mode that crashes the
+        # packaged shell before any of its own error handling runs.
+        run: node scripts/check-asar-deps.js --source .
+
+      - name: Package desktop app (dir + NSIS)
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        # Downloads the pinned embeddable python and installs requirements on
+        # the runner (one-time per runner), then packages dir + installer.
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\Build-Desktop.ps1 -Target win
+
+      - name: Verify packaging outputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($f in @("desktop\out\win-unpacked\ResumeForge.exe",
+                           "desktop\out\win-unpacked\resources\payload\backend\app\main.py",
+                           "desktop\out\win-unpacked\resources\payload\frontend\dist\index.html",
+                           "desktop\out\win-unpacked\resources\payload\python-runtime.zip")) {
+            if (-not (Test-Path $f)) { throw "packaging output missing: $f" }
+          }
+          # Version-agnostic: the artifact name carries the version from
+          # desktop/package.json, hardcoding it here would break on bumps.
+          $setup = Get-ChildItem "desktop\out\ResumeForge-Setup-*.exe" | Select-Object -First 1
+          if (-not $setup) { throw "installer artifact not found in desktop/out" }
+          $sha = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          # LF line ending so `sha256sum -c` works on macOS/Linux (Set-Content
+          # would append CRLF and break the cross-platform check).
+          [System.IO.File]::WriteAllText("$($setup.FullName).sha256", "$sha  $($setup.Name)`n", [System.Text.Encoding]::ASCII)
+          Write-Host "installer sha256: $sha"
+
+      - name: Check packaged app.asar require completeness (audit PR-04)
+        working-directory: desktop
+        # Same gate against the real artifact: walk main.js's require graph
+        # inside out/win-unpacked/resources/app.asar and verify every local
+        # module shipped. Catches manifest drift the source gate cannot see
+        # (electron-builder filtering, buildResources clashes).
+        run: node scripts/check-asar-deps.js --asar out/win-unpacked/resources/app.asar
+
+      - name: Upload unpacked build for smoke job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-windows-unpacked
+          path: desktop/out/win-unpacked/
+          # Only consumed by desktop-shell-smoke right after this job.
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-windows
+          path: |
+            desktop/out/ResumeForge-Setup-*.exe
+            desktop/out/ResumeForge-Setup-*.exe.sha256
+          retention-days: 14
+          if-no-files-found: error
+
+  desktop-shell-smoke:
+    # Real-launch smoke test for the packaged desktop shell. This job MUST
+    # run in CI: it actually starts win-unpacked\ResumeForge.exe, fetches the
+    # served page entry over the local backend port, quits the shell and
+    # asserts the backend process is gone. The maintainer's machine has no
+    # GUI-verification setup for the packaged shell, so this job is the only
+    # place the "packaged build really starts" property is exercised (the
+    # 2026-10-13 audit found a build that could not start at all).
+    name: Desktop shell smoke (real launch, CI-only)
+    needs: desktop-shell
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download unpacked desktop build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-windows-unpacked
+          path: desktop/out/win-unpacked
+
+      - name: Launch shell and wait for backend port
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Start-Process -FilePath "desktop\out\win-unpacked\ResumeForge.exe"
+          # BackendManager writes the pinned loopback port into the **user directory**
+          # (%LOCALAPPDATA%\ResumeForge\runtime\logs\desktop-backend.log,
+          # "==== desktop launch ... port=NNNN ===="). It used to live under
+          # resources\payload\runtime\logs, i.e. inside the install directory --
+          # which is read-only on macOS and admin-only on Windows, so the shell now
+          # never writes there (see desktop/lib/shell-paths.js).
+          # First run unpacks the python runtime and installs requirements, hence
+          # the 10 min budget.
+          $log = Join-Path $env:LOCALAPPDATA "ResumeForge\runtime\logs\desktop-backend.log"
+          $deadline = (Get-Date).AddMinutes(10)
+          $port = $null
+          while ((Get-Date) -lt $deadline) {
+            if (Test-Path $log) {
+              $m = Select-String -Path $log -Pattern "port=(\d+)" | Select-Object -Last 1
+              if ($m) { $port = $m.Matches[0].Groups[1].Value; break }
+            }
+            if (-not (Get-Process -Name ResumeForge -ErrorAction SilentlyContinue)) {
+              throw "ResumeForge.exe exited before the backend reported a port (see logs step)"
+            }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $port) { throw "backend port not found in $log within 10 minutes" }
+          # The "port=" line is written by BackendManager BEFORE uvicorn spawns;
+          # on a cold runner interpreter unpack + FastAPI import take a while,
+          # so poll the health endpoint until the backend actually serves.
+          $base = "http://127.0.0.1:$port"
+          $healthy = $false
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $health = Invoke-WebRequest -UseBasicParsing -Uri "$base/api/health" -TimeoutSec 5
+              if ($health.StatusCode -eq 200) { $healthy = $true; break }
+            } catch {
+              if (-not (Get-Process -Name ResumeForge -ErrorAction SilentlyContinue)) {
+                throw "ResumeForge.exe exited while waiting for backend health (see logs step)"
+              }
+            }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $healthy) { throw "backend at $base never became healthy within 10 minutes" }
+          $port | Set-Content desktop\out\smoke-port.txt
+          Write-Host "backend port: $port (health OK)"
+
+      - name: Fetch served page entry (port alive is not enough)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $port = Get-Content desktop\out\smoke-port.txt
+          $base = "http://127.0.0.1:$port"
+          # The SPA fallback (static_spa._should_spa_fallback) only serves
+          # index.html for 404s that carry browser-navigation Accept semantics;
+          # programmatic requests get the FastAPI 404 JSON by design.
+          $browserHeaders = @{ Accept = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8" }
+          $index = Invoke-WebRequest -UseBasicParsing -Uri "$base/" -TimeoutSec 30 -Headers $browserHeaders
+          if ($index.StatusCode -ne 200) { throw "index returned $($index.StatusCode)" }
+          # Vite serves the app through an entry module; a blank page happens
+          # exactly when this module 404s while / returns 200. Fetch it.
+          if ($index.Content -notmatch 'src="(/assets/[^"]+\.js)"') {
+            throw "no entry module reference found in index.html"
+          }
+          $entryPath = $Matches[1]
+          $entry = Invoke-WebRequest -UseBasicParsing -Uri "$base$entryPath" -TimeoutSec 30
+          if ($entry.StatusCode -ne 200) { throw "entry module $entryPath returned $($entry.StatusCode)" }
+          Write-Host "entry module OK: $entryPath ($($entry.RawContentLength) bytes)"
+
+      - name: Quit shell and assert backend is gone
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $port = [int](Get-Content desktop\out\smoke-port.txt)
+          taskkill /IM ResumeForge.exe /T /F | Out-Null
+          Start-Sleep -Seconds 5
+          $client = New-Object Net.Sockets.TcpClient
+          $alive = $false
+          try { $alive = $client.ConnectAsync("127.0.0.1", $port).Wait(3000) } catch { $alive = $false }
+          if ($alive) { throw "backend still listening on port $port after the shell was killed" }
+          Write-Host "backend no longer listening on port $port after shell exit"
+
+      - name: Collect smoke logs on failure
+        if: failure()
+        shell: pwsh
+        # 运行期日志在用户目录（payload 只读，壳不再往里写），而 artifact 的 path 表达
+        # 不了 %LOCALAPPDATA%，所以先把两份都收进工作目录再上传。
+        run: |
+          $dest = "desktop\out\smoke-logs"
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          $userLogs = Join-Path $env:LOCALAPPDATA "ResumeForge\runtime\logs"
+          if (Test-Path $userLogs) {
+            Copy-Item -Recurse -Force $userLogs (Join-Path $dest "user-runtime")
+          }
+          $payloadLogs = "desktop\out\win-unpacked\resources\payload\runtime\logs"
+          if (Test-Path $payloadLogs) {
+            Copy-Item -Recurse -Force $payloadLogs (Join-Path $dest "payload-runtime")
+          }
+          Get-ChildItem -Recurse -File $dest | ForEach-Object { Write-Host $_.FullName }
+
+      - name: Upload smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-smoke-logs
+          path: |
+            desktop/out/smoke-logs/
+            desktop/out/win-unpacked/resources/payload/runtime/logs/
+            desktop/out/smoke-port.txt
+          retention-days: 7
+          if-no-files-found: ignore

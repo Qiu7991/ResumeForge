@@ -1,0 +1,275 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* AI 求职助手：历史侧栏固定宽度，主区将消息与输入区分层。 */
+.assistant-page {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 20px;
+  min-height: calc(100vh - 116px);
+}
+
+.assistant-sidebar {
+  min-width: 0;
+  padding-right: 12px;
+  border-right: 1px solid var(--rf-border-subtle);
+}
+
+.assistant-conversation-list {
+  margin-top: 12px;
+}
+
+/*
+ * 去分页后列表全量渲染：页面形态让列表自身滚动（新对话/搜索/筛选留在视口内），
+ * 不把整页撑长；浮窗抽屉（.assistant-sidebar--floating）整体 overflow 滚动，
+ * 再嵌一层内滚会出现双滚动条，故排除。
+ */
+.assistant-sidebar:not(.assistant-sidebar--floating) .assistant-conversation-list {
+  max-height: calc(100vh - 300px);
+  overflow-y: auto;
+}
+
+/*
+ * 「新对话」按钮（及其下的批量操作条）与搜索输入框之间的呼吸间距。
+ * 两者原本零间距贴死（用户截图反馈）；10px 落在 8-12px 的建议带内，
+ * 与下方 Segmented 的 margin-top: 12px 同一节奏。整页与浮窗窄板共用。
+ */
+.assistant-conversation-search {
+  margin-top: 10px;
+}
+
+.assistant-conversation-filter {
+  margin-top: 12px;
+}
+
+/* List → Listy 迁移：行外壳类名由 .ant-list-item 换成 .ant-listy-item，
+   「当前对话」高亮经 :has() 作用到行外壳，行内布局（ListyItem）自带 flex。 */
+.assistant-conversation-list .ant-listy-item {
+  padding: 8px 4px;
+  border-radius: 6px;
+}
+
+.assistant-conversation-list .ant-listy-item:has(.is-active) {
+  background: var(--rf-surface-alt);
+}
+
+.assistant-conversation-list .listy-item-actions {
+  gap: 0;
+}
+
+.assistant-conversation-more-button {
+  color: var(--rf-text-tertiary);
+}
+
+.assistant-conversation-more-button:hover,
+.assistant-conversation-list .ant-listy-item:has(.is-active) .assistant-conversation-more-button {
+  color: var(--rf-info);
+}
+
+.assistant-conversation-button {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--rf-text-body);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.assistant-conversation-title {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.assistant-conversation-flags {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 6px;
+  color: var(--rf-favorite);
+  font-size: 12px;
+  vertical-align: 1px;
+}
+
+.assistant-conversation-flags .anticon-pushpin {
+  color: var(--rf-info);
+}
+
+.assistant-conversation-title.is-overflowing {
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 30px), transparent);
+  mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 30px), transparent);
+}
+
+.assistant-conversation-title > span {
+  display: inline-block;
+  min-width: 100%;
+  will-change: transform;
+}
+
+.assistant-conversation-button:hover .assistant-conversation-title.is-overflowing > span,
+.assistant-conversation-button:focus-visible .assistant-conversation-title.is-overflowing > span {
+  animation: assistant-conversation-title-scroll 3.6s ease-in-out 0.55s infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-conversation-button:hover .assistant-conversation-title.is-overflowing > span,
+  .assistant-conversation-button:focus-visible .assistant-conversation-title.is-overflowing > span {
+    animation: none;
+  }
+}
+
+.assistant-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(320px, 1fr) auto;
+  min-width: 0;
+  max-height: calc(100vh - 116px);
+  /* 「回到底部」悬浮按钮（问题 A）以工作区为定位基准。 */
+  position: relative;
+}
+
+/*
+ * 多选态在标题下多出一条选中操作栏，于是子元素从 3 个变成 4 个。
+ * 网格行是按位置分配的：不补这一行，操作栏就会去顶替消息区的 `minmax(320px, 1fr)`
+ * 主行——它自己撑到 320px 高（表现为标题下方一大片空白），消息区反被挤成 `auto`
+ * 缩到内容高度、失去滚动区。补一行 `auto` 才是"多了一条工具条"的正确含义。
+ */
+.assistant-workspace.is-selecting {
+  grid-template-rows: auto auto minmax(320px, 1fr) auto;
+}
+
+.assistant-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--rf-border-subtle);
+}
+
+.assistant-header .ant-typography {
+  margin: 0;
+}
+
+.assistant-header-titles {
+  min-width: 0;
+}
+
+/* 技能指示贴着标题行，不抢标题的位置，也不因为长名字把标题挤变形。 */
+.assistant-skills-hint.ant-btn {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--rf-info-strong);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.assistant-skills-hint.ant-btn:hover {
+  color: var(--rf-info-strong);
+  background: var(--rf-brand-wash);
+}
+
+.assistant-messages {
+  min-height: 320px;
+  padding: 18px 4px;
+  overflow-y: auto;
+}
+
+/* 「回到底部」（问题 A）：流式期间用户上翻退出吸底后的悬浮按钮。
+   z-index 阶梯约定：页面内局部浮层用个位数，远低于悬浮球/浮窗那一档（1000+）。 */
+.assistant-scroll-bottom {
+  position: absolute;
+  right: 24px;
+  bottom: 150px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: var(--rf-text-secondary);
+  background: var(--rf-surface);
+  border: 1px solid var(--rf-border-strong);
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+}
+
+.assistant-scroll-bottom:hover {
+  color: var(--rf-info);
+  border-color: var(--rf-info);
+}
+
+.assistant-empty-state {
+  display: grid;
+  min-height: 100%;
+  padding: 32px 20px;
+  place-items: center;
+  text-align: center;
+}
+
+/* 投投宣传图替代 antd 灰托盘图：柔和投影融入页面，不加大边框。 */
+.assistant-empty-state .assistant-empty-state-brand {
+  width: auto;
+  height: 128px;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 18px rgb(21 94 239 / 0.14));
+}
+
+.assistant-empty-state .ant-empty {
+  margin-block: 0;
+}
+
+.assistant-empty-state-copy {
+  display: grid;
+  gap: 4px;
+  max-width: 440px;
+  /* 块级元素在 `text-align: center` 下不会自己居中：只有行内内容会被居中，
+     440px 的网格仍贴在父容器左边，于是文字比上方宣传图、下方快捷入口左偏 11px
+     （英文下更明显）。`margin-inline: auto` 把块本身也居中，三段共用同一条中轴。 */
+  margin-inline: auto;
+  text-align: center;
+  justify-items: center;
+}
+
+/* 快捷入口：四个 chip 由 `justify-content: center` 聚在中间，宽度上限只负责"什么时候
+   折行"。原来写死 560px 是按中文标签定的（中文四个合计约 400px，余量很大）；英文
+   四个标签的字符数约为中文的 2.5 倍（问题 20a：英文下折成 3 + 1，落单的那个居中）。
+   这里直接去掉上限：四个 chip 的 max-content 约 655–740px（14px 字号 + 5px/10px
+   内边距 + 8px 间距的估算），640 仍在边界上；而容器只有 4 个 chip，
+   `justify-content: center` 已经保证它们聚在中间，上限本身没有存在意义。
+   `flex-wrap: wrap` 保留——窄窗口（< 一排的自然宽）仍要折行，改成 `nowrap` 会横向溢出。 */
+.assistant-starter-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  max-width: none;
+  margin-top: 16px;
+}
+
+.assistant-starter-prompt.ant-btn {
+  height: auto;
+  padding: 5px 10px;
+  color: var(--rf-info-strong);
+  border-color: var(--rf-border-strong);
+  background: var(--rf-surface-alt);
+}
+
+.assistant-starter-prompt.ant-btn:hover {
+  color: var(--rf-info-strong);
+  border-color: var(--rf-focus-ring);
+  background: var(--rf-brand-wash);
+}
+
+/* 空态里的技能引导：只在没启用任何技能时出现，负责让人知道有这个功能。 */
+.assistant-skills-discovery {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  max-width: 440px;
+  margin: 12px auto 0;
+}

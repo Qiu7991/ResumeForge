@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: Apache-2.0
+"""模拟面试官：一次面试会话与其中的问答记录。
+
+与求职助手的分工：助手是"随问随答的顾问"，模拟面试是**有固定流程的角色扮演**——
+面试官按设定的类型、难度、风格和轮数推进，结束后给出一份评分报告。因此单独建表，
+而不是塞进 chat_conversation：两者的生命周期和字段都不一样。
+"""
+
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from ..database import Base
+from .profile import utcnow
+
+# 面试类型：覆盖校招/社招常见形式，前端按这个清单给选项。
+INTERVIEW_TYPES = (
+    "技术面",
+    "项目深挖",
+    "行为面（STAR）",
+    "HR 面",
+    "综合面",
+    "案例分析",
+    "英语面试",
+    "压力面",
+)
+
+INTERVIEW_DIFFICULTIES = ("初级", "中级", "高级")
+
+# 面试官风格：影响提问语气与追问强度。
+INTERVIEWER_STYLES = (
+    "严谨专业",
+    "温和引导",
+    "持续追问",
+    "压力质询",
+)
+
+INTERVIEW_STATUS_ACTIVE = "active"
+INTERVIEW_STATUS_FINISHED = "finished"
+
+# 消息所属的阶段（0071 / #41）：
+#   · ``interview`` —— 正式面试的问答，**只有它计入轮次**（进度条与报告都按它算）；
+#   · ``followup``  —— 面试结束后的「追问」，面试已经收尾，再问多少轮都不影响
+#                      ``answered_rounds``，也不会让一场已结束的面试"重新开始"。
+# 默认是 ``interview``：历史行升级后行为逐字节不变（迁移里给了同样的 server_default）。
+MESSAGE_PHASE_INTERVIEW = "interview"
+MESSAGE_PHASE_FOLLOWUP = "followup"
+MESSAGE_PHASES = (MESSAGE_PHASE_INTERVIEW, MESSAGE_PHASE_FOLLOWUP)
+
+
+class InterviewSession(Base):
+    __tablename__ = "interview_session"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(128), default="")
+    # 目标岗位（快照保存：岗位被删除后这场面试仍然可用）
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("job.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    job_title: Mapped[str] = mapped_column(String(128), default="")
+    company: Mapped[str] = mapped_column(String(128), default="")
+    # 关联简历（0066）：真实面试里面试官只拿得到你提交的那份简历 + 该岗位的 JD，
+    # 所以这场面试只读这份简历的内容（不再读个人资料）。同样是快照语义：简历被删后
+    # 外键置 NULL，但 resume_title 留着，历史列表仍能显示"当时面的是哪份简历"。
+    resume_id: Mapped[int | None] = mapped_column(
+        ForeignKey("resume_record.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    resume_title: Mapped[str] = mapped_column(String(256), default="")
+    # 导入的材料（0071 / #41）：岗位侧导入的 JD 文件（PDF / TXT）与简历侧导入的截图
+    # （视觉模型识别出的文本）。语义与 job_title / resume_title 一致——是**快照**：
+    # 原文件不在服务端留副本，材料文本随会话存下来，删掉本地文件也不影响这场面试。
+    # 与 job_id / resume_id 是"二选一"：给了材料就不再读那条记录，反之亦然。
+    job_material_name: Mapped[str] = mapped_column(String(256), default="")
+    job_material_text: Mapped[str] = mapped_column(Text, default="")
+    resume_material_name: Mapped[str] = mapped_column(String(256), default="")
+    resume_material_text: Mapped[str] = mapped_column(Text, default="")
+    # 有效面试时长（秒，0066）：由前端累计后上报"本次已累计秒数"，服务端取大值防回退。
+    # 界面会在候选人点「准备好了」之后才开始计时、离开页面暂停，所以它不是墙上时间。
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    interview_type: Mapped[str] = mapped_column(String(32), default="技术面")
+    difficulty: Mapped[str] = mapped_column(String(16), default="中级")
+    interviewer_style: Mapped[str] = mapped_column(String(32), default="严谨专业")
+    # 计划轮数：面试官问答满这些轮次后收尾并出报告。
+    # 自动轮数模式下 rounds 兼作**上限**（最迟第 rounds 轮强制收尾）。
+    rounds: Mapped[int] = mapped_column(Integer, default=6)
+    # 自动轮数下限：非空表示 AI 按表现判断何时收尾（最早第 rounds_min 轮）；
+    # NULL = 固定轮数模式（rounds 即精确轮数）。
+    rounds_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 用户自定义的面试官人设与考察重点（会拼进系统提示）。
+    persona: Mapped[str] = mapped_column(Text, default="")
+    focus: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(16), default=INTERVIEW_STATUS_ACTIVE, index=True)
+    # 追问区收起的时刻（0072 / #41）：NULL = 开放。只控制"还能不能发追问"，
+    # 不改 status、不影响 answered_rounds——追问本来就不算正式轮次。
+    follow_up_closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 结束时的评分报告：{"score": 78, "dimensions": [...], "strengths": [...], "improvements": [...], "summary": "..."}
+    report: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    model: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    messages: Mapped[list["InterviewMessage"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="InterviewMessage.id",
+    )
+
+
+class InterviewMessage(Base):
+    __tablename__ = "interview_message"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("interview_session.id", ondelete="CASCADE"), index=True
+    )
+    # interviewer：面试官提问；user：候选人回答；note：系统提示（如"第 3/6 题"）
+    role: Mapped[str] = mapped_column(String(16))
+    # 阶段（0071 / #41）：``interview`` = 正式问答（计入轮次），``followup`` = 结束后的
+    # 追问（不计轮次）。用字符串而不是布尔，是为了以后还能加阶段（如"复盘"）。
+    phase: Mapped[str] = mapped_column(String(16), default=MESSAGE_PHASE_INTERVIEW)
+    content: Mapped[str] = mapped_column(Text, default="")
+    context: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="complete")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+    session: Mapped[InterviewSession] = relationship(back_populates="messages")

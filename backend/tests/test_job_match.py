@@ -1,0 +1,394 @@
+# SPDX-License-Identifier: Apache-2.0
+"""匹配分析离线测试：五类状态、证据锚定、禁分数、硬门槛、准入映射、本地降级、招呼语。"""
+
+import json
+import time
+from types import SimpleNamespace
+
+import pytest
+from app.schemas.job_match import JobMatchResult, MatchCondition
+from app.schemas.setting import LLMConfig
+from app.services.job.job_match import (
+    analyze_match,
+    build_match_messages,
+    finalize_match_result,
+    generate_greeting,
+    job_payload,
+    local_match_result,
+    parse_greeting,
+    parse_match_result,
+    strip_data_urls,
+    validate_evidence,
+)
+from app.services.llm.base import BaseLLMProvider, LLMError
+
+
+class ScriptedProvider(BaseLLMProvider):
+    def __init__(self, response: str):
+        super().__init__(LLMConfig(base_url="http://fake", model="fake-model"))
+        self.response = response
+        self.messages: list[dict] | None = None
+
+    async def chat(self, messages: list[dict], *, thinking: bool = True) -> str:
+        self.messages = messages
+        return self.response
+
+    async def stream_chat(self, messages: list[dict]):  # pragma: no cover - 未用到
+        yield ""
+
+
+def _payload() -> dict:
+    return job_payload(
+        SimpleNamespace(
+            title="后端开发",
+            company="A公司",
+            location="北京",
+            salary="20k",
+            job_type="社招",
+            description="负责后端服务开发",
+            requirements="熟悉 Python；本科及以上学历",
+            additional_info="",
+        )
+    )
+
+
+_PROFILE_TEXT = json.dumps(
+    {"name": "张三", "education": "本科", "skills": ["Python"]}, ensure_ascii=False
+)
+_RESUME_TEXT = json.dumps(
+    {"title": "后端版", "content": {"skills": "Python 后端"}}, ensure_ascii=False
+)
+
+
+def _valid_result(**overrides) -> dict:
+    data = {
+        "hard_conditions": [
+            {
+                "label": "本科及以上",
+                "jd_quote": "本科及以上学历",
+                "status": "matched",
+                "evidence": "本科",
+            }
+        ],
+        "core_abilities": [
+            {
+                "label": "熟悉 Python",
+                "jd_quote": "熟悉 Python",
+                "status": "expression_gap",
+                "evidence": "Python",
+            }
+        ],
+        "bonus_items": [
+            {
+                "label": "有开源经历",
+                "jd_quote": "",
+                "status": "evidence_insufficient",
+                "evidence": "资料中未提供",
+            }
+        ],
+        "hard_gate": "met",
+        "admission": "allow",
+        "advice": "建议投递，使用「后端版」简历。",
+        "notes": ["团队成果不计入个人能力"],
+    }
+    data.update(overrides)
+    return data
+
+
+@pytest.mark.asyncio
+async def test_analyze_match_returns_five_status_taxonomy_and_recomputes_admission():
+    provider = ScriptedProvider(json.dumps(_valid_result(), ensure_ascii=False))
+
+    result = await analyze_match(provider, _payload(), _PROFILE_TEXT, _RESUME_TEXT)
+
+    statuses = {
+        result.hard_conditions[0].status,
+        result.core_abilities[0].status,
+        result.bonus_items[0].status,
+    }
+    assert statuses == {"matched", "expression_gap", "evidence_insufficient"}
+    # admission_of 是唯一权威：含"证据不足"→需确认，覆盖模型自报的 allow。
+    assert result.hard_gate == "met"
+    assert result.admission == "needs_confirm"
+    assert provider.messages is not None
+    assert [m["role"] for m in provider.messages] == ["system", "user"]
+    assert "<MATCH_DATA>" in provider.messages[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_match_rejects_a_percentage_score_field():
+    payload = _valid_result()
+    payload["score"] = 82  # 禁伪精确：任何数值评分字段都必须被拒
+
+    with pytest.raises(LLMError):
+        await analyze_match(
+            ScriptedProvider(json.dumps(payload, ensure_ascii=False)),
+            _payload(),
+            _PROFILE_TEXT,
+            _RESUME_TEXT,
+        )
+
+
+@pytest.mark.asyncio
+async def test_analyze_match_rejects_unverifiable_evidence():
+    payload = _valid_result()
+    payload["core_abilities"][0]["evidence"] = "精通 Kubernetes 与微服务治理"
+
+    with pytest.raises(LLMError):
+        await analyze_match(
+            ScriptedProvider(json.dumps(payload, ensure_ascii=False)),
+            _payload(),
+            _PROFILE_TEXT,
+            _RESUME_TEXT,
+        )
+
+
+def test_finalize_marks_hard_gate_unmet_and_blocks_on_real_gap():
+    result = parse_match_result(
+        json.dumps(
+            _valid_result(
+                hard_conditions=[
+                    {
+                        "label": "硕士及以上",
+                        "jd_quote": "本科及以上学历",
+                        "status": "real_gap",
+                        "evidence": "资料中未提供",
+                    }
+                ]
+            ),
+            ensure_ascii=False,
+        )
+    )
+
+    finalized = finalize_match_result(result)
+
+    assert finalized.hard_gate == "unmet"
+    assert finalized.admission == "block"
+
+
+def test_local_match_result_is_honest_and_never_fabricates():
+    result = local_match_result(_payload())
+
+    assert result.notes and "未配置大模型" in result.notes[0]
+    assert result.hard_conditions and all(
+        condition.status == "to_confirm" for condition in result.hard_conditions
+    )
+    # 本地降级一律"需确认"，不给出任何匹配结论式的放行。
+    assert result.admission == "needs_confirm"
+
+
+def test_result_model_forbids_numeric_fields():
+    with pytest.raises(LLMError):
+        parse_match_result(
+            json.dumps({"hard_conditions": [], "match_percent": 88}, ensure_ascii=False)
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_greeting_strips_fences_and_caps_length():
+    provider = ScriptedProvider("```\n您好，我有 Python 后端经验，期待沟通。\n```")
+
+    greeting = await generate_greeting(provider, _payload(), _RESUME_TEXT)
+
+    assert greeting == "您好，我有 Python 后端经验，期待沟通。"
+
+
+def test_parse_greeting_caps_at_record_limit():
+    from app.schemas.apply import GREETING_RECORD_MAX_CHARS
+
+    parsed = parse_greeting("好" * (GREETING_RECORD_MAX_CHARS + 500))
+
+    assert len(parsed) == GREETING_RECORD_MAX_CHARS
+
+
+def test_build_match_messages_declares_untrusted_boundary():
+    messages = build_match_messages(_payload(), _PROFILE_TEXT, _RESUME_TEXT)
+
+    assert messages[0]["role"] == "system"
+    assert "不可信数据" in messages[1]["content"]
+
+
+# ===== B1：证据核对误杀回归 =====
+
+
+@pytest.mark.asyncio
+async def test_analyze_match_accepts_cross_line_evidence_from_json_source():
+    """资料是 json.dumps 产物（换行为字面 \\n）时，跨行/跨字段证据不再被误杀。"""
+    profile_text = json.dumps(
+        {"summary": "负责后端服务开发\n精通 Python 与 Django", "skills": ["Python"]},
+        ensure_ascii=False,
+    )
+    resume_text = json.dumps({"content": "主导过高并发网关项目"}, ensure_ascii=False)
+    payload = _valid_result()
+    payload["core_abilities"][0]["evidence"] = "负责后端服务开发，精通 Python 与 Django"
+    payload["core_abilities"][0]["jd_quote"] = "熟悉 Python"
+
+    analyzed = await analyze_match(
+        ScriptedProvider(json.dumps(payload, ensure_ascii=False)),
+        _payload(),
+        profile_text,
+        resume_text,
+    )
+
+    assert analyzed.core_abilities[0].evidence == "负责后端服务开发，精通 Python 与 Django"
+
+
+def test_validate_evidence_accepts_light_paraphrase():
+    """模型对原文做轻度改写（换词序/近义词）时，子句级 3-gram 容错应放行。"""
+    personal_source = "精通 Python 后端开发；熟悉 Spring Cloud 微服务与消息队列"
+    result = JobMatchResult(
+        core_abilities=[
+            MatchCondition(
+                label="后端",
+                status="matched",
+                jd_quote="",
+                evidence="擅长 Python 后端开发，熟悉 Spring Cloud 微服务体系",
+            )
+        ]
+    )
+
+    # 不抛异常即通过。
+    validate_evidence(result, jd_source="", personal_source=personal_source)
+
+
+def test_validate_evidence_rejects_fabricated_clause_among_real_ones():
+    """一条真实子句 + 一条纯编造子句：防虚构护栏仍要拒绝整条证据。"""
+    personal_source = "精通 Python 后端开发"
+    result = JobMatchResult(
+        core_abilities=[
+            MatchCondition(
+                label="后端",
+                status="matched",
+                jd_quote="",
+                evidence="擅长 Python 后端开发，具备 Kubernetes 集群运维经验",
+            )
+        ]
+    )
+
+    with pytest.raises(LLMError, match="无法在资料或简历中核对"):
+        validate_evidence(result, jd_source="", personal_source=personal_source)
+
+
+def test_validate_evidence_handles_evidence_with_no_substantial_clauses():
+    """全部子句都短于实质子句阈值时，退化为整段核对：短证据不崩溃、不误放行。"""
+    present = JobMatchResult(
+        core_abilities=[
+            MatchCondition(label="学历", status="matched", jd_quote="", evidence="本科")
+        ]
+    )
+    # 短证据但仍是整段子串 → 放行。
+    validate_evidence(present, jd_source="", personal_source="最高学历：本科")
+
+    fabricated = JobMatchResult(
+        core_abilities=[
+            MatchCondition(label="学历", status="matched", jd_quote="", evidence="博士")
+        ]
+    )
+    with pytest.raises(LLMError, match="无法在资料或简历中核对"):
+        validate_evidence(fabricated, jd_source="", personal_source="最高学历：本科")
+
+
+# ===== 问题 C：带照片简历剥离 base64 data URL =====
+
+
+def test_strip_data_urls_removes_base64_and_keeps_text():
+    """合法 data URL 被剥成占位文本，真实文本与 JSON 结构保持完好。"""
+    text = json.dumps(
+        {
+            "content": {
+                "skills": "Python 后端",
+                "photo": "data:image/png;base64," + "QUJD" * 100,
+            }
+        },
+        ensure_ascii=False,
+    )
+
+    stripped = strip_data_urls(text)
+
+    assert "QUJD" not in stripped
+    assert "base64" not in stripped
+    assert "[图片数据已省略]" in stripped
+    assert "Python 后端" in stripped
+    # 占位符落在字符串值内部：剥离后的文本仍是合法 JSON。
+    assert json.loads(stripped)["content"]["skills"] == "Python 后端"
+
+
+def test_strip_data_urls_returns_text_without_data_urls_unchanged():
+    """没有 data URL 时原样返回；任意 mime 前缀都剥离；非 base64 的 data: 不误伤。"""
+    untouched = json.dumps({"skills": "Python"}, ensure_ascii=False)
+    assert strip_data_urls(untouched) == untouched
+    assert strip_data_urls("") == ""
+
+    # 不只 image/*：任意 data:...;base64, 前缀都剥离。
+    mixed = "前缀 data:application/pdf;base64,QUJD 后缀"
+    assert strip_data_urls(mixed) == "前缀 [图片数据已省略] 后缀"
+
+    # 非 base64 形态的 "data:" 引用不受影响。
+    plain = "参考 data: 文档说明"
+    assert strip_data_urls(plain) == plain
+
+
+def test_strip_data_urls_handles_large_base64_quickly():
+    """超大 base64（约 640KB）剥离耗时可接受（单次线性扫描，阈值 1s）。"""
+    huge = "data:image/jpeg;base64," + "QUJD" * 160_000
+    text = json.dumps({"content": {"photo": huge, "skills": "Python"}}, ensure_ascii=False)
+
+    start = time.perf_counter()
+    stripped = strip_data_urls(text)
+    elapsed = time.perf_counter() - start
+
+    assert "QUJD" not in stripped
+    assert "Python" in stripped
+    assert elapsed < 1.0
+
+
+def test_build_match_messages_strips_photo_and_keeps_real_text():
+    """带照片简历：构造出的 messages 不含 base64 片段、真实简历文本留在预算内。"""
+    real = "主导过高并发网关项目，精通 Python 与 Django。" * 200  # ~6000 字符，预算内
+    resume_text = json.dumps(
+        {
+            "content": {
+                "skills": "Python 后端",
+                # ~480KB 的照片 base64：修复前会把真实文本完全挤出预算。
+                "photo": "data:image/png;base64," + "QUJD" * 120_000,
+                "detail": real,
+            }
+        },
+        ensure_ascii=False,
+    )
+
+    messages = build_match_messages(_payload(), _PROFILE_TEXT, resume_text)
+    user_message = messages[1]["content"]
+
+    assert "QUJD" not in user_message
+    assert "base64" not in user_message
+    # 真实简历文本（含收尾片段）不再被 base64 挤出预算。
+    assert real[-40:] in user_message
+    assert len(user_message) <= 20_000
+
+    # 剥离后的消息体仍是合法 JSON，resume 值里的占位符可解析。
+    between = user_message.split("<MATCH_DATA>\n", 1)[1].rsplit("\n</MATCH_DATA>", 1)[0]
+    data = json.loads(between)
+    assert "[图片数据已省略]" in data["resume"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_match_with_photo_resume_strips_base64_from_prompt_and_evidence():
+    """analyze_match 全链路：提示词不含 base64，证据核对仍能对到真实简历文本。"""
+    resume_text = json.dumps(
+        {
+            "content": {
+                "skills": "Python 后端",
+                "photo": "data:image/png;base64," + "QUJD" * 100,
+            }
+        },
+        ensure_ascii=False,
+    )
+    provider = ScriptedProvider(json.dumps(_valid_result(), ensure_ascii=False))
+
+    result = await analyze_match(provider, _payload(), _PROFILE_TEXT, resume_text)
+
+    assert provider.messages is not None
+    assert "QUJD" not in provider.messages[1]["content"]
+    # 证据核对（validate_evidence）拿到的是剥离后的来源，"Python" 可核对到。
+    assert result.core_abilities[0].evidence == "Python"

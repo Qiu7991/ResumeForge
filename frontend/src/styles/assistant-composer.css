@@ -1,0 +1,128 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+.assistant-composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.assistant-composer-image-item {
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+}
+
+.assistant-composer-image-item .assistant-message-image {
+  width: 96px;
+  height: 72px;
+}
+
+.assistant-message-attachments .ant-image {
+  display: block;
+  flex: 0 0 120px;
+  width: 120px !important;
+  height: 90px;
+  max-width: 120px;
+  overflow: hidden;
+}
+
+/* Ant Design applies width: 100% to the nested img, so constrain both layers. */
+.assistant-message-attachments .ant-image-img,
+.assistant-message-attachments .assistant-message-image {
+  display: block;
+  width: 120px !important;
+  height: 90px !important;
+  object-fit: contain;
+}
+
+.assistant-conversation-actions-menu {
+  display: grid;
+  min-width: 132px;
+  gap: 2px;
+}
+
+.assistant-conversation-actions-menu .ant-btn {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.assistant-composer {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border-top: 1px solid var(--rf-border-subtle);
+  background: var(--rf-surface);
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 20px;
+}
+
+.assistant-context-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+}
+
+.assistant-context-selects {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.assistant-context-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding-left: 14px;
+  border-left: 1px solid var(--rf-border-subtle);
+}
+
+.assistant-context-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--rf-text-secondary);
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/*
+ * 104px 输入框规则。选择器**直接落在 textarea 上**：当前 antd 6 的 `Input.TextArea`
+ * 不再渲染那层历史包装（textarea 的父节点就是 `.assistant-composer`），选择器串上
+ * 任何中间层都会整条静默失效——这就是它此前"看起来存在却没效果"的原因。
+ *
+ * `max-height`/`overflow-y` 必须 `!important`：`autoSize` 把 height/min-height 写成
+ * **内联样式**，非 important 的样式表规则压不过它。上下同时锁高，粘贴超长文本时
+ * textarea 内部滚动，不再无限撑高布局。
+ */
+.assistant-composer textarea.ant-input {
+  min-height: 104px !important;
+  max-height: 104px !important;
+  overflow-y: auto !important;
+  padding: 12px 14px;
+  line-height: 1.7;
+}
+
+.assistant-composer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.assistant-composer-utility {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+@keyframes assistant-conversation-title-scroll {
+  to {
+    transform: translateX(var(--assistant-title-scroll-distance));
+  }
+}

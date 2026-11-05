@@ -1,0 +1,486 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 简历预览（1/3）：栏改写面板、预览工具栏、页间隙、纸面画布与「精确」PDF 预览。
+拆分自 resume.css（原 925 行，超 500 行预算），纯搬迁、规则内容与顺序不变。 */
+
+/* 「让 AI 按我的要求改这一栏」面板：从预览点某一栏进来时出现在编辑器最上方。
+   淡蓝底 + 左侧色条，与普通表单项区分开——它是一次性动作，不是又一个字段。 */
+.resume-field-rewrite {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--rf-info);
+  border-radius: 0 10px 10px 0;
+  background: var(--rf-surface-alt);
+}
+
+/* 「当前内容」预览。
+ *
+ * 这里以前是 `max-height: 72px; overflow-y: auto`——内容一长右边就竖着一根滚动条，
+ * 在一个以"改写一段文字"为主的小面板里显得很扎眼（用户反馈"不太好看"）。改成
+ * **收起 + 底部渐隐 + 「展开全文」**：默认只显示前几行，要看全的点一下展开，
+ * 既不出现滚动条，也不丢内容。 */
+.resume-field-rewrite-original {
+  display: block;
+  position: relative;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* 收起时按"视觉行数"截断：个人总结是一条长文本，靠条数折叠挡不住它。
+   `pre-line` 让多条要点各占一行，`-webkit-line-clamp` 再把整块压到 N 行。 */
+.resume-field-rewrite-original.is-collapsed .resume-field-rewrite-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.resume-field-rewrite-text {
+  margin: 4px 0 0 !important;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
+.resume-field-rewrite-more {
+  height: auto !important;
+  padding: 0 !important;
+  font-size: 12px;
+}
+
+/* 一段内容的每条要点各自成行：整段改写的结果必须一行一条，糊成一段就看不出条数了。 */
+.resume-field-rewrite-line {
+  display: block;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.resume-field-rewrite-result {
+  padding: 10px 12px;
+  border: 1px dashed var(--rf-focus-ring);
+  border-radius: 8px;
+  background: var(--rf-surface);
+}
+/* 页与页之间的“裁切间隙”：把连续纸面在分页处切开，观感等同两张并排的独立 A4 纸。
+   间隙里露出预览视口的底色（#f5f7fa），两侧的柔和阴影扮演每张纸的纸边。
+   宽度由组件按 PAGE_GAP_PX × scale 内联给出；压住的是简历自身的页边距区域，不遮正文。 */
+/* 预览工具栏（P2b 起是两行：上=结构类、下=度量类）与下方警告条、画布之间的呼吸间距：
+   之前工具栏没有下缘间距，与黄色警告条、画布三层全部贴死（用户截图反馈）。 */
+.resume-preview-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* 每一行都是可换行的 flex：窄屏时行内的簇各自换行，而不是把整行挤成横向滚动。 */
+.resume-preview-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 第一行：左侧交互模式、右侧结构类控件（`margin-left:auto` 顶到最右）。 */
+.resume-preview-toolbar-row-primary {
+  justify-content: space-between;
+}
+
+.resume-preview-toolbar-cluster {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 度量那一行：cluster 是行的子项，不给 grow 就只占内容宽度（544px），
+   右边留一大块空白——与生成弹窗里铺满的两列不一致。 */
+.resume-preview-toolbar-row > .resume-preview-toolbar-cluster {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.resume-preview-toolbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* 精确模式下、度量控件**下面**单独一行的一句说明（2026-10-21 用户要求从第二行右端
+   移到字号调整条下方）。独占一行，所以左对齐——原先靠 `margin-left: auto` 顶到最右，
+   现在会把它推到右边，与"贴着控件说一句"的意图相反。 */
+.resume-preview-exact-hint {
+  font-size: 12px;
+}
+
+/* 版式下拉的触发框（2026-10-24 收窄）。
+   上一版是 `calc(4em + 36px)`（≈ 100px，按 antd 的 16px 字号算），比「标准」这类
+   两字预设宽出一大截，同一行的「版式 / 板块 / 顺序」看着疏密不匀（用户截图）。
+   现在钉成 **88px**：刚好容下四字预设（「跟随模板」）+ 箭头与内边距，更长的自制版式名
+   在触发框里走省略号，展开后的列表仍按内容撑开（`popupMatchSelectWidth={false}`），
+   完整名字由选项自带的 `title` 提供。写 px 而不是 em：em 跟着 antd 的字号 token 漂，
+   同一个框在不同主题下会悄悄变宽/变窄。 */
+.resume-format-select {
+  /* 2026-10-28 用户要求：触发框与下拉弹层**同宽**，整体收到"四个字"就够
+     （「跟随模板」）。弹层的宽度在 resume-workbench-controls.css 的
+     `.resume-params-dropdown.resume-format-dropdown` 里跟着改成同一个值。 */
+  width: 104px;
+  min-width: 104px;
+}
+
+/* 缩放条：在纸面**下方**居中（P2b / D6）。缩放是"看"的动作，手应该落在图旁边。 */
+.resume-preview-zoom-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 精确模式的状态块也住这一行（见下一条）：整行允许换行，窄屏不会撑出横向滚动条。 */
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-top: 12px;
+}
+
+/* 精确模式的状态（「实际 N 页（上限 M 页）」+「在新标签打开」）与缩放控件**同一行**
+   （2026-10-29 用户要求）。它原来是纸面下方单独一条，两条各自居中、中间还夹一档间距，
+   读起来像两块无关的东西。 */
+.resume-preview-zoom-status {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+}
+
+/* 状态块自己在家时有一档上边距与内缩，搬进这一行之后要归零，否则整行会比按钮高出一截。 */
+.resume-preview-zoom-status .exact-preview-status {
+  margin-top: 0;
+  padding: 0;
+}
+
+/* 溢出警告条与画布之间同样留一档（2026-10-29 从 12px 收到 8px：制作台右栏的头部要矮，
+   这一档省下来的高度直接变成纸面）。 */
+.resume-preview-overflow {
+  margin-bottom: 8px;
+}
+
+/* 页与页之间的“裁切间隙”：把连续纸面在分页处切开，观感等同两张并排的独立 A4 纸。
+   间隙里露出预览视口的底色（#f5f7fa），两侧的柔和阴影扮演每张纸的纸边。
+   宽度由组件按 PAGE_GAP_PX × scale 内联给出；压住的是简历自身的页边距区域，不遮正文。 */
+.resume-preview-page-separator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 1;
+  transform: translateX(-50%);
+}
+
+/* 盖住列间距，露出视口底色：观感是"两张并排的 A4 纸"而不是一张宽纸。
+   宽度=column-gap（28mm），两侧各加一道纸边阴影，边界才立得住。 */
+.resume-preview-page-separator-line {
+  display: block;
+  height: 100%;
+  background: var(--rf-surface-alt);
+  /* 阴影留在页间隙内部；外投影会盖住紧贴纸边的日期、照片和正文末字。 */
+  box-shadow:
+    inset 7px 0 16px -6px rgb(15 40 80 / 0.28),
+    inset -7px 0 16px -6px rgb(15 40 80 / 0.28),
+    inset 1px 0 0 rgb(15 40 80 / 0.06),
+    inset -1px 0 0 rgb(15 40 80 / 0.06);
+}
+
+.resume-preview-page-separator-label {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  background: var(--rf-warning-bg);
+  color: var(--rf-warning-text);
+  border: 1px solid var(--rf-warning-border);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.resume-preview-viewport {
+  display: block;
+  width: 100%;
+  /* 横向放大只在预览内滚动；纵向空间由外层弹窗/页面承接，避免双滚动条。 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 6px;
+  background: var(--rf-surface-alt);
+  cursor: grab;
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
+.resume-preview-viewport.is-panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.resume-preview-scale-box {
+  margin: 0 auto;
+  overflow: visible;
+  /* 多页竖排后整块比一屏高，缩放靠内部 `.resume-preview-pages` 的 transform；
+     这里只负责给出"缩放后的实际占位"，滚动交给视口。 */
+  position: relative;
+}
+
+/* 多页竖排：每页一张 A4，上下摞（2026-10-21 取代横向并排）。
+   transform-origin 在左上角，与 scale-box 的宽高（已按 scale 算好）对齐。 */
+.resume-preview-pages {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  transform-origin: top left;
+}
+
+.resume-preview-page {
+  position: relative;
+  flex: 0 0 auto;
+  /* 纸面容器底色（问题 19）：浅色 = 白（与 `--rf-paper` 同值），深色 = 黑。
+     **这不影响导出**：导出的纸由服务端模板绘制，`--rf-paper` 仍是"导出与打印看到的那张纸"。
+     加载瞬间 iframe 还没画出来时，这一层就是纸的颜色——不先用深色打底就会闪一下白边。 */
+  background: var(--rf-preview-paper);
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 2px;
+  box-shadow: 0 1px 4px rgb(15 40 80 / 0.12);
+  /* 不能 `overflow: hidden`：页标挂在页脚**下方**那条空隙里（`bottom: -20px`），
+     裁掉就再也看不见了。iframe 自身就是 A4 尺寸，不会溢出这张纸。 */
+}
+
+/* 深色下纸是接近纯黑的：浅色投影落在黑纸上只会显脏，直接去掉。 */
+[data-theme="dark"] .resume-preview-page {
+  box-shadow: none;
+}
+
+/* 页标放在页脚下方那条空隙里（`PAGE_STACK_GAP_PX` = 24px 够放 12px 的字），
+   不压正文；单页时不渲染。 */
+.resume-preview-page-label {
+  position: absolute;
+  left: 0;
+  bottom: -20px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--rf-text-secondary);
+  background: var(--rf-surface-alt);
+  border-radius: 3px;
+  padding: 0 6px;
+  pointer-events: none;
+}
+
+/* 超限页（第「页数上限 + 1」页起）不属于导出（2026-11 问题 24）：**2px 实红线**包边，
+   纸下方一条**通栏红带**。旧版是 1px 半透明虚线 + 内容宽的小胶囊，在浅色下几乎与纸边
+   重影，翻到这一页时看不出它和正常页有什么区别。
+
+   **必须写在样式表里而不是 JSX 内联样式里**：内联优先级更高，一写回 JSX 这两条就永远
+   不生效（测试里有一条专门盯着"超限页标没有内联 style"）。
+
+   **继续用 outline 而不是 border**：outline 不参与布局，纸高与页间距（`PAGE_STACK_GAP_PX`）
+   一个像素都不变，`layoutFrame` 的高度测量也不会跟着抖。 */
+.resume-preview-page.is-over-limit {
+  outline: 2px solid var(--rf-danger);
+  outline-offset: -2px;
+}
+
+/* 通栏红带：宽度从"内容宽"改成撑满纸宽（`left: 0` 来自基类，这里补 `right: 0`），
+   位置仍在页脚下方那 24px 间隙里（`bottom: -20px`），所以不压正文、也不改页间距。
+   白字是颜色守卫里唯一的字面量例外——它压在 `--rf-danger` 实底上，深浅两套都是浅色。 */
+.resume-preview-page-label.is-over-limit {
+  right: 0;
+  padding: 0 8px;
+  background: var(--rf-danger);
+  color: #fff;
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.resume-iframe {
+  display: block;
+  border: none;
+  flex: 0 0 auto;
+  /* 平时把指针交给父容器（`.resume-preview-viewport`）：iframe 是独立文档，指针一旦进去，
+     父页面就收不到 pointerup，拖拽平移会卡在"正在拖"（与制作台分隔条同一个坑）。
+     代价是纸面本身不可点——那正是「草稿模式编辑」要打开的一扇门，见下面那条覆盖。 */
+  pointer-events: none;
+}
+
+/* 深色主题的草稿纸（问题 19 方案 A）：整张纸反色，照片/图标由 iframe 内部注入的样式
+   抵消一次（见 `components/resume-preview/paperTheme.ts`）。为什么是滤镜而不是改模板
+   的 `--bg`：那会覆盖用户自选的「页面背景色」，且要给 9 个模板各写一套深色映射。
+   **这里只影响屏幕**——导出走服务端渲染，打印另有 `@media print` 关闭。 */
+.resume-iframe.is-dark-paper {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* 打印预览里纸必须是白的：滤镜像一层"显示偏好"，绝不能让它跟着 `Ctrl+P` 打出来。
+   （导出 PDF / DOCX / HTML 走服务端渲染，本来就不经过这条规则。） */
+@media print {
+  .resume-iframe.is-dark-paper {
+    filter: none;
+  }
+}
+
+/* 「草稿模式编辑」：把指针还给 iframe。
+   点纸面字段靠的是 iframe **自己文档**里的 click 监听（`useClickToEditPreview` 注入的），
+   父容器拦着就永远收不到事件——2026-10-23 用户实测"勾了还是抓手、点不动"就是这个原因：
+   光标停在父容器上（`cursor: grab`），点击也落在父容器上。
+
+   光标一并让回默认：抓手会让人以为"这里只能拖"，那就不会去试点击。
+   代价（有意接受）：编辑模式下在纸面上按住不能平移——那一刻用户的意图是选字段而不是挪纸；
+   纸张两侧的间隙、以及滚动条仍然可拖。 */
+.resume-preview-viewport.is-click-to-edit {
+  cursor: default;
+}
+
+.resume-preview-viewport.is-click-to-edit .resume-iframe {
+  pointer-events: auto;
+}
+
+/* 精确预览：显示的是服务端排出的真实 PDF（与「导出」下载的是同一份字节）。
+   所以它只需要一个干净的相框——分页、阴影、缩放条全部交给浏览器 PDF 查看器，
+   任何"预览自己的装饰"在这里都会与查看器的工具栏打架。 */
+.exact-preview {
+  width: 100%;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 6px;
+  background: var(--rf-surface-alt);
+  /* 放大（`scale > 1`）时纸会比相框宽：允许横向滚动看右边，而不是把纸裁掉。
+     **但只在真的放大时才开**（`.is-zoomed`）：100% 时纸列宽度已经等于相框宽，
+     浮点累计出的半像素会让 `overflow-x: auto` 凭空多出一条横向滚动条，用户拖动它
+     纸就歪了（2026-11 反馈"精确预览有时候可以左右滑动、简历歪斜"）。
+     `overflow-x: hidden` 与 `overflow-y: hidden` 配对，不会按规范把 `overflow-y`
+     连带算成 `auto`——纵向高度是按页数算出来的，再出一条竖向滚动条就回到"两个滚动条"。 */
+  /* 不放大时这一层不滚动：纸列宽度恰好等于相框宽，任何 `overflow-x: auto` 都会因为
+     半像素误差凭空多出一条横向滚动条（2026-11 反馈"精确预览有时候可以左右滑动"）。 */
+  overflow: visible;
+  position: relative;
+}
+
+/* 只有用户显式放大之后才让纸溢出相框，而且**横向滚动就发生在纸面层**（Q21）：
+   头部/提示/工具条/缩放条都是这一层的兄弟节点（在 `.resume-preview-chrome` 与页脚里），
+   不参与横向滚动。相框高度由 `useExactPreviewFrameHeight` 按宽度算；横向滚动条只会压缩
+   高度、不影响 `clientWidth`，所以宽度测量不会自激。 */
+.exact-preview.is-zoomed {
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+}
+
+/* 相框自己的横向滚动条收窄一点，别抢纸面（全局细滚动条不一定覆盖到这里）。 */
+.exact-preview.is-zoomed::-webkit-scrollbar {
+  height: 8px;
+}
+
+.exact-preview.is-zoomed::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: var(--rf-border);
+}
+
+.exact-preview-frame {
+  display: block;
+  width: 100%;
+  border: none;
+  /* PDF 只当"图"看：指针交给外层视口。否则 iframe 会把滚轮与拖动全吃掉——
+     Ctrl+滚轮落进查看器里成了**它自己的**缩放，与缩放条不是同一套状态（用户 2026-10-29：
+     "按钮缩放没有和滚轮缩放同步"）；顺手也避免查看器内部滚动条与外层滚动打架。 */
+  pointer-events: none;
+}
+
+/* 双缓冲的两层叠在一起：可见层在下（不透明），预加载层在上（完全透明）。
+   两者都是 PDF 查看器，位置必须严格重合，否则换上来时会"跳"一下。 */
+.exact-preview-stack {
+  position: relative;
+  width: 100%;
+}
+
+/* ===== 精确预览的纸列（2026-10-24 起不再补空白页） ===== */
+/* 2026-10-23 曾经按"上限 − 实际页数"补同比例的白纸，让精确预览与草稿模式的纸数看起来
+   一致。2026-10-24 用户口径把它推翻了：**多页状态下后面补出来的空白页要去掉**——
+   那些纸在导出的 PDF 里根本不存在，画出来只是让人以为"我的简历有 3 页"。
+   现在只画 PDF 实际排出来的页，预览与下载到的文件永远一致。 */
+.exact-preview-paper-column {
+  /* 高度由相框（`frameHeight`）决定，不需要额外预留：宽度一变，纸高自己跟着变。 */
+  margin: 0 auto;
+  /* 100% 时不允许比相框更宽（半像素也不许）：多出来的那一点就是横向滚动条的来源。
+     放大时由 `.is-zoomed` 把上限放开——那条路上"纸比相框宽"才是正确行为。 */
+  max-width: 100%;
+  min-width: 0;
+}
+
+.exact-preview.is-zoomed .exact-preview-paper-column {
+  max-width: none;
+}
+
+/* 相框里的 iframe 必须**铺满 stack**：`inset: 0` 单独用时，`width: 100%`（见
+   `.exact-preview-frame`）会让 `height: auto` 退回 iframe 的默认 150px——PDF 只画一小条。
+   高度显式写 100%，由 stack 的宽高决定；缩放时改的是 stack 的尺寸，不再用 transform。 */
+.exact-preview-stack > .exact-preview-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* 预加载层：`onLoad` 之前谁也看不见它，但浏览器已经在解析新 PDF。 */
+.exact-preview-frame-pending {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 重排遮罩：半透明，让人知道"还在算"，同时仍能看见旧图的轮廓
+   （全遮住会变成一块白板，反而更像卡死）。 */
+.exact-preview-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10px;
+  background: rgb(245 247 250 / 0.55);
+  pointer-events: none;
+}
+
+.exact-preview-overlay-text {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--rf-surface-alt);
+  border: 1px solid var(--rf-border-subtle);
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* 状态行是**整块预览的页脚**（在 `.exact-preview` 之后），不是相框的一部分：
+   夹在"最后一页纸"与页脚之间时，一条横栏会把纸和页码读成断开的两块。
+   `margin-top` 8px 让它离最后一张纸有一口气，同时不与 `padding: 2px 10px 4px` 打架。 */
+.exact-preview-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 2px 10px 4px;
+}
+
+/* 纸面比相框宽时的可见状态（Q21）：与读数同一行，提醒"可以左右拖动看全"。 */
+.resume-preview-zoom-overflow-hint {
+  font-size: 12px;
+  color: var(--rf-warning-text);
+  white-space: normal;
+}
+
+/* 缩放读数触底（`MIN_READABLE_SCALE`）：它不再是"当前比例"，而是一句提示的入口——
+   纸已经不能再小，再缩就看不清了。用警示色区分"正常 42%"与"触底 55%"，并给出指针反馈，
+   否则用户会以为缩放按钮坏了（点了没变化）。 */
+.resume-preview-zoom-label.is-min-scale {
+  color: var(--rf-warning-text);
+  cursor: help;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}

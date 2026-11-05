@@ -1,0 +1,498 @@
+# SPDX-License-Identifier: Apache-2.0
+"""测试夹具：独立的文件型测试数据库 + 测试客户端。
+
+必须在导入 app 之前设置 DATABASE_URL（config 在导入时读取一次）。
+
+测试库放在**每个进程独立的目录**里，而不是共享的系统临时目录根下：数据集功能把
+指针（active.json）与 datasets/ 目录都解析成"数据库所在目录"的子项，放在共享目录
+会让不同测试运行互相看到对方的数据集。
+"""
+
+import gc
+import os
+import shutil
+import sqlite3
+import tempfile
+import time
+import warnings
+from pathlib import Path
+from types import SimpleNamespace
+
+_TEST_DIR = Path(tempfile.gettempdir()) / f"resume_forge_test_{os.getpid()}"
+_TEST_DIR.mkdir(parents=True, exist_ok=True)
+_TEST_DB = _TEST_DIR / "resume_forge.db"
+os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB.as_posix()}"  # noqa: E402
+# 文件日志只在生产装配时挂：测试进程并发写同一份滚动文件会在 Windows 上触发
+# 轮转竞争（改名时另一进程还握着句柄）。需要验证日志本身的用例自己临时打开。
+os.environ["LOG_FILE_ENABLED"] = "false"  # noqa: E402
+# 自动备份调度不进测试：lifespan 启动的后台线程会在每个 client 用例的启动时
+# 醒来对测试库拍真实快照（纯浪费 IO），而且 PR-15 起它持真正的数据集租约——
+# 那份瞬态租约会让任何断言"租约已清零"的用例（test_dataset_scope_stream 等）
+# 变成看运气的竞态。需要验证备份行为的用例都自己注入 settings 或直接调用函数。
+os.environ["AUTO_BACKUP_ENABLED"] = "false"  # noqa: E402
+
+import pytest  # noqa: E402
+from app import database  # noqa: E402
+from app.database import Base, SessionLocal, get_db  # noqa: E402
+from app.dataset_registry import (  # noqa: E402
+    MAIN_DATASET_ID,
+    datasets_directory,
+    write_active_dataset_id,
+)
+from app.main import app  # noqa: E402
+
+# 全局模型/主题（data/global_settings.json）的路径来自 config.DATA_DIR，**不跟随**
+# DATABASE_URL：不隔离的话，`PUT /api/settings/llm` 会在开发机上改写用户真实的
+# 模型配置（2026-10-19 实际发生过一次，从备份恢复）。这里把它指到本进程的测试目录，
+# 用例之间共享同一份纯净起点；需要独立目录的用例（test_global_llm）自己再 monkeypatch。
+from app.services import global_settings as _global_settings  # noqa: E402
+from app.services import (  # noqa: E402
+    knowledge_service,
+    search_fts,
+)
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import event, text  # noqa: E402
+from sqlalchemy.engine import Engine  # noqa: E402
+
+_GLOBAL_SETTINGS_DIR = _TEST_DIR / "global_settings"
+_GLOBAL_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+_global_settings.DATA_DIR = str(_GLOBAL_SETTINGS_DIR)
+
+# 自定义字体（``data/fonts/``）同一条理由：路径来自 ``config.DATA_DIR``，不跟随
+# DATABASE_URL。不隔离就会出两种事故——任何一次导出测试都把开发机上的真实字体
+# （本机实测 6 MB）打进包，格式号被推到 6，``format == 5`` 之类的断言随机变红；
+# 反过来导入测试还会往用户的真实字体目录里写文件。这里指到本进程的测试目录。
+from app.services import user_fonts as _user_fonts  # noqa: E402
+
+_FONTS_ROOT = _TEST_DIR / "fonts_root"
+_FONTS_ROOT.mkdir(parents=True, exist_ok=True)
+_user_fonts.DATA_DIR = str(_FONTS_ROOT)
+
+
+@pytest.fixture(autouse=True)
+def _clean_fonts_dir():
+    """每个用例从"没有自定义字体"开始。
+
+    不做这一步，任何一条"上传字体"的用例都会把后面的导出用例推到格式 6（字体进了包
+    格式号就变），失败信息还会指向完全无关的断言。
+    """
+    shutil.rmtree(_FONTS_ROOT, ignore_errors=True)
+    _FONTS_ROOT.mkdir(parents=True, exist_ok=True)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _clean_global_settings_file():
+    """每个用例从"没有全局配置"开始：模型记录与主题都不该跨用例泄漏。"""
+    (_GLOBAL_SETTINGS_DIR / "global_settings.json").unlink(missing_ok=True)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_preview_cache():
+    """每个用例从"内存里没有任何排好的 PDF"开始。
+
+    精确预览的结果缓存是**进程级**的（``services/pdf_preview_cache``），而不同用例的简历
+    常常是同一份内容（``_resume()``）+ 同一组参数——缓存键会撞在一起，上一个用例的字节被
+    下一个用例直接端走，"同一组参数只排一趟"这类计数断言就会随执行顺序时红时绿。
+    """
+    from app.services.pdf_preview_cache import clear as clear_preview_cache
+
+    clear_preview_cache()
+    yield
+    clear_preview_cache()
+
+
+@pytest.fixture(autouse=True)
+def _reset_font_subsets():
+    """每个用例从"用全量字体渲染"开始。
+
+    字体预子集化把"这份内容画过哪些字"记在进程级缓存里，第二趟起会换成小字体渲染。
+    子集与全量字体的**几何完全一致**，但 PDF 里的字体名与字节不同（``MPDFAA+`` 前缀、
+    子集化的稠密字形编号）——逐字节比对的用例不该因为"同进程里前面有人排过一次"而变绿
+    或变红。要验证子集路径的用例自己调两次，断言它确实换了字体。
+
+    后台预热也在这里关掉：它是异步的，``stats() == (1, 0)`` 这类"刚排完一趟"的即时断言
+    会变成抛硬币（预热线程可能刚好抢在前面把子集裁好了）。验证预热的用例自己开回来。
+
+    **不要把它改成 `monkeypatch` 参数**：autouse fixture 一旦请求 `monkeypatch`，这个
+    fixture 就会抢先把它实例化，于是 `monkeypatch` 的还原被排到所有 fixture 的收尾**之后**
+    ——`test_sample_recorder_is_within` 那个把 `Path.resolve` 打成抛异常的用例会让本文件
+    的数据目录清理在还原前跑，凭空多一条 teardown ERROR。所以这里手动存取。
+    """
+    from app.services.pdf_exporter import font_subset
+
+    previous = font_subset._warm_enabled
+    font_subset._warm_enabled = False
+    font_subset.reset()
+    yield
+    font_subset.reset()
+    font_subset._warm_enabled = previous
+
+
+@event.listens_for(Engine, "connect")
+def _relax_test_database_durability(dbapi_connection, _connection_record) -> None:
+    """关掉测试库的落盘同步——``clean_db`` 每个用例都重建 38 张表，而 fsync 是全部成本。
+
+    实测（本机 Windows）``drop_all`` + ``create_all`` 一次要 **436 ms**，其中删表只占
+    11 ms，剩下约 429 ms 全是 **建表**：38 张表连同索引，在 SQLite 默认的
+    ``synchronous=FULL`` 下每条 DDL 都要 fsync 一次。这一个动作就占了单个用例总耗时的
+    97%，也就是说**整个后端套件的运行时间几乎全是建表**。换成 ``journal_mode=MEMORY`` +
+    ``synchronous=OFF`` 后是 **44.7 ms**（快 9.8 倍）。
+
+    为什么必须动它：GitHub 的 Windows runner 磁盘慢、且带 Defender 实时防护，fsync 被
+    放大了约 12 倍——实测每个用例 5.4 s（本机 0.46 s），2149 个用例跑 28 分钟才到 15%，
+    外推要 **3.2 小时**，而后端 job 的超时是 30 分钟。加并行救不了这个：瓶颈是文件同步，
+    4 个 worker 只是排队。
+
+    为什么在测试里改是安全的：这两项只影响**断电时能否恢复**，不影响任何一条 SQL 的语义、
+    隔离级别或约束。测试库随会话结束整个删掉（见 ``cleanup_test_db``），没有需要扛住崩溃
+    的数据；生产引擎的持久性由 ``app/database.build_engine`` 决定，这里碰不到它。
+
+    监听器挂在 ``Engine`` **类**上而不是实例上：``database.rebind()`` 换数据集时会新建引擎
+    对象，挂在实例上的监听器会漏掉那些新引擎。
+    """
+    if not isinstance(dbapi_connection, sqlite3.Connection):
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        # 生产引擎（app.database.build_engine）已把库切到 WAL；WAL 是库级持久模式，
+        # 只要还有其他连接在用就不能切回 MEMORY（会报 database is locked）。
+        # 退而求其次只关 synchronous：WAL + synchronous=OFF 的提交同样不落盘同步，
+        # 建表开销与 MEMORY 日志基本一致。
+        cursor.execute("PRAGMA journal_mode")
+        if cursor.fetchone()[0] != "wal":
+            # journal_mode 会返回一行结果，必须取走，否则连接上会留着一个未读完的语句。
+            cursor.execute("PRAGMA journal_mode=MEMORY")
+            cursor.fetchone()
+        cursor.execute("PRAGMA synchronous=OFF")
+    finally:
+        cursor.close()
+
+
+def _reset_to_test_database() -> None:
+    """把活动指针与引擎复位到测试库本身。
+
+    数据集用例会切换引擎，不复位的话，一个用例切到的数据集会被后续用例继续使用。
+    引擎一律用属性访问：它是可以被重绑的模块级对象，按值导入会拿到旧的那个。
+    """
+    write_active_dataset_id(MAIN_DATASET_ID)
+    current = database.engine.url.database
+    if current is None or Path(current).resolve() != _TEST_DB.resolve():
+        database.rebind(_TEST_DB)
+
+
+def _clear_datasets() -> None:
+    """清掉用例产生的数据集文件。
+
+    数据集目录建在测试库同级，所以同一进程里前一个用例导入的数据集会出现在后一个
+    用例的列表里。这里删的是本进程独占的临时目录内容（整个目录在会话结束时统一
+    删除），不是用户数据。
+
+    与 ``_remove_test_dir`` 同一套纪律（见其 docstring）：导入/切换路径会为数据集
+    建独立引擎，旧引擎的连接池吊着 ``.db`` 句柄，Windows 上 ``rmtree`` 会删不动——
+    所以先 dispose + gc，再带重试；重试仍失败就如实告警，**不静默**（2026-10-11
+    CI Windows 轮实测：``ignore_errors=True`` 吞掉失败后，脏数据集泄漏进后续用例）。
+    """
+    directory = datasets_directory()
+    if not directory.exists():
+        return
+    database.engine.dispose()
+    for _attempt in range(6):
+        gc.collect()
+        shutil.rmtree(directory, ignore_errors=True)
+        if not directory.exists():
+            return
+        time.sleep(0.3)
+    warnings.warn(f"测试数据集目录没能删干净，请手工删除：{directory}", stacklevel=1)
+
+
+@pytest.fixture(autouse=True)
+def no_real_search_network(monkeypatch):
+    """测试默认**不许真的联网**。
+
+    联网搜索改成"多来源聚合 + 可选正文抓取"之后，只要有一条测试忘了替换网络层，整轮
+    测试就会去请求 Bing / DuckDuckGo / 结果页，表现为长时间卡住而不是失败——这是最难
+    排查的一类测试问题。这里把网络层统一换成"没有结果"，需要真实行为的测试自己再
+    patch 回来（那些 patch 在 fixture 之后生效，优先级更高）。
+    """
+
+    async def empty_results(*_args, **_kwargs):
+        return []
+
+    async def empty_page(*_args, **_kwargs):
+        return ""
+
+    async def empty_rss(_query: str) -> bytes:
+        return b"<rss><channel></channel></rss>"
+
+    monkeypatch.setattr("app.services.search.aggregate.bing_search", empty_results)
+    monkeypatch.setattr("app.services.search.aggregate.search_duckduckgo", empty_results)
+    monkeypatch.setattr("app.services.search.aggregate.search_searxng", empty_results)
+    monkeypatch.setattr("app.services.search.aggregate.search_deepseek", empty_results)
+    monkeypatch.setattr("app.services.search.aggregate.fetch_deepseek_text", empty_page)
+    monkeypatch.setattr("app.services.search.aggregate.fetch_page_text", empty_page)
+    monkeypatch.setattr("app.services.assistant.assistant_web_search.fetch_bing_rss", empty_rss)
+
+    def no_filter_network(url: str, timeout: float):
+        # 站点筛选项清单的默认取数口子。**默认封掉**：忘了注入 fetcher 的用例会立刻失败，
+        # 而不是安静地去请求 zhipin.com——后者在能联网的开发机上"碰巧通过"、在 CI 上超时，
+        # 是最难定位的一类测试问题。需要真实响应的用例自己 monkeypatch 回来。
+        raise OSError(f"测试环境不访问真实站点：{url}")
+
+    monkeypatch.setattr("app.services.sites.boss_filters.default_fetcher", no_filter_network)
+
+
+@pytest.fixture(autouse=True)
+def clean_db():
+    """每个用例前重建表结构，保证用例之间完全隔离。"""
+    _reset_to_test_database()
+    _clear_datasets()
+    # 存储统计有 60 秒短缓存（按统计根+库文件为键，跨用例是同一把钥匙）：
+    # 不在每个用例前失效，上一个用例扫到的旧数字会串进下一个用例的断言。
+    from app.services import storage_stats as _storage_stats
+
+    _storage_stats.reset_storage_cache()
+    Base.metadata.drop_all(bind=database.engine)
+    Base.metadata.create_all(bind=database.engine)
+    _seed_schema_gate_state()
+    _drop_fts_derived_tables()
+    yield
+    _reset_to_test_database()
+    Base.metadata.drop_all(bind=database.engine)
+    _clear_datasets()
+
+
+# 迁移 0044/0046 的 FTS5 派生索引不在 ``Base.metadata`` 里：``drop_all`` 删不掉它们，
+# 跑过迁移链的用例（迁移测试、备份演练）会给共享测试库留下 knowledge_fts 与
+# search_fts_*。残留的索引是陈旧的（业务表重建后触发器没了、索引指向已消失的
+# rowid），而检索服务层按"表存在"切 FTS 路径——不清掉的话，一个迁移用例就能让
+# 后续所有检索用例静默走上一条坏路径。影子表（_data/_idx/_docsize/_config）一并删；
+# 缓存按 engine 记忆探测结果，表删了缓存也得跟着失效。
+_FTS_BASE_TABLES = tuple(search_fts.SEARCH_FTS_SPECS)
+_FTS_SUFFIXES = ("", "_data", "_idx", "_docsize", "_config")
+_FTS_DERIVED_TABLES = (
+    "knowledge_fts",
+    "knowledge_fts_data",
+    "knowledge_fts_idx",
+    "knowledge_fts_docsize",
+    "knowledge_fts_config",
+) + tuple(f"search_fts_{base}{suffix}" for base in _FTS_BASE_TABLES for suffix in _FTS_SUFFIXES)
+
+
+def _baseline_head_revision() -> str:
+    """当前迁移链 head（测试库每轮重建后要把它写回 alembic_version）。"""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config()
+    config.set_main_option(
+        "script_location", str(Path(__file__).resolve().parents[1] / "migrations")
+    )
+    return str(ScriptDirectory.from_config(config).get_current_head())
+
+
+_BASELINE_HEAD_REVISION = _baseline_head_revision()
+
+
+def _seed_schema_gate_state() -> None:
+    """把 clean_db 重建出来的测试库补成"合法 2.0 库"。
+
+    clean_db 用 Base.metadata.create_all 建表：它不写 alembic_version，也没有
+    app_schema_epoch 的播种行。2.0 启动闸门在 lifespan 里只读判定库形态，看到
+    "有业务表但没有版本号"会判成 pre-2.0 库并走归档——测试库每轮都会被这么处理
+    一遍。这里把版本号与 epoch 单行补齐，让 TestClient 的 lifespan 走正常的
+    UPGRADE 分支（revision == head 时迁移是 no-op，不写库也不产生快照）。
+
+    这是测试夹具的职责，不是应用的兼容分支：生产库里这两个标记只由基线迁移写入。
+    """
+    with database.engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS alembic_version ("
+                "version_num VARCHAR(32) NOT NULL, "
+                "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+            )
+        )
+        connection.execute(text("DELETE FROM alembic_version"))
+        connection.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
+            {"revision": _BASELINE_HEAD_REVISION},
+        )
+        connection.execute(text("DELETE FROM app_schema_epoch"))
+        connection.execute(text("INSERT INTO app_schema_epoch (epoch) VALUES (2)"))
+
+
+def _drop_fts_derived_tables() -> None:
+    with database.engine.begin() as connection:
+        for name in _FTS_DERIVED_TABLES:
+            connection.execute(text(f"DROP TABLE IF EXISTS {name}"))
+    knowledge_service._FTS_CACHE.clear()
+    search_fts.reset_cache()
+
+
+@pytest.fixture
+def db_session():
+    session = SessionLocal()
+    yield session
+    session.close()
+
+
+# 官网站点采集的用例会走真实的 SSRF 防护，而那道防护要解析域名。**刻意不是 autouse**：
+# 只有需要它的用例才取用，避免给两千多个既有用例换掉 DNS 行为。
+PUBLIC_IP_FOR_TESTS = "93.184.216.34"
+PRIVATE_IP_FOR_TESTS = "10.0.0.1"
+
+
+@pytest.fixture
+def fake_public_dns(monkeypatch):
+    """把域名解析固定下来：``*.internal.example`` 指向内网，其余指向公网。
+
+    替换 ``socket.getaddrinfo`` 而不是替换 ``is_public_http_url``——**防护本身必须在被测
+    路径上**，把防范函数打桩等于把要验的东西换成恒真式。
+
+    字面 IP **原样返回**（真实 ``getaddrinfo`` 就是这么做的）：若在这里也把它们换成公网地址，
+    "127.0.0.1 会被拒绝"这条断言会通过，但什么也没有证明。
+    """
+    import ipaddress
+    import socket
+
+    def _getaddrinfo(host, port, *args, **kwargs):  # noqa: ARG001
+        try:
+            ipaddress.ip_address(host)
+            address = host
+        except ValueError:
+            address = (
+                PRIVATE_IP_FOR_TESTS
+                if str(host).endswith("internal.example")
+                else PUBLIC_IP_FOR_TESTS
+            )
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port or 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", _getaddrinfo)
+
+
+@pytest.fixture
+def client():
+    def override_get_db():
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    # 生产版只监听本机；测试客户端也使用回环地址覆盖密钥查看边界。
+    with TestClient(app, client=("127.0.0.1", 50000)) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+def _remove_test_dir() -> None:
+    """删掉**本进程**的测试数据目录；删不掉就如实告警，**不静默**。
+
+    ## 为什么要重试，且不能 ``ignore_errors=True``
+
+    Windows 上删不干净是常事（句柄还被持着、杀毒软件正在扫）。这里原本写的是
+    ``shutil.rmtree(_TEST_DIR, ignore_errors=True)``——**失败被吞掉了**，于是没人知道
+    清理没成功。实测跑了很多轮之后攒下几百个目录，看代码的人只会以为"谁忘了清理"，
+    而真实原因是**每次都失败、每次都沉默**。
+
+    实测到的失败形态是**只删掉内容、目录本身留下**（残留的是 0 字节空目录），
+    所以重试几次基本就能收掉。
+
+    另外 ``database.engine.dispose()`` 只覆盖**当前**那一个——``rebind()`` 换数据集时
+    是**新建引擎对象**替换模块属性（见 ``app/database.py``），旧引擎的连接池不在其列。
+    它们的句柄靠进程结束时释放，这也是重试有意义的原因。
+    """
+    database.engine.dispose()
+    for _attempt in range(6):
+        # **先 gc 再删。** `rebind()` 换数据集时是新建引擎替换模块属性，旧引擎从此没人引用；
+        # 它吊着的连接池（连同 sqlite 的文件句柄）要等对象被回收才释放。CPython 靠引用计数
+        # 通常当场就收掉了，但**池里成环**时得等一轮 gc——实测偶发有一个目录带着 `.db` 删不掉，
+        # 正是这一种。
+        gc.collect()
+        shutil.rmtree(_TEST_DIR, ignore_errors=True)
+        if not _TEST_DIR.exists():
+            return
+        time.sleep(0.3)
+    # 都没删掉：如实报一声并**点名路径**。留个空目录无害，但带着 `.db` 的那种会在
+    # PID 复用的时候被下一轮捡到（表现为 `database disk image is malformed`），
+    # 所以不能装作删掉了。
+    warnings.warn(f"测试数据目录没能删干净，请手工删除：{_TEST_DIR}", stacklevel=1)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_test_db():
+    """测试全部结束后删除测试数据目录。"""
+    yield
+    _remove_test_dir()
+
+
+def pytest_unconfigure(config):  # noqa: ARG001 - pytest 钩子签名固定
+    """再清一次——**这一条是为了 controller 进程**。
+
+    并行跑（``-n auto``）时实测每轮留下**一个空目录**：controller 也 import 了本文件、
+    于是建了自己的目录，但它从没跑过测试，session 级 fixture 的 teardown 在它那儿
+    不一定执行到。``pytest_unconfigure`` 在每个进程退出前都会跑到，兜住这一种。
+
+    重复调用是安全的：目录已经不在就直接返回。
+    """
+    _remove_test_dir()
+
+
+# ---------------------------------------------------------------------------
+# 备份/资产用例的三份数据集夹具（``test_backup_asset_manifest.py`` 与
+# ``test_backup_asset_restore.py`` 共用）。
+#
+# 放在 conftest 而不是某个测试文件里：pytest 只从测试模块与 conftest 收集夹具，
+# 从别的模块 import 夹具会让 ruff 把每个用例的同名参数判成 F811（要么关规则、
+# 要么到处 noqa）。夹具本身只为回到单文件行数预算而搬家，行为不变。
+# ---------------------------------------------------------------------------
+@pytest.fixture()
+def three_datasets(db_session):
+    """主库 + 数据集 A、B：每个库都有自己独特的附件，且 A 另有一张内推备注图。"""
+    # 辅助函数在 fixture 内部 import：conftest 顶部必须先设好测试环境变量
+    # （DATABASE_URL 等）再 import app 模块，模块级 import 会抢在它前面。
+    from app import database as _database
+    from app.dataset_registry import dataset_database_file as _dataset_database_file
+    from app.services.data_backup import database_path as _database_path
+    from app.services.datasets import create_dataset as _create_dataset
+    from tests.backup_asset_fixtures import (
+        _add_main_user_file as _backup_add_main_user_file,
+    )
+    from tests.backup_asset_fixtures import (
+        _add_referral_image as _backup_add_referral_image,
+    )
+    from tests.backup_asset_fixtures import (
+        _add_user_file as _backup_add_user_file,
+    )
+
+    dataset_a = _create_dataset("数据集A", _database.engine)
+    dataset_b = _create_dataset("数据集B", _database.engine)
+    path_a = _dataset_database_file(dataset_a["id"])
+    path_b = _dataset_database_file(dataset_b["id"])
+
+    main_file = _database_path(_database.engine).parent / "user_files" / "main-only-attachment.bin"
+    _backup_add_main_user_file(db_session, "main-only-attachment.bin", b"MAIN-CONTENT" * 10)
+    _backup_add_user_file(path_a, "aaa-dataset-a-file.bin", b"A" * 128)
+    _backup_add_user_file(path_b, "bbb-dataset-b-file.bin", b"B" * 128)
+    _backup_add_referral_image(path_a, "aaa-referral-note.png", b"REF-A-IMAGE" * 8)
+    try:
+        yield SimpleNamespace(
+            id_a=dataset_a["id"], id_b=dataset_b["id"], path_a=path_a, path_b=path_b
+        )
+    finally:
+        # 主库父目录（进程级测试根）不在 conftest 的数据集清理范围内，自己收尾。
+        main_file.unlink(missing_ok=True)
+
+
+# ===== 跨引擎对拍（草稿 Chromium vs 服务端 PDF）的共享浏览器夹具 =====
+#
+# 夹具本体在 `browser_parity_support.py`（与 `measure_layout.js` 放在一起，便于"改了
+# 测量口径就一起看"）。这里做一次显式再导出：测试模块里**导入**夹具会让 ruff 把
+# "函数参数与导入同名"判成 F811（pytest 的夹具注入本来就是这么用的），而放在 conftest
+# 里由 pytest 统一发现就没有这个假冲突。
+#
+# `X as X` 是给 ruff 看的"这是再导出，不是未使用导入"。
+from browser_parity_support import chromium_page as chromium_page  # noqa: E402

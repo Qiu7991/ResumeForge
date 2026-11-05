@@ -1,0 +1,110 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/*
+ * 全局 AI 润色浮层（R17）：改写卡片。
+ *
+ * 只用主题 token（design-tokens.css 的 --rf-*），不写死颜色；视觉目标是"贴着指针
+ * 的一张卡片"，比 antd 的 Modal 轻，用户可以边看原文边改。
+ *
+ * 右键菜单本身的皮肤已搬到 `styles/context-menu.css`（`.rf-ctx-menu*`，问题 25）：
+ * 纸面加粗菜单与选区菜单共用同一个浮层，样式不该留在 ai-polish 里。
+ */
+
+.rf-ai-polish-host {
+  position: fixed;
+  inset: 0;
+  /* 宿主只用来定层与判"点/滚是否在卡片里"，自身不该挡住页面。 */
+  pointer-events: none;
+}
+
+.rf-ai-polish-card {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--rf-space-1);
+  width: 344px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: var(--rf-space-3);
+  border: 1px solid var(--rf-border);
+  border-radius: var(--rf-radius-panel);
+  background: var(--rf-surface);
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--rf-brand) 22%, transparent);
+}
+
+.rf-ai-polish-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* 整块标题栏是拖动把手：grab 光标 + 关掉文字选择，避免拖的时候把标题选蓝。 */
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.rf-ai-polish-card-head:active {
+  cursor: grabbing;
+}
+
+.rf-ai-polish-privacy {
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+.rf-ai-polish-label {
+  margin-top: var(--rf-space-2);
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+.rf-ai-polish-preview {
+  max-height: 72px;
+  overflow-y: auto;
+  padding: var(--rf-space-2);
+  border-radius: var(--rf-radius-control);
+  background: var(--rf-surface-alt);
+  color: var(--rf-text-body);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 结果态里原文降级成"对照材料"：留在卡片里供比对，但不该和改写抢注意力。 */
+.rf-ai-polish-preview.is-muted {
+  color: var(--rf-text-secondary);
+}
+
+.rf-ai-polish-result {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* 「继续改写」那一行把卡片撑高了：动作区吸在卡片底边，用户在长结果里滚动时
+   不必先滚到底才能替换/取消。背景必须不透明，否则滚上来的正文会从按钮底下透出来。 */
+.rf-ai-polish-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--rf-space-2);
+  padding-top: var(--rf-space-2);
+  background: var(--rf-surface);
+}
+
+/* 结果超长时「继续改写」不可用，原因要写在要求框上方（按钮本身的灰态说不清为什么）。 */
+.rf-ai-polish-followup-warning {
+  font-size: 12px;
+}
+
+.rf-ai-polish-followup {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* 窄屏：卡片不能比视口还宽，否则左右都被裁掉。 */
+@media (max-width: 480px) {
+  .rf-ai-polish-card {
+    width: calc(100vw - 24px);
+  }
+}

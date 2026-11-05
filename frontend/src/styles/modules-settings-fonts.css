@@ -1,0 +1,308 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 设置页「简历字体」卡片：内置字体那块主推面板、历史字体的行、页脚。
+ *
+ * 为什么要单独一片：`modules-templates.css` 已经 446 行（500 行零豁免），这批样式
+ * 塞不进去；而它们只服务于这一张卡片，和模板画廊没有关系。
+ *
+ * 2026-10-24 的排版口径（用户截图：一行里名字、体积、标签、两颗按钮挤在一起，
+ * 「回到系统字体」旁边紧跟着"还没有导入其它字体"）：
+ * 1. **每个字体一条行**，行内两行式——第一行名字 + 状态标签，第二行次要信息（体积 / 文件名）；
+ * 2. 内置字体用一层浅底 + 细边包起来，表示"这是应用自带的那一款"，与历史字体区分；
+ * 3. 页脚独立成段（上边一条分隔线），「回到系统字体」与它的说明各占其位。 */
+
+/* 卡片说明与列表之间留一口气，说明本身不再靠 inline style 控制间距。 */
+.settings-font-intro {
+  margin-bottom: 14px !important;
+}
+
+/* ── 内置字体（主推那一款）──────────────────────────────── */
+.settings-font-featured {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: var(--rf-radius-panel);
+  background: var(--rf-surface-alt);
+}
+
+/* 正在使用：左侧一道主题色细条 + 稍亮的底色，扫一眼就能定位"我现在用的是哪款"。 */
+.settings-font-featured.is-active {
+  border-color: color-mix(in srgb, var(--rf-brand) 35%, var(--rf-border-subtle));
+  background: color-mix(in srgb, var(--rf-brand) 5%, var(--rf-surface));
+  box-shadow: inset 3px 0 0 var(--rf-brand);
+}
+
+.settings-font-featured-main {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.settings-font-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+/* 名字做成链接按钮，但不要 antd 链接按钮自带的内边距（它会把整行撑高、名字与标签错位）。 */
+.settings-font-name.ant-btn {
+  height: auto;
+  padding: 0;
+  font-weight: 600;
+}
+
+.settings-font-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 2px;
+  color: var(--rf-text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* 次要信息之间用一枚小圆点分隔，比堆一串括号好读。 */
+.settings-font-meta > span + span::before {
+  content: "·";
+  margin-right: 10px;
+  color: var(--rf-text-quaternary, var(--rf-text-tertiary));
+}
+
+.settings-font-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.settings-font-error {
+  flex: 1 1 100%;
+  margin: 2px 0 0 !important;
+  font-size: 12px;
+}
+
+/* ── 历史导入的字体 ─────────────────────────────────────── */
+.settings-font-list .listy-item {
+  padding: 10px 2px;
+}
+
+/* ── 页脚：回到系统字体 ─────────────────────────────────── */
+.settings-font-empty {
+  display: block;
+  padding: 10px 2px;
+}
+
+.settings-font-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rf-border-subtle);
+}
+
+.settings-font-footnote {
+  flex: 1 1 280px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* ===== 界面语言：两张可点选的卡片 =====
+   只有两种语言时，下拉要多点一次才看得到另一个选项；卡片把"有哪些、现在选哪个"一次说清。 */
+/* 外壳（标题栏 + 边框 + 卡间距）由 `LocaleSettingsCard` 自己的 `<Card className="settings-card">`
+   提供——它要和「简历字体」「界面与导航」平级摆在一起。这里只管卡内纵向节奏。 */
+.settings-locale {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 保存失败的红条要和上面那句提示拉开，否则两行字贴在一起像同一句。 */
+.settings-locale > .ant-alert {
+  margin-top: 10px;
+}
+
+.settings-locale-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+/* 用 button 而不是 div：原生可聚焦、回车/空格天然可用，不用手写 keydown。 */
+.settings-locale-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: var(--rf-radius-control);
+  background: var(--rf-surface);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--rf-motion-duration) ease,
+    background var(--rf-motion-duration) ease;
+}
+
+.settings-locale-option:hover:not(:disabled) {
+  border-color: var(--rf-brand);
+}
+
+.settings-locale-option:focus-visible {
+  outline: 2px solid var(--rf-focus-visible);
+  outline-offset: 2px;
+}
+
+.settings-locale-option:disabled {
+  cursor: progress;
+  opacity: 0.75;
+}
+
+.settings-locale-option.is-active {
+  border-color: var(--rf-brand);
+  background: var(--rf-surface-alt);
+}
+
+.settings-locale-option-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-locale-option-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-locale-option-check {
+  color: var(--rf-brand);
+}
+
+.settings-locale-option-desc {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--rf-text-secondary);
+}
+
+.settings-locale-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--rf-text-secondary);
+}
+
+/* ===== 费用估算单价：带标签的三格 + 示例 =====
+   此前三个输入框只有 placeholder，没有可见标签，空着时看不出哪格是输入、哪格是输出。 */
+.settings-pricing {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-pricing-hint,
+.settings-pricing-example,
+.settings-pricing-note {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--rf-text-secondary);
+}
+
+.settings-pricing-example {
+  padding: 8px 10px;
+  border-left: 2px solid var(--rf-border-strong);
+  border-radius: 0 6px 6px 0;
+  background: var(--rf-surface-alt);
+}
+
+/* 两格窄、一格更窄：宽度按内容给，别让「币种」抢走单价的宽度。 */
+.settings-pricing-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(96px, 0.5fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.settings-pricing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-pricing-label {
+  font-size: 12px;
+  color: var(--rf-text-secondary);
+}
+
+.settings-pricing-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* 窄屏：三格改两行，币种落到下一行最左。 */
+@media (max-width: 767px) {
+  .settings-pricing-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* ===== 单价记录列表（0067）：每条一卡，名称 + 三档价 + 动作 ===== */
+.settings-pricing-records {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-pricing-records-title {
+  font-size: 13px;
+}
+
+.settings-pricing-record {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: var(--rf-radius-control);
+  background: var(--rf-surface);
+}
+
+.settings-pricing-record-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-pricing-record-time {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--rf-text-secondary);
+}
+
+.settings-pricing-record-prices {
+  font-size: 12.5px;
+  color: var(--rf-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 三档价格并排：窄屏自动落成一行一档。 */
+.settings-pricing-grid--prices {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+@media (max-width: 767px) {
+  .settings-pricing-grid--prices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

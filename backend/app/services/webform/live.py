@@ -1,0 +1,1617 @@
+# SPDX-License-Identifier: Apache-2.0
+"""「点哪个填哪个」：页面里的焦点监听 + 提示面板的驱动。
+
+## 与批量模式的根本差别
+
+批量模式先给整页控件打上 ``data-rf-index``（DOM 顺序号）再统一匹配。而网申页面是联动的
+——选了国家，省份下拉重渲染，后面的序号就可能全部错位。那是我最初设计里**最大的风险**。
+
+这个模式**不做预先快照**：你点到哪个框，才在现场描述那个框、现场匹配。序号从哪来、页面
+怎么变，都与它无关。
+
+## 分工
+
+- **页面里**（``FOCUS_LISTENER_SCRIPT``）：只听焦点、只渲染面板。它**不填值**。
+- **这里**：轮询页面状态 → 用 ``service.suggest_for`` 算建议 → 写回面板 → 用户点了「填入」
+  才真正写值，走的是与批量模式**同一套**哑执行器与回读校验。
+
+之所以让写入绕回 Python，而不是在页面里直接写：写入、回读校验、失败上报就都只有一份实现。
+
+## 安全
+
+- 面板只显示**这一个控件**该填什么，绝不自动写。
+- 密码 / 验证码 / 同意条款 / 声明类勾选 / 他人信息：``suggest_for`` 直接判为 blocked，
+  面板只说明原因、不给「填入」按钮。
+- 页面**不直接访问本地 API**（那会让任何网站都能读到用户资料），一切经 CDP 来回传。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import logging
+import threading
+import unicodedata
+from collections.abc import Callable
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any
+
+from ..browser.cdp_client import CdpClient
+from . import live_assistant
+from ._base import WebFormConflict
+from .data.profile_snapshot import normalize_scope
+from .engine import (
+    FOCUS_LISTENER_SCRIPT,
+    Control,
+    FormEngine,
+    excluded_by_hints,
+    foreign_marker,
+    has_ambiguous_field_evidence,
+)
+from .fields import FIELD_LABELS
+from .live_ai_worker import _AiWorker
+from .live_autofill import (
+    AUTOFILL_STEP,
+    AUTOFILL_TARGET,
+    REASON_INTERNAL,
+    REASON_PAGE_UNREADABLE,
+    AutoFillProgress,
+    AutoFillWorker,
+    fill_current_page,
+)
+from .live_control import (
+    install_live_control_script,
+    set_assistant_reply_script,
+    set_autofill_status_script,
+    set_live_enabled_script,
+)
+from .live_memory_panel import memory_targets_script, remember_editor_script
+from .live_remember import LiveRememberMixin
+from .live_scripts import (
+    _ACK_ASSISTANT_ASK_SCRIPT,
+    _ACK_AUTOFILL_SCRIPT,
+    _ACK_SCOPE_SCRIPT,
+    _HIDE_SCRIPT,
+    _STATE_SCRIPT,
+    _UNINSTALL_SCRIPT,
+    _catalog_script,
+    _clear_state_script,
+    _scope_script,
+    _show_panel_script,
+)
+from .panel_copy import localize_panel
+from .panel_labels import (
+    indexed_field_label,
+    panel_field_display_name,
+    section_display_name,
+    with_display_fields,
+)
+from .repeated_fields import field_key_for_block, field_label_for_key, split_repeated_key
+from .service import (
+    AI_NOTE,
+    RELAXED_NOTE,
+    SOURCE_AI,
+    SOURCE_RULE,
+    FillSelection,
+    Suggestion,
+    apply_fill,
+    is_relaxed_ai_candidate,
+    recognize_field,
+    related_entries,
+    relaxed_suggestion,
+    resolve_value_for,
+    suggest_for,
+)
+from .service.relaxed import _own_text_contains
+from .service.relaxed_matching import custom_labels_from_catalog
+from .session import Snapshot
+from .webform_copy import locale_key, ui_text
+
+if TYPE_CHECKING:
+    # 仅供静态检查：运行时的 MultiLiveSession 经下方模块级 ``__getattr__`` 延迟提供
+    # （live_multi 单向依赖本模块的 LiveSession，模块级导入会成环）。
+    from .live_multi import MultiLiveSession
+
+logger = logging.getLogger(__name__)
+
+# data_loader 的返回形状：**2 元组是旧契约**（测试与外部调用方），3 元组多带一份
+# 范围/被过滤清单——它与 data/catalog 出自同一次 build_webform_view，_refresh_data 按
+# 元组长度分流。两个形状都收：live_routes 传 3 元组，类型收窄回 2 元组会让 pyright
+# 把那次传参判成错误（2026-11 全仓 pyright 归零）。
+LiveDataLoader = Callable[
+    [],
+    "tuple[dict[str, str], list[dict[str, str]]] | tuple[dict[str, str], list[dict[str, str]], dict[str, Any]]",
+]
+
+# 轮询间隔。CDP 是本地回环，350ms 足够跟手，又不至于把一秒钟塞满几十次往返。
+POLL_INTERVAL_SECONDS = 0.35
+
+# 空闲退避（2026-10-05 性能审查）：0.35s 恒定轮询在页面完全静止时也在持续消耗
+# 前后端 CPU——每轮都是 WebSocket 往返 + 整页状态序列化 + JSON 解析。连续
+# IDLE_AFTER_QUIET_TICKS 轮没有任何事件（约 2.8 秒）就把间隔放大到
+# IDLE_POLL_INTERVAL_SECONDS；任何事件（焦点 / 请求 / 页面跳转 / 开关变更 /
+# 出错）立刻回到快档，交互手感不变。
+IDLE_POLL_INTERVAL_SECONDS = 1.5
+IDLE_AFTER_QUIET_TICKS = 8
+
+# 浏览器整个被关掉后，页面级 WebSocket 已经死了：``evaluate`` 会**连续**失败（页面跳转
+# 通常只失败一轮，下一轮就能重新装上监听，所以单次失败绝不能触发）。连续失败达到阈值后，
+# 再用浏览器级端点确认一次，不可达才判定浏览器已关闭、自动结束本次填写——否则会话永远
+# 显示「运行中」，用户只能手动停。
+#
+# 确认不用进程句柄：浏览器有意活得比后端久，后端重启后句柄必然是死的（见
+# browser_manager.is_running 的说明）；浏览器级 HTTP 端点（/json/list）不走页面通道，
+# 端口活着就说明浏览器还在，是这里唯一可靠的外部信号。
+BROWSER_CLOSED_FAILURES = 3
+BROWSER_CLOSED_REASON = "browser_closed"
+
+# 一次会话最多问几次模型。**这是钱**：一个长表单上认不出的框可能有几十个，而用户来回点
+# 同一个框也会重复触发。到顶就停止询问并如实说明，不静默变成"没认出来"。
+# 同一控件重复问不会真的再花一次（``ai.fingerprint`` 的语义缓存挡在前面），所以这个数
+# 大致等于"这一页最多能问多少个**不同的**框"。
+MAX_AI_CALLS = 30
+
+# 规则认不出、也没问 AI（没开或问不成）时的兜底措辞。
+UNMATCHED_NOTE = "没认出来这个框要填什么"
+
+
+class LiveSession(LiveRememberMixin):
+    """点哪个填哪个的一次会话：装上监听、轮询、按用户确认写入。"""
+
+    def __init__(
+        self,
+        client: CdpClient,
+        data: dict[str, str],
+        catalog: list[dict[str, str]] | None = None,
+        *,
+        provider: Any = None,
+        ai_enabled: bool = False,
+        store: Callable[[dict[str, str]], bool] | None = None,
+        require_memory_choice: bool = False,
+        data_loader: LiveDataLoader | None = None,
+        autofill_data_loader: Callable[[], dict[str, str]] | None = None,
+        memory_targets: list[dict[str, Any]] | None = None,
+        memory_targets_loader: Callable[[], list[dict[str, Any]]] | None = None,
+        relaxed_mode_loader: Callable[[], bool] | None = None,
+        ui_locale_loader: Callable[[], str | None] | None = None,
+        ui_locale: str | None = None,
+        scope: str = "group",
+        scope_setter: Callable[[str], None] | None = None,
+    ) -> None:
+        self._client = client
+        self._data = dict(data)
+        # 给人挑的完整清单（按分区、逐条列出）。**在启动时一次性推给页面**：面板不能反过来
+        # 请求本地 API（那会让任何网站都能读到用户资料），所以数据只能由这边主动送过去。
+        self._catalog = list(catalog or [])
+        # 「记住这条」的落库回调。**是个回调而不是直接依赖 extra_profile**：那样这个模块就
+        # 得知道 session 从哪来，而它活在后台线程里、与请求的 session 生命周期无关。由
+        # ``api`` 层用一次性 session 闭一个进来，"怎么写"的事仍留在那一层。
+        # 为 None（单测直接用 LiveSession 时）⇒ 「记住这条」如实说"存不了"，不静默假成功。
+        self._store = store
+        # 默认由 API 根据字段 key 自动落到已有资料或网申资料自定义字段；
+        # require_memory_choice 仅保留给需要显式选目标的兼容调用与单元测试。
+        self._require_memory_choice = require_memory_choice
+        self._memory_targets = list(memory_targets or [])
+        self._memory_targets_loader = memory_targets_loader
+        # 资料可能在另一个界面被补充；每次聚焦新控件前按需重新读取，避免会话持有旧快照。
+        self._data_loader = data_loader
+        # 悬浮球的整页快捷填充必须使用主界面的可复用资料口径；逐框建议仍可包含“本次”资料。
+        self._autofill_data_loader = autofill_data_loader
+        # 「放宽模式」是用户设置（默认关）：每次聚焦时现读，设置页改完立刻生效，
+        # 不需要重启会话。loader 为 None（单测/未接线）⇒ 恒为关。
+        self._relaxed_mode_loader = relaxed_mode_loader
+        # 注入到页面里的文案（悬浮球菜单、焦点面板、「记住这条」）用哪种语言：
+        # 每次安装脚本时现读，用户切了界面语言、下一个页面就跟着变。
+        self._ui_locale_loader = ui_locale_loader
+        # 开启会话那一刻的界面语言：请求里有数据集身份，读到的就是用户正在用的那份设置。
+        # 后台轮询线程读同一个键时没有请求身份，可能落到主数据集上，所以**优先用这个值**。
+        self._ui_locale = ui_locale
+        # 取数范围（group = 仅当前方案 / all = 全部资料）。**实际取数由 loader 按这里执行**：
+        # `_scope_setter` 把新值写回 API 层的范围持有者，下一次 data_loader 读到的就是新范围，
+        # 所以 data / catalog / 预填不会各按一个范围取数（需求 3 硬约束）。
+        self._scope = normalize_scope(scope)
+        self._scope_setter = scope_setter
+        # 被当前方案过滤掉的板块与它们的清单行：每次刷新随 data 一起更新。
+        self._filtered_sections: list[dict[str, str]] = []
+        self._filtered_rows: list[dict[str, str]] = []
+        self._engine = FormEngine()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        # 单轮轮询的互斥：见 _tick 的 docstring（页面一次性事件的"读-清"必须原子）。
+        self._tick_lock = threading.Lock()
+        self._seq = 0
+        # AI 兜底。``provider`` 为 None（没配模型）时整条路都不存在：**零调用**。
+        self._provider = provider
+        self._ai_enabled = bool(ai_enabled and provider is not None)
+        self._ai_calls = 0
+        # 模型调用要 1~3 秒，而 ``_on_focus`` 跑在 350ms 一轮的轮询线程上（``_loop`` 只
+        # ``except Exception`` 兜底）。在那里同步等一次网络调用会把整个轮询卡死——用户点到
+        # 下一个框时面板纹丝不动，看起来就是"卡了"。所以真正的调用挪到自己的工作线程上。
+        self._ai_worker = _AiWorker(self._run_ai)
+        self._autofill_worker = AutoFillWorker(self._run_autofill)
+        # 「问投投」的工作线程。**独立于填表 AI 开关**：只要配了模型（provider 有值）
+        # 就可以问——ai_enabled 管的是自动字段识别的成本，而问答是用户逐条显式发起的
+        # 单次调用，语义不同。provider 为 None 时 ask() 会如实回「未配置模型服务」。
+        self._ask_worker = _AiWorker(self._run_ask, name="webform-ask")
+        # 问答历史与问题游标都是**每文档**一份：页面跳转即重置（见 _tick 的重装分支），
+        # 否则上一页的对话会接到新页面上、旧 seq 会吞掉新页的第一次提问。
+        self._ask_history = live_assistant.new_history()
+        self._last_ask_sequence: int | None = None
+        self._enabled = True
+        self._last_control_sequence: int | None = None
+        self._last_autofill_sequence: int | None = None
+        # 「可能是这几个」——按**当前焦点控件**从完整清单里挑出的前几条，随面板一起推给页面。
+        #
+        # 存在这里而不是每次现算：`_publish` 会被好几个分支调用（命中 / 认不出 / AI 在想 /
+        # AI 回来了），它们都得带上同一份；而重算一遍要遍历整个清单。
+        self._related: list[dict[str, str]] = []
+        # 给 ResumeForge 页面看的状态（页面上要能显示"正在做什么"）。
+        self.state: dict[str, Any] = {
+            "running": False,
+            "enabled": False,
+            "field_label": "",
+            "value": "",
+            "status": "",
+            "note": "",
+            "source": "",
+            "remember_field_key": "",
+            "alternatives": [],
+            "filled": 0,
+            "remember_pending": None,
+            # 会话结束原因："" = 正常（没结束或用户手动停）；browser_closed = 浏览器被
+            # 关闭后自动结束。前端据此给一条中性提示而不是报错。
+            "stop_reason": "",
+            # 取数范围与"自动填写时因范围被跳过"的统计（面板开关与跳过清单用）。
+            "scope": self._scope,
+            "skipped_count": 0,
+            "skipped_section": "",
+        }
+
+    # ===== 生命周期 =====
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            raise WebFormConflict("点击填表模式已经在运行")
+        # 刻意**不**在这里把窗口唤到前台：实时填表现在随浏览器启动自动开启，
+        # 用户可能把窗口最小化/切走了并不想被打断——启动时强行 activateTarget
+        # 就是用户反馈的"加载出来的时候又弹出一次专用浏览器"。焦点问题（Chrome
+        # 无系统焦点时不派发 focusin）在用户真正点击窗口时自然消失：点击本身
+        # 就会让窗口获得焦点。
+        self._attach()
+        # 上一轮可能留下了面板，先收干净。
+        self._client.evaluate(_clear_state_script())
+        self._stop.clear()
+        self._ai_worker.start()
+        self._autofill_worker.start()
+        self._ask_worker.start()
+        # running 先落状态再开线程：自动结束可能跑得比这行赋值还快（浏览器在启动的
+        # 同一瞬间就被关掉），后写会把它覆盖回 True，会话就永远显示「运行中」。
+        self.state["running"] = True
+        self.state["enabled"] = self._enabled
+        self.state["stop_reason"] = ""
+        self._thread = threading.Thread(target=self._loop, name="webform-live", daemon=True)
+        self._thread.start()
+
+    def update_data(
+        self,
+        data: dict[str, str],
+        catalog: list[dict[str, str]] | None = None,
+        scope_info: dict[str, Any] | None = None,
+    ) -> None:
+        """更新当前会话使用的资料与人工挑选清单。
+
+        ``scope_info``（范围 / 被组过滤的板块 / 这些板块的清单行）与 data、catalog 出自
+        **同一次取数**（``build_webform_view``），所以面板上的角标、空态原因与清单内容
+        不会互相矛盾。
+        """
+        with self._lock:
+            self._data = dict(data)
+            if catalog is not None:
+                self._catalog = list(catalog)
+                next_catalog = list(self._catalog)
+            else:
+                next_catalog = None
+            if scope_info is not None:
+                self._apply_scope_info(scope_info)
+        if next_catalog is not None:
+            # 资料页可能在实时会话仍运行时被另一个界面更新。除了匹配数据要刷新，
+            # 浏览器里的「换个资料」清单也必须立刻看到新条目。
+            try:
+                self._client.evaluate(_catalog_script(self._display_catalog(next_catalog)))
+            except Exception as error:  # noqa: BLE001 - 页面跳转时下一轮会重新装载
+                logger.debug("网申填表：刷新浏览器资料清单失败：%s", error)
+            self._push_scope_state()
+
+    def _apply_scope_info(self, info: dict[str, Any]) -> None:
+        """记下范围与"被当前方案过滤掉的板块"（调用方已持有 ``_lock``）。"""
+        self._scope = normalize_scope(info.get("scope"))
+        self._filtered_sections = [dict(item) for item in info.get("filtered_sections") or ()]
+        self._filtered_rows = [dict(item) for item in info.get("filtered_rows") or ()]
+        self.state["scope"] = self._scope
+
+    def _filtered_display(self) -> tuple[list[dict[str, str]], dict[str, str]]:
+        """（板块显示名列表, 清单 key 基础名 → 板块显示名）。
+
+        输出给面板的名字**按当前界面语言**取（``section_display_name`` 只对英文生效），
+        所以英文界面里那句「当前方案未包含…」不会夹一个中文板块名。
+        """
+        locale = self._locale()
+        sections = [
+            {
+                "key": str(item.get("key") or ""),
+                "display": section_display_name(
+                    str(item.get("key") or ""), str(item.get("name") or ""), locale
+                ),
+            }
+            for item in self._filtered_sections
+        ]
+        names = {item["key"]: item["display"] for item in sections}
+        by_key: dict[str, str] = {}
+        for row in self._filtered_rows:
+            base = split_repeated_key(str(row.get("key") or ""))[0]
+            name = names.get(str(row.get("group_key") or ""))
+            if base and name:
+                by_key[base] = name
+        return sections, by_key
+
+    def _push_scope_state(self) -> None:
+        """把范围与"被组过滤的板块"推给页面（面板顶部的开关与空态要说清原因）。"""
+        sections, _by_key = self._filtered_display()
+        try:
+            self._client.evaluate(_scope_script(self._scope, sections))
+        except Exception as error:  # noqa: BLE001 - 页面跳转时下一轮会重新装载
+            logger.debug("网申填表：刷新取数范围失败：%s", error)
+
+    def request_scope(self, scope: str) -> None:
+        """切换取数范围并让三处入口同时换代（面板开关 → Python）。
+
+        重新走一次 data_loader：loader 里的范围持有者已被 ``_scope_setter`` 改掉，所以
+        资料、清单、空态原因在同一次刷新里一起变，不会出现"清单按全部、预填按当前组"。
+        """
+        next_scope = normalize_scope(scope)
+        if next_scope == self._scope:
+            return
+        if self._scope_setter is not None:
+            self._scope_setter(next_scope)
+        self._refresh_data()
+        self._attach()
+
+    def adopt_scope(
+        self, scope: str, scope_setter: Callable[[str], None] | None = None
+    ) -> None:
+        """复用已有会话时对齐范围持有者（不重取数——调用方紧接着会 update_data）。"""
+        if scope_setter is not None:
+            self._scope_setter = scope_setter
+        self._scope = normalize_scope(scope)
+        self.state["scope"] = self._scope
+
+    def set_data_loader(self, loader: LiveDataLoader | None) -> None:
+        """替换资料刷新回调，供页面切换回来时复用同一会话。"""
+        self._data_loader = loader
+
+    def set_autofill_data_loader(self, loader: Callable[[], dict[str, str]] | None) -> None:
+        """替换悬浮球整页快捷填充使用的批量资料读取回调。"""
+        self._autofill_data_loader = loader
+
+    def set_scope_setter(self, setter: Callable[[str], None] | None) -> None:
+        """替换范围写回回调（复用会话时接线，**不**改变当前范围）。"""
+        self._scope_setter = setter
+
+    def set_relaxed_mode_loader(self, loader: Callable[[], bool] | None) -> None:
+        """替换「放宽模式」开关的读取回调（每次聚焦现读，改动即时生效）。"""
+        self._relaxed_mode_loader = loader
+
+    def set_ui_locale_loader(self, loader: Callable[[], str | None] | None) -> None:
+        """替换界面语言读取回调（会话已存在时切语言也能生效）。"""
+        self._ui_locale_loader = loader
+
+    def _locale(self) -> str:
+        """注入脚本文案用哪种语言：优先用开启会话时记下的值，其次现读，最后回退源语言。"""
+        if self._ui_locale:
+            return locale_key(self._ui_locale)
+        if self._ui_locale_loader is None:
+            return locale_key(None)
+        return locale_key(self._ui_locale_loader())
+
+    def _display_catalog(self, rows: list[dict[str, str]]) -> list[dict[str, str]]:
+        """给清单补英文显示名（``display`` / ``display_group``）。
+
+        清单在面板上是 ``textContent`` 原样渲染的，界面文案那套整句替换够不到它；这里按
+        稳定 key（板块 key / field_id / FormField.key）补一份显示名。**``label`` 与 ``group``
+        原样保留**——它们被「填入」回传、被 ``dataset.group`` 用于定位与折叠；``zh-CN`` 下
+        两个显示字段恒等于原值。
+        """
+        return with_display_fields(rows, self._locale())
+
+    def _relaxed_enabled(self) -> bool:
+        if self._relaxed_mode_loader is None:
+            return False
+        try:
+            return bool(self._relaxed_mode_loader())
+        except Exception:  # noqa: BLE001 - 读不到开关就按关处理，面板回到保守文案
+            logger.debug("网申填表：读取放宽模式开关失败，按关闭处理")
+            return False
+
+    def set_client(self, client: CdpClient) -> None:
+        """切换到当前浏览器客户端。
+
+        浏览器管理器每次取 ``client()`` 都会创建一个新的 CDP 客户端；浏览器重启或
+        配置变化后，旧会话不能继续持有旧实例。
+        """
+        with self._lock:
+            self._client = client
+
+    def set_enabled(self, enabled: bool) -> None:
+        """切换当前标签页是否响应焦点；保留悬浮球，避免关闭后无法重新打开。"""
+        next_enabled = bool(enabled)
+        self.state["enabled"] = next_enabled
+        if self._enabled == next_enabled:
+            return
+        self._enabled = next_enabled
+        try:
+            self._client.evaluate(_clear_state_script())
+            self._client.evaluate(set_live_enabled_script(next_enabled))
+        except Exception as error:  # noqa: BLE001 - 页面跳转时下一轮会重新注入
+            logger.debug("网申填表：同步浏览器内开关失败：%s", error)
+
+    def set_memory_choice_required(self, required: bool) -> None:
+        """更新「记住这条」是否需要人工选目标的兼容开关。"""
+        self._require_memory_choice = bool(required)
+
+    def set_memory_targets_loader(self, loader: Callable[[], list[dict[str, Any]]] | None) -> None:
+        """替换浏览器内联编辑器的资料目标刷新回调。"""
+        self._memory_targets_loader = loader
+
+    def update_memory_targets(self, targets: list[dict[str, Any]]) -> None:
+        """把最新的完整资料目录推给目标浏览器。"""
+        self._memory_targets = list(targets)
+        try:
+            self._client.evaluate(memory_targets_script(self._memory_targets))
+        except Exception as error:  # noqa: BLE001 - 页面跳转时下一轮会重新装载
+            logger.debug("网申填表：刷新浏览器记忆目标失败：%s", error)
+
+    def _refresh_data(self) -> None:
+        if self._data_loader is not None:
+            try:
+                loaded = self._data_loader()
+                # 2 元组是旧契约（测试与外部调用方）；3 元组多带一份范围/差异清单，
+                # 与 data/catalog 出自同一次 build_webform_view。
+                if len(loaded) == 3:
+                    data, catalog, scope_info = loaded
+                else:
+                    data, catalog = loaded
+                    scope_info = None
+                self.update_data(data, catalog, scope_info)
+            except Exception as error:  # noqa: BLE001 - 资料刷新失败不应弄死实时监听
+                logger.warning("网申填表：刷新实时资料失败，继续使用上一份资料：%s", error)
+        if self._memory_targets_loader is not None:
+            try:
+                self.update_memory_targets(self._memory_targets_loader())
+            except Exception as error:  # noqa: BLE001 - 资料刷新失败不应弄死实时监听
+                logger.warning("网申填表：刷新记忆目标失败，继续使用上一份目录：%s", error)
+
+    def _refresh_related(self) -> None:
+        """重算「可能是这几个」。
+
+        这份清单是**聚焦那一刻**算好的快照（`_on_focus`）。「记住这条」刚把值写进资料，
+        不重算的话面板上那几条仍是保存前的样子——用户要等到下一次换框才看见刚记下的
+        字段（反馈原话："记住了之后卡片上没有立即刷新"）。
+        """
+        control = self._current_control()
+        if control is None:
+            return
+        with self._lock:
+            catalog = list(self._catalog)
+        self._related = self._display_catalog(related_entries(control, catalog))
+
+    def _attach(self) -> None:
+        """把「给人挑」的清单与焦点监听装进**当前文档**。
+
+        **幂等**：监听脚本自己会看 ``__rfInstalled``，装过就早退。所以页面跳转后重新调一次
+        是安全的——这正是 :meth:`_tick` 自愈的方式。
+
+        两件事必须成对做：清单先送进去，再装监听。少了清单，用户第一次点「换个资料…」
+        会看到空列表；少了监听，点哪个框都没反应。
+        """
+        locale = self._locale()
+        self._client.evaluate(_catalog_script(self._display_catalog(self._catalog)))
+        self._client.evaluate(localize_panel(FOCUS_LISTENER_SCRIPT, locale))
+        # 范围与"被组过滤的板块"：面板顶部的开关、空态原因与「方案外」角标都依赖它。
+        # **必须排在面板脚本之后**——面板脚本里才定义 `__rfPaintScope` / `__rfRefreshList`。
+        self._push_scope_state()
+        self._client.evaluate(install_live_control_script(self._enabled, locale))
+        self._client.evaluate(memory_targets_script(self._memory_targets))
+        self._client.evaluate(remember_editor_script(locale))
+
+    def stop(self) -> None:
+        self._stop.set()
+        thread, self._thread = self._thread, None
+        # 自动结束跑在轮询线程自己身上，join 自己会抛 RuntimeError——跳过。
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        # 还在飞的模型调用不等它（那是网络时间，等下去只会卡住停用按钮），但要丢掉排队中的
+        # 那些——不然用户关了模式之后，某个回调还会往页面上推一个已经没人看的面板。
+        self._ai_worker.close()
+        self._autofill_worker.close()
+        self._ask_worker.close()
+        with contextlib.suppress(Exception):
+            # 真正把监听与面板从页面上撤掉，而不是只藏起来。
+            # 页面可能已经关了。
+            self._client.evaluate(_UNINSTALL_SCRIPT)
+        self.state["running"] = False
+        self.state["enabled"] = False
+
+    @property
+    def is_running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    # ===== 主循环 =====
+
+    def _loop(self) -> None:
+        quiet = 0
+        failures = 0
+        while not self._stop.is_set():
+            try:
+                busy = bool(self._tick())
+            except Exception as error:  # noqa: BLE001 - 单轮失败不该让会话整个垮掉
+                logger.warning("点击填表的一轮出错了：%s", error)
+                # 出错保持快档：连接恢复、页面跳转这类情况要尽快跟上。
+                busy = True
+                failures += 1
+                # 连续失败达到阈值且浏览器级端点也确认不可达：浏览器已被关掉，自动结束
+                # 本次填写。单次失败（页面跳转）到不了阈值；浏览器还在时到不了确认。
+                if failures >= BROWSER_CLOSED_FAILURES and self._browser_is_gone():
+                    logger.info("浏览器已关闭，实时填表会话已自动结束")
+                    self.state["stop_reason"] = BROWSER_CLOSED_REASON
+                    self.stop()
+                    return
+            else:
+                failures = 0
+            if busy:
+                quiet = 0
+                delay = POLL_INTERVAL_SECONDS
+            else:
+                quiet += 1
+                delay = (
+                    POLL_INTERVAL_SECONDS
+                    if quiet < IDLE_AFTER_QUIET_TICKS
+                    else IDLE_POLL_INTERVAL_SECONDS
+                )
+            self._stop.wait(delay)
+
+    def _browser_is_gone(self) -> bool:
+        """连续失败达到阈值后的一次**确认**：浏览器级端点是否也不可达。
+
+        页面级 WebSocket 死掉有两种原因：整个浏览器被关掉（要自动结束），或只是当前
+        标签页没了（多标签模式由外层清理，会话本身保持重试）。区分二者用浏览器级
+        HTTP 端点（``/json/list``）——它不走页面通道，端口活着就说明浏览器还在。
+        """
+        try:
+            self._client.list_targets()
+        except Exception:  # noqa: BLE001 - 探测失败就是"不在了"，具体原因无需关心
+            return True
+        return False
+
+    def _tick(self) -> bool:
+        """拉一次页面状态并处理；返回本轮是否遇到需要跟进的事件（供空闲退避判断）。
+
+        整轮串行（``_tick_lock``）：页面上的 accept/remember 全局是"读到即消费"的
+        一次性事件，两轮 tick 并发跑会同时读到同一份 remember、各自处理一遍——
+        用户的一条「记住这条」被记两次。生产只有轮询线程会 tick，但测试会与
+        轮询线程并发手动 tick，这里的互斥把"读-清"变成原子。
+        """
+        with self._tick_lock:
+            return self._tick_locked()
+
+    def _tick_locked(self) -> bool:
+        busy = False
+        payload = self._client.evaluate(_STATE_SCRIPT)
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if not isinstance(payload, dict):
+            # 状态拿不到（假客户端 / 旧页面 / 异常返回）：按"有事"处理保持快档。
+            return True
+
+        control = payload.get("live_control")
+        if isinstance(control, dict):
+            sequence = int(control.get("seq") or 0)
+            if self._last_control_sequence is None:
+                self._last_control_sequence = sequence
+            elif sequence != self._last_control_sequence:
+                self._last_control_sequence = sequence
+                self.set_enabled(bool(control.get("enabled", True)))
+                busy = True
+        # 页面跳转或刷新会把监听与面板一起带走。这里**自己发现、自己装回去**——
+        # 否则模式会一直显示「运行中」而实际上什么都点不动（用户看到的就是"没生效"，
+        # 且没有任何提示能解释为什么）。
+        #
+        # 判据用 ``installed is False`` 而不是 ``not installed``：假客户端与旧版页面可能
+        # 不返回这个字段，那种情况下**不该**每轮都重装一遍。
+        if payload.get("installed") is False:
+            logger.info("网申填表：页面已跳转，重新装上「点哪个填哪个」的监听")
+            self._attach()
+            # 新文档的焦点序号从 0 开始，跟着归零；否则可能正好撞上旧序号而漏掉第一次聚焦。
+            self._seq = 0
+            # 新文档里的悬浮球从 1 重新编号；不清这个游标时，上一页已经用过 seq=1
+            # 的情况下，新页第一次点击「自动填写当前页面」会被误认为是旧请求，按钮就会
+            # 永远停在「正在填写中」。控制序号也一并重置，避免把新文档的默认状态当成
+            # 上一页的开关变更。
+            self._last_control_sequence = None
+            self._last_autofill_sequence = None
+            # 「问投投」同样是**每文档**一份：历史与问题游标跟着重置，防止新文档的
+            # seq 从 1 重新编号时被旧游标误判为"已处理过"。
+            self._ask_history = live_assistant.new_history()
+            self._last_ask_sequence = None
+            # 上一页的建议已经失效，别让它继续挂在界面上。
+            self._publish(
+                {
+                    "field_label": "",
+                    "value": "",
+                    "status": "",
+                    "note": "",
+                    "source": "",
+                    "alternatives": [],
+                }
+            )
+            return True
+
+        # 面板/清单顶部那个范围开关：页面只放一个请求全局，由这里消费并立刻换代。
+        scope_request = payload.get("scope_request")
+        if self._enabled and isinstance(scope_request, str) and scope_request:
+            busy = True
+            try:
+                self._client.evaluate(_ACK_SCOPE_SCRIPT)
+            except Exception as error:  # noqa: BLE001 - ACK 失败不该阻止范围切换
+                logger.debug("网申填表：确认范围切换失败：%s", error)
+            try:
+                self.request_scope(scope_request)
+            except Exception as error:  # noqa: BLE001 - 切范围失败保持旧范围，别让轮询垮掉
+                logger.warning("网申填表：切换取数范围失败，继续使用当前范围：%s", error)
+
+        autofill = payload.get("autofill")
+        if self._enabled and isinstance(autofill, dict):
+            sequence = int(autofill.get("seq") or 0)
+            if sequence and (
+                self._last_autofill_sequence is None or sequence != self._last_autofill_sequence
+            ):
+                self._last_autofill_sequence = sequence
+                busy = True
+                try:
+                    self._client.evaluate(_ACK_AUTOFILL_SCRIPT)
+                except Exception as error:  # noqa: BLE001 - ACK 失败不应阻止后台任务
+                    logger.debug("网申填表：确认自动填写请求失败：%s", error)
+                if not self._autofill_worker.request(sequence):
+                    self._publish_autofill(
+                        AutoFillProgress(
+                            state="error",
+                            total=0,
+                            completed=0,
+                            filled=0,
+                            failed=0,
+                            message="已有自动填写正在进行，请稍后再试",
+                        )
+                    )
+
+        # 「问投投」与自动填写同层处理：即便实时填表开关是关的，悬浮球还在，
+        # 问答就应当可用（它是悬浮球的独立能力，不随填表开关一起下线）。
+        assistant_ask = payload.get("assistant_ask")
+        if isinstance(assistant_ask, dict):
+            ask_sequence = int(assistant_ask.get("seq") or 0)
+            ask_text = str(assistant_ask.get("text") or "")
+            if (
+                ask_sequence
+                and ask_text
+                and (self._last_ask_sequence is None or ask_sequence != self._last_ask_sequence)
+            ):
+                self._last_ask_sequence = ask_sequence
+                busy = True
+                try:
+                    self._client.evaluate(_ACK_ASSISTANT_ASK_SCRIPT)
+                except Exception as error:  # noqa: BLE001 - ACK 失败不应阻止后台任务
+                    logger.debug("网申填表：确认问投投请求失败：%s", error)
+                self._ask_worker.push(ask_sequence, ask_text)
+
+        # 关闭实时填表后仍要保留悬浮球，这样用户可以在专用浏览器里重新开启；
+        # 因此即使当前是关闭状态，也要先把新文档里的控制球重新装回去，再跳过焦点处理。
+        if not self._enabled:
+            return busy
+
+        seq = int(payload.get("seq") or 0)
+        if seq != self._seq:
+            self._seq = seq
+            busy = True
+            self._on_focus(payload.get("control"))
+
+        accept = payload.get("accept")
+        if isinstance(accept, dict):
+            busy = True
+            self._on_accept(accept)
+
+        remember = payload.get("remember")
+        if isinstance(remember, dict):
+            busy = True
+            self._on_remember(remember)
+        return busy
+
+    # ===== 焦点变化：算建议、显示面板 =====
+
+    def _on_focus(self, raw: Any) -> None:
+        if not isinstance(raw, dict):
+            # 焦点落到了**不填**的控件上（单选、复选、下拉、附件…）。页面那边已经把面板
+            # 收掉了，这边也要跟着清——否则 ResumeForge 页面上还挂着上一条"将填入"，
+            # 而用户眼前的浏览器里什么都没有，两边对不上。
+            self._related = []
+            self._publish(
+                {
+                    "status": "",
+                    "field_label": "",
+                    "value": "",
+                    "note": "",
+                    "source": "",
+                    "alternatives": [],
+                }
+            )
+            return
+        control = self._build_control(raw)
+        if control is None:
+            return
+        self._refresh_data()
+        with self._lock:
+            data = dict(self._data)
+            catalog = list(self._catalog)
+        # 「可能是这几个」：**在算建议之前定下来**，所以每一个分支（命中 / 认不出 /
+        # AI 在想 / AI 回来了）推出去的面板都带着同一份。显示名与清单同源（英文界面下
+        # 也不能露中文），`label` / `group` 仍是原值——点这一行时回传的就是它们。
+        self._related = self._display_catalog(related_entries(control, catalog))
+        custom_labels = custom_labels_from_catalog(catalog)
+        suggestion = self._suggest_custom_field(control, data) or suggest_for(
+            control,
+            data,
+            engine=self._engine,
+            relaxed=self._relaxed_enabled(),
+            custom_labels=custom_labels,
+        )
+        # 放宽模式（用户设置，默认关）：对 blocked 的点选控件给「代点选择」建议或
+        # 「帮我勾选」按钮。建议仍是**建议**——用户点按钮这个动作才是确认；日期
+        # 选择器、文件上传等 ``relaxed_kind`` 判为 None 的控件不会走到这里。
+        if suggestion.status == "blocked" and self._relaxed_enabled():
+            relaxed = relaxed_suggestion(control, data, engine=self._engine)
+            if relaxed is not None:
+                self._publish(
+                    {
+                        "status": relaxed.status,
+                        "remember_field_key": relaxed.field,
+                        "field_label": relaxed.field_label,
+                        "value": relaxed.value,
+                        "note": relaxed.note,
+                        "source": SOURCE_RULE,
+                        "accept_label": relaxed.accept_label,
+                    }
+                )
+                return
+            # 放宽模式下规则没认出字段的点选类控件：交给 AI 兜底识别（与批量 enrichment
+            # 同一套纪律——只发字段名、终局判定不放宽、额度上限）。三种"没接住"都保持
+            # blocked 文案不变：没开 AI、额度用完、模型没帮上忙。
+            if is_relaxed_ai_candidate(control) and self._ai_enabled and self._begin_ai_call():
+                self._publish(
+                    {
+                        "status": "ai_thinking",
+                        "note": ui_text(self._locale(), "note.aiThinking"),
+                        "source": SOURCE_AI,
+                        "remember_field_key": "",
+                    }
+                )
+                self._dispatch_ai(control, relaxed=True)
+                return
+        if suggestion.status != "unmatched":
+            self._publish(
+                {
+                    "status": suggestion.status,
+                    "remember_field_key": suggestion.field,
+                    "field_label": suggestion.field_label,
+                    "value": suggestion.value,
+                    "note": suggestion.note,
+                    "source": SOURCE_RULE,
+                }
+            )
+            return
+
+        # `suggest_for` 把"认得出字段但资料里没值"和"压根认不出"都报成 unmatched
+        # （``match_fields`` 对空值字段直接跳过）。**这两件事要分开**：前者去「我的资料」
+        # 补一下就好了，问模型纯属白花钱；只有后者才值得交给 AI。
+        if known := recognize_field(control):
+            shown_key = field_key_for_block(known, control.block_family, control.block_index)
+            label = field_label_for_key(
+                shown_key, FIELD_LABELS.get(split_repeated_key(shown_key)[0], shown_key)
+            )
+            # **"方案没带这块"与"你没填过"是两件事**：前者要说清是哪个板块被过滤了，
+            # 否则用户会去「我的资料」白找一遍（问题 8）。只在「仅当前方案」范围下出现。
+            filtered_section = self._filtered_display()[1].get(split_repeated_key(shown_key)[0])
+            note = (
+                ui_text(self._locale(), "note.sectionFiltered", section=filtered_section)
+                if filtered_section
+                else ui_text(self._locale(), "note.recognizeNoValue", label=label)
+            )
+            self._publish_unmatched(
+                note,
+                source=SOURCE_RULE,
+                field_label=label,
+                field_key=shown_key,
+            )
+            return
+
+        if has_ambiguous_field_evidence(control):
+            self._publish_unmatched(
+                "页面附近有多个相似字段，未自动猜测，请从资料清单中选择",
+                source=SOURCE_RULE,
+            )
+            return
+
+        # **三种"没问成"要分开说**：没开 AI、次数用完、模型没帮上忙。混成一句话的话，
+        # 用户分不清"是不是我哪里没设置"和"它尽力了"。
+        if not self._ai_enabled:
+            self._publish_unmatched(UNMATCHED_NOTE)
+            return
+        if not self._begin_ai_call():
+            self._publish_unmatched(f"没认出来（这一页问 AI 的次数已用完，上限 {MAX_AI_CALLS} 次）")
+            return
+        # 先把面板切到"AI 在看"，别让用户对着一个静止的"正在看这个框…"等三秒。
+        self._publish(
+            {
+                "status": "ai_thinking",
+                "note": ui_text(self._locale(), "note.aiThinking"),
+                "source": SOURCE_AI,
+                "remember_field_key": "",
+            }
+        )
+        self._dispatch_ai(control)
+
+    def _begin_ai_call(self) -> bool:
+        """还能不能再花一次调用。**先扣再问**，避免并发下的双花。"""
+        with self._lock:
+            if self._ai_calls >= MAX_AI_CALLS:
+                return False
+            self._ai_calls += 1
+            return True
+
+    @staticmethod
+    def _normalize_label(label: str) -> str:
+        normalized = unicodedata.normalize("NFKC", str(label or "")).casefold()
+        return "".join(char for char in normalized if char.isalnum())
+
+    def _suggest_custom_field(self, control: Control, data: dict[str, str]) -> Suggestion | None:
+        """只对**唯一精确同名**的自定义字段提供逐框建议。
+
+        自定义字段没有内置同义词表，不能把模糊相似当成自动填写依据；字段重命名后，
+        目标浏览器拿到的新标签会在下一次聚焦时立即参与这条精确匹配。
+        """
+        # 逐属性精确匹配：label / placeholder / aria_label / name 各自单独归一，
+        # 任一属性与某自定义字段标签完全相等即命中。拼接整串归一会被控件 name
+        # 属性（如 Google 表单的 entry.123456）污染，导致同名也匹配不上。
+        signatures = {
+            normalized
+            for normalized in (
+                self._normalize_label(control.label),
+                self._normalize_label(control.placeholder),
+                self._normalize_label(control.aria_label),
+                self._normalize_label(control.name),
+            )
+            if normalized
+        }
+        if not signatures:
+            return None
+        candidates = [*self._memory_targets, *self._catalog]
+        matches = []
+        seen: set[str] = set()
+        for target in candidates:
+            source = str(target.get("source") or "extra")
+            if source != "extra":
+                continue
+            key = str(target.get("field_key") or target.get("key") or "")
+            label = str(target.get("label") or "")
+            normalized_label = self._normalize_label(label)
+            if (
+                not key.startswith("CUSTOM_")
+                or not normalized_label
+                or normalized_label not in signatures
+            ):
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            matches.append((key, label))
+        if len(matches) != 1:
+            return None
+        key, label = matches[0]
+        value = str(data.get(key) or "").strip()
+        if not value:
+            return Suggestion("unmatched", field=key, field_label=label)
+        return Suggestion("matched", field=key, field_label=label, value=value)
+
+    def _custom_field_labels(self) -> dict[str, str]:
+        """自定义字段 key → 展示名。候选顺序与 ``_suggest_custom_field`` 一致：
+        ``memory_targets`` 在前、``catalog`` 补充，先到先得。"""
+        labels: dict[str, str] = {}
+        for target in (*self._memory_targets, *self._catalog):
+            key = str(target.get("field_key") or target.get("key") or "")
+            if not key.startswith("CUSTOM_") or key in labels:
+                continue
+            label = str(target.get("label") or "").strip()
+            if label:
+                labels[key] = label
+        return labels
+
+    def _ai_custom_candidates(self, limit: int = 15) -> list[tuple[str, str]]:
+        """交给 AI 提示词的有值自定义字段 ``(key, label)``，**只发名字不发值**。
+
+        自定义字段不在目录同义词表里，规则与目录候选都够不到时它们是唯一的补充；
+        量多时限流——目录字段永远全量在前，这里只多给这么多。
+        """
+        labels = self._custom_field_labels()
+        with self._lock:
+            data = dict(self._data)
+        candidates: list[tuple[str, str]] = []
+        for key, label in labels.items():
+            if not (data.get(key) or "").strip():
+                continue
+            candidates.append((key, label))
+            if len(candidates) >= limit:
+                break
+        return candidates
+
+    def _custom_value_by_label(self, key: str, data: dict[str, str]) -> str:
+        """AI 认出的**目录字段**在资料里没值时，按显示名找同名的自定义字段。
+
+        用户常把「项目链接」这类字段记在自定义里。按归一化 label **精确相等**匹配
+        （不做模糊近似——歧义不猜），取到值就交给正常的填写链；取不到返回空串。
+        """
+        if key.startswith("CUSTOM_"):
+            return ""
+        wanted = self._normalize_label(FIELD_LABELS.get(split_repeated_key(key)[0], key))
+        if not wanted:
+            return ""
+        for custom_key, label in self._custom_field_labels().items():
+            if self._normalize_label(label) == wanted and (data.get(custom_key) or "").strip():
+                return str(data[custom_key]).strip()
+        return ""
+
+    def _field_display_label(self, key: str) -> str:
+        """面板上给用户看的字段名；自定义字段用保存时的名字，不带 ``CUSTOM_`` 前缀。
+
+        **只影响显示**：这里的返回值只会进面板标题（``field_label``）与备选行的标签，
+        匹配与写入仍然按 ``key`` 走（``_custom_value_by_label`` 用的是目录里的中文标签，
+        不是这个显示名），所以翻成英文不会改变"认得出哪个字段"。
+        """
+        base = split_repeated_key(key)[0]
+        default = FIELD_LABELS.get(base, base)
+        if key.startswith("CUSTOM_"):
+            default = self._custom_field_labels().get(key, key.removeprefix("CUSTOM_"))
+        # 内置字段按 FormField.key 取英文名；自定义字段（用户起的名字）原样返回。
+        shown = panel_field_display_name(key, default, self._locale())
+        return indexed_field_label(key, shown, self._locale())
+
+    def _publish_unmatched(
+        self,
+        note: str,
+        *,
+        source: str = "",
+        field_label: str = "",
+        field_key: str = "",
+    ) -> None:
+        """ "这个框没认出来"的统一出口——面板上永远留着一个「换个资料…」，不会是死路。"""
+        self._publish(
+            {
+                "status": "unmatched",
+                "field_label": field_label,
+                "remember_field_key": field_key,
+                "note": ui_text(self._locale(), "note.pickFromList", note=note),
+                "source": source,
+            }
+        )
+
+    @staticmethod
+    def _build_control(raw: dict[str, Any]) -> Control | None:
+        controls = FormEngine().snapshot_controls([raw])
+        return controls[0] if controls else None
+
+    # ===== AI 兜底 =====
+    #
+    # 三条纪律，写在实现里而不只是注释里：
+    # 1. **不阻塞轮询**——真正的调用在单槽执行器里跑，``_tick`` 立刻返回；
+    # 2. **过期即丢**——提交时记下 ``seq``，回调里比对，用户已经点到别的框就丢弃；
+    # 3. **失败不抛**——执行器里的异常没人接，``_publish`` 自己兜住。
+
+    def _dispatch_ai(self, control: Control, relaxed: bool = False) -> None:
+        self._ai_worker.push(self._seq, control, relaxed)
+
+    def _run_ai(self, seq: int, control: Control, relaxed: bool = False) -> None:
+        # 惰性导入：``ai`` 会连带拉起 ``services/llm``，而本模块是「网申」包的导入入口之一。
+        from .ai import MAX_CUSTOM_FIELDS, identify_fields
+
+        try:
+            matches = asyncio.run(
+                identify_fields(
+                    self._provider,
+                    [control],
+                    # 有值的自定义字段（CUSTOM_*）一并列进候选——只发字段名不发值，
+                    # 数量多时限流（上限与 ai.MAX_CUSTOM_FIELDS 同源）。
+                    extra_fields=self._ai_custom_candidates(MAX_CUSTOM_FIELDS),
+                )
+            )
+        except Exception as error:  # noqa: BLE001 - 工作线程里的异常没人接
+            logger.warning("网申填表的 AI 识别失败：%s", error)
+            if seq == self._seq and not self._stop.is_set():
+                # 放宽候选是 blocked 集合里的控件：兜底失败也回到 blocked 文案，
+                # 不让它挂在"AI 正在识别…"上。
+                if relaxed or FormEngine.relaxed_kind(control) is not None:
+                    self._publish_blocked_panel(control)
+                else:
+                    self._publish_unmatched("AI 没能识别这个框")
+            return
+        if seq != self._seq or self._stop.is_set():
+            # 用户已经点到别的框了（或模式已经停用）。丢掉的这一份不能推——否则面板上会
+            # 显示上一个框的答案，而那看起来就像是程序答错了。
+            return
+        if relaxed:
+            self._publish_ai_relaxed(control, matches.get(control.index, ()))
+        else:
+            self._publish_ai(control, matches.get(control.index, ()))
+
+    def _publish_ai_relaxed(self, control: Control, candidates: tuple[str, ...]) -> None:
+        """放宽候选的 AI 回答：按**放宽代选**语义落成面板上的一行。
+
+        与 ``_publish_ai`` 的分工：那边服务普通文本框，这边服务被 ``skip_reason`` 挡住的
+        点选类控件——命中且资料里有值 → 「代点选择」建议（点「填入」执行，走引擎的
+        弹层 / 勾选路径）；认出来但没值 → 如实说去补哪一项；守卫全拦下或模型没认出 →
+        **保持 blocked 原文案**，不把"没认出来"的帽子扣到点选控件头上。
+        """
+        with self._lock:
+            data = dict(self._data)
+        kind = FormEngine.relaxed_kind(control)
+        usable = tuple(
+            key
+            for key in candidates
+            if not excluded_by_hints(control, key) and foreign_marker(control, key) is None
+        )
+        fillable: list[tuple[str, str, str]] = []
+        for key in usable:
+            value = resolve_value_for(control, key, data) or self._custom_value_by_label(key, data)
+            # 事实类勾选与放宽规则同一道闸：值必须出现在控件自述里，否则代点就是猜。
+            if not value or (kind == "choice" and not _own_text_contains(control, value)):
+                continue
+            shown_key = field_key_for_block(key, control.block_family, control.block_index)
+            fillable.append((shown_key, self._field_display_label(shown_key), value))
+
+        if fillable:
+            shown_key, label, value = fillable[0]
+            self._publish(
+                {
+                    "status": "matched",
+                    "remember_field_key": shown_key,
+                    "field_label": label,
+                    "value": value,
+                    # AI 给的答案必须标明是猜的；程序又将代点——两层都交代。
+                    "note": f"{AI_NOTE}；{RELAXED_NOTE}",
+                    "source": SOURCE_AI,
+                    "alternatives": [
+                        {"label": alt_label, "value": alt_value}
+                        for _key, alt_label, alt_value in fillable[1:]
+                    ],
+                }
+            )
+            return
+
+        if usable:
+            # 模型认出了字段，但资料里没值（或值装不下这个点选控件）。
+            key = usable[0]
+            shown_key = field_key_for_block(key, control.block_family, control.block_index)
+            self._publish_unmatched(
+                self._ai_dead_end(usable),
+                source=SOURCE_AI,
+                field_label=self._field_display_label(shown_key),
+                field_key=shown_key,
+            )
+            return
+
+        # 模型没认出（或全部候选被守卫拦下）：保持 blocked 原文案。
+        self._publish_blocked_panel(control)
+
+    def _publish_blocked_panel(self, control: Control) -> None:
+        """点选类控件的 blocked 面板：与 ``suggest_for`` 的 blocked 建议同一套措辞。"""
+        reason = FormEngine.skip_reason(control) or "这个框需要你在页面上自己点选"
+        self._publish(
+            {
+                "status": "blocked",
+                "field_label": "不会自动填",
+                "value": "",
+                "note": reason,
+                "source": SOURCE_RULE,
+            }
+        )
+
+    def _publish_ai(self, control: Control, candidates: tuple[str, ...]) -> None:
+        """把模型的候选落成面板上的一行主推 + 若干备选。
+
+        **能不能填仍由本地决定**：每个候选都过一遍 ``resolve_value_for``，装不下这个控件的
+        候选（下拉没那一项、日期解不出来）不进面板——模型只贡献了字段名。
+        """
+        with self._lock:
+            data = dict(self._data)
+        # 采纳前逐个候选过守卫，与规则引擎、批量预览共用同一实现：负向词
+        # （"紧急联系人姓名"框不该认成"姓名"）与跨族否决（"区号"框之于日期字段）
+        # 不因为答案来自模型就免检。
+        usable = tuple(
+            key
+            for key in candidates
+            if not excluded_by_hints(control, key) and foreign_marker(control, key) is None
+        )
+        fillable: list[tuple[str, str]] = []
+        for key in usable:
+            # 目录字段取不到值时再按显示名找同名自定义字段——用户常把「项目链接」
+            # 这类字段记在自定义里，AI 认出的目录名不该因为存的位置而落空。
+            value = resolve_value_for(control, key, data) or self._custom_value_by_label(key, data)
+            if value:
+                shown_key = field_key_for_block(key, control.block_family, control.block_index)
+                fillable.append((self._field_display_label(shown_key), value))
+
+        if not fillable:
+            if usable:
+                key = usable[0]
+                note = self._ai_dead_end(usable)
+            elif candidates:
+                # 所有候选都被守卫拦下：这是"猜的和框对不上"，不是"资料里没填"。
+                key = candidates[0]
+                note = ui_text(self._locale(), "note.aiRejected")
+            else:
+                key = ""
+                note = self._ai_dead_end(())
+            shown_key = (
+                field_key_for_block(key, control.block_family, control.block_index) if key else ""
+            )
+            self._publish_unmatched(
+                note,
+                source=SOURCE_AI,
+                field_label=self._field_display_label(shown_key) if shown_key else "",
+                field_key=shown_key,
+            )
+            return
+
+        (label, value), *rest = fillable
+        self._publish(
+            {
+                "status": "matched",
+                "field_label": label,
+                "value": value,
+                # AI 给的答案**必须标明是猜的**：规则命中至少证明页面上有字对上了，
+                # 这一条可能纯粹是上下文推的，用户核对时的怀疑程度应当不同。
+                "note": AI_NOTE,
+                "source": SOURCE_AI,
+                "alternatives": [
+                    {"label": alt_label, "value": alt_value} for alt_label, alt_value in rest
+                ],
+            }
+        )
+
+    def _ai_dead_end(self, candidates: tuple[str, ...]) -> str:
+        """一个候选都填不了时，如实说明**是哪一种**填不了。
+
+        自定义字段里同名那条有值时，"资料里没填"就不成立——那不是死胡同，只是值
+        没走通这条框（比如下拉装不进去），措辞按后一种说。
+        """
+        if not candidates:
+            return "AI 也认不出这个框"
+        key = candidates[0]
+        label = self._field_display_label(key)
+        with self._lock:
+            data = dict(self._data)
+        has_custom_value = bool(self._custom_value_by_label(key, data))
+        if not (data.get(key) or "").strip() and not has_custom_value:
+            # 与规则路径同一分支：这块被当前方案过滤掉时，说清板块名而不是"你没填"。
+            filtered_section = self._filtered_display()[1].get(split_repeated_key(key)[0])
+            if filtered_section:
+                return ui_text(self._locale(), "note.sectionFiltered", section=filtered_section)
+            return f"AI 认出来是「{label}」，但你的资料里还没填这一项"
+        return f"AI 认出来是「{label}」，但页面上的选项没有对应的值"
+
+    def _publish(self, panel: dict[str, Any]) -> None:
+        """推面板并同步本状态。
+
+        **两件事必须一起做**：只推页面的话，ResumeForge 那边显示的还是上一条；只更新状态的话，
+        用户眼前的浏览器窗口和页面上写的对不上。任一种都会让人以为程序在乱来。
+
+        这个函数会在**执行器线程**里被调用（AI 结果回来时），所以它自己得兜住异常——
+        那里的异常没人接，会静默消失。
+        """
+        payload = {
+            "status": str(panel.get("status", "")),
+            "field_label": str(panel.get("field_label", "")),
+            "value": str(panel.get("value", "")),
+            "note": str(panel.get("note", "")),
+            "source": str(panel.get("source", "")),
+            "remember_field_key": str(panel.get("remember_field_key", "")),
+            "alternatives": list(panel.get("alternatives", [])),
+            "remember_pending": panel.get("remember_pending"),
+            # 放宽模式的「帮我勾选：…」按钮文案。空串 = 页面脚本显示默认的「填入」。
+            "accept_label": str(panel.get("accept_label", "")),
+            # 「可能是这几个」。**跟着每一次推送走**：面板上那几个状态（给出建议 / 认不出 /
+            # AI 在想）都会用到它，漏一次那一栏就会空掉。
+            "related": list(panel.get("related", self._related)),
+        }
+        try:
+            self._client.evaluate(_show_panel_script(payload))
+        except Exception as error:  # noqa: BLE001 - 页面可能已经跳走
+            logger.warning("没能把面板内容写进页面：%s", error)
+        with self._lock:
+            self.state.update(payload)
+
+    # ===== 用户点了「填入」 =====
+
+    def _on_accept(self, accept: dict[str, Any]) -> None:
+        """写入并回读校验，然后把结果写回面板。
+
+        写入走 ``service.apply_fill``——与批量模式**同一条**路径：同样的重建逻辑、
+        同样的哑执行器、同样的回读校验。在这里另写一份"填一个框"的实现，就等于把
+        那三样都复制一遍，日后必然分叉。
+        """
+        # 先把"用户点了填入"这件事清掉，否则下一轮会重复执行。
+        self._client.evaluate(_HIDE_SCRIPT)
+        value = str(accept.get("value") or "")
+        # 用户可能从清单里挑了任意一条，所以标签以他挑的那条为准。
+        picked_label = str(accept.get("label") or self.state.get("field_label", ""))
+        # **控件描述以选择里带的那份为准**：点面板会让页面输入框失焦，此刻再去问
+        # `window.__rfFocus` 可能已经被清掉了（实测到"挑了一条却写入失败"）。只有选择里
+        # 没带（老版本脚本）才退回现场取。
+        raw = accept.get("control")
+        control = self._build_control(raw) if isinstance(raw, dict) else self._current_control()
+        if control is None or not value:
+            return
+        # 页面在选定时打了一个**不会被焦点搬走**的标记，以它为准。`data-rf-focus` 会在
+        # 下一次聚焦时移走，而点面板本身就会引起焦点变化——用它会写不到目标上。
+        if selector := str(accept.get("selector") or ""):
+            control = replace(control, selector=selector)
+
+        snapshot = Snapshot(id="live", controls=[control])
+        results = apply_fill(
+            self._client,
+            snapshot,
+            [FillSelection(index=control.index, field="", value=value)],
+            # 逐项模式不等"落定复读"：用户正对着这个框看，即时反馈优先；
+            # 批量的伪已填复读（settle_recheck）留给整页填充那条路。
+            settle_recheck=0,
+        )
+        outcome = results[0] if results else None
+        ok = outcome is not None and outcome.status == "filled"
+        if ok:
+            note = ui_text(self._locale(), "note.filled")
+        else:
+            detail = outcome.detail if outcome else "没能写入"
+            # 放宽代点失败的失败形态与"写值失败"不同（弹层没打开/没有匹配选项/没勾上），
+            # 把原因如实写成「代选失败：…」，用户才知道这是程序代点没成，不是资料填错。
+            note = (
+                ui_text(self._locale(), "note.relaxedFailed", detail=detail)
+                if FormEngine.relaxed_kind(control)
+                else detail
+            )
+
+        # 「已填入」之后不再留候选——那几个备选是针对"该填什么"的，已经填完了。
+        self._publish(
+            {
+                "status": "filled" if ok else "blocked",
+                "field_label": picked_label,
+                "value": value if ok else "",
+                "note": note,
+                "source": self.state.get("source", ""),
+            }
+        )
+        with self._lock:
+            # `_publish` 写的是 `status`，但这里要的是"这一次写入的结果"，两者不同名：
+            # `filled` 是给 ResumeForge 页面看的（它认的是 matched/filled/failed 那套）。
+            self.state["status"] = "filled" if ok else "failed"
+            if ok:
+                self.state["filled"] = int(self.state.get("filled", 0)) + 1
+
+    def _current_control(self) -> Control | None:
+        """重新取一次当前焦点控件的描述——用户可能已经点到别处去了。"""
+        payload = self._client.evaluate(_STATE_SCRIPT)
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        raw = (payload or {}).get("control") if isinstance(payload, dict) else None
+        return self._build_control(raw) if isinstance(raw, dict) else None
+
+    # ===== 悬浮球的当前页面自动填写 =====
+
+    def _publish_autofill(self, progress: AutoFillProgress) -> None:
+        payload = {
+            "state": progress.state,
+            "total": progress.total,
+            "form_control_total": progress.form_control_total,
+            "recognized_total": progress.recognized_total,
+            "completed": progress.completed,
+            "filled": progress.filled,
+            "failed": progress.failed,
+            "current_label": progress.current_label,
+            "message": progress.message,
+            # 稳定原因码：界面/日志按它办事，长句只作补充（空串 = 没失败）。
+            "reason": progress.reason,
+        }
+        try:
+            self._client.evaluate(set_autofill_status_script(payload))
+        except Exception as error:  # noqa: BLE001 - 页面关闭时进度无需再推送
+            logger.debug("网申填表：更新自动填写进度失败：%s", error)
+
+    def _run_autofill(self, _sequence: int) -> None:
+        # 自动填写按钮可能在本轮焦点事件之前被点击；先读取最新资料，避免使用启动会话时的旧快照。
+        self._refresh_data()
+        with self._lock:
+            data = dict(self._data)
+            catalog = list(self._catalog)
+        if self._autofill_data_loader is not None:
+            try:
+                data = dict(self._autofill_data_loader())
+            except Exception as error:  # noqa: BLE001 - 快捷填充失败时沿用当前会话资料
+                logger.warning("网申填表：刷新快捷填充资料失败，继续使用当前资料：%s", error)
+        try:
+            result = fill_current_page(
+                self._client,
+                data,
+                engine=self._engine,
+                on_progress=self._publish_autofill,
+                should_stop=self._stop.is_set,
+                relaxed=self._relaxed_enabled(),
+                custom_labels=custom_labels_from_catalog(catalog),
+                locale=self._locale(),
+                # 被当前方案过滤掉的字段 → 板块显示名：填完要把"因范围跳过"说清楚，
+                # 而不是让用户以为资料里根本没有。
+                filtered_fields=self._filtered_display()[1],
+            )
+        except (TypeError, AttributeError) as error:
+            # **编程错误不冒充页面问题**：签名漂移/属性改名以前被吞成「请刷新页面重试」，
+            # 用户照着刷一辈子也不会好（本次 fill_current_page 缺 filtered_fields 就是这么
+            # 被埋掉的）。打全栈 + 独立稳定码，界面上照实说是内部错误。
+            logger.exception(
+                "网申填表：自动填写内部错误（step=%s target=%s reason=%s）：%s",
+                AUTOFILL_STEP,
+                AUTOFILL_TARGET,
+                REASON_INTERNAL,
+                error,
+            )
+            self._publish_autofill(
+                AutoFillProgress(
+                    state="error",
+                    total=0,
+                    completed=0,
+                    filled=0,
+                    failed=1,
+                    reason=REASON_INTERNAL,
+                    message=(
+                        f"自动填写内部错误（{type(error).__name__}: {error}），"
+                        "请把这句话反馈给我们"
+                    ),
+                )
+            )
+            return
+        except Exception as error:  # noqa: BLE001 - 失败要回显在悬浮球而不是吞掉
+            logger.exception("网申填表：自动填写当前页面失败：%s", error)
+            self._publish_autofill(
+                AutoFillProgress(
+                    state="error",
+                    total=0,
+                    completed=0,
+                    filled=0,
+                    failed=1,
+                    reason=REASON_PAGE_UNREADABLE,
+                    message="读取当前页面失败，请刷新页面后重试",
+                )
+            )
+            return
+        # 跳过清单要能在 ResumeForge 页面上看到（那里才有「切换为全部资料」的可点入口）。
+        # ``fill_current_page`` 的契约是**永远**返回结果对象；这里的 None 判据只是给
+        # 替身/旧实现留的早退口——宁可不更新计数，也不要让线程抛出去。
+        if result is None:
+            return
+        self.state["skipped_count"] = result.filtered_skipped
+        self.state["skipped_section"] = result.filtered_section
+
+    # ===== 「问投投」：精简版问答 =====
+    #
+    # 与 AI 兜底同一套纪律：不阻塞轮询（真调用在 _ask_worker 上）、失败不抛（转成
+    # 页面可见的 error 文案）、过期回答由页面侧 seq 比对丢弃。
+
+    def _run_ask(self, sequence: int, question: str) -> None:
+        """跑一次问答并把结果（或错误）写回页面。provider 未配置时 ask() 会如实报错。"""
+        try:
+            reply = live_assistant.ask(self._provider, self._ask_history, question)
+        except live_assistant.AssistantAskError as error:
+            self._publish_assistant_reply({"seq": sequence, "error": str(error)})
+            return
+        # 只有**成功**的一轮才进历史；失败的问题留在上下文里只会污染下一轮。
+        live_assistant.append_exchange(self._ask_history, question, reply)
+        self._publish_assistant_reply({"seq": sequence, "text": reply})
+
+    def _publish_assistant_reply(self, payload: dict[str, Any]) -> None:
+        try:
+            self._client.evaluate(set_assistant_reply_script(payload))
+        except Exception as error:  # noqa: BLE001 - 页面可能已经跳走
+            logger.debug("网申填表：回写问投投的回答失败：%s", error)
+
+
+#
+# 同一时刻只允许一个实时会话；会话内部可以绑定多个网申标签页。
+_session: LiveSession | MultiLiveSession | None = None
+_session_lock = threading.Lock()
+
+
+def start_live(
+    client: CdpClient,
+    data: dict[str, str],
+    catalog: list[dict[str, str]] | None = None,
+    *,
+    provider: Any = None,
+    ai_enabled: bool = False,
+    store: Callable[[dict[str, str]], bool] | None = None,
+    require_memory_choice: bool = False,
+    data_loader: LiveDataLoader | None = None,
+    autofill_data_loader: Callable[[], dict[str, str]] | None = None,
+    memory_targets: list[dict[str, Any]] | None = None,
+    memory_targets_loader: Callable[[], list[dict[str, Any]]] | None = None,
+    target_clients_loader: Callable[[], list[tuple[str, CdpClient]]] | None = None,
+    relaxed_mode_loader: Callable[[], bool] | None = None,
+    ui_locale_loader: Callable[[], str | None] | None = None,
+    ui_locale: str | None = None,
+    scope: str | None = None,
+    scope_setter: Callable[[str], None] | None = None,
+) -> LiveSession | MultiLiveSession:
+    """开一次会话。**已经在跑就直接返回它**——注意 ``provider`` / ``ai_enabled`` 也一并
+    被忽略，AI 开关是"开启时"的设置，改动要停掉再开才生效（界面上有这句提示）。"""
+    global _session
+    with _session_lock:
+        if _session is not None and _session.is_running:
+            _session.set_client(client)
+            _session.update_data(data, catalog)
+            _session.set_data_loader(data_loader)
+            _session.set_autofill_data_loader(autofill_data_loader)
+            _session.set_relaxed_mode_loader(relaxed_mode_loader)
+            _session.set_ui_locale_loader(ui_locale_loader)
+            # 复用会话时只接线、不覆盖当前范围：``scope=None`` 表示调用方没带偏好，
+            # 面板上刚切好的「全部资料」不该被下一次 /live/start 悄悄重置回 group。
+            _session.set_scope_setter(scope_setter)
+            if scope is not None:
+                _session.adopt_scope(scope)
+            if ui_locale:
+                _session._ui_locale = ui_locale
+            _session.set_memory_choice_required(require_memory_choice)
+            _session.set_memory_targets_loader(memory_targets_loader)
+            if memory_targets is not None:
+                _session.update_memory_targets(memory_targets)
+            return _session
+        # 延迟导入：``live_multi`` 单向依赖本模块的 ``LiveSession``，模块级导入会成环。
+        from .live_multi import MultiLiveSession
+
+        session_type = MultiLiveSession if target_clients_loader is not None else LiveSession
+        _session = session_type(
+            client,
+            data,
+            catalog,
+            provider=provider,
+            ai_enabled=ai_enabled,
+            store=store,
+            require_memory_choice=require_memory_choice,
+            data_loader=data_loader,
+            autofill_data_loader=autofill_data_loader,
+            memory_targets=memory_targets,
+            memory_targets_loader=memory_targets_loader,
+            relaxed_mode_loader=relaxed_mode_loader,
+            ui_locale_loader=ui_locale_loader,
+            ui_locale=ui_locale,
+            scope=normalize_scope(scope or "group"),
+            scope_setter=scope_setter,
+            **(
+                {"target_clients_loader": target_clients_loader}
+                if target_clients_loader is not None
+                else {}
+            ),
+        )
+        _session.start()
+        return _session
+
+
+def stop_live() -> None:
+    global _session
+    with _session_lock:
+        if _session is not None:
+            _session.stop()
+            _session = None
+
+
+def set_live_enabled(enabled: bool) -> None:
+    """只切换智能逐项填表，不销毁会话和悬浮球。"""
+    with _session_lock:
+        if _session is not None and _session.is_running:
+            _session.set_enabled(bool(enabled))
+
+
+def request_live_scope(scope: str) -> None:
+    """运行中切换取数范围（面板开关与前端开关都走这里）。
+
+    会话不在跑时**什么都不做**：范围偏好由调用方自己保存，等下次开启时随 ``start_live``
+    带进来——不在这里悄悄起一个没有浏览器的会话。
+    """
+    with _session_lock:
+        if _session is not None and _session.is_running:
+            _session.request_scope(scope)
+
+
+def live_status() -> dict[str, Any]:
+    # 延迟导入：``live_multi`` 单向依赖本模块的 ``LiveSession``，模块级导入会成环。
+    from .live_multi import MultiLiveSession
+
+    with _session_lock:
+        if _session is None:
+            return {
+                "running": False,
+                "enabled": False,
+                "field_label": "",
+                "value": "",
+                "status": "",
+                "note": "",
+                "source": "",
+                "remember_field_key": "",
+                "alternatives": [],
+                "filled": 0,
+                "remember_pending": None,
+                "stop_reason": "",
+            }
+        if isinstance(_session, MultiLiveSession):
+            return dict(_session._active_state())
+        return dict(_session.state)
+
+
+def remember_live_choice(
+    *,
+    target_id: str,
+    value: str,
+    label: str = "",
+    reuse: str = "general",
+) -> bool:
+    with _session_lock:
+        if _session is None or not _session.is_running:
+            return False
+        return _session.remember_choice(target_id=target_id, value=value, label=label, reuse=reuse)
+
+
+def is_live_running() -> bool:
+    with _session_lock:
+        return _session is not None and _session.is_running
+
+
+__all__ = [
+    "MAX_AI_CALLS",
+    "POLL_INTERVAL_SECONDS",
+    "IDLE_POLL_INTERVAL_SECONDS",
+    "IDLE_AFTER_QUIET_TICKS",
+    "BROWSER_CLOSED_FAILURES",
+    "BROWSER_CLOSED_REASON",
+    "LiveSession",
+    "MultiLiveSession",
+    "is_live_running",
+    "live_status",
+    "remember_live_choice",
+    "set_live_enabled",
+    "start_live",
+    "stop_live",
+]
+
+
+def __getattr__(name: str) -> Any:
+    """PEP 562：恢复「任何时候 ``from ...webform.live import MultiLiveSession`` 都可导入」的契约。
+
+    ``live_multi`` 单向依赖本模块的 ``LiveSession``，模块级导入会成环；真实使用点
+    （``start_live`` / ``live_status``）已在函数体内延迟导入，这里只兜住外部导入路径。
+    """
+    if name == "MultiLiveSession":
+        from .live_multi import MultiLiveSession
+
+        return MultiLiveSession
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

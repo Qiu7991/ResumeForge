@@ -1,0 +1,45 @@
+# Pinned runtime dependencies; dev and CI tooling lives in requirements-dev.txt.
+# Keep this file pure ASCII: pip 24.x decodes a BOM-less requirements file with
+# the locale codec (cp936 on Chinese Windows), so a non-ASCII comment here makes
+# `pip install -r requirements.txt` abort with UnicodeDecodeError before it
+# reads a single pin.
+fastapi==0.162.0
+starlette==1.9.0
+# Multipart form parsing for the referral note-image upload endpoint.
+python-multipart==0.0.32
+uvicorn[standard]==0.54.0
+sqlalchemy==2.1.3
+pydantic==2.14.1
+pydantic-settings==2.16.2
+httpx==0.28.1
+jinja2==3.1.6
+alembic==1.20.0
+# Uploaded documents and images are decoded locally: pypdf reads PDF text,
+# Pillow converts formats no model accepts (bmp/tiff) into PNG. Both are pure
+# or wheel-published, so the first-run installer stays build-tool free.
+# pypdfium2 renders scanned PDF pages to bitmaps (BSD-3-Clause/Apache-2.0,
+# wheel-published, no external binaries) so image-only pages can reuse the
+# screenshot vision path.
+pillow==13.0.0
+# 6.19.0 was flagged by pip-audit on 2026-10-22 for five known advisories
+# (CVE-2026-113786/113792/113793/113794/113795, fixed in 6.21.1 / 6.20.1).
+# The audit gate is blocking, so staying on 6.19.0 turns CI red.
+pypdf==6.21.4
+pypdfium2==5.14.0
+# Server-side PDF export: fpdf2 embeds a system CJK font so the resume PDF can be
+# downloaded directly. fonttools is its font-parsing backend; pinning it keeps
+# the first-run install reproducible. 4.66+ requires Python >=3.11, which is
+# the repo floor since 3.10 went EOL (2026-10).
+fpdf2==2.8.9
+fonttools==4.68.0
+# Browser automation for the apply center: the CDP client talks to a user's real
+# Chrome/Edge over the DevTools WebSocket. Pure Python (no compiler, has wheels),
+# and the HTTP side reuses the existing httpx dependency.
+websocket-client==1.9.2
+# Word (.docx) export (R-16): pure-Python with wheels, no build toolchain, so the
+# first-run installer stays compiler-free. Layout reuses ResumeLayout instead of
+# introducing a second layout engine.
+python-docx==1.2.0
+# Pinyin collation for A->Z sorting (rf_pinyin, see app/services/text_sort.py).
+# Pure Python, MIT, no transitive dependencies: safe for the first-run installer.
+pypinyin==0.55.0

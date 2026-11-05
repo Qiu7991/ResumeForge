@@ -1,0 +1,398 @@
+# SPDX-License-Identifier: Apache-2.0
+"""应用生命周期接口：退出应用。
+
+这是本项目唯一一个"会让服务消失"的接口，因此边界写得很死：
+- **只接受回环请求**：局域网里的页面不该有权限关掉别人的应用；
+- 先返回响应再退出（延迟一小会儿），否则浏览器只会看到一个连接被重置的错误。
+
+前端点「退出」后：**前端与后端进程都会被停掉**（前端交给启动器那套"按记录 + 校验
+启动时刻/命令行"的停止脚本，它只杀记录对得上的那棵树），页面随即失去全部数据来源，
+可以直接关闭标签页；重新使用双击 `start.cmd`。
+
+**退出路径绝不允许抛异常**：`_stop_frontend_process` 里的任何失败（脚本找不到、超时、
+输出解码出错）都必须被吞掉并记日志——否则退出线程会半途死掉，变成"前端收到 202、
+后端却不退"这种最难查的状态。
+"""
+
+import io
+import ipaddress
+import json
+import locale
+import logging
+import os
+import platform
+import re
+import signal
+import subprocess
+import sys
+import threading
+import time
+import zipfile
+from datetime import UTC, datetime
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
+
+from ..config import DATA_DIR, get_settings, is_desktop_shell
+from ..services.diagnostics import diagnostic_snapshot
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/system", tags=["system"])
+
+# 退出前的等待：够响应走完浏览器这一趟，又不至于让用户觉得没反应。
+_SHUTDOWN_DELAY_SECONDS = 0.6
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_WINDOWS_STOP_SCRIPT = _PROJECT_ROOT / "scripts" / "Stop-ResumeForge.ps1"
+_MACOS_STOP_SCRIPT = _PROJECT_ROOT / "scripts" / "macos" / "stop.sh"
+
+# 等停止脚本的预算：正常一两秒就完了，给太长的例外是"等待期间后端还活着"——用户这时
+# 双击 start.cmd，启动器会看到后端仍在监听、判定"已经在运行"而跳过启动，几秒后它却死了。
+_STOP_TIMEOUT_SECONDS = 8.0
+# 日志里最多留这么长的脚本输出（诊断用，不是给用户看的）。
+_STOP_LOG_CHARS = 2000
+
+
+def _is_loopback_request(request: Request) -> bool:
+    """与密钥查看同一套判断：只有直连本机的请求算数。"""
+    if request.client is None:
+        return False
+    try:
+        address = ipaddress.ip_address(request.client.host.split("%", maxsplit=1)[0])
+    except ValueError:
+        return False
+    if address.is_loopback:
+        return True
+    # ipv4_mapped 只存在于 IPv6 地址对象上：直接用属性访问会在"IPv4 且非回环"时
+    # 抛 AttributeError（本该返回 403 的请求变成 500）。
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped is not None and mapped.is_loopback
+
+
+def _stop_command() -> list[str]:
+    """按平台给出"只停前端"的命令；两个平台都是启动器那套按记录停止的脚本。"""
+    if os.name == "nt":
+        return [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(_WINDOWS_STOP_SCRIPT),
+            "-SkipBackend",
+        ]
+    return ["/bin/bash", str(_MACOS_STOP_SCRIPT), "--skip-backend"]
+
+
+def _stop_output_encodings() -> tuple[str, ...]:
+    """候选解码顺序。
+
+    Windows 上子进程按**代码页**输出（中文系统是 cp936），而 `locale` 在本项目的启动
+    环境下（`PYTHONUTF8=1`）会返回 utf-8——只靠 locale 会得到一串问号，日志等于白记。
+    所以显式把 `mbcs`（Windows 的 ANSI 代码页）排进去。
+    """
+    encodings = ["utf-8"]
+    if os.name == "nt":
+        encodings.append("mbcs")
+    preferred = locale.getpreferredencoding(False)
+    if preferred:
+        encodings.append(preferred)
+    return tuple(encodings)
+
+
+def _decode_stop_output(raw: bytes | None, encodings: tuple[str, ...] | None = None) -> str:
+    """把停止脚本的输出解成能进日志的文本。
+
+    解码**绝不能抛**：这里的失败会让退出线程死在发信号之前（"点了退出，进程还在"）。
+    所以最后一定要有一个 `errors="replace"` 的兜底。
+
+    `encodings` 只为让测试能钉住回退链：真实候选表由 `_stop_output_encodings()` 按
+    **这台机器的代码页**给出（中文 Windows 是 cp936、英文的是 cp1252），而 cp1252 能把
+    GBK 字节解成一串乱码却**不报错**——不注入的话，这条链就变成"测试机是哪国语言"了。
+    真机上那串乱码无害：日志只用于诊断，判定一律看退出码。
+    """
+    if not raw:
+        return ""
+    candidates = _stop_output_encodings() if encodings is None else encodings
+    for encoding in candidates:
+        try:
+            return raw.decode(encoding)[:_STOP_LOG_CHARS]
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")[:_STOP_LOG_CHARS]
+
+
+def _stop_frontend_process() -> None:
+    """让启动器按记录安全停止 Vite 进程树。
+
+    **同步等待并留下证据**。原先这里是"用 DETACHED_PROCESS 甩出去、输出丢进 DEVNULL、
+    不等待"——结果是点退出后前端照旧活着，而后端日志里连一行线索都没有。两个改动各自
+    修掉一半问题：
+
+    - **`CREATE_NO_WINDOW` 而不是 `DETACHED_PROCESS`**：完整的分离进程**没有控制台**，
+      而 Windows PowerShell 是控制台宿主程序，很可能在启动阶段就退出、或在第一次查
+      `Win32_Process` 时失败。给它一个隐藏的控制台才跑得起来；两者互斥，只能选一个。
+    - **捕获输出**：失败时把退出码与脚本文本写进日志，不再静默。
+
+    失败/超时都只记警告——前端没停掉也要让后端正常退出，不能倒过来卡住用户。
+    """
+    script = _WINDOWS_STOP_SCRIPT if os.name == "nt" else _MACOS_STOP_SCRIPT
+    if not script.is_file():
+        logger.warning("找不到停止脚本 %s，退出时无法自动停止前端", script)
+        return
+    creation_flags = 0
+    if os.name == "nt":
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
+    try:
+        completed = subprocess.run(  # noqa: S603 - 命令与参数都是本仓库内的常量
+            _stop_command(),
+            cwd=str(_PROJECT_ROOT),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=_STOP_TIMEOUT_SECONDS,
+            creationflags=creation_flags,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("停止前端超时（%.0f 秒），前端进程可能仍在运行", _STOP_TIMEOUT_SECONDS)
+        return
+    except Exception:  # noqa: BLE001 - 退出路径绝不能抛：抛了后端就不退了
+        logger.exception("启动前端停止器失败")
+        return
+    output = (_decode_stop_output(completed.stdout) + _decode_stop_output(completed.stderr)).strip()
+    if completed.returncode == 0:
+        logger.info("已请求停止前端进程：%s", output or "（脚本无输出）")
+    else:
+        logger.warning(
+            "停止前端失败（退出码 %s）：%s", completed.returncode, output or "（脚本无输出）"
+        )
+
+
+def _stop_process() -> None:
+    """在独立线程里让 uvicorn 优雅退出。
+
+    优先给自己发 SIGINT（等价于 Ctrl+C，uvicorn 会走完整的关闭流程：等待进行中的
+    请求、关闭连接池与数据库）；极端情况下再用 ``os._exit`` 兜底，避免出现"点了退出
+    但进程还在"的状态。
+    """
+    time.sleep(_SHUTDOWN_DELAY_SECONDS)
+    try:
+        # 停前端放在 try 里面：它自己已经吞了异常，这里是第二道保险——这个线程死在
+        # 发信号之前，用户看到的就是"点了退出，进程还在"。
+        _stop_frontend_process()
+        signal.raise_signal(signal.SIGINT)
+        # 给优雅关闭一点时间；仍然活着就强退。
+        time.sleep(3.0)
+        logger.warning("优雅退出未完成，强制结束进程")
+    except Exception:  # noqa: BLE001 - 退出路径本身绝不能抛异常
+        logger.exception("退出流程出错，强制结束进程")
+    os._exit(0)
+
+
+@router.post("/shutdown", status_code=202)
+def shutdown_application(request: Request):
+    """退出后端进程（仅本机可调用）。"""
+    if not _is_loopback_request(request):
+        raise HTTPException(status_code=403, detail="只能在运行后端的本机退出应用")
+    logger.info("收到退出请求，正在关闭后端")
+    threading.Thread(target=_stop_process, name="resumeforge-shutdown", daemon=True).start()
+    return {"status": "stopping", "message": "应用正在退出，可以关闭此页面"}
+
+
+@router.get("/diagnostics")
+def diagnostics():
+    """返回脱敏运行事件，方便用户连同截图提交排障。"""
+    return diagnostic_snapshot()
+
+
+@router.get("/form")
+def app_form():
+    """告诉前端"后端跑在哪一种形态里"（桌面安装壳 / 控制台或开发态）。
+
+    前端据此**分流更新方式**：桌面形态下页面内的"下载 zip 并覆盖安装"在原理上补不齐
+    依赖（桌面 payload 是源码形态整包，没有 ``python-runtime.zip``、没有 ``desktop/``），
+    所以那条路必须在界面上消失，改成"下载 Setup.exe 双击安装"。浏览器/控制台形态
+    保持不变。
+
+    **不做回环限制**：这里只回三个公开的、无副作用的只读信息（形态标记、平台、版本号），
+    拿到它既不能改状态也不能退出应用；限制回环反而会让走代理/容器转发的正常访问变成 403
+    （``/shutdown`` 才是必须限制回环的那个）。
+    """
+    return {
+        "desktop": is_desktop_shell(),
+        "platform": sys.platform,
+        "app_version": get_settings().app_version,
+    }
+
+
+# 日志尾部进诊断包前要再过一道闸：业务日志本身不记密钥（见 AGENTS 约束），但这里
+# 面向"用户直接转发给陌生支持者"的场景，兜底抹掉疑似令牌/长随机串，多一道保险。
+_LOG_SECRET_PATTERNS = (
+    re.compile(r"sk-[A-Za-z0-9_-]{8,}"),
+    re.compile(r"\b[A-Za-z0-9+/]{48,}={0,2}\b"),
+)
+
+
+def _redact_log_line(line: str) -> str:
+    """给日志行兜底脱敏：疑似令牌/长随机串一律换成占位符。"""
+    for pattern in _LOG_SECRET_PATTERNS:
+        line = pattern.sub("<redacted>", line)
+    return line
+
+
+def _recent_log_tail(max_lines: int = 300) -> str:
+    """读滚动文件日志的尾部并做兜底脱敏；文件不存在（被关闭/尚未产生）时返回空。"""
+    log_file = DATA_DIR / "logs" / "backend.log"
+    if not log_file.is_file():
+        return ""
+    try:
+        lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()[-max_lines:]
+    except OSError:
+        return ""
+    return "\n".join(_redact_log_line(line) for line in lines)
+
+
+# 桌面壳通过 RF_DESKTOP_LOG_DIR 告诉后端它的日志目录（desktop/backend-manager.py
+# 注入，目录由 desktop/lib/shell-paths.js 裁决）。两份日志**按原名**进包，方便
+# 维护者对号入座；只点读这两个名字，**不递归目录**——那里还有轮转文件
+# （desktop-backend.log.1 之类）与其它运行产物，整目录打包会把包撑大并带进
+# 与本次故障无关的内容。
+_DESKTOP_LOG_NAMES = ("desktop-main.log", "desktop-backend.log")
+# 尾部上限：桌面日志是"每次启动都会追加"的文件，长的可以到几十 MB；诊断包是给
+# 用户直接转发的，没有理由把几百 KB 的无关历史一起发出去。
+_DESKTOP_LOG_TAIL_LINES = 400
+_DESKTOP_LOG_MAX_BYTES = 256 * 1024
+
+
+def _read_log_tail(path: Path, max_lines: int, max_bytes: int) -> str:
+    """按字节窗口读文件尾部（先丢掉被截断的半行），失败一律返回空串。"""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            if size > max_bytes:
+                handle.seek(size - max_bytes)
+                handle.readline()  # 丢弃截断处的残行，避免把半条日志当成一条
+            payload = handle.read()
+    except OSError:
+        return ""
+    text = payload.decode("utf-8", errors="replace")
+    return "\n".join(text.splitlines()[-max_lines:])
+
+
+def _desktop_log_entries() -> list[tuple[str, str]]:
+    """桌面壳日志的 ``[(原文件名, 脱敏后的尾部)]``；未注入目录时恒为空列表。
+
+    未设置 ``RF_DESKTOP_LOG_DIR``（控制台启动 / 纯后端 / 开发态直接跑 uvicorn）时
+    返回空列表，诊断包内容与本功能加入前完全一致。
+
+    这些日志的价值在于"后端起不来"：那一刻这个端点本身不可达，所以它们只能在
+    **后端起得来**的那一次导出里，把上一次起不来的证据带出去。
+    """
+    raw = (os.environ.get("RF_DESKTOP_LOG_DIR") or "").strip()
+    if not raw:
+        return []
+    directory = Path(raw)
+    if not directory.is_dir():
+        return []
+    entries: list[tuple[str, str]] = []
+    for name in _DESKTOP_LOG_NAMES:
+        content = _read_log_tail(directory / name, _DESKTOP_LOG_TAIL_LINES, _DESKTOP_LOG_MAX_BYTES)
+        if not content:
+            continue
+        entries.append((name, "\n".join(_redact_log_line(line) for line in content.splitlines())))
+    return entries
+
+
+def _system_snapshot() -> dict:
+    settings = get_settings()
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "app_version": settings.app_version,
+        "python_version": sys.version.split()[0],
+        "os": platform.system(),
+        "platform": platform.platform(),
+        "log_file_enabled": settings.log_file_enabled,
+    }
+
+
+# 导出前预览的固定口径说明（RF-20）：用户在导出前要知道包里有什么、没有什么。
+_DIAGNOSTICS_PREVIEW_NOTE = (
+    "诊断包只包含脱敏运行事件、系统信息与近期后端日志尾部（疑似令牌已兜底抹除）；"
+    "不包含简历全文、表单填写值、Cookie 或提示词。"
+)
+# 预览里最多列出的类别数：事件名是有限的集合，20 个足够覆盖现有埋点。
+_PREVIEW_MAX_CATEGORIES = 20
+
+
+@router.get("/diagnostics/preview")
+def preview_diagnostics():
+    """导出前预览诊断包内容：条数、时间范围、类别与各文件体积，不返回事件正文。
+
+    与 /diagnostics/export 使用同一套数据源与脱敏路径；预览只暴露元信息，
+    用户可据此决定是否导出、并如实转述包内容。
+    """
+    snapshot = diagnostic_snapshot()
+    events = snapshot.get("events", [])
+    times = [event["at"] for event in events if event.get("at")]
+    system = _system_snapshot()
+    files = [
+        {
+            "name": "diagnostics.json",
+            "bytes": len(json.dumps(snapshot, ensure_ascii=False, indent=2).encode("utf-8")),
+        },
+        {
+            "name": "system.json",
+            "bytes": len(json.dumps(system, ensure_ascii=False, indent=2).encode("utf-8")),
+        },
+    ]
+    log_tail = _recent_log_tail()
+    if log_tail:
+        files.append({"name": "backend-recent.log", "bytes": len(log_tail.encode("utf-8"))})
+    # 桌面日志同样列出来：预览说"包里有什么"，就必须和导出真正打进去的一致。
+    for name, content in _desktop_log_entries():
+        files.append({"name": name, "bytes": len(content.encode("utf-8"))})
+    categories = sorted({str(event.get("event", "")) for event in events})
+    return {
+        "event_count": len(events),
+        "time_range": {"from": times[0], "to": times[-1]} if times else None,
+        "categories": categories[:_PREVIEW_MAX_CATEGORIES],
+        "files": files,
+        "contains_resume_content": False,
+        "note": _DIAGNOSTICS_PREVIEW_NOTE,
+    }
+
+
+@router.get("/diagnostics/export")
+def export_diagnostics():
+    """导出脱敏诊断包（zip）：脱敏运行事件 + 系统信息 + 近期后端日志尾部。
+
+    包里**没有**简历数据、密钥或数据库文件——它是给用户直接贴进反馈的，隐私边界
+    与 /diagnostics 的脱敏事件保持同一档。日志尾部会再做一道疑似令牌的兜底脱敏。
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "diagnostics.json",
+            json.dumps(diagnostic_snapshot(), ensure_ascii=False, indent=2),
+        )
+        archive.writestr(
+            "system.json",
+            json.dumps(_system_snapshot(), ensure_ascii=False, indent=2),
+        )
+        log_tail = _recent_log_tail()
+        if log_tail:
+            archive.writestr("backend-recent.log", log_tail)
+        # 桌面壳的两份日志按原名进包：起不来时它们是唯一有内容的那两份，而后端
+        # 日志恰好什么都没写下来。名字与 backend-recent.log 不冲突。
+        for name, content in _desktop_log_entries():
+            archive.writestr(name, content)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"resumeforge-diagnostics-{timestamp}.zip"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

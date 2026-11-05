@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: Apache-2.0
+/** 版本对比弹窗（受控）：基准版本展示 + 对比版本选择 + 字段级差异视图。
+ *
+ * 纯展示——diff 状态（diffAgainstId/diffResult/diffLoading）与三并发请求 handler
+ * （selectDiffAgainst）保留在 ResumesPage，保证「版本对比」入口的重置语义逐字不变。
+ */
+import { Modal, Select, Space, Typography } from "antd";
+import LoadingBlock from "../../components/common/LoadingBlock";
+import ResumeFieldDiffView from "../../components/ResumeFieldDiffView";
+import { t } from "../../i18n";
+import { useLocale } from "../../i18n/i18nContext";
+import type { DiffViewData } from "../../types/resumeFieldDiff";
+import type { ResumeBrief } from "../../types";
+
+interface Props {
+  /** 对比基准（null 表示弹窗关闭）。 */
+  diffBase: ResumeBrief | null;
+  diffAgainstId: number | null;
+  diffResult: DiffViewData | null;
+  diffLoading: boolean;
+  /** 可选的对比版本清单（当前列表数据，排除基准后作为下拉项）。 */
+  items: ResumeBrief[];
+  onSelect: (againstId: number) => void;
+  onClose: () => void;
+}
+
+export default function ResumeDiffModal({
+  diffBase,
+  diffAgainstId,
+  diffResult,
+  diffLoading,
+  items,
+  onSelect,
+  onClose,
+}: Props) {
+  useLocale();
+  return (
+    <Modal
+      title={t("resumesPage.diff.title")}
+      open={diffBase !== null}
+      width="min(880px, calc(100vw - 24px))"
+      footer={null}
+      // 版本对比内容随简历长度伸缩：限高让超长内容只滚弹窗内部。
+      styles={{
+        body: { maxHeight: "var(--rf-modal-body-max-h)", overflowY: "auto", overflowX: "hidden" },
+      }}
+      onCancel={onClose}
+    >
+      {diffBase && (
+        <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+          <Space wrap>
+            <Typography.Text>{t("resumesPage.diff.baseLabel")}</Typography.Text>
+            <Typography.Text strong>{diffBase.title}</Typography.Text>
+            <Typography.Text type="secondary">{t("resumesPage.diff.againstLabel")}</Typography.Text>
+            <Select
+              style={{ minWidth: 240 }}
+              placeholder={t("resumesPage.diff.againstPlaceholder")}
+              value={diffAgainstId ?? undefined}
+              onChange={(value) => onSelect(value)}
+              options={items
+                .filter((item) => item.id !== diffBase.id)
+                .map((item) => ({ value: item.id, label: item.title }))}
+            />
+          </Space>
+          {diffLoading && <LoadingBlock />}
+          {!diffLoading && diffResult && <ResumeFieldDiffView data={diffResult} />}
+          {!diffLoading && !diffResult && (
+            <Typography.Text type="secondary">{t("resumesPage.diff.emptyHint")}</Typography.Text>
+          )}
+        </Space>
+      )}
+    </Modal>
+  );
+}

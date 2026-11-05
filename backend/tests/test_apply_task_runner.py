@@ -1,0 +1,443 @@
+# SPDX-License-Identifier: Apache-2.0
+"""任务运行器离线测试：完成 / 暂停恢复 / 停止 / 熔断 / 异常隔离 / 跨线程会话。
+
+（拆分说明：pause/stop/熔断/异常隔离与 ``_set_status`` 终态守卫在
+test_apply_task_runner_stop.py。fakes 与 helpers 留在本文件供其复用。）
+"""
+import threading
+import time
+
+from app.models.apply import ApplyTask, ApplyTaskItem
+from app.models.job import JOB_STATUS_APPLIED, Job
+from app.models.resume import ResumeRecord
+from app.models.tracker import SOURCE_APPLY, STATUS_APPLIED, ApplicationTrack
+from app.schemas.apply import ApplyConfigIn
+from app.services.apply.task_apply import company_key
+from app.services.apply.task_runner import TaskRunner
+from app.services.browser.cdp_client import CdpClient
+from app.services.sites.base import (
+    ApplyOutcome,
+    RiskProfile,
+    SearchPage,
+    SiteAdapter,
+    SiteFailure,
+)
+from app.services.sites.registry import SiteRegistry
+
+
+class _FakeClock:
+    """每次读表都大步前进，让岗位间限速立即结束（离线测试不真等）。"""
+
+    def __init__(self) -> None:
+        self._t = 0.0
+
+    def __call__(self) -> float:
+        self._t += 100.0
+        return self._t
+
+
+class FakeCdp(CdpClient):
+    def __init__(self) -> None:
+        self.events: list[tuple] = []
+        self.closed = False
+
+    def list_targets(self):
+        return []
+
+    def new_tab(self, url: str = "about:blank") -> str:
+        self.events.append(("new_tab", url))
+        return "target-1"
+
+    def send(self, method, params=None, *, timeout=None):
+        self.events.append(("send", method))
+        return {}
+
+    def evaluate(self, expression, *, timeout=None):
+        self.events.append(("evaluate", expression))
+        return None
+
+    def set_file_input(self, selector, files, *, timeout=None):
+        self.events.append(("file", selector))
+
+    def navigate(self, url, *, timeout=None):
+        self.events.append(("navigate", url))
+        return {}
+
+    def close(self):
+        self.closed = True
+
+
+class FakeAdapter(SiteAdapter):
+    key = "fake"
+    display_name = "示例站点"
+    hosts = ("zhipin.com",)
+
+    def __init__(
+        self,
+        *,
+        fail_categories: list[str | None] | None = None,
+        gate: threading.Event | None = None,
+        raise_first_error: bool = False,
+    ) -> None:
+        self._fail_categories = list(fail_categories or [])
+        self._gate = gate
+        self._raise_first_error = raise_first_error
+        self.calls = 0
+
+    def matches(self, url_or_source: str) -> bool:
+        return True
+
+    def risk_profile(self) -> RiskProfile:
+        return RiskProfile(key=self.key)
+
+    def collect_search(self, client, query, page) -> SearchPage:  # pragma: no cover
+        raise AssertionError("投递不应触发采集")
+
+    def open_apply(self, client, job) -> None:
+        client.evaluate("rf:open")
+        if self._gate is not None:
+            self._gate.wait(timeout=5)
+
+    def fill_and_submit(self, client, data, greeting) -> ApplyOutcome:
+        self.calls += 1
+        client.evaluate("rf:submit")
+        if self._raise_first_error and self.calls == 1:
+            raise RuntimeError("模拟内部异常")
+        if self._fail_categories:
+            category = self._fail_categories[min(self.calls - 1, len(self._fail_categories) - 1)]
+            if category:
+                raise SiteFailure(category, f"模拟失败：{category}")
+        return ApplyOutcome(success=True, greeting_sent=greeting)
+
+
+def _registry(adapter: SiteAdapter) -> SiteRegistry:
+    registry = SiteRegistry()
+    registry.register(adapter)
+    return registry
+
+
+def _runner(adapter: SiteAdapter) -> TaskRunner:
+    return TaskRunner(
+        registry=_registry(adapter),
+        client_factory=lambda _config: FakeCdp(),
+        sleeper=lambda _seconds: None,
+        clock=_FakeClock(),
+        poll_interval=0.01,
+    )
+
+
+def _config(**overrides) -> ApplyConfigIn:
+    data = {
+        "interval_seconds": 1,
+        "interval_jitter_seconds": 0,
+        "breaker_threshold": 3,
+        "daily_limit": 60,
+        "per_task_limit": 20,
+    }
+    data.update(overrides)
+    return ApplyConfigIn(**data)
+
+
+def _setup_task(
+    db_session,
+    count: int = 1,
+    *,
+    with_resume: bool = True,
+    companies: list[str] | None = None,
+    **config_overrides,
+) -> ApplyTask:
+    """建一个批次与它的条目。
+
+    ``companies`` 用来指定各条目的公司名（默认每条一家不同公司）。「同公司只投一个岗位」
+    这类用例必须能**精确控制哪两条撞在同一家公司**，否则测不出来。
+    """
+    task = ApplyTask(kind="apply", status="pending", total=count, config=_config(**config_overrides).model_dump())
+    db_session.add(task)
+    db_session.flush()
+    for index in range(count):
+        job = Job(
+            title=f"后端开发{index}",
+            company=companies[index] if companies else f"公司{index}",
+            source="BOSS直聘",
+            source_url=f"https://www.zhipin.com/job/{index}",
+        )
+        db_session.add(job)
+        db_session.flush()
+        resume = None
+        if with_resume:
+            resume = ResumeRecord(
+                title=f"后端版{index}", job_id=job.id, job_title=job.title, content={}
+            )
+            db_session.add(resume)
+            db_session.flush()
+        db_session.add(
+            ApplyTaskItem(
+                task_id=task.id,
+                job_id=job.id,
+                job_title=job.title,
+                company=job.company,
+                resume_id=resume.id if resume is not None else None,
+                resume_title=resume.title if resume is not None else "",
+                sort_order=index,
+            )
+        )
+    db_session.commit()
+    return task
+
+
+def _wait(runner: TaskRunner, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while runner.is_running() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
+def _wait_db(db_session, read, expected, describe: str, timeout: float = 10.0):
+    """轮询等待数据库里的观测值到达 ``expected``；超时给出带实测值的可读失败。
+
+    为什么需要它：``_wait()`` 只保证工作线程退出，之后**一次性读库断言**会把"读到还没落库
+    的旧状态"当成失败——整机满载时线程调度抖动即触发（典型 flaky：隔离跑常过、满载偶发红）。
+    改为对数据库状态做容错轮询，就不再对"提交可见时刻"做任何假设。
+
+    ``read`` 返回当前观测值，``expected`` 是期望值；相等即通过。
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        db_session.expire_all()
+        observed = read()
+        if observed == expected:
+            return observed
+        time.sleep(0.01)
+    db_session.expire_all()
+    observed = read()
+    raise AssertionError(
+        f"{describe}：{timeout}s 内未到达期望值 {expected!r}，实际观测为 {observed!r}"
+    )
+
+
+def _task_status(db_session, task_id: int) -> str:
+    task = db_session.get(ApplyTask, task_id)
+    return task.status if task is not None else "<missing>"
+
+
+def _item_statuses(db_session, task_id: int) -> list[str]:
+    return [
+        item.status
+        for item in db_session.query(ApplyTaskItem)
+        .filter_by(task_id=task_id)
+        .order_by(ApplyTaskItem.sort_order)
+        .all()
+    ]
+
+
+def _poll(db_session, predicate, timeout: float = 5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        db_session.expire_all()
+        value = predicate()
+        if value:
+            return value
+        time.sleep(0.01)
+    db_session.expire_all()
+    return predicate()
+
+
+def test_runner_completes_and_writes_back_job_status(db_session):
+    task = _setup_task(db_session, 1)
+    runner = _runner(FakeAdapter())
+
+    runner.start(task.id)
+    _wait(runner)
+    _wait_db(db_session, lambda: _task_status(db_session, task.id), "completed", "任务状态")
+
+    db_session.expire_all()
+    stored = db_session.get(ApplyTask, task.id)
+    item = db_session.query(ApplyTaskItem).filter_by(task_id=task.id).one()
+    job = db_session.get(Job, item.job_id)
+    assert stored.status == "completed"
+    assert stored.succeeded == 1
+    assert item.status == "success"
+    assert item.greeting  # 默认招呼语已写入记录
+    assert job.status == JOB_STATUS_APPLIED
+
+
+def test_a_custom_greeting_wins_over_the_default_one(db_session):
+    """**用户为这个岗位自己写的招呼语，必须真的被发出去**（而不是被默认招呼语顶掉）。
+
+    这条是"用户自定义必须真实生效"里最容易出问题的一类：界面里能逐条编辑招呼语，用户改完
+    看到的是"已保存"，但发出去的到底是哪一条，只有断言到**适配器收到什么**才知道。
+
+    验证方式：把招呼语设成一个哨兵串，跑完一轮后看写回记录里的招呼语是不是它——
+    运行器会把适配器**实际发出去**的那条写回 `item.greeting`（见 ``task_runner`` 里的
+    ``item.greeting = outcome.greeting_sent``），所以记录里是哨兵串就说明自定义那条赢了。
+    """
+    task = _setup_task(db_session, 1)
+    item = db_session.query(ApplyTaskItem).filter_by(task_id=task.id).one()
+    item.greeting = "您好，我是自己写的那一条 SENTINEL_GREETING"
+    db_session.commit()
+
+    runner = _runner(FakeAdapter())
+    runner.start(task.id)
+    _wait(runner)
+    _wait_db(db_session, lambda: _task_status(db_session, task.id), "completed", "任务状态")
+
+    db_session.expire_all()
+    sent = db_session.query(ApplyTaskItem).filter_by(task_id=task.id).one()
+    assert sent.greeting == "您好，我是自己写的那一条 SENTINEL_GREETING"
+
+
+def test_runner_records_a_tracker_row_for_each_successful_apply(db_session):
+    """投出去的岗位要自动出现在「求职进度」里，否则用户还得手工再录一遍。"""
+    task = _setup_task(db_session, 1)
+    runner = _runner(FakeAdapter())
+
+    runner.start(task.id)
+    _wait(runner)
+    _wait_db(db_session, lambda: _task_status(db_session, task.id), "completed", "任务状态")
+
+    db_session.expire_all()
+    item = db_session.query(ApplyTaskItem).filter_by(task_id=task.id).one()
+    tracks = db_session.query(ApplicationTrack).all()
+    assert len(tracks) == 1
+    assert tracks[0].company == item.company
+    assert tracks[0].title == item.job_title
+    assert tracks[0].status == STATUS_APPLIED
+    assert tracks[0].source == SOURCE_APPLY
+    assert tracks[0].job_id == item.job_id
+
+
+def test_runner_allows_an_adapter_that_does_not_require_a_generated_resume(db_session):
+    """BOSS 的立即沟通不依赖本地岗位版简历，缺简历时仍应进入站点投递流程。"""
+
+    class _NoResumeAdapter(FakeAdapter):
+        requires_resume = False
+
+    task = _setup_task(db_session, 1, with_resume=False)
+    adapter = _NoResumeAdapter()
+    runner = _runner(adapter)
+
+    runner.start(task.id)
+    _wait(runner)
+    _wait_db(db_session, lambda: _task_status(db_session, task.id), "completed", "任务状态")
+
+    db_session.expire_all()
+    item = db_session.query(ApplyTaskItem).filter_by(task_id=task.id).one()
+    assert item.status == "success"
+    assert adapter.calls == 1
+
+
+def test_runner_still_skips_missing_resume_when_the_adapter_requires_it(db_session):
+    task = _setup_task(db_session, 1, with_resume=False)
+    adapter = FakeAdapter()
+    runner = _runner(adapter)
+
+    runner.start(task.id)
+    _wait(runner)
+    _wait_db(db_session, lambda: _task_status(db_session, task.id), "completed", "任务状态")
+
+    db_session.expire_all()
+    item = db_session.query(ApplyTaskItem).filter_by(task_id=task.id).one()
+    assert item.status == "skipped"
+    assert "未找到可用简历" in item.failure_detail
+    assert adapter.calls == 0
+
+
+# ===== 「同公司只投一个岗位」=====
+#
+# 这个开关在设置界面里已经存在很久（默认开），但**投递逻辑从来没有读过它**——用户打开它、
+# 保存它、以为最多给一家公司发一条，实际上队列里有几条就发几条。2026-09-21 在真实投递里
+# 发现并补上。作用域按产品决定取「本批次内」。
+
+
+def test_same_company_skips_the_second_job_of_that_company(db_session):
+    task = _setup_task(
+        db_session, 3, companies=["核桃编程", "核桃编程", "意聪科技"], skip_same_company=True
+    )
+    adapter = FakeAdapter()
+    runner = _runner(adapter)
+
+    runner.start(task.id)
+    _wait(runner)
+
+    assert adapter.calls == 2, "同一家公司的第二条不该真的发出去"
+    statuses = _item_statuses(db_session, task.id)
+    assert statuses == ["success", "skipped", "success"]
+
+    db_session.expire_all()
+    skipped = (
+        db_session.query(ApplyTaskItem)
+        .filter(ApplyTaskItem.task_id == task.id, ApplyTaskItem.status == "skipped")
+        .one()
+    )
+    # 用户看到「已跳过」却不知道为什么，只会以为程序漏投了——原因必须写下来。
+    assert "核桃编程" in skipped.failure_detail
+    assert "同公司只投一个岗位" in skipped.failure_detail
+    # 跳过**不是失败**：不能计入失败、也不能触发熔断。
+    assert skipped.failure_category == ""
+    assert db_session.get(ApplyTask, task.id).failed == 0
+    assert db_session.get(ApplyTask, task.id).skipped == 1
+    assert db_session.get(ApplyTask, task.id).processed == 3
+
+
+def test_same_company_switch_off_sends_every_job(db_session):
+    """关掉开关时行为与从前完全一致——这是"改一处别把别的弄坏"的那一半。"""
+    task = _setup_task(
+        db_session, 3, companies=["核桃编程", "核桃编程", "意聪科技"], skip_same_company=False
+    )
+    adapter = FakeAdapter()
+    runner = _runner(adapter)
+
+    runner.start(task.id)
+    _wait(runner)
+
+    assert adapter.calls == 3
+    assert _item_statuses(db_session, task.id) == ["success", "success", "success"]
+
+
+def test_same_company_matching_ignores_spacing_and_case(db_session):
+    """公司名带空格、大小写不同，仍是同一家——不归一化就等于开关形同虚设。"""
+    task = _setup_task(
+        db_session, 2, companies=[" 核桃编程 ", "核桃编程"], skip_same_company=True
+    )
+    adapter = FakeAdapter()
+    runner = _runner(adapter)
+
+    runner.start(task.id)
+    _wait(runner)
+
+    assert adapter.calls == 1
+    assert _item_statuses(db_session, task.id) == ["success", "skipped"]
+
+
+def test_items_without_a_company_are_never_skipped(db_session):
+    """没有公司名的条目不作同公司判断（判断不了就不做判断），否则会把无关岗位一起吞掉。"""
+    task = _setup_task(db_session, 2, companies=["", ""], skip_same_company=True)
+    adapter = FakeAdapter()
+    runner = _runner(adapter)
+
+    runner.start(task.id)
+    _wait(runner)
+
+    assert adapter.calls == 2
+
+
+def test_a_failed_first_job_still_claims_the_company(db_session):
+    """**失败也算"投过"。** 失败可能发生在确认环节——招呼语其实已经发出去了。这时再给同一家
+    公司发第二条，恰是这个开关要避免的事。方向始终是"宁可少发一条，不可重发一家"。"""
+    task = _setup_task(
+        db_session, 2, companies=["核桃编程", "核桃编程"], skip_same_company=True
+    )
+    adapter = FakeAdapter(fail_categories=["network_timeout"])
+    runner = _runner(adapter)
+
+    runner.start(task.id)
+    _wait(runner)
+
+    assert adapter.calls == 1, "第一条失败之后，第二条仍不该发"
+    assert _item_statuses(db_session, task.id) == ["failed", "skipped"]
+
+
+def test_company_key_normalizes_whitespace_and_case():
+    assert company_key(" 核桃 编程 ") == company_key("核桃 编程")
+    assert company_key("ABC") == company_key("abc")
+    assert company_key("") == ""
+    assert company_key(None) == ""

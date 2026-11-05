@@ -1,0 +1,443 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+@import "./profile-layout.css";
+@import "./profile-settings-rows.css";
+@import "./profile-card.css";
+@import "./profile-edit-bar.css";
+/* 识别结果的校对列表（项 13）：一行一栏，栏目名左、值右；窄屏自动折成上下两段。 */
+.recognition-review-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.recognition-review-label {
+  display: flex;
+  flex: 0 0 168px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 5px;
+}
+
+.recognition-review-value {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.recognition-review-section {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+@media (max-width: 640px) {
+  .recognition-review-row {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .recognition-review-label {
+    flex: 0 0 auto;
+    padding-top: 0;
+  }
+}
+
+.profile-page-header,
+.settings-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.profile-page-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.profile-top-card {
+  height: auto;
+}
+
+.profile-workspace-tabs {
+  margin-top: 8px;
+}
+
+.profile-workspace-tabs > .ant-tabs-nav {
+  margin-bottom: 16px;
+}
+
+.profile-photo-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.profile-photo-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 132px;
+  height: 176px;
+  overflow: hidden;
+  border: 1px solid var(--rf-border-strong);
+  border-radius: 6px;
+  background: var(--rf-surface-alt);
+}
+
+.profile-photo-frame .ant-image,
+.profile-photo-frame img {
+  width: 100%;
+  height: 100%;
+}
+
+.profile-photo-frame img {
+  object-fit: cover;
+}
+
+.profile-photo-placeholder {
+  color: var(--rf-text-description);
+  font-size: 52px;
+}
+
+.profile-section-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 分区标题栏：卡片本体不再自带标题，标题由这里统一给，查看态点标题即可展开/收起。
+   12px 16px 是卡片内边距的统一口径（内容区同为 16px，见 profile-layout.css）：
+   此前 8px 4px 让齿轮/折叠图标离卡片边缘只有 4px。 */
+.profile-section-collapse-toggle,
+.profile-section-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.profile-section-collapse-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.profile-section-collapse-toggle:hover {
+  background: var(--rf-surface-alt);
+}
+
+.profile-section-collapse-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--rf-info);
+  font-size: 12px;
+}
+
+.profile-section-content.is-collapsed {
+  display: none;
+}
+
+.profile-section-sortable {
+  position: relative;
+  min-width: 0;
+  /* 长资料页只绘制当前视口附近的分区，避免滚动时反复绘制整棵表单树。
+     编辑态下该优化被 is-section-reordering 覆盖（见下），查看态保持 auto。 */
+  content-visibility: auto;
+  contain-intrinsic-size: 0 420px;
+  /* 阴影/描边只在拖拽抬起时出现，150ms 过渡只作用于 box-shadow；
+     transform 严禁加过渡（跟手视觉逐帧直写，过渡会拖尾）。 */
+  transition: box-shadow 150ms ease;
+}
+
+/*
+ * 强制**真实布局**（content-visibility: visible）。类在**进入编辑态时**就挂在每个
+ * 分区上（ProfileSectionShell：`reordering || editable`），而不是等拖拽激活——
+ * 激活瞬间同时发生「全部分区 auto → visible」与「被拖壳 will-change 提升合成层 +
+ * transform 逐帧变化」，Chrome 对刚切出 content-visibility 的内容会出现栅格失效，
+ * 卡片自己的白色背景整帧画不出来（真机连拍实测标题栏与第一个条目之间露出整段
+ * 页面背景，看起来像"游离在卡片外的重复拖动标志"）。提前挂类后拖拽全程不再发生
+ * CV 切换。离屏分区默认 `content-visibility: auto` 时 rect 也会退化成
+ * `contain-intrinsic-size` 的 420px 假高度，拖拽几何（前缀和、clamp 上限）同样全错。
+ *
+ * 这条规则只管 content-visibility，不负责折叠：拖拽期的折叠是**另一件事**，由下面的
+ * `.is-compact` 显式开关（激活那一刻「量 → 折叠 → 补偿 scrollTop」三步走，见
+ * features/profile/profileCompactDrag.ts）。两件事必须分开：塌缩若顺手做在这里，
+ * 补偿值就没有「塌缩前」的参照，符号/量级全错，卡片会直接脱手。
+ */
+.profile-section-sortable.is-section-reordering {
+  content-visibility: visible;
+}
+
+/*
+ * 拖动激活期「全部大卡片折叠成紧凑条」（P3）。
+ *
+ * 开关只有一个：store 的 `compact`（由 useProfileSectionReorder 在拖动激活那一帧
+ * 同步挂上、松手立刻摘掉），**所有**分区一起折，不分被拖/未拖——用户要的就是
+ * 「一开始拖就全收起来，再在紧凑布局里换位」。
+ *
+ * 折叠是真实的高度变化，所以激活顺序必须是「量 beforeTop → 折叠 → 补偿 scrollTop →
+ * 按紧凑高度采集几何」（见 features/profile/profileCompactDrag.ts）。拖动中的跟手
+ * 视觉就是紧凑条**自己**：`transform` 直写（见 useProfileSectionReorder.syncDrag）
+ * 配上 `.is-dragging` 的置顶/合成层，不再另起浮条——用户要的是"卡片本身跟手"。
+ *
+ * 放在 `.is-dragging` 之前：那条规则要给被拖卡换抬起阴影，同特异度下后写的赢。
+ */
+.profile-section-sortable.is-compact {
+  box-sizing: border-box;
+  height: 52px;
+  min-height: 52px;
+  /* 紧凑条之间留 8px：否则 8 条只剩 1px 描边相隔，看起来像一整块表格。
+     间距是均匀的，几何采集算出的 gap 就是 8，前缀和模型照常成立。 */
+  margin: 0 0 8px;
+  overflow: hidden;
+  background: var(--rf-surface);
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 8px;
+}
+
+.profile-section-sortable.is-compact .profile-section-content {
+  display: none;
+}
+
+/*
+ * 标题栏占满整条：52px 减上下各 1px 边框 = 50px，标题栏本身就是 flex，垂直居中由它
+ * 负责。右侧留出 76px 给拖动把手（right 38px、宽 28px）与微调按钮，标题不钻到控件下面。
+ */
+.profile-section-sortable.is-compact .profile-section-titlebar {
+  box-sizing: border-box;
+  height: 50px;
+  margin: 0;
+  padding: 0 76px 0 16px;
+  overflow: hidden;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+/* 微调按钮默认浮在卡片顶部（top 9px + 28px），紧凑条里会和把手挤在一起，直接收起。 */
+.profile-section-sortable.is-compact .profile-section-nudge {
+  display: none;
+}
+
+/*
+ * 拖动中的分区（类由 useProfileSectionReorder 在激活时挂、松手时摘）：
+ * - z-index 抬到所有兄弟之上：分区栈改用 CSS order 做视觉重排后，DOM 顺序不再
+ *   随拖动变化，向下拖时后绘制的兄弟（不透明白底）会盖住被拖卡，必须置顶。
+ * - will-change: transform 把被拖卡提升为合成层：跟手视觉是每帧直改
+ *   transform（ref 直写、不走 React），有独立合成层后不再整块重绘。
+ * - "抬起"语言与条目统一：1px 浅蓝描边用 box-shadow 环实现（零布局位移），
+ *   圆角与卡片一致，阴影多层柔和（近处贴地影 + 远处弥散影）。
+ * 只在拖动期间挂载，松手即摘，不常驻占显存。
+ *
+ * 注意：被拖卡在拖动激活期同时带 `.is-compact`（52px），所以"跟手的那条"就是卡片
+ * 本身——不再有独立浮条，这里必须保证它在紧凑尺寸下也有完整的白色底与抬起阴影。
+ */
+.profile-section-sortable.is-dragging {
+  z-index: 10;
+  will-change: transform;
+  border-radius: 8px;
+  background: var(--rf-surface);
+  box-shadow:
+    0 0 0 1px #91caff,
+    0 1px 2px rgb(31 55 88 / 6%),
+    0 12px 28px rgb(31 55 88 / 14%);
+}
+
+.profile-section-drag-handle {
+  position: absolute;
+  z-index: 3;
+  top: 9px;
+  right: 38px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--rf-text-description);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.profile-page.is-editing .profile-section-drag-handle {
+  display: inline-flex;
+}
+
+.profile-section-drag-handle:hover {
+  background: var(--rf-brand-wash);
+  color: var(--rf-info);
+}
+
+.profile-section-drag-handle:active {
+  cursor: grabbing;
+}
+
+/*
+ * 分区把手上移/下移微调按钮（点击移动一位，复用键盘排序路径）：
+ * - 默认完全透明且不响应指针，悬停分区 / 焦点进入分区时才浮现（减少编辑态噪音）；
+ *   opacity/pointer-events 组合保持按钮始终可被键盘聚焦——聚焦本身会触发
+ *   .profile-section-sortable:focus-within 让它现形（visibility:hidden 会把按钮
+ *   踢出 Tab 序，键盘用户就永远找不到它了）。
+ * - 位置在拖拽把手（right 38px、宽 28px）左侧一列：↑ 66px、↓ 94px。
+ */
+.profile-section-nudge {
+  position: absolute;
+  z-index: 3;
+  top: 9px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--rf-text-description);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  user-select: none;
+}
+
+.profile-section-nudge-up {
+  right: 66px;
+}
+
+.profile-section-nudge-down {
+  right: 94px;
+}
+
+.profile-page.is-editing .profile-section-nudge {
+  display: inline-flex;
+}
+
+.profile-section-sortable:hover .profile-section-nudge,
+.profile-section-sortable:focus-within .profile-section-nudge {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.profile-section-nudge:hover {
+  background: var(--rf-brand-wash);
+  color: var(--rf-info);
+}
+
+.profile-section-nudge:disabled {
+  color: var(--rf-text-tertiary);
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.profile-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.profile-list-item {
+  position: relative;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--rf-border);
+  border-radius: 8px;
+  background: var(
+    --rf-surface-alt
+  ); /* 只过渡 box-shadow（抬起/落下的阴影有 150ms 缓冲）；transform 严禁加过渡。 */
+  transition: box-shadow 150ms ease;
+}
+
+/*
+ * 拖动中的条目（类由 useProfileItemListDrag 在激活时挂、松手时摘）：
+ * 条目全程保持展开、没有塌缩，这里只给"被拖条目"一个抬起视觉——
+ * z-index 置顶（向下拖时后绘制的兄弟会盖住被拖项）+ 合成层提示（每帧直改
+ * transform）+ 柔和多层阴影 + 浅蓝描边（不再是生硬的 1px 纯蓝）。只在拖动期间
+ * 挂载，松手即摘。
+ */
+.profile-list-item.is-dragging {
+  z-index: 10;
+  will-change: transform;
+  border-color: var(--rf-focus-ring);
+  box-shadow:
+    0 1px 2px rgb(31 55 88 / 6%),
+    0 12px 28px rgb(31 55 88 / 14%);
+  background: var(--rf-surface);
+}
+
+/*
+ * 交叉隐藏（只在拖拽进行中生效，松手即恢复；非拖拽态不受影响，键盘可达性不变）：
+ * - 分区拖拽中隐藏条目级把手/删除簇：被拖分区上的「⠿ 🗑」悬在卡片视觉之外，
+ *   用户会把它们看成"重复的拖动标志/错位"。
+ * - 条目拖拽中隐藏分区把手：同理，拖条目时不该看到分区级的把手。
+ */
+.profile-section-sortable.is-dragging .profile-list-item-drag-handle,
+.profile-section-sortable.is-dragging .profile-list-item-delete,
+.profile-section-sortable.is-dragging .profile-section-nudge {
+  visibility: hidden;
+}
+
+/* :has 从被拖条目反向命中分区壳（Chromium 105+ 支持；不支持的引擎下只是少这层
+   视觉精修，不影响功能）。 */
+.profile-section-stack:has(.profile-list-item.is-dragging) .profile-section-drag-handle,
+.profile-section-stack:has(.profile-list-item.is-dragging) .profile-section-nudge {
+  visibility: hidden;
+}
+
+/* 分区拖拽进行中（栈级 is-section-reordering 只在拖拽期存在）隐藏全部分区微调按钮，
+   避免拖动时其它分区的 ↑/↓ 悬在卡片外被误认成拖动标志。 */
+.profile-section-stack.is-section-reordering .profile-section-nudge {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/*
+ * 条目卡的动作簇（↑ ↓ 🗑 + 拖拽把手）现在是**流式布局**里的一行（右对齐、gap 4px、
+ * 每颗 28×28，样式在 profile-layout.css）。此前它们是 `position: absolute` 浮在
+ * 卡片右上角（把手 right 40px、删除 right 8px），卡片为此留了 76px 右内边距的空白；
+ * 这里只保留"拖拽期交叉隐藏"这一条状态规则。
+ */
+.profile-reference-preview {
+  max-height: 60vh;
+  margin: 12px 0 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 6px;
+  background: var(--rf-surface-alt);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* 年/月/日三个下拉的宽度规则只在 profile-layout.css 里有一份（单一来源）：这里原先
+   还有一组 `width: 100%; min-width: 0`，与那边的 `flex: 1 1 208px; min-width: 208px`
+   互相打架——后写的这份把控件区压到 187px，三个守着自己 min-width 的下拉溢出后与
+   「至今」重叠 11px（2026-10-27 实测）。不要再往这里加日期宽度的覆写。 */
+
+/* 非编辑态的下拉框：**只禁用交互，文字仍用正文色**。
+   antd 的 disabled 会把内容统一降到 rgba(0,0,0,.25)，在浅色卡片上几乎读不清；
+   而同一行的普通输入框（如绩点）还是正文色，两者并排就像"这一格没填"。
+   只覆盖文字与箭头，背景/光标保持原样——仍然点不动，只是看得清。 */
+.profile-page:not(.is-editing) .ant-select-disabled .ant-select-content-has-value,
+.profile-page:not(.is-editing) .ant-select-disabled .ant-select-suffix,
+.profile-page:not(.is-editing) .ant-select-disabled .anticon-down {
+  color: var(--rf-text-body);
+}

@@ -1,0 +1,278 @@
+// SPDX-License-Identifier: Apache-2.0
+/** 助手消息的安全 Markdown 子集、附件和来源展示。 */
+
+import {
+  ExportOutlined,
+  FilePdfOutlined,
+  FileTextOutlined,
+  FileWordOutlined,
+  PushpinFilled,
+  StarFilled,
+} from "@ant-design/icons";
+import { Collapse, Image, Tag, Tooltip, Typography } from "antd";
+import { memo, useEffect, useRef, useState } from "react";
+import type { AssistantAttachment, AssistantSource, AssistantSourceNumber } from "../../../types";
+import { t } from "../../../i18n";
+import { useLocale } from "../../../i18n/i18nContext";
+import { MarkdownBlock } from "../../../components/common/MarkdownBlock";
+import { MessageToolCalls } from "./MessageToolCalls";
+
+import { attachmentStyle, canPreviewImage } from "../assistantUtils";
+
+/** 文档按扩展名区分图标：pdf 和 docx 混在一串标签里时，图标比文件名更好认。 */
+function attachmentIcon(name: string, kind: string) {
+  if (kind !== "document") return <FileTextOutlined />;
+  return name.toLowerCase().endsWith(".pdf") ? <FilePdfOutlined /> : <FileWordOutlined />;
+}
+
+/**
+ * 助手消息正文：块级解析已移到 `components/common/MarkdownBlock`（面试页共用同一份）。
+ * 这里只保留 memo 与 `sourceMap` 的透传，渲染结果与拆分前逐节点一致。
+ */
+function AssistantMessageContentBase({
+  content,
+  sourceMap,
+}: {
+  content: string;
+  /** [来源N] 的「编号 → url」映射；缺省时正文里的 [来源N] 保持纯文本。 */
+  sourceMap?: AssistantSourceNumber[];
+}) {
+  return <MarkdownBlock content={content} sourceMap={sourceMap} />;
+}
+
+/**
+ * 流式期间每个 delta 都会让页面级 state（streamingText）更新、整棵助手页重渲染；
+ * 历史气泡的 props（content 字符串 + sourceMap 数组引用）不变，包一层 memo 把它们挡在
+ * 渲染之外——否则长对话下每次 delta 都要对全部历史消息重新 split 全文 + 逐行解析。
+ */
+export const AssistantMessageContent = memo(AssistantMessageContentBase);
+
+export function StreamingStatus({ message }: { message: string }) {
+  return (
+    <div className="assistant-streaming-status" role="status">
+      <span className="assistant-streaming-dot" aria-hidden="true" />
+      <span>{message}</span>
+      <span className="assistant-streaming-ellipsis" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+    </div>
+  );
+}
+
+export function ConversationTitle({
+  title,
+  pinned,
+  favorite,
+  onSelect,
+}: {
+  title: string;
+  pinned: boolean;
+  favorite: boolean;
+  onSelect: () => void;
+}) {
+  const titleRef = useRef<HTMLSpanElement>(null);
+  const [overflowDistance, setOverflowDistance] = useState(0);
+
+  useEffect(() => {
+    const element = titleRef.current;
+    if (!element) return;
+
+    const updateOverflowDistance = () => {
+      const nextDistance = Math.max(0, element.scrollWidth - element.clientWidth);
+      setOverflowDistance((current) => (current === nextDistance ? current : nextDistance));
+    };
+    updateOverflowDistance();
+
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(updateOverflowDistance);
+    observer?.observe(element);
+    window.addEventListener("resize", updateOverflowDistance);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateOverflowDistance);
+    };
+  }, [title]);
+
+  return (
+    <Tooltip title={title} placement="right">
+      <button
+        type="button"
+        className="assistant-conversation-button"
+        aria-label={title}
+        onClick={onSelect}
+      >
+        {(pinned || favorite) && (
+          <span className="assistant-conversation-flags" aria-hidden="true">
+            {pinned && <PushpinFilled />}
+            {favorite && <StarFilled />}
+          </span>
+        )}
+        <span
+          ref={titleRef}
+          className={
+            overflowDistance > 0
+              ? "assistant-conversation-title is-overflowing"
+              : "assistant-conversation-title"
+          }
+          style={attachmentStyle(overflowDistance)}
+        >
+          <span>{title}</span>
+        </span>
+      </button>
+    </Tooltip>
+  );
+}
+
+export function MessageAttachments({
+  attachments,
+}: {
+  attachments: Array<
+    AssistantAttachment | { name: string; kind: "text" | "image" | "document"; data: string }
+  >;
+}) {
+  useLocale();
+  if (!attachments.length) return null;
+  const notes = attachments.flatMap((attachment) =>
+    "notes" in attachment ? attachment.notes : [],
+  );
+  return (
+    <div className="assistant-message-attachments">
+      {attachments.map((attachment, index) => {
+        const dataUrl = "data_url" in attachment ? attachment.data_url : attachment.data;
+        const mimeType = "mime_type" in attachment ? attachment.mime_type : "";
+        if (attachment.kind === "image" && dataUrl && canPreviewImage(mimeType)) {
+          return (
+            <Image
+              key={`${attachment.name}-${index}`}
+              src={dataUrl}
+              alt={attachment.name}
+              className="assistant-message-image"
+            />
+          );
+        }
+        return (
+          // 文件名是用户给的，长度没有上限；标签本身不换行，不截断就会顶出气泡。
+          <Tooltip key={`${attachment.name}-${index}`} title={attachment.name}>
+            <Tag
+              className="assistant-attachment-tag"
+              icon={attachmentIcon(attachment.name, attachment.kind)}
+            >
+              {attachment.name}
+            </Tag>
+          </Tooltip>
+        );
+      })}
+      {notes.length > 0 && (
+        <span className="assistant-attachment-notes">
+          {notes.join(t("assistantUi.attachments.notesSeparator"))}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 模型的思考过程；开启思考强度后才有内容。
+ *
+ * 照抄 `MessageSources` 的折叠面板模式：**默认折叠**（不传 `defaultActiveKey`），
+ * 标题「思考过程」，用户点开即可查看。**没有内容时整块不渲染**——这是安全降级：
+ * 不开思考、或更早存下的历史消息里没有 `reasoning` 字段时，界面与加这个功能之前
+ * 完全一致，不会凭空多出一个空面板。
+ *
+ * 无障碍：折叠头由 antd 渲染成可聚焦的 `role="button"`，本身支持回车/空格开关；
+ * 这里额外挂 `aria-label` 固定名称、并用 `data-testid` 提供给测试，避免依赖会被
+ * antd 自动插入空格的中文可见文本（两字中文标签会被拆开，按文本查询会找不到）。
+ */
+export function MessageReasoning({
+  reasoning,
+  truncated = false,
+  active = false,
+}: {
+  reasoning?: string;
+  truncated?: boolean;
+  /** 正在流式思考时为 true：标题旁亮脉冲点，思考结束后停（A2）。 */
+  active?: boolean;
+}) {
+  useLocale();
+  if (!reasoning || !reasoning.trim()) return null;
+  return (
+    <Collapse
+      className={`assistant-reasoning${active ? " assistant-reasoning--active" : ""}`}
+      size="small"
+      data-testid="message-reasoning"
+      items={[
+        {
+          key: "reasoning",
+          label: (
+            <span
+              className="assistant-reasoning-label"
+              aria-label={t("assistantUi.reasoning.title")}
+            >
+              {t("assistantUi.reasoning.title")}
+              {active && <span className="assistant-reasoning-dot" aria-hidden="true" />}
+            </span>
+          ),
+          children: (
+            <div className="assistant-reasoning-body">
+              <div className="assistant-reasoning-text" style={{ whiteSpace: "pre-wrap" }}>
+                {reasoning}
+              </div>
+              {truncated && (
+                <Typography.Text type="secondary" className="assistant-reasoning-truncated">
+                  {t("assistantUi.reasoning.truncated")}
+                </Typography.Text>
+              )}
+            </div>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
+export function MessageSources({ sources }: { sources: AssistantSource[] }) {
+  useLocale();
+  if (!sources.length) return null;
+  return (
+    <Collapse
+      className="assistant-sources"
+      size="small"
+      items={[
+        {
+          key: "sources",
+          label: t("assistantUi.sources.header", { count: sources.length }),
+          children: (
+            <ol>
+              {sources.map((source) => (
+                <li key={source.url}>
+                  <Typography.Link
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="assistant-source-title"
+                  >
+                    {source.title || source.url}
+                    {/* 标题默认就是一段普通文字，用户不会想到能点。外链图标把"可跳转"摆在
+                        明面上；aria-hidden 是因为图标自带 aria-label（"export"），不隐藏
+                        会并进链接的无障碍名称，读屏时在"招聘官网"后面念一句"export"没意义。 */}
+                    <ExportOutlined aria-hidden className="assistant-source-icon" />
+                  </Typography.Link>
+                  {source.snippet && (
+                    <Typography.Text type="secondary">{source.snippet}</Typography.Text>
+                  )}
+                </li>
+              ))}
+            </ol>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
+// 兼容再导出：既有调用方从 AssistantMessageContent 拿 MessageToolCalls。
+export { MessageToolCalls };

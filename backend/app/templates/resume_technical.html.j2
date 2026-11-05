@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; script-src 'nonce-{{ csp_nonce }}'; base-uri 'none'; form-action 'none'" />
+<title>{{ page_title }} - 简历</title>
+<style>
+  /* 技术模板：等宽辅助信息 + 标签化技能 + 深色条目标题，信息密度高，适合研发岗位。 */
+  :root {
+    --text: #1c2430;
+    --muted: #5d6b7a;
+    --line: #ccd6e0;
+    --accent: #0b5fa5;
+    --accent-soft: #eaf2fa;
+    --bg: #ffffff;
+    /* 正文字号就是控件上的值：这里「不得」再乘任何缩放系数（2026-10-21 用户要求）。 */
+    --fs: {{ base_px }}px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    font-size: var(--fs);
+    line-height: 1.6;
+    width: 210mm;
+    height: {{ page_limit * 297 }}mm;
+    padding: 12mm;
+  }
+  .header { display: flex; align-items: flex-start; gap: calc(var(--fs) * 1.4); border-bottom: 3px solid var(--accent); padding-bottom: calc(var(--fs) * 0.8); margin-bottom: calc(var(--fs) * 1.1); }
+  .header-main { flex: 1; min-width: 0; }
+  .header .name { font-size: calc(var(--fs) * 1.8 * var(--name-scale, 1)); font-weight: 700; color: var(--accent); }
+  .name-extra { font-size: calc(var(--fs) * 0.95); font-weight: 400; color: var(--muted); }
+  .header .intent { font-size: calc(var(--fs) * 1.04); font-weight: 600; margin-top: calc(var(--fs) * 0.24); }
+  .header .contact { font-family: Consolas, "Cascadia Mono", Menlo, monospace; font-size: calc(var(--fs) * 0.86); color: var(--muted); margin-top: calc(var(--fs) * 0.44); }
+  .header .contact span { margin-right: calc(var(--fs) * 1.14); white-space: nowrap; }
+  .profile-photo { width: calc(var(--fs) * 5.8 * var(--photo-scale, 1)); height: calc(var(--fs) * 7.4 * var(--photo-scale, 1)); flex: 0 0 auto; object-fit: contain; border: 1px solid var(--line); }
+  .section { margin-bottom: calc(var(--fs) * 1.0); }
+  .section-title { font-size: calc(var(--fs) * 1.04 * var(--section-title-scale, 1)); font-weight: 700; color: #ffffff; background: var(--accent); display: inline-block; padding: calc(var(--fs) * 0.1) calc(var(--fs) * 0.71); margin-bottom: calc(var(--fs) * 0.57); }
+  .entry { margin-bottom: calc(var(--fs) * 0.64 * var(--entry-gap, 1)); }
+  .entry-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--fs); }
+  .entry-head .title { font-size: calc(var(--fs) * 1.04); font-weight: 600; }
+  .entry-head .meta { font-family: Consolas, "Cascadia Mono", Menlo, monospace; font-size: calc(var(--fs) * 0.86); color: var(--muted); white-space: nowrap; }
+  .entry .sub { font-size: calc(var(--fs) * 0.9); color: var(--muted); margin: calc(var(--fs) * 0.1) 0 calc(var(--fs) * 0.2); }
+  ul { padding-left: calc(var(--fs) * 1.29); }
+  li { margin-bottom: calc(var(--fs) * 0.14); }
+  li::marker { color: var(--accent); }
+  .summary-text { font-size: calc(var(--fs) * 0.97); }
+  .skill-list { padding-left: 0; }
+  .skill-list li { list-style: none; display: inline-block; font-family: Consolas, "Cascadia Mono", Menlo, monospace; font-size: calc(var(--fs) * 0.86); background: var(--accent-soft); color: var(--accent); border-left: 2px solid var(--accent); padding: 0 calc(var(--fs) * 0.5); margin: 0 calc(var(--fs) * 0.43) calc(var(--fs) * 0.36) 0; }
+  @page { size: A4; margin: 0; }
+  @media print {
+    .section, .entry { break-inside: avoid; }
+    /* 让背景色与边框在打印时保留：技能标签的底色/左侧色条就靠这句。
+       浏览器默认「不打印背景图形」，这正是"预览里有小框、打印出来没有"的原因；
+       `print-color-adjust: exact` 会强制按屏幕样式绘制，不依赖用户在打印对话框里勾选。 */
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+{% include "_resume_document.j2" %}
+{% include "_resume_fit_script.j2" %}
+</body>
+</html>

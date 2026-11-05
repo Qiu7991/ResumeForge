@@ -1,0 +1,315 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 简历制作台（3/4）：中栏（内容编辑）与画布（A4 纸面）。 */
+/* ===== 中栏 ===== */
+.resume-wb-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.resume-wb-editor-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rf-border-subtle);
+}
+
+.resume-wb-editor-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.resume-wb-editor-status {
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+/* 面板自己滚（不整块滚）：动作条要一直贴在中栏底部。
+   `padding-top: 0` 是修"滚动时内容从标签条上方透出来"的关键：sticky 的标签条贴在
+   **padding box 的顶边**，只要这里留了内边距，滚上去的内容就会从那条缝里露出来一条
+   （用户 2026-10-23 截图：标签条上方浮着半行正文）。上边距改由标签条自己的
+   `padding-top` 提供，它跟着内容一起被背景色盖住。 */
+.resume-wb-editor-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* 横向必须**显式** hidden：只写 `overflow-y: auto` 时，`overflow-x` 会按规范从
+     `visible` 计算成 `auto`，于是任何 1px 的横向余量都会在底部变成一条横条
+     （用户 2026-11-06 截图：中栏内容底部多出一条横向滚动条）。
+     不能写 `overflow: hidden`——那会把纵向滚动一起关掉，中栏就滚不动了。 */
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding-top: 0;
+  scrollbar-color: var(--rf-border) transparent;
+  scrollbar-width: thin;
+}
+
+.resume-wb-editor-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin: 0 -16px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--rf-border-subtle);
+  background: var(--rf-surface);
+}
+
+/* 动作条被摘掉之后（`hideActions`：制作台里只留顶部那一对整体动作），中栏最后一屏
+   会直接顶到窗口底边——中栏那一栏的 `padding: 16px 16px 0` 是"底部由动作条自己补"
+   的写法。用 `:has()` 把那段补回来；不补的话最后一行内容贴着屏幕边缘，看着像被裁掉。 */
+.resume-wb-editor:not(:has(.resume-wb-editor-actions)) .resume-wb-editor-body {
+  padding-bottom: 16px;
+}
+
+/* ===== 画布 ===== */
+.resume-wb-canvas {
+  /* 中性灰画布：从既有变量派生，深浅两套主题各自成立（不新增十六进制）。 */
+  --rf-wb-canvas: color-mix(in srgb, var(--rf-surface-alt) 86%, var(--rf-border) 14%);
+
+  display: flex;
+  flex-direction: column;
+  /* **剩余高度**，不是整栏高度：这一栏里横幅（分页报告）是兄弟节点。写 `height: 100%`
+     会按整栏算，横幅那 52px 就把画布顶出栏外、被 `overflow: hidden` 裁掉，末尾的缩放条
+     正好落在被裁的那一段（2026-10-29 用户反馈）。`min-height: 0` 允许它真的缩小。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--rf-wb-canvas);
+}
+
+/* 画布这一栏必须能被压缩（Q21）。`.resume-wb-canvas` 是 `.resume-wb-body` 的 flex 项，
+   默认的 `min-width: auto` 会取"纸面内容的最小宽度"——精确预览里纸列有内联 px 宽度，
+   两者互相推高（量宽 → 纸变宽 → 栏变宽 → 量宽更大），于是右栏越过窗口右边框、整列被裁。
+   给 flex 链上每一层都写上 `min-width: 0`，栏宽就只由「剩余空间」决定，纸面超宽交给
+   纸面层自己横向滚动。 */
+.resume-wb-canvas,
+.resume-wb-canvas-scroll,
+.resume-wb-canvas-scroll .resume-preview-root,
+.resume-wb-canvas-scroll .resume-preview-body {
+  min-width: 0;
+}
+
+/* 画布条：**只装实时预览状态**（2026-11 起）。原先那两句说明（分页虚线 / 缩放怎么用）
+   已经并成一句交给纸面下方的缩放条，所以这条现在通常只有一枚状态胶囊；
+   没有状态时 `ResumeWorkbenchCanvas` 整条都不渲染，不会留一个空盒子。
+   只剩一个子项，所以从"竖排两行说明"改成**横排**：这样出错时那句说明与「重试」
+   并排在一行，而不是上下堆成两块。 */
+.resume-wb-canvas-bar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 8px;
+  background: var(--rf-surface);
+}
+
+/* 状态条里那句话（`ResumeWorkbenchLiveCanvas` 的「正在更新预览…」/「上一次预览成功」）：
+   与画布其它说明同字号，margin 归零以适配 antd Typography 的默认外边距。 */
+.resume-wb-canvas-note.ant-typography {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.resume-wb-canvas-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* **不再整块滚动**（2026-10-29 用户要求"上下滑动时红框部分都不要动"）。
+     这一层只做三件事：竖排「固定头部 / 纸面滚动区 / 缩放条页脚」，并把高度接力传下去。
+     整块滚的时候，工具条以下（专业视图行、溢出提示）都会跟着走，用户怎么滚都在动。 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  /* 底部 0：缩放条自己就是页脚，留 16px 会在它和纸面之间露出一条灰缝（"脱节"）。 */
+  padding: 12px 16px 0;
+  scrollbar-color: var(--rf-border) transparent;
+  scrollbar-width: thin;
+}
+
+/* ===== 头部固定、只有纸面滚（2026-11 用户要求） ===== */
+/* 结构（见 `ResumePreview`）：`.resume-preview-chrome`（工具条 + 专业视图行 + 两条提示）
+   → `.resume-preview-body`（纸面，唯一滚动区）→ 缩放条（页脚）。
+   头部用 flex 的 `0 0 auto` 而不是 sticky：不滚的那一层自然不动，也不需要在滚动时
+   补背景色去盖住从缝里透出来的纸边。 */
+.resume-wb-canvas-scroll .resume-preview-root {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.resume-wb-canvas-scroll .resume-preview-chrome {
+  flex: 0 0 auto;
+}
+
+/* 纸面：精确模式的多页 PDF 也在这里滚（草稿模式一页刚好塞满，通常没有滚动条）。 */
+.resume-wb-canvas-scroll .resume-preview-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  /* 横向**只允许纸面层自己滚**（Q21）：草稿的纸在 `.resume-preview-viewport` 里滚，
+     精确的纸在 `.exact-preview.is-zoomed` 里滚。这一层若也开 `overflow-x: auto`，
+     1–2px 的亚像素余量就会多出一条横条，放大时更是整块画布内容一起被右侧裁切。 */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 纸面本身（相框 / 草稿视口）高度是算出来的，不能被 flex 压缩——压了就不会滚，
+   内容会被直接裁掉。 */
+.resume-wb-canvas-scroll .resume-preview-body > * {
+  flex: 0 0 auto;
+}
+
+/* 缩放条：页脚，贴在右栏底部（不再是 sticky 在滚动流里，因此不会"滚到底脱节"）。 */
+.resume-wb-canvas-scroll .resume-preview-zoom-row {
+  flex: 0 0 auto;
+  /* 说明并进来之后这一行可能很长：允许换行，否则它会横向撑出滚动条。 */
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 10px;
+  /* 上边距必须是 0：这一行是页脚，与纸面滚动区之间只要 1px 分隔线。
+     留一档 8px 就是用户说的"滑到最下面这里脱节了"——纸面已经到底，页脚却浮在下面。 */
+  margin: 0 -16px;
+  /* 右侧 56px：让开右下角常驻的助手悬浮球（它是 fixed，会压在这条尾巴上）。
+     底部 18px（问题 22 ④）：这一行是右栏的最后一条，行底正好落在视口底。原来只有 10px
+     下内边距，提示行 y 973–990 / 视口 1000 —— 实测距底 10px，视觉上像贴在窗口边缘，
+     也容易被系统任务栏/浏览器底栏压住。留 18px 之后提示行距视口底 ≥16px（断言 ④-1），
+     并且**不裁**（这一行不是滚动容器，只是变高了 8px）。 */
+  padding: 10px 56px 18px 12px;
+  /* 白底 + 上分隔：与预览弹窗里那行同款（那边坐在白卡上），在灰画布上才读得出
+     "这是页脚工具条"而不是"浮在纸上的几个图标"。 */
+  border-top: 1px solid var(--rf-border-subtle);
+  background: var(--rf-surface);
+}
+
+/* 缩放条里的提示语在这一屏是**唯一的**分页/缩放说明（画布上方那条已经撤掉），
+   所以不能沿用 `.resume-preview-zoom-hint` 在窄屏隐藏的规则（那条规则属于
+   "主预览里还有别处解释"的语境）；长句允许换行、居中收尾。
+   `flex: 0 1 auto`（不是 `1 1 auto`）：让"控件 + 提示"整体居中，而不是提示撑满右侧
+   把控件推到偏左——后者正是用户说的"和预览界面那行不一样"。 */
+.resume-wb-canvas-scroll .resume-preview-zoom-hint {
+  display: inline;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.45;
+}
+
+/* 精确模式的 PDF 相框：吸顶的工具栏不能盖住第一页的页首——`resume-canvas.css` 里
+   `.exact-preview` 自带 1px 边框与底色，这里补一档上间距即可（不改它的 overflow）。 */
+.resume-wb-canvas-scroll .exact-preview {
+  margin-top: 2px;
+}
+
+.resume-wb-canvas-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.resume-wb-canvas-scroll::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--rf-border);
+}
+
+/* 纸张：投影 + 2px 圆角（真实纸张是有切边的，纯直角看起来像截图拼的）。 */
+.resume-wb-canvas-scroll .resume-preview-page {
+  margin: 0 auto;
+  border-radius: 2px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+}
+
+/* 窄屏提示：**由 JS 决定渲染**（只在内容栏不在栅格里时出现），所以这里不再
+   `display: none` —— 那句隐藏规则会让"渲染了但看不见"。
+   样式只负责"它是次要说明"，占位与否则是 `ResumeZoomModal` 的 `tier` 判断。 */
+.resume-wb-narrow-hint {
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 矮屏（≤839 高）：说明条已经撤掉（说明并到纸面下方的缩放条里），这里只把状态条收薄，
+   把省下的高度还给纸张。
+   为什么值得收：工作台的可用高 = 弹窗体高 − 动作条 56 − 状态条 − 画布内边距，而纸的缩放
+   由**高度**决定（宽度再宽也不会让纸变大，见方案 §4.6.1 的读表要点）。 */
+@media (max-height: 839px) {
+  .resume-wb-canvas-bar {
+    padding: 4px 8px;
+  }
+}
+
+/* ===== 头部压缩（2026-10-29 用户要求：红框那一块矮一点，下面多放纸） ===== */
+/* 右栏里固定不滚的那几行（分页报告横幅 / 工具条 / 专业视图工具条 / 溢出提示）叠起来能吃掉
+   两三百像素，而纸的缩放是**按剩余高度**算的。这里只收内边距与行距，不动任何控件的尺寸与
+   字号——控件高度一改，换行数就跟着变，头部反而更难预测。
+   不要写死像素高度：工具条在"有没有版式控件"两种宿主下换行数不同。 */
+.resume-wb-canvas-scroll .resume-preview-toolbar {
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* 溢出提示：字号收一档（省高度），但**内边距要留够**——2026-10-29 反馈"文字离边框太近"，
+   上一版把 padding 压到 6/10 确实贴脸了；现在 10/14 与 12px 字号配起来才像一条正常的提示。 */
+.resume-wb-canvas-scroll .resume-preview-alerts .ant-alert {
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 精确口径的页数提示与草稿口径**同字号同内边距**（用户 2026-10-29：两栏的提示大小要一致）。
+   它不在 `.resume-preview-alerts` 里（那是草稿侧的容器），所以单列一条选择器。 */
+.resume-wb-canvas-scroll .exact-preview-overflow,
+.resume-wb-canvas-scroll .exact-preview-stale {
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 标题比正文大半档即可：同字号时分不出"这是结论"和"这是解释"。 */
+.resume-wb-canvas-scroll .resume-preview-alerts .ant-alert-title,
+.resume-wb-canvas-scroll .exact-preview-overflow .ant-alert-title,
+.resume-wb-canvas-scroll .exact-preview-stale .ant-alert-title {
+  font-size: 13px;
+}
+
+.resume-wb-canvas-scroll .resume-preview-alerts .ant-alert-description,
+.resume-wb-canvas-scroll .exact-preview-overflow .ant-alert-description,
+.resume-wb-canvas-scroll .exact-preview-stale .ant-alert-description {
+  margin-top: 2px;
+}
+
+/* 分页报告横幅：**一行说完**（标题 + 获取按钮 + 当前状态）。
+   它原先没有任何样式，`Flex`（块级）之后那句"还没有分页报告"被顶到第二行——空状态也要占
+   两行高。有报告时溢出的 Alert 用 `flex-basis: 100%` 独占一行，不会被压成一条细缝。 */
+.resume-pagination-report {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 12px;
+}
+
+.resume-pagination-report .ant-typography {
+  margin: 0;
+  font-size: 12px;
+}
+
+.resume-pagination-report > .ant-alert {
+  flex: 1 1 100%;
+}

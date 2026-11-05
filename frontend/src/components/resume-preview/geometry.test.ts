@@ -1,0 +1,228 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * 预览几何：**多页竖向堆叠**（2026-10-21 起，取代横向并排）。
+ *
+ * 2026-11-02 变更（问题 2 方案 A）：画布纸张数 = `max(页数上限, pages_needed)`，超限的页
+ * **照样画出来**并带超额角标。此前是"贴住上限、超出部分裁掉"，于是第 4 列之后的板块
+ * （知识产权、证书资质、作品集…）在纸面上凭空消失。
+ *
+ * 2026-10-23 追加「可读下限 / 大屏上限」两组：`MIN_READABLE_SCALE = 0.55` 之后
+ * 缩放下限是硬约束（rubric R7：纸面 ≥ 437px），而 `maxFitScale` 只在大屏生效。
+ */
+import { describe, expect, it } from "vitest";
+import { A4_HEIGHT_PX, A4_WIDTH_PX, MIN_READABLE_SCALE, PAGE_STACK_GAP_PX } from "./config";
+import { calculatePreviewGeometry } from "./geometry";
+
+function geometry(
+  pageCount: number,
+  options: { overflow?: boolean; naturalWidth?: number; reportedPages?: number | null } = {},
+) {
+  return calculatePreviewGeometry({
+    availableSpace: { width: A4_WIDTH_PX, height: A4_HEIGHT_PX },
+    paperHeight: A4_HEIGHT_PX * Math.max(1, pageCount),
+    pageLimit: pageCount,
+    zoom: 1,
+    overflow: options.overflow ?? false,
+    naturalWidth: options.naturalWidth ?? A4_WIDTH_PX * pageCount,
+    pageGap: 106,
+    measure: null,
+    reportedPages: options.reportedPages,
+  });
+}
+
+describe("预览几何：多页竖向堆叠", () => {
+  it("2 / 3 页装得下：宽仍是一页，高 = 页数 × A4 + 页间距", () => {
+    for (const pages of [2, 3]) {
+      const result = geometry(pages);
+      // 2026-10-21 起多页是**上下摞**（原来是左右并排）：横向并排要看第 2 页得先横滚。
+      expect(result.contentTotalWidth).toBe(A4_WIDTH_PX);
+      expect(result.contentTotalHeight).toBe(
+        A4_HEIGHT_PX * pages + PAGE_STACK_GAP_PX * (pages - 1),
+      );
+      expect(result.totalVisualPages).toBe(pages);
+      expect(result.overflowPages).toBe(0);
+      // 竖排后画布不再画"页间隙条"：页与页之间是真实空白。
+      expect(result.separatorCount).toBe(0);
+      expect(result.overflowClipped).toBe(false);
+    }
+  });
+
+  it("1 页上限 + 内容溢出：把第 2 页也画出来（不再裁掉）", () => {
+    // `overflow` 为真但量不到具体页数 → 兜底成"上限 + 1"，第 2 页照样画（问题 2）。
+    const result = geometry(1, { overflow: true, naturalWidth: A4_WIDTH_PX * 2 });
+    expect(result.contentTotalWidth).toBe(A4_WIDTH_PX);
+    expect(result.contentTotalHeight).toBe(A4_HEIGHT_PX * 2 + PAGE_STACK_GAP_PX);
+    expect(result.totalVisualPages).toBe(2);
+    expect(result.overflowPages).toBe(1);
+    expect(result.separatorCount).toBe(0);
+    // 这个标志现在只表示"超限的页不计入导出"，不再表示"内容被裁掉"。
+    expect(result.overflowClipped).toBe(true);
+    // 提示仍如实说"约需 2 页"。
+    expect(result.pagesNeeded).toBe(2);
+  });
+
+  it("1 页装得下时是一张 A4、不显示分页线", () => {
+    const result = geometry(1);
+    expect(result.contentTotalWidth).toBe(A4_WIDTH_PX);
+    expect(result.totalVisualPages).toBe(1);
+    expect(result.overflowPages).toBe(0);
+    expect(result.separatorCount).toBe(0);
+    expect(result.overflowClipped).toBe(false);
+  });
+
+  it("溢出时页数 = max(上限, 需求)：超限页照样画，角标由 pageLimit 决定", () => {
+    // 1 页上限 + 溢出 → 画 2 页（第 2 页是超额页）。
+    const single = geometry(1, { overflow: true });
+    expect(single.totalVisualPages).toBe(2);
+    expect(single.overflowPages).toBe(1);
+    expect(single.overflowClipped).toBe(true);
+
+    // 2 页上限 + 溢出 → 画 3 页，而不是只画 2 页把第 3 列裁掉。
+    const double = geometry(2, { overflow: true });
+    expect(double.totalVisualPages).toBe(3);
+    expect(double.overflowPages).toBe(1);
+    expect(double.overflowClipped).toBe(true);
+  });
+
+  it("服务端报告优先（问题 3）：28 号上限 3、报告 8 → 画 8 页", () => {
+    const result = geometry(3, { reportedPages: 8 });
+    expect(result.pagesNeeded).toBe(8);
+    expect(result.totalVisualPages).toBe(8);
+    expect(result.overflowPages).toBe(5);
+    expect(result.contentTotalHeight).toBe(A4_HEIGHT_PX * 8 + PAGE_STACK_GAP_PX * 7);
+  });
+
+  it("报告比上限小 → 需求页数取报告，画幅仍铺满上限", () => {
+    const result = geometry(3, { reportedPages: 2 });
+    // 需求页数 = 报告（内容其实只要 2 页），画布照样按用户设定的 3 页铺满。
+    expect(result.pagesNeeded).toBe(2);
+    expect(result.totalVisualPages).toBe(3);
+    expect(result.overflowPages).toBe(0);
+    expect(result.overflowClipped).toBe(false);
+  });
+});
+
+/** 只关心"容器宽 × 高"时的几何：单页、无溢出。 */
+function fitIn(width: number, height: number, extra: { zoom?: number; maxFitScale?: number } = {}) {
+  return calculatePreviewGeometry({
+    availableSpace: { width, height },
+    paperHeight: A4_HEIGHT_PX,
+    pageLimit: 1,
+    zoom: extra.zoom ?? 1,
+    overflow: false,
+    naturalWidth: A4_WIDTH_PX,
+    pageGap: 0,
+    measure: null,
+    maxFitScale: extra.maxFitScale,
+  });
+}
+
+describe("制作台按宽度适应（Q21）", () => {
+  function widthFit(width: number, height: number) {
+    return calculatePreviewGeometry({
+      availableSpace: { width, height },
+      paperHeight: A4_HEIGHT_PX,
+      pageLimit: 1,
+      zoom: 1,
+      overflow: false,
+      naturalWidth: A4_WIDTH_PX,
+      pageGap: 0,
+      measure: null,
+      fitMode: "width",
+    });
+  }
+
+  it("默认纸宽 = 相框宽，高度不再缩纸（纵向滚动看全）", () => {
+    // 右栏实测 654×698：按整页算会缩到 62%，两侧留灰边；按宽算是 82%，纸铺满右栏。
+    const result = widthFit(654, 698);
+    expect(Math.round(A4_WIDTH_PX * result.scale)).toBe(654);
+    expect(result.scaledHeight).toBeGreaterThan(698);
+  });
+
+  it("纸宽 ≤ 相框宽：正常宽度下不会横向溢出", () => {
+    // 低于可读下限（437px）时纸不再缩（设计如此，与"缩字号塞进一页"无关），
+    // 那一档不在这里断言——它由 `clampedToMin` + 缩放条提示承担。
+    for (const width of [480, 654, 1024, 1920]) {
+      const result = widthFit(width, 700);
+      expect(Math.round(A4_WIDTH_PX * result.scale)).toBeLessThanOrEqual(width);
+    }
+  });
+});
+
+describe("A4 可读下限（2026-10-23）", () => {
+  it("容器矮到只允许 0.34 时不再缩小：scale 停在 0.55，纸面宽 437", () => {
+    // 1092×614 实测：画布 672×382 —— 按旧算法这里会缩到 0.339（正文 4.7px）。
+    const result = fitIn(672, 382);
+    expect(result.clampedToMin).toBe(true);
+    expect(result.scale).toBe(MIN_READABLE_SCALE);
+    expect(Math.round(A4_WIDTH_PX * result.scale)).toBe(437);
+  });
+
+  it("1366 的窄画布（458×476）同样触底，且纸比容器高（要纵向滚动）", () => {
+    const result = fitIn(458, 476);
+    expect(result.clampedToMin).toBe(true);
+    expect(result.scale).toBeCloseTo(0.55, 5);
+    expect(result.scaledHeight).toBeGreaterThan(476);
+  });
+
+  it("放得下时不触底：2048 画布（1140×796）由高度决定，纸面 563", () => {
+    const result = fitIn(1140, 796);
+    expect(result.clampedToMin).toBe(false);
+    expect(result.scale).toBeCloseTo(796 / A4_HEIGHT_PX, 3);
+    expect(Math.round(A4_WIDTH_PX * result.scale)).toBe(563);
+  });
+
+  it("手动缩小也不许低于下限（MIN_ZOOM 0.5 仍被抬到 0.55）", () => {
+    const result = fitIn(1400, 1200, { zoom: 0.5 });
+    // fit = min(1400/794, 1200/1123) = 1.068 → ×0.5 = 0.534 → 抬到 0.55
+    expect(result.scale).toBe(MIN_READABLE_SCALE);
+  });
+});
+
+describe("大屏放大上限 maxFitScale", () => {
+  it("默认 1：保持「永不放大」，2560 屏的纸仍是 794", () => {
+    const result = fitIn(1740, 1276);
+    expect(result.scale).toBe(1);
+    expect(Math.round(A4_WIDTH_PX * result.scale)).toBe(794);
+  });
+
+  it("1.35：同一容器由高度封顶 1.136，纸面 902", () => {
+    const result = fitIn(1740, 1276, { maxFitScale: 1.35 });
+    expect(result.scale).toBeCloseTo(1276 / A4_HEIGHT_PX, 3);
+    expect(Math.round(A4_WIDTH_PX * result.scale)).toBe(902);
+  });
+
+  it("1.35 在 1280 高的屏上不生效（高度先封顶，纸仍是 789）", () => {
+    const result = fitIn(1228, 1116, { maxFitScale: 1.35 });
+    expect(result.scale).toBeCloseTo(1116 / A4_HEIGHT_PX, 3);
+    expect(Math.round(A4_WIDTH_PX * result.scale)).toBe(789);
+  });
+});
+
+describe("单调性：纸面宽对容器宽、高都不下降", () => {
+  it("宽 480→2560（每 8px）与高 560→1440（每 8px）分别扫一遍", () => {
+    const paperWidth = (w: number, h: number) => Math.round(A4_WIDTH_PX * fitIn(w, h).scale);
+
+    let previous = 0;
+    for (let width = 480; width <= 2560; width += 8) {
+      const paper = paperWidth(width, 900);
+      expect(paper).toBeGreaterThanOrEqual(previous - 1);
+      previous = paper;
+    }
+
+    previous = 0;
+    for (let height = 560; height <= 1440; height += 8) {
+      const paper = paperWidth(1200, height);
+      expect(paper).toBeGreaterThanOrEqual(previous - 1);
+      previous = paper;
+    }
+  });
+
+  it("任何容器下 scale 都不低于 0.55", () => {
+    for (const width of [320, 480, 768, 1092, 1366, 1920, 2560]) {
+      for (const height of [400, 560, 614, 768, 1080, 1440]) {
+        expect(fitIn(width, height).scale).toBeGreaterThanOrEqual(MIN_READABLE_SCALE);
+      }
+    }
+  });
+});

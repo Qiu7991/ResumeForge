@@ -1,0 +1,436 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+.assistant-message {
+  width: fit-content;
+  min-width: min(100%, 260px);
+  max-width: min(88%, 820px);
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 8px;
+  background: var(--rf-surface);
+}
+
+.assistant-message--user {
+  min-width: 0;
+  margin-left: auto;
+  background: var(--rf-surface-alt);
+  border-color: var(--rf-border-strong);
+}
+
+/*
+ * 多选模式：勾选框在气泡左侧，整行可点。
+ *
+ * 用户消息的气泡是 `margin-left: auto` 靠右的，所以整行也要跟着变成 flex 才排得整齐；
+ * 勾选框 `align-items: flex-start` 对齐到气泡顶部，消息很高时不用滚到底才能勾。
+ */
+.assistant-message-pick {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+/* 勾选框自己撑满一行会把气泡挤窄，固定宽度让它只占该占的位置。 */
+.assistant-message-pick > .ant-checkbox-wrapper,
+.assistant-message-pick > .ant-checkbox {
+  flex: 0 0 auto;
+  margin-top: 14px;
+}
+
+.assistant-message-pick .assistant-message {
+  flex: 1 1 auto;
+}
+
+.assistant-message--selected {
+  border-color: var(--rf-info);
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.12);
+}
+
+/* 多选操作条：**贴着一行消息**，不占一整块版面。
+   此前它是独立的一整条浅蓝卡片，下面还没有任何内容时就先支起一个大框（截图反馈），
+   看上去像页面坏了。改成与消息列表同宽的一行轻量工具条：左边报数、右边动作。 */
+.assistant-select-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 6px 2px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--rf-border-subtle);
+  background: none;
+}
+
+.assistant-message-content {
+  margin-top: 6px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.assistant-message-content--rich > :first-child {
+  margin-top: 0;
+}
+
+.assistant-message-content--rich > :last-child {
+  margin-bottom: 0;
+}
+
+.assistant-message-content--rich p {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+}
+
+.assistant-message-content--rich h4 {
+  margin: 14px 0 7px;
+  color: var(--rf-text-body);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.assistant-message-content--rich code {
+  padding: 1px 5px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 4px;
+  color: var(--rf-text-body);
+  background: var(--rf-surface-alt);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
+}
+
+.assistant-message-content--rich a {
+  color: var(--rf-info);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.assistant-message-content--rich a:hover {
+  color: var(--rf-info-strong);
+}
+
+.assistant-markdown-list-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 4px;
+  margin: 5px 0;
+}
+
+.assistant-markdown-list-item > span {
+  color: var(--rf-info);
+  font-weight: 600;
+  text-align: center;
+}
+
+.assistant-markdown-spacer {
+  height: 6px;
+}
+
+.assistant-markdown-table-wrap {
+  max-width: 100%;
+  margin: 10px 0;
+  overflow-x: auto;
+  border: 1px solid var(--rf-border-strong);
+  border-radius: 6px;
+  background: var(--rf-surface);
+}
+
+.assistant-markdown-table-wrap:focus-visible {
+  outline: 2px solid var(--rf-focus-visible);
+  outline-offset: 2px;
+}
+
+.assistant-markdown-table-wrap table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.assistant-markdown-table-wrap th,
+.assistant-markdown-table-wrap td {
+  min-width: 100px;
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  border-right: 1px solid var(--rf-border-strong);
+  border-bottom: 1px solid var(--rf-border-strong);
+}
+
+.assistant-markdown-table-wrap th:last-child,
+.assistant-markdown-table-wrap td:last-child {
+  border-right: 0;
+}
+
+.assistant-markdown-table-wrap tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.assistant-markdown-table-wrap th {
+  color: var(--rf-text-body);
+  font-weight: 600;
+  background: var(--rf-surface-alt);
+}
+
+.assistant-message-attachments,
+.assistant-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* 附件名来自用户，长度没有上限；antd 的 Tag 不换行，不设限就会把气泡顶变形。
+   全名在悬停提示里，所以这里截断是安全的。 */
+.assistant-attachment-tag.ant-tag {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* 文档提取的说明（例如内容过长只取了前一部分）：占满一行，跟在附件标签下面。 */
+.assistant-attachment-notes {
+  flex: 1 1 100%;
+  font-size: 12px;
+  color: var(--rf-warning-text);
+}
+
+.assistant-sources.ant-collapse {
+  display: block;
+  margin-top: 10px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 6px;
+  background: var(--rf-surface-alt);
+}
+
+.assistant-sources .ant-collapse-header {
+  align-items: center !important;
+  padding: 8px 10px !important;
+  color: var(--rf-text-secondary) !important;
+  font-size: 13px;
+}
+
+.assistant-sources .ant-collapse-content {
+  border-top: 1px solid var(--rf-border-subtle) !important;
+  background: var(--rf-surface);
+}
+
+.assistant-sources .ant-collapse-content-box {
+  padding: 10px 12px !important;
+}
+
+.assistant-sources ol {
+  display: grid;
+  width: 100%;
+  gap: 0;
+  margin: 0;
+  padding-left: 20px;
+}
+
+/* 每条来源之间用一条分隔线断开：以前条目贴在一起，用户会误以为标题和摘要是同一条来源的
+   两部分，其实它们是不同来源。分隔线 + 上下留白让"一条到这儿就完了"变得显然。 */
+.assistant-sources li {
+  padding: 8px 2px;
+  border-top: 1px solid var(--rf-border-subtle);
+}
+
+.assistant-sources li:first-child {
+  padding-top: 2px;
+  border-top: 0;
+}
+
+.assistant-sources li:last-child {
+  padding-bottom: 2px;
+}
+
+/* 外链图标 + hover 下划线：标题默认看起来就是普通文字，用户不会想到能点开原网页。
+   图标把"这是链接"摆在明面上，下划线是悬停时的二次确认。 */
+.assistant-source-title.ant-typography {
+  font-weight: 500;
+}
+
+.assistant-source-title:hover {
+  text-decoration: underline;
+}
+
+.assistant-source-title .assistant-source-icon {
+  margin-left: 4px;
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+/* 摘要最多两行，超出省略：满宽铺两行会把每条来源拉得很长、几条叠在一起又挤又难扫。
+   省略掉的只是"预览"，点标题就能到原网页看完整内容。 */
+.assistant-sources li .ant-typography-secondary {
+  display: -webkit-box;
+  margin-top: 4px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* 「助手做了什么」默认折叠：逐条记录太吵，但折叠标题承接了原设计"改动必须一眼可见"
+   的意图——标题里直接写「改动了 N 项」「N 项失败」。标题永远显示，所以不展开也看得见。 */
+.assistant-tool-calls.ant-collapse {
+  margin-top: 10px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 6px;
+  background: var(--rf-surface-alt);
+}
+
+.assistant-tool-calls .ant-collapse-header {
+  align-items: center !important;
+  padding: 8px 10px !important;
+  color: var(--rf-text-secondary) !important;
+  font-size: 13px;
+}
+
+.assistant-tool-calls .ant-collapse-content {
+  border-top: 1px solid var(--rf-border-subtle) !important;
+  background: var(--rf-surface);
+}
+
+.assistant-tool-calls .ant-collapse-content-box {
+  padding: 10px 12px !important;
+}
+
+.assistant-tool-calls ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+/* 标题里的「改动了 N 项 / N 项失败」：紧跟在计数后面，用颜色区分"改了数据"与"出错了"。 */
+.assistant-tool-calls-flag {
+  margin-left: 2px;
+  font-size: 13px;
+}
+
+.assistant-streaming-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+.assistant-streaming-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--rf-info);
+  animation: assistant-pulse 1.2s ease-in-out infinite;
+}
+
+.assistant-streaming-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.assistant-streaming-ellipsis i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: assistant-dot-bounce 1.1s ease-in-out infinite;
+}
+
+.assistant-streaming-ellipsis i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.assistant-streaming-ellipsis i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes assistant-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+
+@keyframes assistant-dot-bounce {
+  50% {
+    opacity: 0.3;
+    transform: translateY(-2px);
+  }
+}
+
+/* 思考过程置顶 + 动效（A2）：思考中标题亮蓝并带脉冲点，思考结束后停（复用 streaming 的
+   同一套脉冲节奏，视觉上"正在想"与"正在答"是一致的手感）。 */
+.assistant-reasoning--active .assistant-reasoning-label {
+  color: var(--rf-info);
+}
+
+.assistant-reasoning-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--rf-info);
+  animation: assistant-pulse 1.2s ease-in-out infinite;
+}
+
+.assistant-message-image {
+  display: block;
+  width: 120px;
+  height: 90px;
+  object-fit: contain;
+  background: var(--rf-surface-alt);
+  border: 1px solid var(--rf-border-strong);
+  border-radius: 6px;
+  cursor: zoom-in;
+}
+
+/* 写入提案确认卡（RF-01）：放在工具折叠面板外，待确认的写入一眼可见。 */
+.assistant-write-proposals {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.assistant-write-proposals-heading {
+  font-size: 12px;
+}
+
+.assistant-write-proposal {
+  padding: 10px 12px;
+  border: 1px solid var(--rf-border-strong);
+  border-radius: 8px;
+  background: var(--rf-surface-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assistant-write-proposal-head {
+  display: flex;
+  align-items: center;
+}
+
+.assistant-write-proposal-diff-title {
+  font-size: 12px;
+}
+
+.assistant-write-proposal-changes {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.assistant-write-proposal-result {
+  font-size: 12px;
+}
+
+.assistant-write-proposal-actions {
+  margin-top: 2px;
+}
