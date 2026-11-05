@@ -9,7 +9,7 @@
 | B0 | 建分支与三件套 | [x] | 见 git log | 起点 88ae5ac 已确认 |
 | B1 | 数据层（types + api 客户端） | [x] | 6de76f2 | typecheck 绿 |
 | B2 | i18n 双包（144+144 key）+ namespaces 注册 | [ ] | | 中英 key 数必须相等 |
-| B3 | 只读组件 8 个（含 .test.tsx） | [ ] | | |
+| B3 | 只读组件 8 个（含 .test.tsx） | [x] | 见 git log | GreetingEditor 提前随批，7 测试绿 |
 | B3.5 | B-6 页内收录 import_url 自动导入 | [ ] | | 修 docs/fork-2.0-blocked.md B-6 |
 | B4 | 写入组件 5 个（含 .test.tsx） | [ ] | | |
 | B5 | 页面与路由（registry + appRoutes + 侧栏） | [ ] | | |

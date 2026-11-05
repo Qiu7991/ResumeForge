@@ -29,3 +29,14 @@
 - npx vitest run src/i18n：14 文件 335 passed / 1 skipped（既有 skip）✅
 - npm run typecheck ✅
 - commit: f4def85
+
+## 2026-11-06 夜 B3 只读组件
+
+- 移植 8 个只读组件：ActionCards / ConnectionCard / JobDetailDrawer / JobResultsTable /
+  PreflightPanel / RunHistoryTable / ScoreTracePanel / StatusBadge（逐字未改）+ 1.x 已有的
+  ScoreTracePanel.test.tsx、StatusBadge.test.tsx
+- 适配偏差：JobDetailDrawer 硬 import GreetingEditor（1.x 中属写入组件）——E3 禁止改写组件，
+  故将 GreetingEditor.tsx 提前随 B3 移植（原样），B4 剩 4 个（ConfirmationTable/ReplyInbox/
+  SettingsForm/TaskProgress）
+- 依赖核对：1.x 与 2.0 antd 同为 ^6.6.8、icons ^6.3.4；t/useLocale/types/api 导入路径全部一致
+- vitest src/components/ai-jobs：2 文件 7 passed ✅；typecheck ✅
