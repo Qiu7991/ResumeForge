@@ -14,4 +14,8 @@
 | A5 前端页面（只读部分） | [ ] | 由会话 B 承担 | A 不碰 frontend/** |
 | A6 前端页面（写入部分） | [ ] | 由会话 B 承担 | A 不碰 frontend/** |
 | A7 对抗审查 | [x] | F1-F4 全 PASS；A-D PASS，E DEFERRED 待 B | adversarial.md |
-| A8 全量闸门与晨间报告 | [ ] | | |
+| A8 全量闸门与晨间报告 | [x] | d20e977；--all 34P/0F/9S | morning-report.md |
+
+> **2026-11-06 晨收工**：A0-A8 全部完成（A5/A6 由会话 B 承担并已完成）。
+> 最终态：--all 34P/0F/9S；-k "ai_jobs or apply" 567P/1S；F1-F4 全 PASS。
+> 收工 HEAD d20e977。晨间报告：docs/fork-2.0-ai-jobs-morning-report.md
