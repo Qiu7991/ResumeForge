@@ -40,3 +40,15 @@
   SettingsForm/TaskProgress）
 - 依赖核对：1.x 与 2.0 antd 同为 ^6.6.8、icons ^6.3.4；t/useLocale/types/api 导入路径全部一致
 - vitest src/components/ai-jobs：2 文件 7 passed ✅；typecheck ✅
+
+## 2026-11-06 夜 B3.5 修 B-6（页内收录 import_url 自动导入）
+
+- 移植 1.x 的 useImportUrlParam.ts / useJobsImportBridge.ts / useImportUrlParam.test.tsx（逐字），
+  挂进 2.0 JobsPage（useJobsPageState 解构后调 useJobsImportBridge(reload)）
+- frontend/src/api/jobs.ts 增加 importJobFromUrl（POST /jobs/import-url，budget: recognition）
+- i18n：zh/en jobsPage 包各追加 3 个 jobsPage.importUrl.* key（未动任何既有 key）
+- **E10 待补（需 A）**：2.0 后端无 POST /jobs/import-url 端点（grep backend/app/api/jobs.py 为空），
+  前端已按 1.x 契约调用；A 移植该端点前，扩展按钮仍是「开页但导入失败（404）」
+- 验证：typecheck ✅；useImportUrlParam.test.tsx 3 passed ✅；JobsPage 全套 29 passed ✅；
+  lint 0 errors（29 warnings 均为既有/1.x 原样的 react-hooks/set-state-in-effect 类）
+- commit: 见 git log
