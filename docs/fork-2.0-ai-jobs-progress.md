@@ -141,3 +141,17 @@ PASS 互斥测试 test_ai_jobs_mutex.py — 4 passed
 ```
 
 **定向测试**：`-k ai_jobs` = 125 passed / 1 skipped；`-k apply_task_runner` = 24 passed。
+
+---
+
+## 2026-11-06 夜 · A7 对抗审查
+
+**F1-F4 全部 PASS**（逐条证据见 docs/fork-2.0-ai-jobs-adversarial.md）：
+- F1 凭据不落库：12 处命中逐条定性，持久化唯一路径 AiJobsConfig 无凭据字段；api_key 只进发往引擎的 payload（S3 口径）。
+- F2 发送闸门：/api/workbench/deliver 调用路径唯一（delivery.py:78）；未设置环境变量 → API 层 403（测试绿）；服务层仍有确认门+白名单+双 busy。
+- F3 版本窗口：2.3.9/3.0.0 探针均 version_ok=False + 可操作原因；任务启动被 _require_sidecar 挡（422），不降级硬跑。
+- F4 许可证：16 文件命中全为注释/字符串/HTTP 路径；import bosshunter=0；引擎源码文件名=0；polyform 6 处全在 .venv 第三方 SPDX 目录。
+
+**通用五类**：A PASS（脏岗位跳过/301字400/脏配置回默认探针）；B PASS（sent→APPLIED 映射+幂等回写测试）；C PASS（未运行/非JSON/连接错误/POST 不重试/超时分档 2/5/15/30s 全有测试）；D PASS（分支级回退 + apply_task_runner 24 绿；如实记录 task_runner 懒导入耦合点）；E DEFERRED（前端由会话 B 产出，合并后补验）。
+
+**A7 commit**：docs(ai-jobs): 对抗审查报告
