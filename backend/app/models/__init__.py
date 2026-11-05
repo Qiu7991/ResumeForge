@@ -47,6 +47,12 @@ from .drill import (
     DrillSession,
     DrillTurn,
 )
+from .ai_job_link import AiJobLink
+from .generation_plan import (
+    PLAN_STATUS_FAILED,
+    PLAN_STATUS_READY,
+    ResumeGenerationPlan,
+)
 from .glossary import (
     GLOSSARY_CATEGORIES,
     GLOSSARY_LANGUAGES,
@@ -293,6 +299,10 @@ __all__ = [
     "ANNOTATION_STATUSES",
     "REVIEW_FORMAT_VERSION",
     "REVIEW_KIND",
+    "AiJobLink",
+    "PLAN_STATUS_FAILED",
+    "PLAN_STATUS_READY",
+    "ResumeGenerationPlan",
     "ResumeGlossaryTerm",
     "GLOSSARY_CATEGORIES",
     "GLOSSARY_LANGUAGES",

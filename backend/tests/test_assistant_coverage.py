@@ -45,6 +45,15 @@ COVERAGE: dict[str, tuple[str, ...] | str] = {
     # ===== 岗位与匹配 =====
     "job": ("list_jobs", "get_job", "create_job", "update_job"),
     "job_match_analysis": ("get_job", "list_jobs", "list_apply_queue", "list_match_analyses"),
+    # ===== 二开表（0002 迁移）：登记「不暴露」决定（登记动作本身是该测试的约定用法）=====
+    # 0070 的生成计划表：中间产物，计划内容已进简历与匹配报告；助手读结果即可。
+    "resume_generation_plan": "不暴露：这是「匹配报告 → 按方案生成」的中间产物表，"
+    "计划里的证据与结论已经体现在生成出的简历与匹配报告里；助手读结果，"
+    "不重放计划。",
+    # AI 求职（0075）：引擎岗位 ↔ 正式岗位的映射与引擎侧快照（评分/招呼语/状态）。
+    # 助手经「AI 求职」页面查询引擎侧数据；link 快照属于过程数据，且引擎才是权威源。
+    "ai_job_link": "不暴露：BossHunter 引擎岗位与简历通岗位的映射行（引擎侧评分/招呼语/状态快照）。"
+    "引擎侧数据以引擎为权威源、由 AI 求职页面查询；助手不代改同步快照。",
     "job_match_batch": ("list_match_analyses",),
     "candidate_job": (
         "list_candidate_jobs",
