@@ -29,10 +29,15 @@ def _entry_script(marker: str, *, click: bool) -> str:
   const node = candidates.find((item) => visible(item) &&
     !item.disabled && labels.some((word) => label(item).includes(word)));
   if (node) {{ {action} }}
+  // 职位已关闭时页面只剩「查看更多优选职位」，没有沟通入口——这不是选择器失效，
+  // 按「岗位已关闭」软跳过（见 boss_apply._ensure_apply_entry）。
+  const bodyText = (document.body && document.body.innerText) || '';
+  const closed = /职位已关闭|该职位已下线|职位已下线|停止招聘|岗位已关闭/.test(bodyText);
   return JSON.stringify({{
     ok: !!node, found: !!node, matched: node ? 1 : 0,
     label: node ? label(node) : '', url: location.href,
     title: document.title || '',
+    closed: closed,
     captcha: shown(CAPTCHA),
     login_required: shown(LOGIN)
   }});
@@ -208,7 +213,10 @@ def _chat_state_script() -> str:
     name: text('.name-text, .chat-person .name, .geek-chat-name').slice(0, 30),
     dialog: dialog.slice(0, 120),
     captcha: shown(CAPTCHA),
-    login_required: shown(LOGIN)
+    login_required: shown(LOGIN),
+    ready_state: document.readyState || '',
+    visibility: document.visibilityState || '',
+    focused: document.hasFocus()
   }});
 }})()"""
 

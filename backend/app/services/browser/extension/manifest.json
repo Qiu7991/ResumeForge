@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "简历通 · 收录当前岗位",
+  "version": "1.1.6",
+  "description": "在招聘网站上把当前岗位一键收录到本机简历通的岗位广场。",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.zhipin.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

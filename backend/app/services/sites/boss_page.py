@@ -242,14 +242,33 @@ def _readiness_script(selector: str) -> str:
 
 
 def selector_diagnostic(state: dict[str, Any], expected: str) -> str:
-    """选择器匹配失败时的诊断文案（带当前地址/标题/匹配数，供维护者更新选择器）。"""
+    """选择器匹配失败时的诊断文案（带当前地址/标题/匹配数，供维护者更新选择器）。
+
+    命中不了不一定是"页面改版"：弹窗拦截、窗口被遮挡（BOSS 会静默忽略隐藏页面上的点击）、
+    文档还没装载完，都会让控件"看起来不见了"。这些线索只要探针给了就一并写进去，
+    否则用户只能看到一句「页面结构变化」，既不能自救也帮不上排查。
+    """
     url = state.get("url") or "未知"
     title = state.get("title") or "未知"
     matched = state.get("matched", 0)
+    extras: list[str] = []
+    dialog = str(state.get("dialog") or "").strip()
+    if dialog:
+        extras.append(f"页面弹窗：{dialog[:100]}")
+    visibility = str(state.get("visibility") or "").strip()
+    if visibility:
+        extras.append(f"页面可见性：{visibility}")
+    if "focused" in state:
+        extras.append("窗口有焦点" if state.get("focused") else "窗口没有焦点（点击可能被忽略）")
+    ready_state = str(state.get("ready_state") or "").strip()
+    if ready_state:
+        extras.append(f"文档状态：{ready_state}")
+    suffix = f"{'；'.join(extras)}；" if extras else ""
     return (
         f"页面结构可能已变化：未找到「{expected}」。"
         f"当前地址：{url}；页面标题：{title}；"
         f"匹配到的控件数：{matched}；期望：{expected}（例如文本含「立即沟通」或「投递」的入口）。"
+        f"{suffix}"
         "请把这段信息反馈给维护者，以便更新站点选择器。"
     )
 

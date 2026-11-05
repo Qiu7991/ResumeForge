@@ -58,3 +58,5 @@ StartTime = 2026/11/05 16:28:54   ← 早于夜间会话开始
 - B-3 | 开发计划 §14.3 对闸门两处的字面口径无法同时满足：①「2.0 仓单提交 = rev-list HEAD == 1」在第一张卡提交后（E6）永久不成立，与「闸门必须能变绿」矛盾；②pytest 必须在 cwd=backend 下跑（conftest `from app import database` 依赖 `python -m pytest` 把 cwd 塞进 sys.path），而 N4 卡示例从仓库根跑 | ① 按 §3 的真实不变量实现为「upstream-v2.0.0 提交链数==1 且是 HEAD 祖先」；② 闸门 subprocess 用 cwd=BACKEND。两处都写进 fork_gate.py 模块 docstring | scripts/fork_gate.py 头注释 | 无
 
 - B-4 | 1.x 的 tests/test_apply_migration_qa.py 不移植 | 该文件验证 1.x 的 0010 迁移在真实生产库副本上的往返兼容，硬编码 1.x 迁移链与 backend/data/resume_forge.db 副本；2.0 迁移链是 0001/0002 全新链，语义完全不适用（E5：以代码为准） | 文件头注释（覆盖 0010/0009） | 若用户要 2.0 版迁移 QA，需按 0002 重写新文件（本轮不做，非断言修改）
+
+- B-6（更新，N5） | 页内悬浮收录扩展已移植到 `backend/app/services/browser/extension/`（content.js APP_ORIGIN 改指 2.0 的 8010）并在 browser_manager 挂载 --load-extension；但 2.0 前端 /jobs 页面**没有** `?import_url=&close_after=1` 的自动导入流程（1.x 由 JobImportModal + api/jobs.ts 处理，2.0 前端 grep 无此逻辑），后端 POST /jobs/import-current 也不存在 | 扩展按钮会打开 /jobs 但 12s 后提示「导入窗口没有回应」——不破坏页面，只是按钮无效 | grep import_url/close_after 前端 = 0 命中 | N7 前端收口时移植 JobImportModal 的 import_url 分支 + 后端 import-current 端点后按钮才完整可用

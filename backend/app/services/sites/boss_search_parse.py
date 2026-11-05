@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from ...models.apply import FAILURE_SELECTOR_INVALID
@@ -59,15 +60,57 @@ def parse_search_payload(
     )
 
 
+#: 详情页 DOM 的「公司」选择器取错时，常见结果是把岗位名和薪资粘在一起
+#: （如 ``“AI 应用开发助理（双休+五险一金）\n8-13K”``）。这两种形状必须拦截。
+_SALARY_IN_COMPANY = re.compile(r"\d+(?:\.\d+)?\s*[-~–—至]\s*\d+(?:\.\d+)?\s*[Kk]")
+_COMPANY_FROM_TITLE_PATTERNS = (
+    re.compile(r"^.+?[_｜|]\s*(.+?)\s*招聘"),
+    re.compile(r"^.+?[_｜|]\s*(.+?)\s*[-–—]\s*BOSS", re.IGNORECASE),
+    re.compile(r"「.+?」\s*(.+?)招聘"),
+)
+
+
+def _company_from_page_title(title: object) -> str:
+    """从 ``“岗位_公司招聘-BOSS直聘”`` 这类页面标题里拆出公司名；拆不出返回空串。"""
+    text = normalize_text(title)
+    for pattern in _COMPANY_FROM_TITLE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+#: 选择器落在导航/栏目标签上时取到的值，不是公司名。
+_GENERIC_COMPANY_LABELS = frozenset({"公司", "企业", "招聘", "BOSS直聘", "公司信息"})
+
+
+def _clean_detail_company(payload: dict[str, Any], job_title: str) -> str:
+    """详情页公司名兜底：选择器取到岗位名/薪资/栏目标签时，改从页面标题拆。"""
+    company = normalize_text(payload.get("company", ""))
+    if not company:
+        return company
+    polluted = (
+        "\n" in company
+        or bool(_SALARY_IN_COMPANY.search(company))
+        or company in _GENERIC_COMPANY_LABELS
+        or len(company) < 3
+        or (job_title and company.startswith(job_title))
+    )
+    if not polluted:
+        return company
+    return _company_from_page_title(payload.get("title", "")) or company
+
+
 def parse_job_detail(payload: dict[str, Any]) -> dict[str, Any]:
     """把 BOSS 岗位详情响应规整成标准字段；需求缺失时退回描述里拆出的需求。"""
     if not isinstance(payload, dict):
         raise SiteFailure(FAILURE_SELECTOR_INVALID, "岗位详情返回了无法解析的内容")
     dom_requirements = normalize_text(payload.get("requirements", ""))
     sections = split_job_fields(payload.get("description", ""))
+    job_title = normalize_text(payload.get("job_title", ""))
     return {
-        "job_title": normalize_text(payload.get("job_title", "")),
-        "company": normalize_text(payload.get("company", "")),
+        "job_title": job_title,
+        "company": _clean_detail_company(payload, job_title),
         "description": sections.description,
         "requirements": dom_requirements or sections.requirements,
         # 福利待遇 / 公司介绍这类第三段（对应 ``Job.additional_info``）。

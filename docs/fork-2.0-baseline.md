@@ -22,10 +22,10 @@
 | `greeting_baseline` 设置项 | 目标：`schemas/apply/config.py`（现只到 default_greeting:34） | GONE | grep greeting_baseline 后端 = 0 → **N3** |
 | 保存并确认 + 文案变→打回 | `_queue.py::update_queue_item`（2.0:219 存在） | EXISTS（需改造） | 函数在，无 confirm_greeting/打回逻辑 → **N3** |
 | 编辑弹窗查看 JD | `queue/QueueItemEditor.tsx` | MOVED | 组件在，JD 查看块待 N7 对照 |
-| BOSS 适配器 | `services/sites/boss_apply.py`、`boss_apply_scripts.py`、`boss_page.py`、`browser/interaction.py` | EXISTS | ls-tree 命中 |
-| **点击前等 readyState=complete** | 目标 `boss_apply.py::_wait_document_complete` | GONE（符号级） | grep = 0 命中 → **N5（本轮范围外）** |
-| **trusted_click 焦点仿真** | `browser/interaction.py::trusted_click`（2.0:37 存在） | EXISTS（需改造） | 无 `setFocusEmulationEnabled`（grep=0）→ **N5（本轮范围外）** |
-| **job_closed 软跳过** | 目标 models/apply.py 等 | GONE（符号级） | grep job_closed = 0 → **N5（本轮范围外）** |
+| BOSS 适配器 | `services/sites/boss_apply.py`、`boss_apply_scripts.py`、`boss_page.py`、`browser/interaction.py` | EXISTS | ls-tree 命中；**N5 已移植 fork 增量**（三修复 + 诊断增强 + Ego 浏览器 + 扩展挂载），-k 'boss or apply_boss' 229 全绿 |
+| **点击前等 readyState=complete** | `boss_apply.py::_wait_document_complete`（:219） | 已移植（N5） | 2026-11-06 N5：open_apply 在 _ensure_apply_entry 前调用（:277） |
+| **trusted_click 焦点仿真** | `browser/interaction.py::trusted_click` | 已移植（N5） | 2026-11-06 N5：`Emulation.setFocusEmulationEnabled`（:56）+ visibilityState 警告 |
+| **job_closed 软跳过** | models/apply.py（N3）+ boss_apply.py:184 抛点（N5）+ task_apply.py 软跳过分支（N3） | 已移植（N3/N5） | 探针脚本 closed 检测在 boss_apply_scripts.py（N5） |
 | 投递专用浏览器（open-url、登录态保留） | `services/browser/*`、`api/apply.py` | EXISTS | ls-tree 命中；运行时 browser_port 已置 9343（blocked.md B-1） |
 | 失败诊断（弹窗/可见性/焦点/文档状态） | `boss_page.py::selector_diagnostic`（2.0:244） | EXISTS | **上游已原生具备** |
 | 导出截断明确提示 | `application.py:438-439`、`api/resumes/layout_render_routes.py:234` | EXISTS（原生） | **2.0 已有 `X-Resume-Truncated(-At)` / `pages_needed`，不要带 1.x 旧实现**（§10.2） |

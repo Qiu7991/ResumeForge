@@ -61,23 +61,33 @@ _EDGE_RELATIVE = (
     ("PROGRAMFILES", r"Microsoft\Edge\Application\msedge.exe"),
     ("LOCALAPPDATA", r"Microsoft\Edge\Application\msedge.exe"),
 )
+# Ego Lite（Citro Labs 的 Chromium 分支）：安装目录带空格，且版本号在子目录里，
+# 但 Application 下有一份与 Chrome 同构的 ego.exe，直接指向它即可。
+_EGO_RELATIVE = (
+    ("PROGRAMFILES", r"Citro Labs\ego lite\Application\ego.exe"),
+    ("PROGRAMFILES(X86)", r"Citro Labs\ego lite\Application\ego.exe"),
+    ("LOCALAPPDATA", r"Programs\ego lite\Application\ego.exe"),
+)
 
 _LOGIN_HINT = "首次使用请在弹出的浏览器窗口里扫码登录一次；登录态会保存在专用目录里，下次自动沿用。"
 
 BROWSER_CHOICE_AUTO = "auto"
 BROWSER_CHOICE_CHROME = "chrome"
 BROWSER_CHOICE_EDGE = "edge"
+BROWSER_CHOICE_EGO = "ego"
 BROWSER_CHOICE_CUSTOM = "custom"
 BROWSER_CHOICES = (
     BROWSER_CHOICE_AUTO,
     BROWSER_CHOICE_CHROME,
     BROWSER_CHOICE_EDGE,
+    BROWSER_CHOICE_EGO,
     BROWSER_CHOICE_CUSTOM,
 )
 
 # 中文名，供界面展示"实际用的是哪个浏览器"（别只给路径）。
 _CHROME_NAME = "Google Chrome"
 _EDGE_NAME = "Microsoft Edge"
+_EGO_NAME = "Ego Lite（Chromium）"
 _CUSTOM_NAME = "自定义浏览器"
 
 
@@ -86,6 +96,10 @@ def browser_display_name(path: str | Path | None) -> str:
     if not path:
         return ""
     name = Path(path).name.casefold()
+    parent = Path(path).parent.as_posix().casefold()
+    # Ego Lite 的主程序叫 ego.exe，靠名字就够；额外认一下安装目录，兼容它改名的情况。
+    if name in ("ego.exe", "ego-browser.exe") or "citro labs" in parent:
+        return _EGO_NAME
     if "msedge" in name or "edge" in name:
         return _EDGE_NAME
     if "chrome" in name:
@@ -236,6 +250,15 @@ class BrowserManager:
                 )
             return located
 
+        if self._browser_choice == BROWSER_CHOICE_EGO:
+            located = self._find_one(_EGO_RELATIVE, ("ego",))
+            if located is None:
+                raise BrowserError(
+                    "没有找到 Ego Lite：请先安装 Ego Lite，或在投递设置里改用「自动」或"
+                    "「自定义路径」（直接填 ego.exe 的完整路径也可以）。"
+                )
+            return located
+
         located = self._find_one(_CHROME_RELATIVE, ("chrome", "google-chrome"))
         if located is None:
             located = self._find_one(_EDGE_RELATIVE, ("msedge",))
@@ -350,9 +373,19 @@ class BrowserManager:
             f"--user-data-dir={self._profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
-            "--new-window",
-            "about:blank",
         ]
+        # 随应用分发的「收录当前岗位」扩展：浏览器由应用拉起，直接挂载即可
+        # （目录里没有 manifest.json 时返回空列表，不影响普通启动）。
+        extension_dir = Path(__file__).resolve().parent / "extension"
+        if (extension_dir / "manifest.json").is_file():
+            args.extend(
+                [
+                    f"--load-extension={extension_dir}",
+                    f"--disable-extensions-except={extension_dir}",
+                    "--disable-features=DisableLoadExtensionCommandLineSwitch",
+                ]
+            )
+        args.extend(["--new-window", "about:blank"])
         try:
             self._process = self._popen(args, shell=False)
         except OSError as exc:

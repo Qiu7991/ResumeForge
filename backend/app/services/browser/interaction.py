@@ -47,11 +47,26 @@ def trusted_click(client: CdpClient, x: float, y: float) -> None:
         client.send("Page.bringToFront")
     except CdpError:
         pass
+    # 焦点仿真：Chromium 在多窗口环境里会把"窗口在前台、但标签页不是活动页"的页面
+    # 判成 ``hidden``（Ego Lite 的投递窗口就是这种形态，2026-11-04 实测）。此时
+    # ``Page.bringToFront`` / ``Target.activateTarget`` / 最小化→还原都无法改变
+    # ``visibilityState``，站点（BOSS）就静默忽略点击。``Emulation.setFocusEmulationEnabled``
+    # 是实测唯一能立刻把它拉回 ``visible`` 的开关；先开它，再走窗口还原兜底。
+    try:
+        client.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
+    except CdpError:
+        pass
     ensure = getattr(client, "ensure_page_visible", None)
     if ensure is not None and not ensure():
         # 无法还原窗口（无头/远程会话等）不在这里打死流程：继续点击并把情况写日志，
         # 真正点不动时由调用方的等待超时给出带 URL/标题的诊断。
         logger.warning("未能把浏览器窗口恢复到可见状态，点击可能不会生效")
+    try:
+        visibility = str(client.evaluate("document.visibilityState") or "")
+    except CdpError:
+        visibility = ""
+    if visibility and visibility != "visible":
+        logger.warning("点击前页面仍处于 %s 状态（站点可能忽略这次点击）", visibility)
     client.send(
         "Input.dispatchMouseEvent",
         {"type": "mouseMoved", "x": x, "y": y, "button": "none", "buttons": 0},
