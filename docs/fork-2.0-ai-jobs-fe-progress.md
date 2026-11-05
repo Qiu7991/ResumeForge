@@ -52,3 +52,12 @@
 - 验证：typecheck ✅；useImportUrlParam.test.tsx 3 passed ✅；JobsPage 全套 29 passed ✅；
   lint 0 errors（29 warnings 均为既有/1.x 原样的 react-hooks/set-state-in-effect 类）
 - commit: 见 git log
+
+## 2026-11-06 夜 B4 写入组件
+
+- 移植 ConfirmationTable / ReplyInbox / SettingsForm / TaskProgress（逐字）+
+  1.x 已有的 ConfirmationTable.test.tsx、TaskProgress.test.tsx
+  （GreetingEditor 因 JobDetailDrawer 依赖已随 B3 落位）
+- 至此 1.x 的 17 个 ai-jobs 组件全部在 2.0 就位
+- vitest src/components/ai-jobs：4 文件 15 passed ✅；typecheck ✅
+- commit: df28ec9

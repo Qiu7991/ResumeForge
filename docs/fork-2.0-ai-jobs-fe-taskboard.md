@@ -11,7 +11,7 @@
 | B2 | i18n 双包（144+144 key）+ namespaces 注册 | [x] | f4def85 | en 聚合点=en-US.ts（无 en-US.namespaces.ts），见 blocked 备注-1 |
 | B3 | 只读组件 8 个（含 .test.tsx） | [x] | 见 git log | GreetingEditor 提前随批，7 测试绿 |
 | B3.5 | B-6 页内收录 import_url 自动导入 | [x] | 4ec08a2 | 后端 POST /jobs/import-url 需 A 补（E10） |
-| B4 | 写入组件 5 个（含 .test.tsx） | [ ] | | |
+| B4 | 写入组件（GreetingEditor 已随 B3） | [x] | df28ec9 | 4 组件 15 测试绿 |
 | B5 | 页面与路由（registry + appRoutes + 侧栏） | [ ] | | |
 | B6 | 发送闸门前端体现 | [ ] | | 闸门关→按钮禁用 |
 | B7 | 收尾（typecheck/lint/vitest/build + 晨报） | [ ] | | build 必须做 |
