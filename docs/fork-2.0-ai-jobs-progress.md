@@ -62,3 +62,43 @@ FAIL 互斥测试 test_ai_jobs_mutex.py 存在且绿 — 文件不存在（A4 �
 其他要点：`/api/config` 实为 GET/POST（计划附录 B 写 PUT 是笔误）；`/api/ai-jobs` 是自有路由前缀非引擎路径；附录 B 多列的 greetings/outreach-resume 两条 1.x 并不调用；JobCreate 仅 job_type 默认值不同且 job_sync 不依赖该默认。
 
 详见 docs/fork-2.0-ai-jobs-contract.md。
+
+---
+
+## 2026-11-06 夜 · A2 后端适配层移植
+
+**改动**：`backend/app/schemas/ai_jobs.py` + `backend/app/services/ai_jobs/` 全部 14 文件 + `backend/app/api/ai_jobs.py`（1.x 逐文件拷贝，L1 逐批验证）。
+**批次顺序**：批次1 schemas/__init__/client/settings/gate → 批次2 manager/status/config_sync（+ tasks 提前拷入，config_sync 依赖其 TaskGateError，依赖闭合）→ 批次3 job_sync/greeting/replies → 批次4 resume_sync → 批次5 delivery/delivery_sync/api。共 15 文件 1970 行。
+
+**A1 契约改造落地（2 处）**：
+- `replies.py:66` reply payload `{"content": ...}` → `{"message": ...}`（引擎 server.py:2361 只读 message；全测试面 grep 无 content 断言，安全）。
+- `greeting.py:68` greeting payload 补 `"confirmed": True`（引擎 server.py:2117 要求；1.x 此调用对 2.4.0 恒 400 一直静默兜底）。
+
+**发送闸门语义反转（红线 4/8）**：
+- `delivery.py` 新增 `send_gate_open()`：`AI_JOBS_ALLOW_SEND` 默认关，仅 `1/true/yes/on`（大小写不敏感）放行；`deliver()` 顶部强制检查（403）。
+- `api/ai_jobs.py deliver` 端点 API 层复用同一助手先挡一次（纵深防御）；1.x 的 `== "0"` 默认放行形态已移除。
+- 行为验证：默认 False / =1 True / =0 False（L1 实测输出）。
+
+**目录隔离**：sidecar runtime = `DATA_DIR/ai-jobs/<dataset_id>/engine/`（manager.py:111-114，DATA_DIR 来自 2.0 config.py:23）；grep 无 1.x 硬编码路径/端口残留。
+
+**L3 闸门输出（A2 后，EXIT=1 符合预期）**：
+
+```
+PASS 适配层 14 个服务文件齐全 — 现有=14/14
+PASS schemas/ai_jobs.py 存在
+FAIL application_routers 注册 ai_jobs — ai_jobs 出现 0 次（A4）
+PASS 引擎端口调用收口在 services/ai_jobs/
+PASS 发送闸门存在且默认关 — 所在文件=['services/ai_jobs/delivery.py', 'api/ai_jobs.py']
+PASS 版本窗口 ENGINE_VERSION_(MIN,MAX)=(2,4,0),(3,0,0)
+PASS 无 BossHunter 源码混入（许可证 S1） — 合法引用文件数=11
+PASS ai_jobs_config 持久化边界无凭据字段
+PASS ai_job_link 表存在
+FAIL pytest -k ai_jobs 全绿 — returncode=5（A3 移植后转绿）
+SKIP 前端 /ai-jobs 路由 / i18n key 数（会话 B）
+PASS dist 比 src 新
+FAIL 互斥测试 test_ai_jobs_mutex.py — A4 创建
+
+汇总：PASS=9 FAIL=3 SKIP=2
+```
+
+**A2 commit**：见 git log（feat(ai-jobs): 后端适配层移植）
