@@ -100,7 +100,10 @@ def test_a_generated_but_unconfirmed_greeting_is_still_skipped(db_session):
 
     db_session.expire_all()
     assert _item_statuses(db_session, task.id) == ["skipped"]
-    assert _items(db_session, task.id)[0].failure_category == "greeting_missing"
+    # 有字只是没确认：分类必须是「待确认」，不能写成「缺失」——否则进度表里明明有招呼语，
+    # 右侧分类却写「招呼语缺失」，用户会以为程序没读到文案。
+    assert _items(db_session, task.id)[0].failure_category == "greeting_unconfirmed"
+    assert _items(db_session, task.id)[0].failure_reason == "greeting_unconfirmed"
     assert "待确认" in (_items(db_session, task.id)[0].failure_detail or "")
     assert adapter.greetings == []
 

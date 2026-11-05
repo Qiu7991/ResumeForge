@@ -56,9 +56,13 @@ const applyQueue = {
   "applyQueue.greeting.unconfirmed": "Greeting not confirmed",
   "applyQueue.greeting.unconfirmedHint": "No greeting saved yet: this item is skipped when sending. Click this tag to edit, generate and save one.",
   "applyQueue.greeting.pendingConfirm": "Greeting pending review",
-  "applyQueue.greeting.pendingConfirmHint": "Generated for this Job but not yet confirmed: this item is skipped when sending. Click this tag to edit and save it.",
+  "applyQueue.greeting.pendingConfirmHint":
+    "Generated for this Job but not yet confirmed: this item is skipped when sending. Click this tag to edit and save, or use “Confirm greetings” in the toolbar to confirm in bulk.",
   "applyQueue.greeting.clickToEdit": "Click to edit",
   "applyQueue.greeting.editAria": "Edit greeting for {job}",
+  "applyQueue.greeting.confirmSelectedHint":
+    "Selected items take priority; with no selection, every drafted-but-unconfirmed greeting is confirmed. They are sent to recruiters exactly as written.",
+  "applyQueue.action.confirmGreetings": "Confirm greetings ({count})",
 
   "applyQueue.admission.needsConfirm": "Confirm each one",
   "applyQueue.admission.unanalyzed": "Not analyzed",
@@ -92,6 +96,17 @@ const applyQueue = {
   "applyQueue.greeting.batchDoneTitle": "Greetings generated: {ok} succeeded, {failed} failed",
   "applyQueue.greeting.batchSkipped": "{count} more were not processed (stopped)",
   "applyQueue.action.start": "Start applying",
+  "applyQueue.confirm.confirmGreetingsTitle": "Confirm these greetings?",
+  "applyQueue.confirm.confirmGreetingsBody":
+    "{count} item(s) will be sent to recruiters exactly as written, instead of being skipped one by one.",
+  "applyQueue.preflight.title": "{count} greeting(s) need attention",
+  "applyQueue.preflight.body":
+    "With “confirm greetings before sending” on, unconfirmed or empty greetings are skipped. You can confirm the {confirmable} draft(s) here before starting.",
+  "applyQueue.preflight.alsoMissing": "{count} more have no greeting and will still be skipped.",
+  "applyQueue.preflight.confirmAndStart": "Confirm and start",
+  "applyQueue.preflight.startAnyway": "Start anyway",
+  "applyQueue.toast.confirmedGreetings": "Confirmed {count} greeting(s)",
+  "applyQueue.toast.confirmGreetingsFailed": "Confirmed {ok}, {failed} failed — try again",
 
   "applyQueue.editor.title": "Edit “{title}”",
   "applyQueue.editor.untitledJob": "this Job",
@@ -100,12 +115,30 @@ const applyQueue = {
   "applyQueue.editor.resumePlaceholder":
     "This Job's Resume first, then favorites (type to search)",
   "applyQueue.editor.generate": "Generate a greeting for this Job",
+  "applyQueue.editor.focusProject.label": "Focus project (optional)",
+  "applyQueue.editor.focusProject.hint":
+    "Only affects this greeting, never the Resume; leave empty to let the JD pick the most relevant project.",
+  "applyQueue.editor.focusProject.placeholder": "Auto: pick from the JD",
+  "applyQueue.editor.focusProject.empty": "This Resume has no projects",
+  "applyQueue.editor.viewJd": "View job description",
+  "applyQueue.editor.hideJd": "Hide job description",
+  "applyQueue.editor.jdLoading": "Loading the JD…",
+  "applyQueue.editor.jdDescription": "Description",
+  "applyQueue.editor.jdRequirements": "Requirements",
+  "applyQueue.editor.jdEmpty":
+    "This job has no JD yet — use “Fill in details” in the job board first.",
+  "applyQueue.editor.jdFailed": "Could not load the JD",
+  "applyQueue.editor.jdNoJob": "The job was deleted, so its JD is unavailable",
+  "applyQueue.editor.saveConfirm": "Save & confirm",
+  "applyQueue.editor.saveConfirmHint":
+    "Saving counts as confirming: this greeting is sent to the recruiter as written. Changing the Resume requires confirming again.",
   "applyQueue.toast.greetingGenerated": "Generated a greeting for this Job",
   "applyQueue.toast.greetingDefault": "Filled in the default greeting (no model configured)",
   "applyQueue.toast.greetingFailed": "Could not generate the greeting",
   "applyQueue.toast.greetingNoResume": "This Job has no tailored Resume yet: generate one in the Job board first",
   "applyQueue.toast.resumeChangedGreeting": "The Resume changed, so the greeting needs to be confirmed again",
   "applyQueue.toast.updated": "Queue item updated",
+  "applyQueue.toast.savedConfirmed": "Saved and confirmed — ready to send",
   "applyQueue.toast.updateFailed": "Could not update the queue item",
 } as const;
 

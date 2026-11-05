@@ -30,6 +30,8 @@ export interface ApplyConfig {
   default_greeting: string;
   /** 用户自定义的打招呼语基准/模板；只约束结构语气，不覆盖事实。 */
   greeting_baseline?: string;
+  /** 默认简历：岗位没有专属简历时用它（优先级低于岗位版、高于没有简历）。 */
+  default_resume_id?: number | null;
   /** 发送前必须确认招呼语：开启时没有已确认招呼语的岗位会被跳过。 */
   require_greeting_review: boolean;
   skip_same_company: boolean;

@@ -51,9 +51,13 @@ const applySettings = {
   "applySettings.action.save": "Save settings",
   "applySettings.saved": "Apply settings saved",
   "applySettings.saveFailed": "Could not save the apply settings",
+  "applySettings.defaultResume.label": "Default Resume (optional)",
+  "applySettings.defaultResume.extra":
+    "Used when a Job has no tailored Resume — lower priority than the job-specific one, higher than none. Changing it also affects items already in the queue.",
+  "applySettings.defaultResume.placeholder": "Pick a general Resume (type to search)",
   "applySettings.greetingBaseline.label": "Custom greeting baseline",
   "applySettings.greetingBaseline.extra":
-    "Paste your preferred template, structure or tone. It only steers structure and wording, never facts; leave empty to use the built-in baseline.",
+    "Paste your preferred template, structure or tone — you can also state your differentiator (e.g. “most of my projects were built end-to-end with AI tools”). It is the highest-priority constraint, but facts must still come from the Resume; leave empty to use the built-in baseline.",
   "applySettings.greetingReview.label": "Review the greeting before sending",
   "applySettings.greetingReview.extra":
     "When enabled, queued jobs without a confirmed greeting are skipped and marked \"greeting missing\"; the default greeting is never sent on your behalf.",

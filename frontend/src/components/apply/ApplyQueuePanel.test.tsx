@@ -15,6 +15,7 @@ import ApplyQueuePanel from "./ApplyQueuePanel";
 const apiMocks = vi.hoisted(() => ({
   listQueue: vi.fn(),
   createApplyTask: vi.fn(),
+  getApplyConfig: vi.fn(),
   getBrowserStatus: vi.fn(),
   reorderQueue: vi.fn(),
   removeQueueItem: vi.fn(),
@@ -26,6 +27,7 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock("../../api/apply", () => ({
   listQueue: apiMocks.listQueue,
   createApplyTask: apiMocks.createApplyTask,
+  getApplyConfig: apiMocks.getApplyConfig,
   getBrowserStatus: apiMocks.getBrowserStatus,
   reorderQueue: apiMocks.reorderQueue,
   removeQueueItem: apiMocks.removeQueueItem,
@@ -70,6 +72,8 @@ beforeEach(() => {
   apiMocks.listResumes.mockResolvedValue({ items: [], total: 0 });
   // 浏览器默认已启动：绝大多数用例不关心浏览器前置检查这一层。
   apiMocks.getBrowserStatus.mockResolvedValue({ state: "running" });
+  // 招呼语闸门默认开启（与后端出厂默认一致），预检用例据此断言。
+  apiMocks.getApplyConfig.mockResolvedValue({ require_greeting_review: true });
 });
 
 afterEach(() => {
@@ -416,5 +420,83 @@ describe("ApplyQueuePanel 招呼语复核", () => {
     expect(
       screen.queryByRole("button", { name: /批量生成招呼语/ }),
     ).not.toBeInTheDocument();
+  });
+
+  it("工具栏可批量确认草稿：先二次确认，再把每一条标为已确认", async () => {
+    apiMocks.listQueue.mockResolvedValue(
+      queueList([
+        { ...BASE_ITEM, id: 1, greeting: "草稿一", greeting_confirmed: false },
+        {
+          ...BASE_ITEM,
+          id: 2,
+          job_id: 12,
+          job_title: "前端开发",
+          greeting: "草稿二",
+          greeting_confirmed: false,
+        },
+        {
+          ...BASE_ITEM,
+          id: 3,
+          job_id: 13,
+          job_title: "已确认岗位",
+          greeting: "确认过的文案",
+          greeting_confirmed: true,
+        },
+      ]),
+    );
+    apiMocks.updateQueueItem.mockResolvedValue({ ...BASE_ITEM, greeting_confirmed: true });
+
+    render(
+      <AntdApp>
+        <ApplyQueuePanel disabled={false} onStarted={vi.fn()} />
+      </AntdApp>,
+    );
+
+    // 只数「有文案但未确认」的两条；已确认的那条不算。
+    // 按钮带图标，accessible name 会连图标名一起算进来，用正则锁定文案部分。
+    fireEvent.click(await screen.findByRole("button", { name: /确认招呼语 2/ }));
+
+    const dialog = await screen.findByRole("dialog");
+    // 弹窗里的确认键与工具栏同名：用 role 定位，不靠中文正文断言（棘轮要求新用例不新增 ByText）。
+    fireEvent.click(within(dialog).getByRole("button", { name: /确认招呼语 2/ }));
+
+    await waitFor(() => expect(apiMocks.updateQueueItem).toHaveBeenCalledTimes(2));
+    expect(apiMocks.updateQueueItem).toHaveBeenCalledWith(1, { confirm_greeting: true });
+    expect(apiMocks.updateQueueItem).toHaveBeenCalledWith(2, { confirm_greeting: true });
+  });
+
+  it("开始投递前预检：先说明会被跳过，并允许当场确认草稿后再建任务", async () => {
+    apiMocks.listQueue.mockResolvedValue(
+      queueList([{ ...BASE_ITEM, greeting: "AI 草稿", greeting_confirmed: false }]),
+    );
+    apiMocks.updateQueueItem.mockResolvedValue({ ...BASE_ITEM, greeting_confirmed: true });
+    apiMocks.createApplyTask.mockResolvedValue({ id: 1, status: "running" });
+
+    render(
+      <AntdApp>
+        <ApplyQueuePanel disabled={false} onStarted={vi.fn()} />
+      </AntdApp>,
+    );
+
+    const start = await screen.findByRole("button", { name: /开始投递/ });
+    await waitFor(() => expect(start).toBeEnabled());
+    fireEvent.click(start);
+
+    // 关键：任务还没建，先弹预检——不能静默跳过整批再让用户去猜。
+    // 用「确认并开始投递」按钮（role 定位）证明弹的是预检框，不用中文 ByText。
+    expect(await screen.findByRole("button", { name: "确认并开始投递" })).toBeInTheDocument();
+    expect(apiMocks.createApplyTask).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认并开始投递" }));
+
+    await waitFor(() =>
+      expect(apiMocks.updateQueueItem).toHaveBeenCalledWith(1, { confirm_greeting: true }),
+    );
+    // 先确认落库、再建任务：建批次时快照的 greeting_confirmed 必须是新的。
+    await waitFor(() => expect(apiMocks.createApplyTask).toHaveBeenCalledWith({ use_queue: true }));
+    expect(apiMocks.updateQueueItem.mock.invocationCallOrder[0]).toBeLessThan(
+      apiMocks.createApplyTask.mock.invocationCallOrder[0]!,
+    );
   });
 });

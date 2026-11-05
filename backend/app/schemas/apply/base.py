@@ -80,11 +80,13 @@ FailureCategory = Literal[
     "login_required",
     "captcha_required",
     "greeting_missing",
+    "greeting_unconfirmed",
     "network_timeout",
     "file_upload_failed",
     "site_unsupported",
     "profile_insufficient",
     "unconfirmed",
+    "job_closed",
     "unknown",
 ]
 

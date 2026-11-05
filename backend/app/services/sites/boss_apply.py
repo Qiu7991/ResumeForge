@@ -36,9 +36,14 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
-from ...models.apply import FAILURE_GREETING_MISSING, FAILURE_SELECTOR_INVALID
+from ...models.apply import (
+    FAILURE_GREETING_MISSING,
+    FAILURE_JOB_CLOSED,
+    FAILURE_SELECTOR_INVALID,
+)
 from ..browser.cdp_client import CdpClient, CdpError
 from ..browser.interaction import trusted_click
 from ..browser.page_ready import wait_for_page_state
@@ -78,8 +83,10 @@ from .boss_apply_scripts import (
 )
 from .boss_page import (
     CHAT_PAGE_PATH,
+    _SELECTORS,
     _as_payload,
     _current_url,
+    _readiness_script,
     blocker_failure,
     detect_blocker,
     same_target_page,
@@ -170,6 +177,15 @@ class BossApplyMixin:
         blocker = detect_blocker(state)
         if blocker is not None:
             raise blocker_failure(blocker, state)
+        if state.get("closed"):
+            # 页面还在、JD 还在，但招聘方已关闭这个职位——没有沟通入口不是我们的故障。
+            # 单独分类并软跳过，避免它被记成「选择器失效」还触发熔断。
+            raise SiteFailure(
+                FAILURE_JOB_CLOSED,
+                "该岗位已关闭（页面显示「职位已关闭」），无法再投递；请把它移出投递队列",
+                url=state.get("url") or "",
+                title=state.get("title") or "",
+            )
         present = state.get("found")
         if present is None:
             present = int(state.get("matched", 0) or 0) > 0
@@ -200,6 +216,42 @@ class BossApplyMixin:
         except CdpError:
             return set()
 
+    def _wait_document_complete(self, client: CdpClient) -> None:
+        """点击入口前等页面脚本装载完（``readyState === "complete"``）。
+
+        2026-11-04 连错 3 次的根因：BOSS 岗位详情是「先出 HTML、再挂事件」——「立即沟通」
+        按钮在文档 ``loading`` 阶段就已经在 DOM 里（实测 0.03s 就出现），而 Vue 到 ~0.6s
+        才挂 click 处理器、2.4s 才 ``complete``。入场探针只看「入口在不在」，于是点击发生在
+        **处理器绑定之前**：可信事件打在一个还没接线的按钮上，页面纹丝不动，也没有任何报错，
+        最后在「等聊天输入框」上超时，被误报成「页面结构变化 / 选择器失效」。
+
+        等 ``complete`` 之后再点击，并额外留一小段时间给框架补绑事件。超时**不失败**：
+        个别慢网/被拦截的页面本来就 Cannot 保证 complete，继续点击至少还能把真实状态写进诊断。
+        """
+        timeout_seconds = self._ready_wait.timeout
+        deadline = time.monotonic() + max(timeout_seconds, 0.0)
+        state: dict[str, Any] = {}
+        while True:
+            try:
+                value = _as_payload(client.evaluate(_readiness_script(_SELECTORS["apply_entry"])))
+                state = value if isinstance(value, dict) else {}
+            except CdpError:
+                state = {}
+            if state.get("ready_state") == "complete":
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "岗位详情页未在 %.1fs 内完成加载（readyState=%s），仍继续点击入口",
+                    timeout_seconds,
+                    state.get("ready_state") or "unknown",
+                )
+                break
+            time.sleep(min(0.3, remaining))
+        # complete 通常已在框架 mount 之后，但「complete 后异步补绑」也见过；这 250ms 是兜底，
+        # 不值得再开一轮轮询。
+        time.sleep(0.25)
+
     def open_apply(self, client: CdpClient, job: Any) -> None:
         """打开岗位页并等待「立即沟通 / 继续沟通」入口就绪。"""
         url = getattr(job, "source_url", "") or ""
@@ -213,11 +265,19 @@ class BossApplyMixin:
             client,
             state,
             _apply_entry_script(),
+            # 已关闭的页面永远等不到入口：把 closed 也当成"可以收工"，
+            # 交给 _ensure_apply_entry 报出具体原因，而不是白等满 15 秒。
             ready=lambda item: (
-                bool(item.get("found")) and same_target_page(str(item.get("url") or ""), url)
+                (bool(item.get("found")) and same_target_page(str(item.get("url") or ""), url))
+                or bool(item.get("closed"))
             ),
             expected="“立即沟通 / 继续沟通”入口",
         )
+        # 入口出现 ≠ 能点：必须等页面脚本装载完，否则点击会打在一个还没绑事件的按钮上。
+        self._wait_document_complete(client)
+        # 等待期间页面可能重渲染，重新确认入口仍在（坐标也会在 fill_and_submit 里重取）。
+        refreshed = _as_payload(client.evaluate(_apply_entry_script()))
+        state = refreshed if isinstance(refreshed, dict) else state
         self._ensure_apply_entry(state)
 
     def _wait_entry_rect(self, client: CdpClient) -> dict[str, Any]:

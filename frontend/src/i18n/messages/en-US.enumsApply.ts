@@ -74,12 +74,14 @@ const enumsApply = {
   "enumsApply.failure.login_required": "Sign-in required",
   "enumsApply.failure.captcha_required": "Captcha or security check required",
   "enumsApply.failure.greeting_missing": "Greeting missing",
+  "enumsApply.failure.greeting_unconfirmed": "Greeting pending review",
   "enumsApply.failure.network_timeout": "Network timed out",
   "enumsApply.failure.file_upload_failed": "Resume upload failed",
   "enumsApply.failure.site_unsupported": "This job source does not support auto-apply",
   "enumsApply.failure.profile_insufficient":
     "Profile incomplete — add the missing Resume or web-form details first",
   "enumsApply.failure.unconfirmed": "Could not confirm the result — check it in the browser",
+  "enumsApply.failure.job_closed": "Job closed",
   "enumsApply.failure.unknown": "Unknown failure",
 
   // #39: display names for the three failure codes (protocol values live in the backend).
@@ -90,11 +92,13 @@ const enumsApply = {
   "enumsApply.failureReason.login_required": "Sign-in required",
   "enumsApply.failureReason.captcha_required": "CAPTCHA required",
   "enumsApply.failureReason.greeting_missing": "Greeting missing",
+  "enumsApply.failureReason.greeting_unconfirmed": "Greeting pending review",
   "enumsApply.failureReason.network_timeout": "Network timeout",
   "enumsApply.failureReason.upload_failed": "Resume upload failed",
   "enumsApply.failureReason.site_unsupported": "Job source not supported",
   "enumsApply.failureReason.profile_insufficient": "Profile incomplete",
   "enumsApply.failureReason.unconfirmed": "Result unconfirmed",
+  "enumsApply.failureReason.job_closed": "Job closed",
   "enumsApply.failureReason.unknown": "Unknown reason",
   "enumsApply.failureTarget.chat_input": "Chat input",
   "enumsApply.failureTarget.send_button": "Send button",

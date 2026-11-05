@@ -7,7 +7,7 @@
  * 两个下拉的选项在渲染期由 filterOptions.ts 构建（展示名走语言包，`value` 仍是协议值），
  * 本组件只迁工具栏自己的文案；移出确认与详情抽屉共用同一条后果正文，避免两处措辞分叉。
  */
-import { PlayCircleOutlined, ReloadOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, PlayCircleOutlined, ReloadOutlined } from "@ant-design/icons";
 import { Button, Popconfirm, Progress, Select, Space, Tooltip, Typography } from "antd";
 import type { GreetingBatchState } from "../../../features/apply/greetingBatchRunner";
 import { t } from "../../../i18n";
@@ -35,6 +35,9 @@ export function QueueFilterBar({
   onSelectAll,
   onClearSelection,
   onRemoveSelected,
+  onConfirmGreetings,
+  confirmGreetingCount,
+  confirmingGreetings,
   onReload,
   greetingBatch,
   onStopGreetings,
@@ -58,6 +61,11 @@ export function QueueFilterBar({
   onSelectAll: () => void;
   onClearSelection: () => void;
   onRemoveSelected: () => void;
+  /** 批量把「有文案但没确认」的草稿标为已确认；有选中时只处理选中的。 */
+  onConfirmGreetings: () => void;
+  /** 本次会确认多少条（选中的优先，没有选中时是全部待确认草稿）。 */
+  confirmGreetingCount: number;
+  confirmingGreetings: boolean;
   onReload: () => void;
   /** 入队后自动生成招呼语的进度：只在运行中显示进度与停止。 */
   greetingBatch: GreetingBatchState;
@@ -121,6 +129,19 @@ export function QueueFilterBar({
             {t("applyQueue.action.removeSelected")}
           </Button>
         </Popconfirm>
+        {/* 有文案但没确认的草稿：批量生成后一次确认，比逐条点开保存快得多。
+            仍然要求用户显式点这一下（确认弹窗），不会在生成时自动放行。 */}
+        {confirmGreetingCount > 0 ? (
+          <Tooltip title={t("applyQueue.greeting.confirmSelectedHint")}>
+            <Button
+              icon={<CheckCircleOutlined />}
+              loading={confirmingGreetings}
+              onClick={onConfirmGreetings}
+            >
+              {t("applyQueue.action.confirmGreetings", { count: confirmGreetingCount })}
+            </Button>
+          </Tooltip>
+        ) : null}
         {/* loading 直接挂 reload 的请求态：本地接口虽快，转圈一闪也是「点到了」的确认
             （此前点击毫无反馈，用户会以为没点上而连点好几次）。 */}
         <Button icon={<ReloadOutlined />} loading={loading} onClick={onReload}>

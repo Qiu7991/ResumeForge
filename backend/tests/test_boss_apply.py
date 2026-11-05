@@ -211,6 +211,20 @@ def test_trusted_click_dispatches_a_full_mouse_press_release_sequence():
     pressed = next(params for _, params in entry_events if params["type"] == "mousePressed")
     assert pressed["button"] == "left" and pressed["buttons"] == 1
     assert any(method == "Page.bringToFront" for method, _ in client.sends)
+    # 焦点仿真必须在鼠标事件之前打开：Ego 多窗口下页面会被判成 hidden，
+    # 不开它站点会静默忽略这次可信点击（2026-11-04 实测根因）。
+    focus_index = next(
+        index
+        for index, (method, _) in enumerate(client.sends)
+        if method == "Emulation.setFocusEmulationEnabled"
+    )
+    press_index = next(
+        index
+        for index, (method, params) in enumerate(client.sends)
+        if method == "Input.dispatchMouseEvent" and params.get("type") == "mousePressed"
+    )
+    assert focus_index < press_index
+    assert client.sends[focus_index][1] == {"enabled": True}
 
 
 def test_empty_greeting_is_blocked_before_any_click():

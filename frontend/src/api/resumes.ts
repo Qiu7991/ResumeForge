@@ -285,7 +285,11 @@ export async function exportResumeWithOptions(
   blob: Blob;
   filename: string;
   pages: number | null;
+  /** 按当前版式真实需要几页（未截断）；截断时 `pages` 只会等于上限。 */
+  pagesNeeded: number | null;
   pageLimit: number | null;
+  /** 服务端已按页数上限截断：`pages` 是被裁后的页数，界面必须据此提示。 */
+  overflow: boolean;
   savedTo?: string;
 }> {
   const resp = await requestRaw(`/resumes/${id}/export`, {
@@ -300,7 +304,9 @@ export async function exportResumeWithOptions(
       getFilenameFromDisposition(resp.headers.get("Content-Disposition")) ??
       `resume.${options.format}`,
     pages: readCountHeader(resp.headers.get("X-Resume-Pages")),
+    pagesNeeded: readCountHeader(resp.headers.get("X-Resume-Pages-Needed")),
     pageLimit: readCountHeader(resp.headers.get("X-Resume-Page-Limit")),
+    overflow: resp.headers.get("X-Resume-Overflow") === "true",
     savedTo: readSavedToHeader(resp.headers.get("X-Saved-To")),
   };
 }

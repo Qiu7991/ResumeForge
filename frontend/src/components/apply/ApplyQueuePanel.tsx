@@ -11,7 +11,14 @@ import { DeleteOutlined, EditOutlined, EyeOutlined } from "@ant-design/icons";
 import { App, Alert, Button, Empty, Space, Tag, Typography, Popconfirm } from "antd";
 import PageSkeleton from "../common/PageSkeleton";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createApplyTask, getBrowserStatus, listQueue, removeQueueItem } from "../../api/apply";
+import {
+  createApplyTask,
+  getApplyConfig,
+  getBrowserStatus,
+  listQueue,
+  removeQueueItem,
+  updateQueueItem,
+} from "../../api/apply";
 import {
   stopGreetingBatch,
   useGreetingBatchState,
@@ -45,7 +52,7 @@ interface Props {
 }
 
 export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Props) {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   // 本面板用模块级 t()：必须订阅语言变化。
   useLocale();
   const [reloadKey, setReloadKey] = useState(0);
@@ -60,6 +67,7 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
     undefined,
   );
   const [batchRemoving, setBatchRemoving] = useState(false);
+  const [confirmingGreetings, setConfirmingGreetings] = useState(false);
   const greetingBatch = useGreetingBatchState();
   const buildMenu = useRowActionMenu();
 
@@ -80,6 +88,19 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
     () => pendingItems.filter((item) => item.apply_supported === false),
     [pendingItems],
   );
+  // 有文案但没经用户确认的草稿（批量生成的）。闸门开着时这些条目会被逐条跳过，
+  // 所以工具栏给一个显式的批量确认入口；没有选中时覆盖整队列。
+  const confirmableItems = useMemo(
+    () =>
+      pendingItems.filter((item) => item.greeting.trim() && item.greeting_confirmed !== true),
+    [pendingItems],
+  );
+  const selectedConfirmable = useMemo(
+    () => confirmableItems.filter((item) => selectedIds.includes(item.id)),
+    [confirmableItems, selectedIds],
+  );
+  const confirmGreetingCount =
+    selectedIds.length > 0 ? selectedConfirmable.length : confirmableItems.length;
   // 筛选只影响表格显示：准入告警、开始投递的可用性判断仍看全量 items。
   const filteredItems = useMemo(
     () =>
@@ -189,18 +210,57 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
     }
   };
 
+  /**
+   * 批量确认招呼语草稿：逐条 PATCH（后端只有单条更新端点），allSettled 聚合——
+   * 一条失败不拖垮整批，失败条数如实回给用户。
+   */
+  const confirmDrafts = async (targets: ApplyQueueItem[], { toast = true } = {}) => {
+    if (targets.length === 0) return true;
+    setConfirmingGreetings(true);
+    try {
+      const results = await Promise.allSettled(
+        targets.map((item) => updateQueueItem(item.id, { confirm_greeting: true })),
+      );
+      const failed = results.filter((result) => result.status === "rejected").length;
+      const ok = targets.length - failed;
+      // 刷新队列：表格里的「待确认」标签要立刻消失，用户才敢点开始。
+      refresh();
+      if (failed > 0) {
+        message.warning(t("applyQueue.toast.confirmGreetingsFailed", { ok, failed }));
+      } else if (toast) {
+        message.success(t("applyQueue.toast.confirmedGreetings", { count: ok }));
+      }
+      return failed === 0;
+    } finally {
+      setConfirmingGreetings(false);
+    }
+  };
+
+  const askConfirmGreetings = () => {
+    // 有选中就只确认选中的（按钮上的数字也是这个口径）；没选中时确认整队列的草稿。
+    const targets = selectedIds.length > 0 ? selectedConfirmable : confirmableItems;
+    if (targets.length === 0) return;
+    modal.confirm({
+      title: t("applyQueue.confirm.confirmGreetingsTitle"),
+      content: t("applyQueue.confirm.confirmGreetingsBody", { count: targets.length }),
+      okText: t("applyQueue.action.confirmGreetings", { count: targets.length }),
+      cancelText: t("common.action.cancel"),
+      onOk: () => confirmDrafts(targets),
+    });
+  };
+
   const start = async () => {
     // Table 的 rowKey 是队列条目 id，而后端 /apply/tasks 的 job_ids 明确要求岗位 id。
     // 两种 id 通常不同，直接提交 selectedIds 会投错岗位，甚至在碰巧存在同号岗位时静默误投。
-    const chosen =
+    const selectedPending =
       selectedIds.length > 0
-        ? items
-            .filter(
-              (item): item is ApplyQueueItem & { job_id: number } =>
-                selectedIds.includes(item.id) && item.status === "pending" && item.job_id !== null,
-            )
-            .map((item) => item.job_id)
-        : undefined;
+        ? items.filter(
+            (item): item is ApplyQueueItem & { job_id: number } =>
+              selectedIds.includes(item.id) && item.status === "pending" && item.job_id !== null,
+          )
+        : [];
+    const chosen =
+      selectedIds.length > 0 ? selectedPending.map((item) => item.job_id) : undefined;
     if (selectedIds.length > 0 && chosen?.length === 0) {
       message.warning(t("applyQueue.toast.notEligible"));
       return;
@@ -214,16 +274,65 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
         message.warning(t("applyQueue.toast.needBrowser"));
         return;
       }
-      const task = await createApplyTask(
-        chosen ? { job_ids: chosen, use_queue: false } : { use_queue: true },
+
+      const submit = async () => {
+        const task = await createApplyTask(
+          chosen ? { job_ids: chosen, use_queue: false } : { use_queue: true },
+        );
+        message.success(
+          chosen
+            ? t("applyQueue.toast.startedSelected", { count: chosen.length })
+            : t("applyQueue.toast.startedAll"),
+        );
+        setSelectedIds([]);
+        onStarted(task);
+      };
+
+      // 开始前预检：闸门开启时，有文案但未确认 / 没有文案的条目都会被逐条跳过。
+      // 之前这里没有任何提示，用户看着整批「已跳过·招呼语缺失」只会以为程序没读到文案，
+      // 所以改为开始时就说清楚，并允许当场确认草稿（仍需用户显式点确认，不自动放行）。
+      const targets = selectedIds.length > 0 ? selectedPending : pendingItems;
+      const drafts = targets.filter(
+        (item) => item.greeting.trim() && item.greeting_confirmed !== true,
       );
-      message.success(
-        chosen
-          ? t("applyQueue.toast.startedSelected", { count: chosen.length })
-          : t("applyQueue.toast.startedAll"),
-      );
-      setSelectedIds([]);
-      onStarted(task);
+      const missing = targets.filter((item) => !item.greeting.trim());
+      if (drafts.length > 0 || missing.length > 0) {
+        const reviewRequired = await getApplyConfig()
+          .then((config) => config.require_greeting_review)
+          .catch(() => false);
+        if (reviewRequired) {
+          modal.confirm({
+            title: t("applyQueue.preflight.title", { count: drafts.length + missing.length }),
+            content: (
+              <Space orientation="vertical" size={4}>
+                <span>{t("applyQueue.preflight.body", { confirmable: drafts.length })}</span>
+                {missing.length > 0 ? (
+                  <span>{t("applyQueue.preflight.alsoMissing", { count: missing.length })}</span>
+                ) : null}
+              </Space>
+            ),
+            okText: drafts.length
+              ? t("applyQueue.preflight.confirmAndStart")
+              : t("applyQueue.preflight.startAnyway"),
+            cancelText: t("common.action.cancel"),
+            onOk: async () => {
+              setBusy(true);
+              try {
+                if (drafts.length > 0) await confirmDrafts(drafts, { toast: false });
+                await submit();
+              } catch (err) {
+                message.error(
+                  err instanceof Error ? err.message : t("applyQueue.toast.startFailed"),
+                );
+              } finally {
+                setBusy(false);
+              }
+            },
+          });
+          return;
+        }
+      }
+      await submit();
     } catch (err) {
       message.error(err instanceof Error ? err.message : t("applyQueue.toast.startFailed"));
     } finally {
@@ -290,6 +399,9 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
         onSelectAll={() => setSelectedIds(selectableIds)}
         onClearSelection={() => setSelectedIds([])}
         onRemoveSelected={() => void removeSelected()}
+        onConfirmGreetings={askConfirmGreetings}
+        confirmGreetingCount={confirmGreetingCount}
+        confirmingGreetings={confirmingGreetings}
         onReload={() => void reload()}
         greetingBatch={greetingBatch}
         onStopGreetings={stopGreetingBatch}

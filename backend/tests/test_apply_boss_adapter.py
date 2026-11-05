@@ -299,3 +299,24 @@ def test_selector_diagnostic_includes_actionable_hints():
     assert "详情" in text
     assert "匹配到的控件数：3" in text
     assert "反馈给维护者" in text
+
+
+def test_selector_diagnostic_surfaces_dialog_visibility_and_focus():
+    """找不到控件不一定是改版：弹窗拦截 / 窗口被遮挡 / 没焦点都要写进诊断。"""
+    text = selector_diagnostic(
+        {
+            "url": "https://x/job",
+            "title": "详情",
+            "matched": 0,
+            "dialog": "今日沟通人数已达上限",
+            "visibility": "hidden",
+            "focused": False,
+            "ready_state": "complete",
+        },
+        "聊天页输入框",
+    )
+
+    assert "今日沟通人数已达上限" in text
+    assert "页面可见性：hidden" in text
+    assert "窗口没有焦点" in text
+    assert "文档状态：complete" in text

@@ -138,6 +138,8 @@ class GreetingPreviewRequest(BaseModel):
     item_id: int | None = Field(default=None, ge=1)
     # 编辑弹窗里刚选中、可能还没保存的简历：给了就按它生成（优先于队列里的 resume_id）。
     resume_id: int | None = Field(default=None, ge=1)
+    # 本次指定第 3 句讲哪个项目（来自该简历的项目名）。不传 = 按 JD 自动挑。
+    focus_project: str | None = Field(default=None, max_length=200)
 
 
 class GreetingPreviewOut(BaseModel):

@@ -25,7 +25,8 @@ const exportPanel = {
   "exportPanel.toast.needFormat": "请至少选择一种导出格式",
   "exportPanel.toast.savedTo": "已保存到 {path}",
   "exportPanel.toast.savedBoth": "已同时保存到 {path}",
-  "exportPanel.toast.overLimit": "「{format}」共 {pages} 页，超过所选 {limit} 页上限。",
+  "exportPanel.toast.overLimit":
+    "「{format}」按当前版式约需 {pages} 页，超过所选 {limit} 页上限，超出的部分已截断——请加页或收紧版式后重新导出。",
   "exportPanel.toast.started": "已开始导出",
   "exportPanel.toast.failed": "导出失败",
   "exportPanel.toast.printFailed": "打开打印窗口失败",

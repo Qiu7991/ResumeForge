@@ -60,9 +60,13 @@ const applyQueue = {
   "applyQueue.greeting.unconfirmed": "招呼语未确认",
   "applyQueue.greeting.unconfirmedHint": "还没确认招呼语：开始投递时会被跳过。点这条标签直接编辑，按岗位生成并保存即可。",
   "applyQueue.greeting.pendingConfirm": "招呼语待确认",
-  "applyQueue.greeting.pendingConfirmHint": "AI 已按岗位生成，但还没经你确认：开始投递时会被跳过。点这条标签直接编辑并保存后才会发送。",
+  "applyQueue.greeting.pendingConfirmHint":
+    "AI 已按岗位生成，但还没经你确认：开始投递时会被跳过。点这条标签编辑并保存，或点工具栏「确认招呼语」批量确认。",
   "applyQueue.greeting.clickToEdit": "点击编辑",
   "applyQueue.greeting.editAria": "编辑招呼语：{job}",
+  "applyQueue.greeting.confirmSelectedHint":
+    "选中的优先；没有选中时确认全部「有文案但没确认」的草稿。确认后按现有文案原样发送给 HR。",
+  "applyQueue.action.confirmGreetings": "确认招呼语 {count}",
 
   // 准入徽标自己的两枚固定标签（准入结论的展示名仍来自 types 的 ADMISSION_META）。
   "applyQueue.admission.needsConfirm": "需逐条确认",
@@ -99,6 +103,17 @@ const applyQueue = {
   "applyQueue.greeting.batchDoneTitle": "招呼语生成完成：成功 {ok} 个，失败 {failed} 个",
   "applyQueue.greeting.batchSkipped": "另有 {count} 个未处理（已停止）",
   "applyQueue.action.start": "开始投递",
+  "applyQueue.confirm.confirmGreetingsTitle": "确认这些招呼语？",
+  "applyQueue.confirm.confirmGreetingsBody":
+    "共 {count} 条。确认后会按现有文案原样发送给 HR，不再逐条跳过。",
+  "applyQueue.preflight.title": "有 {count} 条招呼语待处理",
+  "applyQueue.preflight.body":
+    "开启「发送前必须确认招呼语」时，未确认或没有文案的条目会被跳过。可以先在这里把 {confirmable} 条草稿标为已确认，再开始投递。",
+  "applyQueue.preflight.alsoMissing": "另有 {count} 条还没有招呼语，仍会被跳过。",
+  "applyQueue.preflight.confirmAndStart": "确认并开始投递",
+  "applyQueue.preflight.startAnyway": "仍然开始",
+  "applyQueue.toast.confirmedGreetings": "已确认 {count} 条招呼语",
+  "applyQueue.toast.confirmGreetingsFailed": "已确认 {ok} 条，{failed} 条失败，请重试",
 
   // 条目编辑弹窗。
   "applyQueue.editor.title": "编辑「{title}」",
@@ -107,12 +122,29 @@ const applyQueue = {
     "优先选标着「本岗位」的简历（为该 JD 生成的那份）；收藏的简历排在后面。留空则运行时用该岗位最近一份岗位版简历。",
   "applyQueue.editor.resumePlaceholder": "本岗位简历优先，也可选收藏简历（输入关键词搜索）",
   "applyQueue.editor.generate": "按岗位生成招呼语",
+  "applyQueue.editor.focusProject.label": "重点展示的项目（可选）",
+  "applyQueue.editor.focusProject.hint":
+    "只影响这次招呼语生成，不改简历；留空则按 JD 自动挑最相关的项目。",
+  "applyQueue.editor.focusProject.placeholder": "不指定，按 JD 自动挑",
+  "applyQueue.editor.focusProject.empty": "这份简历里没有项目可选",
+  "applyQueue.editor.viewJd": "查看岗位 JD",
+  "applyQueue.editor.hideJd": "收起岗位 JD",
+  "applyQueue.editor.jdLoading": "正在读取 JD…",
+  "applyQueue.editor.jdDescription": "岗位描述",
+  "applyQueue.editor.jdRequirements": "任职要求",
+  "applyQueue.editor.jdEmpty": "这个岗位还没有 JD：可以在「岗位广场」点「补齐详情」后再看。",
+  "applyQueue.editor.jdFailed": "读取岗位 JD 失败",
+  "applyQueue.editor.jdNoJob": "岗位已删除，无法查看 JD",
+  "applyQueue.editor.saveConfirm": "保存并确认",
+  "applyQueue.editor.saveConfirmHint":
+    "保存即视为确认：这段招呼语会按原样发给 HR。换简历后需要重新确认。",
   "applyQueue.toast.greetingGenerated": "已按岗位生成招呼语",
   "applyQueue.toast.greetingDefault": "已填入默认招呼语（未配置模型）",
   "applyQueue.toast.greetingFailed": "生成招呼语失败",
   "applyQueue.toast.greetingNoResume": "这个岗位还没有岗位版简历：请先在岗位广场生成简历",
   "applyQueue.toast.resumeChangedGreeting": "简历已更换，招呼语需要重新确认",
   "applyQueue.toast.updated": "队列条目已更新",
+  "applyQueue.toast.savedConfirmed": "已保存并确认，可以投递",
   "applyQueue.toast.updateFailed": "更新失败",
 } as const;
 

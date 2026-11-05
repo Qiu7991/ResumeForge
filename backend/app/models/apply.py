@@ -127,6 +127,9 @@ FAILURE_SELECTOR_INVALID = "selector_invalid"
 FAILURE_LOGIN_REQUIRED = "login_required"
 FAILURE_CAPTCHA_REQUIRED = "captcha_required"
 FAILURE_GREETING_MISSING = "greeting_missing"
+# 「有字但没确认」不是「缺失」：批量生成的草稿已经落库，只是没经用户点确认。两者要分开，
+# 否则进度表里明明写着招呼语、分类却显示「招呼语缺失」，用户只会以为程序坏了。
+FAILURE_GREETING_UNCONFIRMED = "greeting_unconfirmed"
 FAILURE_NETWORK_TIMEOUT = "network_timeout"
 FAILURE_FILE_UPLOAD_FAILED = "file_upload_failed"
 # 岗位不属于任何已注册的招聘网站（例如纯手动录入、来源与投递链接都指不到站点）。
@@ -139,17 +142,22 @@ FAILURE_PROFILE_INSUFFICIENT = "profile_insufficient"
 # 「无法确认」= 动手了但读不到成功凭据。**未知状态永不记成功**，也不能当成站点故障去熔断
 # （页面可能其实已经投出去了，重试反而会重复投递）——单列一类，让用户去浏览器核对。
 FAILURE_UNCONFIRMED = "unconfirmed"
+# 「职位已关闭 / 停止招聘」：站点页面还在，但没有沟通入口。这不是我们的故障、也不是
+# 选择器失效——按软跳过处理（不触发熔断），并写清原因让用户把它移出队列。
+FAILURE_JOB_CLOSED = "job_closed"
 FAILURE_UNKNOWN = "unknown"
 FAILURE_CATEGORIES = (
     FAILURE_SELECTOR_INVALID,
     FAILURE_LOGIN_REQUIRED,
     FAILURE_CAPTCHA_REQUIRED,
     FAILURE_GREETING_MISSING,
+    FAILURE_GREETING_UNCONFIRMED,
     FAILURE_NETWORK_TIMEOUT,
     FAILURE_FILE_UPLOAD_FAILED,
     FAILURE_SITE_UNSUPPORTED,
     FAILURE_PROFILE_INSUFFICIENT,
     FAILURE_UNCONFIRMED,
+    FAILURE_JOB_CLOSED,
     FAILURE_UNKNOWN,
 )
 
@@ -159,11 +167,13 @@ FAILURE_CATEGORY_LABELS = {
     FAILURE_LOGIN_REQUIRED: "需要登录",
     FAILURE_CAPTCHA_REQUIRED: "需要验证码或安全验证",
     FAILURE_GREETING_MISSING: "招呼语缺失",
+    FAILURE_GREETING_UNCONFIRMED: "招呼语待确认",
     FAILURE_NETWORK_TIMEOUT: "网络超时",
     FAILURE_FILE_UPLOAD_FAILED: "简历上传失败",
     FAILURE_SITE_UNSUPPORTED: "岗位来源不支持自动投递",
     FAILURE_PROFILE_INSUFFICIENT: "资料不足，需要先补充简历/网申资料",
     FAILURE_UNCONFIRMED: "无法确认投递结果，请到浏览器核对",
+    FAILURE_JOB_CLOSED: "岗位已关闭",
     FAILURE_UNKNOWN: "未知失败",
 }
 

@@ -23,7 +23,7 @@ const exportPanel = {
   "exportPanel.toast.savedTo": "Saved to {path}",
   "exportPanel.toast.savedBoth": "Also saved to {path}",
   "exportPanel.toast.overLimit":
-    "“{format}” is {pages} pages, over the {limit}-page limit you selected.",
+    "“{format}” needs about {pages} pages at the current layout, over the {limit}-page limit you selected — the overflow was cut off. Add pages or tighten the layout, then export again.",
   "exportPanel.toast.started": "Export started",
   "exportPanel.toast.failed": "Export failed",
   "exportPanel.toast.printFailed": "Could not open the print window",

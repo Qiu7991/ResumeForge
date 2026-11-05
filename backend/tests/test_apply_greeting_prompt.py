@@ -86,6 +86,22 @@ def test_custom_greeting_baseline_is_injected_as_style_guidance():
     assert "不得把基准里的示例" in system
 
 
+def test_focus_project_is_pinned_to_the_third_sentence():
+    """手动指定项目：只锁第 3 句的选材，并要求项目不在简历时忽略、不得编造。"""
+    messages = build_greeting_messages(
+        {"title": "AI落地工程师"},
+        "{}",
+        focus_project="CreatorDistill 创作者内容分析系统",
+    )
+    system = messages[0]["content"]
+    assert "第 3 句只能写「CreatorDistill 创作者内容分析系统」" in system
+    assert "如果简历里找不到这个项目" in system
+    assert "不要编造" in system
+    # 没指定时不出现这段，避免污染默认生成。
+    plain = build_greeting_messages({"title": "AI落地工程师"}, "{}")[0]["content"]
+    assert "本次指定项目" not in plain
+
+
 def test_greeting_prompt_no_longer_requires_education_intro():
     system = build_greeting_messages({"title": "AI应用赋能专员"}, "{}")[0]["content"]
     assert "不要介绍学校、专业、年级、届别、学历、毕业时间" in system

@@ -427,6 +427,7 @@ def build_greeting_messages(
     resume_text: str,
     *,
     greeting_baseline: str = "",
+    focus_project: str = "",
 ) -> list[dict[str, str]]:
     """拼招呼语生成的消息：岗位与简历作为不可信数据注入，预算内截断。"""
     prefix = (
@@ -463,6 +464,16 @@ def build_greeting_messages(
             f"{baseline}\n"
             "</USER_GREETING_BASELINE>\n"
             "不得把基准里的示例公司、项目、数字当成用户的事实；用户事实只能来自简历。"
+        )
+    # 手动指定项目：用户比任何排序都清楚"这条岗位该讲哪个项目"。它只覆盖第 3 句的
+    # 选材，不改变五句结构；项目不在简历里时忽略，绝不凭这个名字编内容。
+    focused = str(focus_project or "").strip()[:200]
+    if focused:
+        system += (
+            "\n\n## 本次指定项目（最高优先级）\n"
+            f"第 3 句只能写「{focused}」这个项目，且只能引用简历里关于它的真实内容；"
+            "如果简历里找不到这个项目，忽略本段、按上面的规则重新挑一个，不要编造。\n"
+            "其余四句仍按五句话结构写，不要因为指定了项目就改变结论或语气。"
         )
     return [
         {"role": "system", "content": system},
@@ -511,10 +522,14 @@ async def generate_greeting(
     resume_text: str,
     *,
     greeting_baseline: str = "",
+    focus_project: str = "",
 ) -> str:
     """按岗位生成一版招呼语（可编辑，不落库）。"""
     messages = build_greeting_messages(
-        job_payload_data, resume_text, greeting_baseline=greeting_baseline
+        job_payload_data,
+        resume_text,
+        greeting_baseline=greeting_baseline,
+        focus_project=focus_project,
     )
     raw = await provider.chat(messages, thinking=False)
     return parse_greeting(raw)

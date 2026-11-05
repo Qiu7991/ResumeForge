@@ -10,6 +10,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
+import { t } from "../i18n";
 import { clampPagePadding } from "../utils/pagePadding";
 import ExportOptionsModal from "./ExportOptionsModal";
 
@@ -98,6 +99,25 @@ describe("ExportOptionsModal", () => {
       include_photo: true,
       allow_incomplete: undefined,
     });
+  });
+
+  it("内容超出页数上限被截断时，导完立刻提示（旧判定拿夹到上限的 pages 比较，永远不响）", async () => {
+    // 真实响应形状：pages 被截断到上限 1，pagesNeeded 才是真实需要的 2 页。
+    apiMocks.exportResumeWithOptions.mockResolvedValue({
+      ...RESULT,
+      pages: 1,
+      pagesNeeded: 2,
+      pageLimit: 1,
+      overflow: true,
+    });
+    renderModal({ initialPageLimit: 1 });
+
+    fireEvent.click(screen.getByRole("button", { name: /导\s*出/ }));
+
+    const expected = t("exportPanel.toast.overLimit", { format: "pdf", pages: 2, limit: 1 });
+    await waitFor(() =>
+      expect(document.querySelector(".ant-message-notice")?.textContent).toBe(expected),
+    );
   });
 
   it("面板里不再有「版式」栏与「预览脱敏效果」：版式归预览，脱敏预览已下线（T5）", () => {

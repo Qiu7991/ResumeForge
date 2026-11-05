@@ -7,7 +7,7 @@ test_apply_task_runner_stop.py。fakes 与 helpers 留在本文件供其复用�
 import threading
 import time
 
-from app.models.apply import ApplyTask, ApplyTaskItem
+from app.models.apply import FAILURE_JOB_CLOSED, ApplyTask, ApplyTaskItem
 from app.models.job import JOB_STATUS_APPLIED, Job
 from app.models.resume import ResumeRecord
 from app.models.tracker import SOURCE_APPLY, STATUS_APPLIED, ApplicationTrack
@@ -443,3 +443,23 @@ def test_company_key_normalizes_whitespace_and_case():
     assert company_key("ABC") == company_key("abc")
     assert company_key("") == ""
     assert company_key(None) == ""
+
+
+def test_a_closed_job_is_a_soft_skip_and_never_trips_the_breaker(db_session):
+    """岗位已关闭是软跳过：不计失败、不触发熔断，但保留分类让用户知道该移出队列。"""
+    task = _setup_task(db_session, 3, breaker_threshold=2)
+    adapter = FakeAdapter(fail_categories=[FAILURE_JOB_CLOSED])
+    runner = _runner(adapter)
+
+    runner.start(task.id)
+    _wait(runner)
+    _wait_db(db_session, lambda: _task_status(db_session, task.id), "completed", "任务状态")
+
+    db_session.expire_all()
+    # 熔断阈值是 2：如果算失败，第二条就会暂停，走不到 completed。
+    assert _item_statuses(db_session, task.id) == ["skipped", "skipped", "skipped"]
+    items = db_session.query(ApplyTaskItem).filter_by(task_id=task.id).all()
+    assert all(item.failure_category == FAILURE_JOB_CLOSED for item in items)
+    assert all(item.failure_reason == FAILURE_JOB_CLOSED for item in items)
+    stored = db_session.get(ApplyTask, task.id)
+    assert (stored.failed, stored.skipped, stored.status) == (0, 3, "completed")

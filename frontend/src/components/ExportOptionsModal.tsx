@@ -208,12 +208,20 @@ export default function ExportOptionsModal({
         if (result.savedTo) {
           message.success(t("exportPanel.toast.savedBoth", { path: result.savedTo }));
         }
-        if (result.pages && result.pageLimit && result.pages > result.pageLimit) {
+        // 截断时 `pages` 已经被夹到上限（= pageLimit），拿它比 `pages > pageLimit`
+        // 永远为假——这正是"PDF 少了个人总结、界面却一声不吭"的原因。判定必须看
+        // `overflow` 或"真实需要几页"（pagesNeeded）。
+        const neededPages = result.pagesNeeded ?? result.pages;
+        const exceeded =
+          neededPages != null &&
+          result.pageLimit != null &&
+          neededPages > result.pageLimit;
+        if (result.overflow || exceeded) {
           message.warning(
             t("exportPanel.toast.overLimit", {
               format,
-              pages: result.pages,
-              limit: result.pageLimit,
+              pages: neededPages ?? 0,
+              limit: result.pageLimit ?? 0,
             }),
           );
         }

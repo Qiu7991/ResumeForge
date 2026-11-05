@@ -181,6 +181,8 @@ export function previewGreeting(
     job_id: number;
     item_id?: number;
     resume_id?: number;
+    /** 本次指定第 3 句讲哪个项目（来自该简历的项目名）；不传 = 按 JD 自动挑。 */
+    focus_project?: string;
   },
   signal?: AbortSignal,
 ): Promise<GreetingPreview> {

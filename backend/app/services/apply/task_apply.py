@@ -12,6 +12,8 @@ from typing import Any
 from ...models.apply import (
     FAILURE_CAPTCHA_REQUIRED,
     FAILURE_GREETING_MISSING,
+    FAILURE_GREETING_UNCONFIRMED,
+    FAILURE_JOB_CLOSED,
     FAILURE_NETWORK_TIMEOUT,
     FAILURE_PROFILE_INSUFFICIENT,
     FAILURE_SITE_UNSUPPORTED,
@@ -323,18 +325,35 @@ def run_apply(
                 task.skipped += 1
                 session.commit()
             except SiteFailure as exc:
-                runner._mark_failed(
-                    session,
-                    task,
-                    item,
-                    exc.category,
-                    exc.detail,
-                    step=getattr(exc, "stage", ""),
-                )
-                # 「无法确认」不是站点故障：页面可能已经投出去了，熔断重试反而会重复
-                # 投递。它与软跳过同一方向——不计入连续失败，留给用户去浏览器核对。
-                if exc.category != FAILURE_UNCONFIRMED:
-                    consecutive += 1
+                if exc.category == FAILURE_JOB_CLOSED:
+                    # 岗位已关闭：站点页面还在、只是没有沟通入口，不是故障也不是选择器失效。
+                    # 记成软跳过（不计失败、不触发熔断），但保留分类与子码供筛选/复盘。
+                    item.status = ITEM_STATUS_SKIPPED
+                    item.failure_category = exc.category
+                    codes = classify_failure(
+                        exc.category, str(exc), step=getattr(exc, "stage", "")
+                    )
+                    item.failure_step = codes.step
+                    item.failure_target = codes.target
+                    item.failure_reason = codes.reason
+                    item.failure_detail = str(exc)
+                    item.finished_at = utcnow()
+                    task.processed += 1
+                    task.skipped += 1
+                    session.commit()
+                else:
+                    runner._mark_failed(
+                        session,
+                        task,
+                        item,
+                        exc.category,
+                        exc.detail,
+                        step=getattr(exc, "stage", ""),
+                    )
+                    # 「无法确认」不是站点故障：页面可能已经投出去了，熔断重试反而会重复
+                    # 投递。它与软跳过同一方向——不计入连续失败，留给用户去浏览器核对。
+                    if exc.category != FAILURE_UNCONFIRMED:
+                        consecutive += 1
             except CdpError as exc:
                 runner._mark_failed(session, task, item, FAILURE_NETWORK_TIMEOUT, str(exc))
                 consecutive += 1
@@ -438,8 +457,8 @@ def execute_item(
         if config.require_greeting_review:
             if greeting:
                 raise ItemSkip(
-                    "招呼语待确认：按岗位生成的招呼语需要先在投递队列里编辑并保存",
-                    category=FAILURE_GREETING_MISSING,
+                    "招呼语待确认：这段草稿还没经你确认，先在投递队列里点「确认招呼语」或打开编辑保存一次",
+                    category=FAILURE_GREETING_UNCONFIRMED,
                 )
             raise ItemSkip(
                 "招呼语未确认：请先在投递队列里为这个岗位生成或填写招呼语",

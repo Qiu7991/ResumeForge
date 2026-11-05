@@ -350,3 +350,18 @@
   background: var(--rf-surface);
   border-top: 1px solid var(--rf-border-subtle);
 }
+
+/* 编辑弹窗里的岗位 JD：展开后限高滚动，避免把「保存并确认」挤出视口。 */
+.apply-queue-jd {
+  margin: -4px 0 8px;
+}
+
+.apply-queue-jd-body {
+  margin-top: 6px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--rf-surface-alt);
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 6px;
+}

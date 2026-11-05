@@ -158,6 +158,44 @@ def test_changing_the_resume_invalidates_greeting_confirmation(db_session):
     assert changed.greeting_confirmed is False
 
 
+def test_confirming_a_regenerated_greeting_while_switching_resume_sticks(db_session):
+    """手动选简历 + 按新简历重新生成后保存：一次操作就应当确认，不再要求保存两次。
+
+    编辑弹窗的「保存并确认」会同时提交新简历与新文案；旧实现只要换简历就无条件打回
+    未确认，用户看到的是"明明点了保存，投递时还是说招呼语没确认"。
+    """
+    job = Job(title="后端开发", company="A公司", source="BOSS直聘", source_url="u")
+    db_session.add(job)
+    db_session.flush()
+    resume_a = ResumeRecord(title="A 版", job_id=job.id, content={})
+    resume_b = ResumeRecord(title="B 版", job_id=job.id, content={})
+    db_session.add_all([resume_a, resume_b])
+    db_session.commit()
+
+    created = apply_service.add_to_queue(
+        db_session,
+        ApplyQueueAddRequest(
+            items=[{"job_id": job.id, "confirm_unanalyzed": True, "resume_id": resume_a.id}]
+        ),
+    )
+    item_id = created[0].id
+    apply_service.update_queue_item(
+        db_session, item_id, ApplyQueueItemUpdate(greeting="对 A 版写的招呼语", confirm_greeting=True)
+    )
+
+    changed = apply_service.update_queue_item(
+        db_session,
+        item_id,
+        ApplyQueueItemUpdate(
+            greeting="按 B 版重新生成的招呼语",
+            resume_id=resume_b.id,
+            confirm_greeting=True,
+        ),
+    )
+    assert changed.resume_id == resume_b.id
+    assert changed.greeting_confirmed is True
+
+
 def test_greeting_preview_refuses_without_a_resume(client, db_session):
     """队列条目没有可用简历时，预览直接返回 no_resume，不调模型、不编话术。"""
     job = Job(title="后端开发", company="A公司", source="BOSS直聘", source_url="u")
@@ -203,9 +241,12 @@ def test_greeting_preview_uses_the_explicitly_selected_resume(client, db_session
 
     captured: dict[str, str] = {}
 
-    async def _fake_generate(provider, payload_data, resume_text, *, greeting_baseline=""):
+    async def _fake_generate(
+        provider, payload_data, resume_text, *, greeting_baseline="", focus_project=""
+    ):
         captured["resume_text"] = resume_text
         captured["baseline"] = greeting_baseline
+        captured["focus_project"] = focus_project
         return "您好，按 B 版简历重新生成的招呼语。"
 
     monkeypatch.setattr("app.api.apply.generate_greeting", _fake_generate)

@@ -82,12 +82,14 @@ class RobustFakeClient(CdpClient):
 
     def evaluate(self, expression, *, timeout=None):
         self.evaluate_calls += 1
-        if "visibilityState" in expression:
-            return self.visible_state
+        # 先认脚本标记：聊天状态脚本本身也会读 visibilityState，顺序反了会把整段
+        # JSON 脚本误派给可见性探针（返回裸字符串 "hidden"）。
         if _chat_state_script()[:40] in expression or "rf:chat-state" in expression:
             if self.chat_responses:
                 return self.chat_responses.pop(0)
             return _chat_state(input_found=True)
+        if "visibilityState" in expression:
+            return self.visible_state
         return None
 
     def close(self):

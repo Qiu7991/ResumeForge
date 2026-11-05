@@ -11,6 +11,7 @@ import pytest
 from app.models.apply import (
     FAILURE_CAPTCHA_REQUIRED,
     FAILURE_GREETING_MISSING,
+    FAILURE_JOB_CLOSED,
     FAILURE_SELECTOR_INVALID,
 )
 from app.services.sites.base import CollectQuery, SiteFailure
@@ -72,6 +73,52 @@ def test_open_apply_reuses_the_tab_and_confirms_the_entry_is_present():
 
     assert client.navigations == [FAKE_JOB.source_url]
     assert client.tabs == []
+
+
+def test_open_apply_waits_for_the_document_to_finish_loading_before_returning():
+    """入口出现 ≠ 能点：必须等文档 complete，否则点击打在还没绑事件的按钮上（2026-11-04 实锤）。
+
+    这里让就绪探针一直报 loading：超时后仍要继续（不能把慢页面判成失败），
+    但必须确认 open_apply 确实走过「等文档装载」这一步。
+    """
+    adapter = boss()
+    client = ScriptedCdpClient(
+        {
+            "rf:apply-entry": {
+                "found": True,
+                "matched": 1,
+                "url": FAKE_JOB.source_url,
+                "title": "t",
+            }
+        },
+        ready={"matched": 1, "explicitly_empty": False, "ready_state": "loading"},
+    )
+
+    adapter.open_apply(client, FAKE_JOB)
+
+    assert any("rf:readiness" in expression for expression in client.expressions)
+
+
+def test_open_apply_reports_a_closed_job_as_closed_not_as_a_selector_change():
+    """页面还在、但显示「职位已关闭」：没有沟通入口是正常的，不能误报选择器失效。"""
+    adapter = boss()
+    client = ScriptedCdpClient(
+        {
+            "rf:apply-entry": {
+                "found": False,
+                "matched": 0,
+                "closed": True,
+                "url": FAKE_JOB.source_url,
+                "title": "AI 产品职责",
+            }
+        }
+    )
+
+    with pytest.raises(SiteFailure) as excinfo:
+        adapter.open_apply(client, FAKE_JOB)
+
+    assert excinfo.value.category == FAILURE_JOB_CLOSED
+    assert "职位已关闭" in excinfo.value.detail
 
 
 def test_open_apply_reports_a_missing_entry_with_diagnostics():

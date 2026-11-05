@@ -36,6 +36,12 @@ vi.mock("../../api/apply", async () => {
   };
 });
 
+// 「默认简历」下拉会预拉候选：把这层网络挡掉，用例只关心底部操作条。
+vi.mock("../../api/resumes", () => ({
+  listResumes: vi.fn(async () => ({ items: [], total: 0 })),
+  getResume: vi.fn(async () => null),
+}));
+
 const CONFIG: ApplyConfig = {
   interval_seconds: 30,
   interval_jitter_seconds: 10,
