@@ -89,3 +89,12 @@
   与等探测落地的 waitFor（**断言零改动**）
 - 验证：ai-jobs 5 文件 18 tests ✅；typecheck ✅；lint 0 errors（+1 warning 与基线同类）
 - commit: 见 git log
+
+## 2026-11-06 夜 B7 收尾
+
+- 终验：typecheck 退出码 0；lint 0 errors/35 warnings；定向 vitest 26 文件 393 passed/1 skipped/0 failed
+- npm run build ✓ 947ms；dist/assets 143 JS chunk 全新（06:03），含 AiJobsPage-9V_voe6s.js(40,421B)
+- 棘轮基线登记（commit 2edb0de）：移植带入 1.x 测试中文断言 30 行（5 文件）+ ScoreTracePanel
+  JSX 全角冒号 3 行；维护模式按设计无法登记增项 → 按扫描器真值手工登记（src 195→198、
+  tests 1443→1473），理由与回退方式写进晨报备注-2
+- 晨报：docs/fork-2.0-ai-jobs-fe-morning-report.md（五节固定格式）
