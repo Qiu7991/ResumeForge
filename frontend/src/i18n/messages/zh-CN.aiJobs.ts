@@ -151,5 +151,10 @@ const aiJobs = {
   "aiJobs.history.detail": "说明",
   "aiJobs.history.time": "时间",
   "aiJobs.history.empty": "还没有运行记录",
+  // 发送闸门前端体现（B6）：状态来自空列表 deliver 探测（403=关/400=开）。
+  "aiJobs.gate.checking": "正在检查发送闸门…",
+  "aiJobs.gate.closed": "发送闸门已关闭（AI_JOBS_ALLOW_SEND=0）：投递通道不可用。需要发送时请由管理员在服务环境里放开该开关。",
+  "aiJobs.gate.unknown": "暂时无法确认发送闸门状态，发送已停用。",
+  "aiJobs.gate.retry": "重新检查",
 } as const;
 export default aiJobs;

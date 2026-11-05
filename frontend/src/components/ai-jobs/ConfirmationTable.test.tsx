@@ -2,15 +2,21 @@
 /** ConfirmationTable：选择、白名单外提示由后端给；这里钉住确认弹窗三要素与拒绝。 */
 import { App as AntdApp } from "antd";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ConfirmationTable from "./ConfirmationTable";
 import type { EngineJobSummary, SendQuota } from "../../types/aiJobs";
 
 const apiMocks = vi.hoisted(() => ({
   deliverAiJobs: vi.fn(),
   rejectAiJobs: vi.fn(),
+  // B6：组件挂载会探测发送闸门；这里给默认「开」，闸门行为另见 ConfirmationTable.gate.test.tsx。
+  probeSendGate: vi.fn(),
 }));
 vi.mock("../../api/aiJobs", () => apiMocks);
+
+beforeEach(() => {
+  apiMocks.probeSendGate.mockResolvedValue("open");
+});
 
 const quota: SendQuota = { daily_limit: 30, sent: 2, remaining: 28, exhausted: false };
 
@@ -62,8 +68,11 @@ describe("ConfirmationTable", () => {
 
   it("confirm modal requires checkbox and shows quota + warning", async () => {
     renderTable();
-    // 勾选第一行（索引 0 是表头全选框）
+    // 勾选第一行（索引 0 是表头全选框）；B6 起按钮还受挂载时的闸门探测约束，等它落地为「开」
     fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /确认投递/ }).hasAttribute("disabled")).toBe(false),
+    );
     fireEvent.click(screen.getByRole("button", { name: /确认投递/ }));
     expect(screen.getByText("已选 1 个岗位")).toBeTruthy();
     expect(screen.getByText(/今日已发 2\/30/)).toBeTruthy();
@@ -84,6 +93,10 @@ describe("ConfirmationTable", () => {
       </AntdApp>,
     );
     fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    // B6：等闸门探测落地为「开」再打开弹窗
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /确认投递/ }).hasAttribute("disabled")).toBe(false),
+    );
     fireEvent.click(screen.getByRole("button", { name: /确认投递/ }));
     fireEvent.click(screen.getByText("我已核对所选岗位的招呼语与目标公司"));
     fireEvent.click(screen.getByRole("button", { name: /确认发送/ }));

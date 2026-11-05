@@ -5,7 +5,7 @@
  * 前端不直接访问 sidecar：全部经简历通后端代理，错误文案与降级口径由后端统一。
  */
 import type { AiJobsConfig, AiJobsStatus, EngineStartResult, EngineStopResult } from "../types/aiJobs";
-import { request } from "./client";
+import { ApiError, request } from "./client";
 
 /** 聚合连接状态（引擎配置/sidecar 健康/进程归属）。 */
 export function getAiJobsStatus(signal?: AbortSignal): Promise<AiJobsStatus> {
@@ -181,6 +181,33 @@ export const dismissReply = (historyId: string) => replyAction(historyId, "dismi
 /** 把简历通全局 LLM Profile 同步给引擎。 */
 export function syncLlmToEngine(): Promise<{ synced: boolean; model: string; service: string }> {
   return request("/ai-jobs/config/sync-llm", { method: "POST", budget: "task" });
+}
+
+
+/**
+ * 发送闸门前端探测（B6）：后端环境闸 ``AI_JOBS_ALLOW_SEND=0`` 时 ``POST /deliver``
+ * 在同一入口直接 403；闸门开时空列表在 ``delivery.deliver`` 第一道校验就被 400
+ * 短路（先于 sidecar 检查），因此空列表探测**零副作用、不触引擎**。
+ * 其余结果一律视为 unknown，调用方按「关」处理（fail-closed）。
+ */
+export type AiSendGateState = "open" | "closed" | "unknown";
+
+export async function probeSendGate(): Promise<AiSendGateState> {
+  try {
+    await request("/ai-jobs/deliver", {
+      method: "POST",
+      body: JSON.stringify({ job_ids: [], confirm: true }),
+      budget: "task",
+    });
+    // 空列表正常必 400，走不到这里；真走到说明后端行为未知。
+    return "unknown";
+  } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.status === 403) return "closed";
+      if (error.status === 400) return "open";
+    }
+    return "unknown";
+  }
 }
 
 /** 引擎历史记录（采集/评分/任务/投递）。 */

@@ -5,8 +5,9 @@
  */
 import { App, Alert, Button, Checkbox, Modal, Space, Table, Tag, Typography } from "antd";
 import type { TableColumnsType } from "antd";
-import { useMemo, useState } from "react";
-import { deliverAiJobs, rejectAiJobs } from "../../api/aiJobs";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { deliverAiJobs, probeSendGate, rejectAiJobs } from "../../api/aiJobs";
+import type { AiSendGateState } from "../../api/aiJobs";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
 import type { EngineJobSummary, SendQuota } from "../../types/aiJobs";
@@ -91,6 +92,20 @@ export default function ConfirmationTable({
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // B6 发送闸门的前端体现：环境闸 AI_JOBS_ALLOW_SEND=0 时入口按钮必须不可用。
+  // 空列表 deliver 在后端先于 sidecar 检查被 400 短路，探测零副作用；
+  // 403=关、400=开、其余=unknown（fail-closed，按钮保持禁用）。
+  const [gate, setGate] = useState<AiSendGateState | null>(null);
+  const recheckGate = useCallback(() => {
+    setGate(null);
+    probeSendGate()
+      .then(setGate)
+      .catch(() => setGate("unknown"));
+  }, []);
+  useEffect(() => {
+    recheckGate();
+  }, [recheckGate]);
+
   const selectedJobs = useMemo(
     () => jobs.filter((job) => selectedIds.includes(job.id)),
     [jobs, selectedIds],
@@ -165,10 +180,26 @@ export default function ConfirmationTable({
         rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys as string[]) }}
         locale={{ emptyText: t("aiJobs.confirm.empty") }}
       />
+      {gate === "closed" && <Alert type="error" showIcon title={t("aiJobs.gate.closed")} />}
+      {gate === "unknown" && (
+        <Alert
+          type="warning"
+          showIcon
+          title={
+            <Space size="small">
+              <span>{t("aiJobs.gate.unknown")}</span>
+              <Button size="small" onClick={recheckGate}>
+                {t("aiJobs.gate.retry")}
+              </Button>
+            </Space>
+          }
+        />
+      )}
+      {gate === null && <Alert type="info" showIcon title={t("aiJobs.gate.checking")} />}
       <Space>
         <Button
           type="primary"
-          disabled={selectedIds.length === 0 || undefined}
+          disabled={gate !== "open" || selectedIds.length === 0 || undefined}
           onClick={() => setModalOpen(true)}
         >
           {t("aiJobs.confirm.title")}

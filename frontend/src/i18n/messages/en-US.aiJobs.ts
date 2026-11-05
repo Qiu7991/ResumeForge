@@ -151,5 +151,10 @@ const aiJobs = {
   "aiJobs.history.detail": "Detail",
   "aiJobs.history.time": "Time",
   "aiJobs.history.empty": "No run history yet",
+  // Send-gate UI (B6): state comes from the empty-list deliver probe (403=off / 400=on).
+  "aiJobs.gate.checking": "Checking the send gate…",
+  "aiJobs.gate.closed": "The send gate is off (AI_JOBS_ALLOW_SEND=0): delivery is unavailable. To send, ask the administrator to enable it in the service environment.",
+  "aiJobs.gate.unknown": "The send gate state could not be confirmed; sending is disabled.",
+  "aiJobs.gate.retry": "Recheck",
 } as const;
 export default aiJobs;
