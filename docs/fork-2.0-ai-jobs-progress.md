@@ -50,3 +50,15 @@ FAIL 互斥测试 test_ai_jobs_mutex.py 存在且绿 — 文件不存在（A4 �
 **对计划 §11.4「A0 后 14 项全 FAIL」的有意偏差**：PASS 的 5 项中，检查 4/7/8 是「出现即违规」的反向安全断言（空仓库恒真）、检查 9 是 N2 已建表的事实断言、检查 13 是 dist 现状（A 不碰前端）。FAIL 的 7 项正是 A2/A3/A4 的移植清单。
 
 **A0 commit**：见 git log（chore(ai-jobs): 建分支与闸门 phase 8）
+
+---
+
+## 2026-11-06 夜 · A1 三方契约核对
+
+**结论**：22 条引擎路径全部在 2.4.0 server.py 核实存在（逐条行号见表）；2.0 衔接点 17 项全部就位、符号同名；**发现 2 处字段不兼容**，留给 A2：
+1. `history/{id}/reply`：1.x 发 `content`，引擎读 `message`（server.py:2361）→ A2 改发 message 并保留 content 键（防 1.x 测试断言破坏）。
+2. `jobs/{id}/greeting`：引擎要求 `confirmed=true`（server.py:2117-2118），1.x 不发 → 该调用在 1.x 对 2.4.0 引擎从未成功过（一直静默走本地快照兜底）→ A2 补 confirmed。
+
+其他要点：`/api/config` 实为 GET/POST（计划附录 B 写 PUT 是笔误）；`/api/ai-jobs` 是自有路由前缀非引擎路径；附录 B 多列的 greetings/outreach-resume 两条 1.x 并不调用；JobCreate 仅 job_type 默认值不同且 job_sync 不依赖该默认。
+
+详见 docs/fork-2.0-ai-jobs-contract.md。
