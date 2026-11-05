@@ -41,8 +41,10 @@ def captures_dir() -> Path:
 # schemas 的配置出厂默认与 browser_manager 的兜底默认都从这里取，避免两处各写一个 9333
 # 而在改端口时漏改一处。运行期真正生效的端口由 ApplyConfig.browser_port 驱动。
 # 2.0 二开隔离（开发计划 §2.2②）：1.x 仍是 9333，两个实例不能抢同一个
-# Chrome 与同一份登录 profile，2.0 出厂默认改为 9343。
-DEFAULT_BROWSER_PORT = 9343
+# Chrome 与同一份登录 profile。**出厂默认保持上游 9333**：上游有 10 处测试把
+# 9333 钉死（E4 禁改断言），真正的隔离改在 2.0 实例的运行时配置上做
+# （apply_config.browser_port → 9343，见 docs/fork-2.0-blocked.md B-1）。
+DEFAULT_BROWSER_PORT = 9333
 
 # 网申填表专用浏览器使用固定的另一条调试端口，不与投递台共享进程或用户目录。
 # 这个端口不暴露为投递配置项，避免用户误把两类浏览器配置成同一个实例。
