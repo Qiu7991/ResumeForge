@@ -3,6 +3,8 @@
 
 import contextlib
 
+import pytest  # noqa: F401 - 供 test_deliver_allowed_when_env_absent 的 skip 标记使用（blocked.md SK-1）
+
 from app.models.tracker import ApplicationTrack
 from app.services.ai_jobs import tasks
 from app.services.ai_jobs.gate import ai_jobs_busy, set_ai_jobs_busy

@@ -33,7 +33,10 @@ def _seed_resume(db):
     db.commit()
 
 
-def test_full_flow_preflight_task_confirm_deliver(client, db_session, sidecar):
+def test_full_flow_preflight_task_confirm_deliver(client, db_session, sidecar, monkeypatch):
+    # 2.0 发送总闸默认关（红线 4/8，见 blocked.md SK-1）：本用例验证的是「允许发送
+    # 时的端到端流程」，故显式打开环境闸；下方全部断言与 1.x 逐字一致（E4 未动）。
+    monkeypatch.setenv("AI_JOBS_ALLOW_SEND", "1")
     _seed_resume(db_session)
 
     # 1. 预检：简历 OK；AI/浏览器/平台如实报告当前环境（fake 下 LLM/浏览器不可用）

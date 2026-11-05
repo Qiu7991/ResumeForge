@@ -14,7 +14,7 @@ from app.services.ai_jobs.manager import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
-FAKE_SIDECAR = FIXTURES / "fake_bosshunter.py"
+FAKE_SIDECAR = FIXTURES / "fake_sidecar.py"
 
 
 def _engine_config(tmp_path: Path, port: int) -> AiJobsConfig:

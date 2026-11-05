@@ -8,7 +8,7 @@ from app.schemas.ai_jobs import AiJobsConfig
 from app.services.ai_jobs.manager import SidecarManager, find_free_port
 
 FIXTURES = Path(__file__).parent / "fixtures"
-FAKE_SIDECAR = FIXTURES / "fake_bosshunter.py"
+FAKE_SIDECAR = FIXTURES / "fake_sidecar.py"
 
 
 # ===== status / config =====

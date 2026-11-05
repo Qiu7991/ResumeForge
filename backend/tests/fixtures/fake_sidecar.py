@@ -2,7 +2,7 @@
 """fake BossHunter sidecar：本地 loopback HTTP 桩，供 manager/契约/端到端测试用。
 
 只模拟 BossHunter 的 ``/api`` 表面（health/task/jobs/deliver/...），**不访问任何
-招聘平台**。用法：``python fake_bosshunter.py --port 8687 [--version 2.4.1]``。
+招聘平台**。用法：``python fake_sidecar.py --port 8687 [--version 2.4.1]``。
 """
 
 from __future__ import annotations

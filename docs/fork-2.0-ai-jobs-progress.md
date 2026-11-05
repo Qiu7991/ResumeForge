@@ -102,3 +102,42 @@ FAIL 互斥测试 test_ai_jobs_mutex.py — A4 创建
 ```
 
 **A2 commit**：见 git log（feat(ai-jobs): 后端适配层移植）
+
+---
+
+## 2026-11-06 夜 · A3+A4 测试移植与路由/互斥
+
+**A3 测试移植**（17 个 test_ai_jobs_*.py + ai_jobs_fakes.py + fixtures/fake_sidecar.py）：
+- 途中补齐两处 2.0 缺失（照 1.x 忠实移植）：`models/tracker.py` 补 `SOURCE_AI_JOBS` 常量与标签（1.x:77-85）；`services/tracker.py::record_applied` 补 `source` 参数（1.x 同名函数有此参，delivery_sync 依赖）。
+- SK-1：`test_deliver_allowed_when_env_absent` 断言「未设环境变量 → 投递 200」与 2.0 红线 4/8（默认关）直接冲突 → 按红线 6 豁免 skip（未改任何断言），2.0 语义由新增 `test_ai_jobs_send_gate.py` 正向覆盖。
+- e2e 全流程用例在函数入口显式 `setenv AI_JOBS_ALLOW_SEND=1`（用例意图=「允许发送时的端到端流程」；全部断言逐字未动，符合 E4）。
+
+**A4 路由与互斥**：
+- `application_routers.py` 注册 `ai_jobs.router`（照 1.x：ai_tasks 之后、jobs 之前）。
+- `apply/task_runner.py` start() 锁内插入 AI 互斥检查（逐字照 1.x:191-196，先于租约与线程）。
+- 新增 `test_ai_jobs_mutex.py`（双向互斥 4 用例：AI busy 拒投递启动且未起线程/租约；投递运行拒 AI 启动；引擎不可达保守维持 busy；引擎空闲自愈放行）+ `test_ai_jobs_send_gate.py`（9 用例：默认关/真值开/非真值关 × 参数化 + API 层 403 + 显式打开走通全链路）。
+
+**NOTE-2（合规改名）**：`tests/fixtures/fake_bosshunter.py` → `fake_sidecar.py`。该文件是 1.x 自建测试桩（SPDX Apache-2.0、纯 MockTransport/HTTPServer 桩，零引擎代码），但文件名含 "bosshunter" 被冻结版 phase_8 检查 7 判 FAIL（E10 不许改闸门）→ 合规改名 + 3 处引用更新，git mv 保历史。
+
+**L3 闸门输出（A4 后，EXIT=0 全绿）**：
+
+```
+PASS 适配层 14 个服务文件齐全 — 现有=14/14
+PASS schemas/ai_jobs.py 存在
+PASS application_routers 注册 ai_jobs — 出现 2 次
+PASS 引擎端口调用收口在 services/ai_jobs/
+PASS 发送闸门存在且默认关 — 所在文件=[delivery.py, api/ai_jobs.py]
+PASS 版本窗口 (2,4,0)-(3,0,0)
+PASS 无 BossHunter 源码混入（许可证 S1） — 同名文件=无
+PASS ai_jobs_config 持久化边界无凭据字段
+PASS ai_job_link 表存在
+PASS pytest -k ai_jobs 全绿 — 125 passed, 1 skipped
+SKIP 前端 /ai-jobs 路由（会话 B）
+SKIP aiJobs 中英 i18n key 数（会话 B）
+PASS dist 比 src 新
+PASS 互斥测试 test_ai_jobs_mutex.py — 4 passed
+
+汇总：PASS=12 FAIL=0 SKIP=2
+```
+
+**定向测试**：`-k ai_jobs` = 125 passed / 1 skipped；`-k apply_task_runner` = 24 passed。

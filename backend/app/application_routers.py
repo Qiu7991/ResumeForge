@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from .api import (
+    ai_jobs,
     ai_tasks,
     analytics,
     apply,
@@ -101,6 +102,8 @@ ROUTERS = (
     job_match.router,
     # 通用 AI 任务（0068）：独立前缀 /api/ai-tasks，不与其他前缀抢路径。
     ai_tasks.router,
+    # AI 求职（BossHunter sidecar）：独立前缀 /api/ai-jobs，不与其他前缀抢路径。
+    ai_jobs.router,
     jobs.router,
     jobs_analysis.router,
     resumes.router,

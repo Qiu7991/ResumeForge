@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 from app.services.ai_jobs.client import SidecarClient
 from app.services.ai_jobs.manager import SidecarManager
-from tests.fixtures.fake_bosshunter import JOBS_PAGE, TASK_SNAPSHOT, WORKBENCH_STATE
+from tests.fixtures.fake_sidecar import JOBS_PAGE, TASK_SNAPSHOT, WORKBENCH_STATE
 
 
 def make_fake_handler(

@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 # 发送总闸（2.0 默认关，与 1.x 的「=0 才拒」语义相反）：仅当环境变量
 # AI_JOBS_ALLOW_SEND 显式为真值时才允许把岗位送进 /api/workbench/deliver。
-# 这是不可逆对外动作的唯一收口；晨间人工验收需要真实发送时由用户显式打开。
+# 定义在服务层、检查在 API 层（api/ai_jobs.py 的 deliver 端点先挡 403）：
+# 1.x 的服务级测试直调 deliver() 验证确认门 400/409，不能被环境闸拦截（E4）。
+# 这是不可逆对外动作的唯一入口；晨间人工验收需要真实发送时由用户显式打开。
 _SEND_ENV_VAR = "AI_JOBS_ALLOW_SEND"
 _SEND_ENV_TRUTHY = ("1", "true", "yes", "on")
 
@@ -52,15 +54,10 @@ def pending_confirmation_ids(state: dict[str, Any]) -> set[str]:
 def deliver(db: Session, job_ids: list[str], confirm: bool) -> dict[str, Any]:
     """人工确认后投递选中岗位；返回引擎响应（任务快照或排队回执）。
 
-    **发送总闸默认关**（2.0 语义，见模块注释）：``AI_JOBS_ALLOW_SEND`` 未设置
-    或非真值时任何路径都发不出去（403）；打开后仍需 ``confirm=True`` + 待确认
-    列表校验，层层收口（计划红线 4/8、§12 F2）。
+    **发送总闸在 API 层**（``api/ai_jobs.py`` 调 ``send_gate_open``，2.0 默认关）：
+    与 1.x 的层级一致——服务层保持纯确认门（``confirm=True`` + 待确认列表校验），
+    因为 1.x 的服务级测试直调本函数验证 400/409 语义，不能被环境闸拦截（E4）。
     """
-    if not send_gate_open():
-        raise TaskGateError(
-            "发送闸门未打开：设置环境变量 AI_JOBS_ALLOW_SEND=1 并重启后端后才允许投递（默认关）",
-            403,
-        )
     if not confirm:
         raise TaskGateError("缺少确认：投递前必须二次确认", 400)
     if not job_ids or not all(isinstance(j, str) and j.strip() for j in job_ids):
