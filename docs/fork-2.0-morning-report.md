@@ -74,3 +74,45 @@ phase 7：复跑无 FAIL；唯一 FAIL=「两份报告存在」缺 morning-repor
 ---
 
 *附注：闸门脚本 fork_gate.py 自 N0 提交（d0ea39e）后未再修改（E10）；夜间未开任何浏览器、未执行任何投递/外部写操作、未 push。*
+
+---
+
+## 六、验收轮复核（2026-11-06 04:20，独立重跑）
+
+> 本节由验收会话在报告提交后追加。**纠错性质**，请以本节为准覆盖上文相应表述。
+
+### 6.1 复核通过的项（独立取证）
+
+| 项 | 复核结果 |
+|---|---|
+| 1.x 完好 | ✅ HEAD `a09b63e4` / dirty 0 / 分支 `fix/v2-single-model` / DB 160,989,184 字节，四项与开工前完全一致 |
+| 2.0 提交历史 | ✅ 11 个提交（`d893243` 基线 → `b14e407` 报告），分支 `feat/fork-port`，工作树干净 |
+| 2.0 无远端 | ✅ `git remote -v` 为空，物理上无法 push |
+| 闸门全量 | ✅ 独立重跑 `fork_gate.py --all` → **PASS=20 FAIL=0 SKIP=9**，退出码 0 |
+| 迁移单头 | ✅ `0001_baseline_v2` → `0002_fork_apply_greeting_plan_aijob` |
+| 四项结构 | ✅ `apply_queue_item.greeting_confirmed`、`apply_task_item.greeting_confirmed`、失败三列、`ai_job_link`、`resume_generation_plan` 全部在库 |
+| `-k apply` 测试 | ✅ 437 passed（复跑一致） |
+| `page_limit or 1` | ✅ 命中 0 处 |
+| `profile_facts` | ✅ 2.0 库无该表，`backend/app` 引用 0 处 |
+| stop-2.0 不误杀 | ✅ 实测：停 2.0 后 8010 下线，8005（1.0.2）仍 200 |
+
+### 6.2 必须更正的三处（详见 docs/fork-2.0-blocked.md 的 V-1 ~ V-4）
+
+1. **「开工时 8005 未监听」不成立。** 实测 8005 上的 1.0.2 后端 PID 24444 启动于 **11-05 16:28:54**，早于夜间会话；且 1.x 的 `runtime/backend.json` 还记录着另一个活进程 PID 6232。**1.x 整夜都在运行**，不是「未运行」。不影响 2.0 产出，但不能以「1.x 没在跑」为前提。
+
+2. **「前端 5174 在跑」不准确。** 5174 无监听，`runtime/frontend.json` 不存在。实际情况是前端由 **8010 同源提供 `frontend/dist`**（dist mtime 03:37，带 `Accept: text/html` 请求 `/` 返回 200）。功能正常，表述需更正。
+
+3. **新增高风险项 V-1：1.x 的 `stop.cmd` 会误杀 2.0。** 反向风险此前未覆盖——1.x 的兜底逻辑枚举所有监听端口 + 匹配 `uvicorn app.main:app` + 健康检查确认，正在跑的 2.0 三条全中。停 2.0 可逆（重跑 `start-2.0.cmd`），但需知情。
+
+### 6.3 复核后的实际状态
+
+```
+8010 → {"status":"ok","version":"2.0.0"}   （已重启，PID 记录已刷新）
+8005 → {"status":"ok","version":"1.0.2"}   （1.x 全程未动）
+```
+
+两实例可同时运行，互不干扰（数据目录、端口、PID 记录、浏览器端口均独立）。
+
+### 6.4 下一轮建议（不变）
+
+**N5 BOSS 适配器最优先**——闸门已把三处修复列为 SKIP（`_wait_document_complete` / `setFocusEmulationEnabled` 缺失），缺任何一处投递就会回到「点了没反应」。其次 N6 AI 求职、N7 前端整页、N8 简历侧。
