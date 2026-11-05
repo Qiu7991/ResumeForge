@@ -61,3 +61,15 @@
 - 至此 1.x 的 17 个 ai-jobs 组件全部在 2.0 就位
 - vitest src/components/ai-jobs：4 文件 15 passed ✅；typecheck ✅
 - commit: df28ec9
+
+## 2026-11-06 夜 B5 页面与路由
+
+- 移植 pages/AiJobsPage.tsx（179 行逐字）+ hooks/useAiJobsPolling.ts(.test.ts)
+- 注册表 4 处改动（B 独占）：
+  1. pages/registry.ts：+AiJobsPage 懒加载工厂一行
+  2. appRoutes.tsx：import 一行 + <Route path="/ai-jobs"> 一行（/assistant 之后，照 1.x 次序）
+  3. navigationConfig.ts：RobotOutlined import + /ai-jobs 条目（primary 组，required=false，照 1.x 原样）
+  4. i18n navigation 双包：navigation.item.aiJobs（中「AI 求职」/英 "AI Jobs"，照 1.x 措辞）
+- 注意：vitest 必须在 frontend/ 下跑（仓库根会落到 node 环境，document is not defined 是 cwd 产物非代码问题）
+- 验证：typecheck ✅；lint 0 errors（AiJobsPage +2 warning，与基线同类 set-state-in-effect）；
+  navigation/轮询/ai-jobs 21 tests ✅；appRouterWiring+AppErrorBoundary+UserGuideModal+AppShell 29 tests ✅
