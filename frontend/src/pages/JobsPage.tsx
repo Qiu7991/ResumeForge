@@ -25,6 +25,7 @@ import { BatchToolbar } from "./jobs/BatchToolbar";
 import { buildBulkRowActions } from "./jobs/bulkActionItems";
 import { JobFilterBar } from "./jobs/JobFilterBar";
 import type { BatchAction } from "./jobs/jobFilterOptions";
+import { useJobsImportBridge } from "./jobs/useJobsImportBridge";
 import { useJobBulkActions } from "./jobs/useJobBulkActions";
 import BatchConfigModal from "../components/batch/BatchConfigModal";
 import { useJobBackfill } from "./jobs/useJobBackfill";
@@ -70,6 +71,9 @@ export default function JobsPage() {
     reload,
     error,
   } = useJobsPageState();
+
+  // 页内收录（浏览器扩展悬浮按钮，B-6）：`?import_url=` 进来时自动导入、提示并切详情。
+  useJobsImportBridge(reload);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
