@@ -205,6 +205,7 @@ def record_applied(
     resume_id: int | None = None,
     resume_title: str = "",
     attempt_key: str | None = None,
+    source: str = SOURCE_APPLY,
 ) -> None:
     """投递成功后落一条「已投递」。
 
@@ -234,7 +235,7 @@ def record_applied(
     )
     existing = _find_by_key(db, payload)
     if existing is None:
-        record = ApplicationTrack(source=SOURCE_APPLY, resume_title=resume_title)
+        record = ApplicationTrack(source=source, resume_title=resume_title)
         _apply_payload(
             record, TrackCreate(**payload.model_dump(), job_id=job_id, resume_id=resume_id)
         )
