@@ -13,5 +13,5 @@
 | A4 路由注册与互斥 | [x] | L3 全绿；24P apply_task_runner | mutex+send_gate 13 用例新增 |
 | A5 前端页面（只读部分） | [ ] | 由会话 B 承担 | A 不碰 frontend/** |
 | A6 前端页面（写入部分） | [ ] | 由会话 B 承担 | A 不碰 frontend/** |
-| A7 对抗审查 | [ ] | | |
+| A7 对抗审查 | [x] | F1-F4 全 PASS；A-D PASS，E DEFERRED 待 B | adversarial.md |
 | A8 全量闸门与晨间报告 | [ ] | | |
