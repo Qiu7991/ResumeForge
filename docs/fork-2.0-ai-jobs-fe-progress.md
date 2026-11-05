@@ -73,3 +73,19 @@
 - 注意：vitest 必须在 frontend/ 下跑（仓库根会落到 node 环境，document is not defined 是 cwd 产物非代码问题）
 - 验证：typecheck ✅；lint 0 errors（AiJobsPage +2 warning，与基线同类 set-state-in-effect）；
   navigation/轮询/ai-jobs 21 tests ✅；appRouterWiring+AppErrorBoundary+UserGuideModal+AppShell 29 tests ✅
+
+## 2026-11-06 夜 B6 发送闸门的前端体现
+
+- **机制**（1.x 契约内零后端改动）：ConfirmationTable 挂载时用「空列表 deliver」探测闸门——
+  后端环境闸 AI_JOBS_ALLOW_SEND=0 在 API 层直接 403；闸门开时空列表在 delivery.deliver
+  第一道校验被 400 短路（先于 sidecar 检查，见 1.x delivery.py:42-45）→ 探测零副作用、不触引擎。
+  403=closed / 400=open / 其余=unknown（fail-closed）
+- ConfirmationTable：入口按钮 disabled={gate!=="open"||未勾选}；closed/unknown 给明确 Alert
+  （aiJobs.gate.*，4 新 key ×2 包，148=148 parity 保持）；unknown 提供「重新检查」
+- 二次确认流程未动：勾选行 → 打开弹窗 → 勾承诺 → 才可「确认发送」；无一键全发
+- api/aiJobs.ts：+probeSendGate()（AiSendGateState 类型）
+- 测试：新增 ConfirmationTable.gate.test.tsx（closed 禁用+提示+点击无效 / open 恢复 /
+  fail-closed+重新检查恢复）；既有 ConfirmationTable.test.tsx 仅补 probeSendGate mock
+  与等探测落地的 waitFor（**断言零改动**）
+- 验证：ai-jobs 5 文件 18 tests ✅；typecheck ✅；lint 0 errors（+1 warning 与基线同类）
+- commit: 见 git log

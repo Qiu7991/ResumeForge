@@ -13,7 +13,7 @@
 | B3.5 | B-6 页内收录 import_url 自动导入 | [x] | 4ec08a2 | 后端 POST /jobs/import-url 需 A 补（E10） |
 | B4 | 写入组件（GreetingEditor 已随 B3） | [x] | df28ec9 | 4 组件 15 测试绿 |
 | B5 | 页面与路由（registry + appRoutes + 侧栏） | [x] | 见 git log | 4 注册表 + nav i18n，路由/外壳测试绿 |
-| B6 | 发送闸门前端体现 | [ ] | | 闸门关→按钮禁用 |
+| B6 | 发送闸门前端体现 | [x] | 见 git log | 空列表探测 fail-closed，3 新测试绿 |
 | B7 | 收尾（typecheck/lint/vitest/build + 晨报） | [ ] | | build 必须做 |
 
 ## 红线（摘要）
