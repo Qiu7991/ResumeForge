@@ -310,8 +310,195 @@ def phase_7() -> None:
     check("两份报告存在", not missing, f"缺失={missing or '无'}")
 
 
+# ===== Phase 9：N8 简历侧二开（生成结果去重 / 技术栈开关 / 覆盖清单 / 画像导入）=====
+#
+# 口径（与 phase_5 一致）：**未开工的能力输出 SKIP 并注明「RN 未移植」**，已存在的能力
+# 必须满足。这样 R0 时刻闸门不会因为「N8 还没做」变红，R8 时刻 12 项全转 PASS。
+#
+# 重入保护：``phase_7`` 的实现是 `for p in sorted(PHASES): PHASES[p]()`，注册 9 之后
+# 会经过本函数；本函数自身又复跑 0..8。``_IN_PHASE_9`` 保证嵌套调用立刻返回（不改
+# phase_7 一个字符）。
+
+_IN_PHASE_9 = False
+
+#: 生成链路后处理文件（去重/技术栈的挂点候选），相对 backend/app
+_GENERATION_FILES = (
+    "services/resume/resume_record.py",
+    "services/resume/generation_postprocess.py",
+    "services/resume/resume_generate_runner.py",
+    "services/resume/document_io.py",
+)
+#: 手工保存路径文件（R3「两条路径都要生效」的另一半），相对 backend/app
+_MANUAL_SAVE_FILES = (
+    "services/resume/document_save.py",
+    "api/resumes/crud_routes.py",
+    "api/resumes/_shared.py",
+)
+
+
+def _app_path(rel: str) -> Path:
+    return BACKEND / "app" / rel
+
+
+def _grep_files(files: tuple[str, ...], needle: str) -> list[str]:
+    """在给定文件集里找字面量，返回命中的相对路径。"""
+    hits: list[str] = []
+    for rel in files:
+        path = _app_path(rel)
+        if not path.exists():
+            continue
+        try:
+            if needle in path.read_text(encoding="utf-8"):
+                hits.append(rel)
+        except OSError:
+            continue
+    return hits
+
+
+def _grep_tree(root: Path, needle: str) -> list[Path]:
+    hits: list[Path] = []
+    for py in sorted(root.rglob("*.py")):
+        try:
+            if needle in py.read_text(encoding="utf-8"):
+                hits.append(py)
+        except OSError:
+            continue
+    return hits
+
+
+def phase_9() -> None:
+    """N8 简历侧：去重 / 技术栈开关 / 覆盖清单 / 画像导入，共 12 项。"""
+    global _IN_PHASE_9
+    if _IN_PHASE_9:
+        return
+    _IN_PHASE_9 = True
+    try:
+        _phase_9_checks()
+    finally:
+        _IN_PHASE_9 = False
+
+
+def _phase_9_checks() -> None:
+    # --- 1. resume_dedupe.py 存在且可导入 ---------------------------------
+    dedupe = _app_path("services/resume/resume_dedupe.py")
+    if not dedupe.exists():
+        skip("resume_dedupe.py 可导入", "R2 未移植（resume_dedupe.py 不存在）")
+    else:
+        proc = subprocess.run(
+            [str(VENV_PY), "-c", "import app.services.resume.resume_dedupe"],
+            cwd=BACKEND, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120,
+        )
+        tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
+        check("resume_dedupe.py 可导入", proc.returncode == 0, f"returncode={proc.returncode} {tail[0][:200]}")
+
+    # --- 2. 去重已接进生成链路 ---------------------------------------------
+    if not dedupe.exists():
+        skip("去重已接进生成链路", "R2 未移植")
+    else:
+        hits = _grep_files(_GENERATION_FILES, "dedupe_resume")
+        check("去重已接进生成链路", bool(hits), f"调用点={hits or '无'}")
+
+    # --- 3. 去重与截断分离（E15）------------------------------------------
+    if not dedupe.exists():
+        skip("去重与截断分离", "R2 未移植")
+    else:
+        text = dedupe.read_text(encoding="utf-8")
+        banned = [word for word in ("page_limit", "truncate") if word in text]
+        check("去重与截断分离", not banned, f"resume_dedupe.py 命中违禁词={banned or '无'}")
+
+    # --- 4/5. 技术栈开关设置项存在且默认关 --------------------------------
+    pref_schema = BACKEND / "app" / "schemas" / "generation_preferences.py"
+    if not pref_schema.exists():
+        skip("技术栈开关设置项 show_tech_stack 存在", "R3 未移植（schemas/generation_preferences.py 不存在）")
+        skip("技术栈开关默认关", "R3 未移植")
+    else:
+        text = pref_schema.read_text(encoding="utf-8")
+        check("技术栈开关设置项 show_tech_stack 存在", "show_tech_stack" in text, str(pref_schema.relative_to(ROOT)))
+        default_off = re.search(r"show_tech_stack\s*:\s*bool\s*=\s*False", text) is not None
+        check("技术栈开关默认关", default_off,
+              "show_tech_stack: bool = False" if default_off else "未找到 `show_tech_stack: bool = False`")
+
+    # --- 6. 生成路径 + 手工保存路径都生效 ---------------------------------
+    tech = _app_path("services/resume/resume_tech_stack.py")
+    if not tech.exists():
+        skip("技术栈两条路径都生效", "R3 未移植（resume_tech_stack.py 不存在）")
+    else:
+        gen_hits = _grep_files(_GENERATION_FILES, "resume_tech_stack")
+        manual_hits = _grep_files(_MANUAL_SAVE_FILES, "resume_tech_stack")
+        ok = bool(gen_hits) and bool(manual_hits)
+        check("技术栈两条路径都生效", ok, f"生成路径={gen_hits or '无'} 手工保存={manual_hits or '无'}")
+
+    # --- 7. 覆盖清单「从资料补上这段」--------------------------------------
+    coverage_ok = _app_path("services/resume/resume_profile_append.py").exists() and \
+        _app_path("services/resume/resume_coverage.py").exists()
+    blocked_doc = ROOT / "docs" / "fork-2.0-resume-blocked.md"
+    gone_registered = False
+    if blocked_doc.exists():
+        gone_registered = "覆盖清单" in blocked_doc.read_text(encoding="utf-8") and "GONE" in blocked_doc.read_text(encoding="utf-8")
+    check("覆盖清单补入能力存在或已记 GONE", coverage_ok or gone_registered,
+          f"resume_profile_append.py={_app_path('services/resume/resume_profile_append.py').exists()} "
+          f"resume_coverage.py={_app_path('services/resume/resume_coverage.py').exists()} GONE登记={gone_registered}")
+
+    # --- 8/9. 画像导入脚本存在且无 profile_facts ---------------------------
+    portrait = ROOT / "scripts" / "import_portrait.py"
+    if not portrait.exists():
+        skip("scripts/import_portrait.py 存在", "R5 未移植")
+        skip("画像导入无 profile_facts 引用", "R5 未移植")
+    else:
+        check("scripts/import_portrait.py 存在", True, "scripts/import_portrait.py")
+        hits = [str(p.relative_to(ROOT)) for p in _grep_tree(BACKEND / "app", "profile_facts")]
+        hits += [p.name for p in [portrait] if "profile_facts" in p.read_text(encoding="utf-8")]
+        check("画像导入无 profile_facts 引用", not hits, f"命中 {len(hits)} 处 {hits[:5]}")
+
+    # --- 10. portrait_extract.md 存在 --------------------------------------
+    prompt = BACKEND / "app" / "prompts" / "portrait_extract.md"
+    if prompt.exists():
+        check("portrait_extract.md 存在", True, str(prompt.relative_to(ROOT)))
+    else:
+        skip("portrait_extract.md 存在", "R5 未移植")
+
+    # --- 11. 定向测试绿 ----------------------------------------------------
+    test_files = [
+        BACKEND / "tests" / name
+        for name in ("test_resume_dedupe.py", "test_tech_stack_preference.py", "test_portrait_import.py")
+    ]
+    existing = [p for p in test_files if p.exists()]
+    if not existing:
+        skip("N8 定向测试绿", "R2/R3/R5 测试均未移植")
+    else:
+        try:
+            proc = subprocess.run(
+                [str(VENV_PY), "-m", "pytest", *[str(p.relative_to(BACKEND)) for p in existing],
+                 "-q", "-p", "no:cacheprovider"],
+                cwd=BACKEND, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=600,
+            )
+            tail = " | ".join(proc.stdout.strip().splitlines()[-2:])
+            check("N8 定向测试绿", proc.returncode == 0,
+                  f"returncode={proc.returncode}；{tail[:300]}")
+        except subprocess.TimeoutExpired:
+            check("N8 定向测试绿", False, "超时（>600s）")
+
+    # --- 12. 前 8 阶段复跑无 FAIL -----------------------------------------
+    # 只复跑 0..6：phase_7 自身就是「复跑 0..6 + 两份报告」，phase_9 再从里面调 phase_7
+    # 会二次触发 -k apply 那套全量测试。--all 按序执行 phase_7 时已覆盖它。
+    global _results
+    saved = _results
+    _results = []
+    try:
+        for p in (0, 1, 2, 3, 4, 5, 6):
+            if p in PHASES:
+                PHASES[p]()
+        rerun = list(_results)
+    finally:
+        _results = saved
+    fails = [(s, n, d) for s, n, d in rerun if s == "FAIL"]
+    check("前 8 阶段复跑无 FAIL", not fails, f"复跑 FAIL={len(fails)} {fails[:3] or ''}")
+
+
 PHASES = {0: phase_0, 1: phase_1, 2: phase_2, 3: phase_3,
-          4: phase_4, 5: phase_5, 6: phase_6, 7: phase_7}
+          4: phase_4, 5: phase_5, 6: phase_6, 7: phase_7, 9: phase_9}
 
 
 def main() -> int:
