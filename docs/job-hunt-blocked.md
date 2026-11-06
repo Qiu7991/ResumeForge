@@ -53,3 +53,11 @@ FAIL 在晨间报告里如实呈现，由人工更新基线常量（需改 phase
 猎聘解析（列表 40/40、详情全字段）已用真实夹具验证；搜索基路径
 `liepin.com/zhaopin/` 有夹具 canonical 实证，但 `key`/`dq`/`curPage` 参数组合夜间
 未实测（`curPage` 按 0 起实现）。**影响**：晨间首跑时核对翻页参数；解析层不需要动。
+
+## BLOCKED-REPLIES-FIXTURE（J8：BOSS 聊天页无夹具，抓取侧未实现）
+
+回复监测的**意向分类 + 汇总**已实现并用假数据测试（8 例，含"拒绝优先于要简历"与
+红线自检"无任何发送行为"）；但 BOSS 聊天页的 DOM → `Conversation` 抓取侧需要聊天页
+HTML 夹具才能实现并验证，夹具目录里没有（用户采集清单未含聊天页）。
+**影响**：`monitor_reply()` 已可用；`fetch_conversations` 待人工在登录态补抓
+`docs/job-hunt-fixtures/boss_chat.html` 后实现。

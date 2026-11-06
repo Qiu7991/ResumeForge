@@ -19,6 +19,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -32,11 +34,68 @@ DEFAULT_MAX_PAGES = 10
 
 
 @dataclass
+class HuntCursor:
+    """断点续采游标：记录「哪个站点、哪批条件、翻到第几页、见过哪些 URL」。
+
+    中断后带着同一游标再跑，从 ``last_page + 1`` 继续翻、已见 URL 直接按重复计，
+    不会重复采（J7）。序列化成 dict 存 KV（``cursor_store.py``）。
+    """
+
+    site_key: str
+    criteria_hash: str
+    last_page: int = 0
+    done_urls: set[str] = field(default_factory=set)
+
+    def to_dict(self) -> dict:
+        return {
+            "site_key": self.site_key,
+            "criteria_hash": self.criteria_hash,
+            "last_page": self.last_page,
+            "done_urls": sorted(self.done_urls),
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> "HuntCursor | None":
+        if not isinstance(data, dict):
+            return None
+        site = str(data.get("site_key") or "")
+        h = str(data.get("criteria_hash") or "")
+        if not site or not h:
+            return None
+        try:
+            last_page = int(data.get("last_page") or 0)
+        except (TypeError, ValueError):
+            last_page = 0
+        raw_urls = data.get("done_urls")
+        urls = {str(u) for u in raw_urls} if isinstance(raw_urls, list) else set()
+        return cls(site_key=site, criteria_hash=h, last_page=max(last_page, 0), done_urls=urls)
+
+
+def hash_criteria(site_key: str, criteria: dict | HuntCriteria | None) -> str:
+    """「站点 + 搜索条件」的稳定短哈希（游标定位键；与页码/时序无关）。"""
+    query = criteria_from(criteria)
+    payload = json.dumps(
+        {
+            "site": site_key,
+            "keywords": query.keywords,
+            "city": query.city,
+            "page_size": query.page_size,
+            "extra": query.extra,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+@dataclass
 class HuntReport:
     """一次采集的结果与账目。
 
     ``stubs`` 是**本条 URL 首次出现**的岗位（跨页重复已去重）；``duplicates`` 是
     被去重跳过的条数；``stopped_reason`` 说明翻页为何停（见模块 docstring）。
+    ``next_cursor`` 是本次跑完后的游标（J7 断点续采：中断后带着它重跑即可续）；
+    ``resumed_from_page`` 非 0 表示本次是从该页之后继续的。
     """
 
     stubs: list[JobStub] = field(default_factory=list)
@@ -46,6 +105,9 @@ class HuntReport:
     errors: list[str] = field(default_factory=list)
     # 实际翻到的页码清单（断点续采 J7 用它登记游标）。
     visited_pages: list[int] = field(default_factory=list)
+    # J7：跑完后可续的游标；resumed_from_page > 0 = 本次是续跑。
+    next_cursor: "HuntCursor | None" = None
+    resumed_from_page: int = 0
 
 
 def criteria_from(value: dict | HuntCriteria | None) -> HuntCriteria:
@@ -72,17 +134,20 @@ class JobHuntRunner:
         *,
         fetch: Callable[[str], str] | None = None,
         on_progress: Callable[[int, int, int], bool | None] | None = None,
+        cursor: HuntCursor | None = None,
     ) -> HuntReport:
         """跑一次采集。
 
         Args:
             criteria: 搜索条件（dict 或 ``HuntCriteria``）。
-            fetch: 取页面回调（url → HTML）。缺省时用构造时给的客户端，两者都没有
-                则拒绝运行（宁可报错，不偷偷连网）。
+            fetch: 取页面回调（url → HTML）。必填——生产用 ``cdp_fetcher(client)``，
+                测试注入假抓取器。
             on_progress: 每页回调 ``(page, new_count, total)``；返回 False 主动停止。
+            cursor: 断点游标（J7）。给了就 ``site``/``hash`` 匹配则从 last_page+1 续翻，
+                已见 URL 按重复计；site/hash 不匹配时按从头开始。
 
         Returns:
-            ``HuntReport``——调用方只管消费，翻页/去重/停止的账目都在里面。
+            ``HuntReport``——翻页/去重/停止的账目 + ``next_cursor``（可存起来下次续）。
         """
         report = HuntReport()
         if fetch is None:
@@ -94,7 +159,25 @@ class JobHuntRunner:
             )
         query = criteria_from(criteria)
         seen: set[str] = set()
-        for page in range(1, self._max_pages + 1):
+        start_page = 1
+        if cursor is not None and cursor.site_key == self._adapter.key:
+            seen |= cursor.done_urls
+            start_page = max(cursor.last_page + 1, 1)
+            report.resumed_from_page = cursor.last_page
+
+        def _finalize(result: HuntReport) -> HuntReport:
+            # 游标只记**成功解析**的页（visited_pages 在 try 通过后才追加）；
+            # 出错中断时已完成页照常可续。
+            last = result.visited_pages[-1] if result.visited_pages else start_page - 1
+            result.next_cursor = HuntCursor(
+                site_key=self._adapter.key,
+                criteria_hash=hash_criteria(self._adapter.key, criteria),
+                last_page=last,
+                done_urls=set(seen),
+            )
+            return result
+
+        for page in range(start_page, self._max_pages + 1):
             url = self._adapter.build_search_url(query, page)
             try:
                 html = fetch(url)
@@ -102,11 +185,11 @@ class JobHuntRunner:
             except JobParseError as exc:
                 report.errors.append(f"第 {page} 页解析失败：{exc.detail}")
                 report.stopped_reason = "parse_error"
-                return report
+                return _finalize(report)
             except Exception as exc:  # noqa: BLE001 — 抓取层异常按页记账并停，不炸整个 run
                 report.errors.append(f"第 {page} 页抓取失败：{exc.__class__.__name__}: {exc}")
                 report.stopped_reason = "fetch_error"
-                return report
+                return _finalize(report)
             report.pages_fetched += 1
             report.visited_pages.append(page)
             fresh: list[JobStub] = []
@@ -121,18 +204,18 @@ class JobHuntRunner:
                 fresh.append(stub)
             if not page_stubs:
                 report.stopped_reason = "no_results"
-                return report
+                return _finalize(report)
             if not fresh:
                 report.stopped_reason = "repeated_page"
-                return report
+                return _finalize(report)
             report.stubs.extend(fresh)
             if on_progress is not None:
                 keep_going = on_progress(page, len(fresh), len(report.stubs))
                 if keep_going is False:
                     report.stopped_reason = "stopped"
-                    return report
+                    return _finalize(report)
         report.stopped_reason = "max_pages"
-        return report
+        return _finalize(report)
 
 
 def _dedup_key(url: str) -> str:
@@ -167,4 +250,12 @@ def cdp_fetcher(
     return fetch
 
 
-__all__ = ["JobHuntRunner", "HuntReport", "criteria_from", "cdp_fetcher", "DEFAULT_MAX_PAGES"]
+__all__ = [
+    "JobHuntRunner",
+    "HuntReport",
+    "HuntCursor",
+    "hash_criteria",
+    "criteria_from",
+    "cdp_fetcher",
+    "DEFAULT_MAX_PAGES",
+]
