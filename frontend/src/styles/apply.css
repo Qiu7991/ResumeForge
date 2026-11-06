@@ -102,15 +102,10 @@
 }
 
 /* 队列里的招呼语本身就是编辑入口：单击直接打开编辑弹窗，不再要求走「更多操作」。
-   移植自 1.x apply.css 同名规则——2.0 原先缺这段样式，于是那一格既没有手型光标，
-   悬停也没有任何反馈，看起来像不可点的纯文本。 */
+   逐字移植自 1.x apply.css 同名规则（只这三条，不要加 display/width 之类——
+   1.x 在同样的 tableLayout="fixed" 下就能稳定工作，多改反而会改变单元格测量时机）。 */
 .apply-queue-greeting-edit {
   cursor: pointer;
-  /* 宽度必须收敛到单元格内：`Typography.Text` 默认 inline，长文案会把整格撑开，
-     antd 的 ellipsis 于是反复测量、与 rc-tooltip 的定位互相追逐（悬停抖动）。
-     显式 block + 100% 让测量结果稳定。 */
-  display: block;
-  width: 100%;
 }
 
 .apply-queue-greeting-edit:hover {

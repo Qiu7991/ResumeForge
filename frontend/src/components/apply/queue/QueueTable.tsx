@@ -43,6 +43,13 @@ export function QueueTable({
 }) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后列头停在旧文案。
   useLocale();
+  /** 招呼语格子兼作编辑入口：Enter / 空格与点击同效（移植自 1.x）。 */
+  const activateEdit = (event: ReactKeyboardEvent<HTMLElement>, item: ApplyQueueItem) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setEditing(item);
+    }
+  };
   const buildMenu = useRowActionMenu();
   const run = useRowActionRunner();
   /** 右键菜单走全局单实例浮层（问题 25）：贴鼠标、夹进视口、层级取 `layer.aiPolish`。 */
@@ -153,47 +160,57 @@ export function QueueTable({
           </Typography.Text>
           {item.greeting ? (
             // 招呼语本身就是编辑入口：单击打开编辑弹窗，不再要求先走「更多操作 → 编辑」。
-            // 移植自 1.x 同名实现（2.0 原先只渲染纯文本，点了没任何反应）。
-            <Typography.Text
-              type="secondary"
-              ellipsis={{
-                tooltip: `${item.greeting} · ${t("applyQueue.greeting.clickToEdit")}`,
-              }}
-              className="apply-queue-greeting-edit"
-              role="button"
-              tabIndex={0}
-              aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
-              onClick={() => setEditing(item)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  setEditing(item);
-                }
-              }}
-            >
-              {item.greeting}
-            </Typography.Text>
+            // 逐字移植自 1.x：注意**不要**给这段加 ellipsis.tooltip——antd 的
+            // ellipsis 会在 `tableLayout=fixed` 的单元格里反复测量文案宽度，
+            // 与 tooltip 的定位计算互相追逐，悬停时整行高频抖动。1.x 用的是纯文本
+            // + 外层 Tooltip，测量只发生一次。
+            <Tooltip title={`${item.greeting} · ${t("applyQueue.greeting.clickToEdit")}`}>
+              <Typography.Text
+                type="secondary"
+                className="apply-queue-greeting-edit"
+                role="button"
+                tabIndex={0}
+                aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+                onClick={() => setEditing(item)}
+                onKeyDown={(event) => activateEdit(event, item)}
+                ellipsis
+              >
+                {item.greeting}
+              </Typography.Text>
+            </Tooltip>
           ) : (
-            <Typography.Text
-              type="secondary"
-              ellipsis={{ tooltip: t("applyQueue.greeting.unconfirmedHint") }}
-              className="apply-queue-greeting-edit"
-              role="button"
-              tabIndex={0}
-              aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
-              onClick={() => setEditing(item)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  setEditing(item);
-                }
-              }}
-            >
-              <Tag color="warning" style={{ marginInlineEnd: 0 }}>
+            <Tooltip title={t("applyQueue.greeting.unconfirmedHint")}>
+              <Tag
+                color="orange"
+                role="button"
+                tabIndex={0}
+                className="apply-queue-greeting-edit"
+                aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+                onClick={() => setEditing(item)}
+                onKeyDown={(event) => activateEdit(event, item)}
+                style={{ marginInlineEnd: 0, width: "fit-content" }}
+              >
                 {t("applyQueue.greeting.unconfirmed")}
               </Tag>
-            </Typography.Text>
+            </Tooltip>
           )}
+          {/* 有字但没人工确认：AI 批量生成的草稿。有字不等于确认过，必须单独标出来。 */}
+          {item.greeting && item.greeting_confirmed !== true ? (
+            <Tooltip title={t("applyQueue.greeting.pendingConfirmHint")}>
+              <Tag
+                color="gold"
+                role="button"
+                tabIndex={0}
+                className="apply-queue-greeting-edit"
+                aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+                onClick={() => setEditing(item)}
+                onKeyDown={(event) => activateEdit(event, item)}
+                style={{ marginInlineEnd: 0, width: "fit-content" }}
+              >
+                {t("applyQueue.greeting.pendingConfirm")}
+              </Tag>
+            </Tooltip>
+          ) : null}
         </Space>
       ),
     },

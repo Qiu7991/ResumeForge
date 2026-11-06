@@ -7,7 +7,8 @@
  * 调完的板块设置与制作台、导出看到的是同一份数据。
  */
 import { ArrowDownOutlined, ArrowUpOutlined, EyeInvisibleOutlined, EyeOutlined } from "@ant-design/icons";
-import { App, Button, Popover, Space, Typography } from "antd";
+import { App, Button, Modal, Space, Typography } from "antd";
+import { useState } from "react";
 import { useLocale } from "../../i18n/i18nContext";
 import { t } from "../../i18n";
 import { RESUME_CATALOG_SECTION_LABEL_KEYS } from "../../i18n/enum/resumeCatalog";
@@ -30,6 +31,8 @@ export default function PreviewSectionsControl({
 }: Props) {
   useLocale();
   const { message } = App.useApp();
+  // 受控开关：改用 Modal 呈现（见下方 return 处的说明）。
+  const [panelOpen, setPanelOpen] = useState(false);
   const sections = document.sections;
 
   const apply = (next: ResumeDocument) => {
@@ -101,16 +104,33 @@ export default function PreviewSectionsControl({
   };
 
   return (
-    <Popover
-      trigger="click"
-      placement="bottomRight"
-      // 预览挂在 Modal 里，而 Modal 的 z-index 由 `popupBase` 抬到 3200；
-      // Popover 若留在 antd 默认档（~1030），弹层虽已渲染却被 Modal 盖住——
-      // 表现就是「点了没反应」。取 popupBase+200，确保在单层 Modal 之上。
-      overlayStyle={{ zIndex: layer.popupBase + 200 }}
-      title={t("workbench.sectionsVisibility.title")}
-      content={
-        <div style={{ width: 280 }}>
+    <>
+      {/*
+       * 用**受控 Modal** 而不是 Popover：预览本身已经在一个 Modal 里，
+       * Popover 的浮层定位（rc-tooltip）会以 Modal 的滚动容器为参照反复测量，
+       * 实测在这台机器上算出的 y 落在视口外（-7204px），且开关状态来回翻转，
+       * 表现为「点了没反应 / 抖一下就没」。Modal 有自己独立且稳定的层级与定位，
+       * 不再依赖锚点测量。宽度 360 足够放下 280 的面板内容。
+       */}
+      <Button
+        size="small"
+        disabled={disabled}
+        aria-label={t("workbench.sectionsVisibility.trigger")}
+        aria-expanded={panelOpen}
+        onClick={() => setPanelOpen((v) => !v)}
+      >
+        {t("workbench.sectionsVisibility.trigger")}
+      </Button>
+      <Modal
+        open={panelOpen}
+        onCancel={() => setPanelOpen(false)}
+        footer={null}
+        width={360}
+        zIndex={layer.popupBase + 300}
+        title={t("workbench.sectionsVisibility.title")}
+        destroyOnHidden
+      >
+        <div style={{ width: "100%" }}>
           <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: "0 0 8px" }}>
             {t("workbench.sectionsVisibility.hint")}
           </Typography.Paragraph>
@@ -181,15 +201,7 @@ export default function PreviewSectionsControl({
             })}
           </Space>
         </div>
-      }
-    >
-      <Button
-        size="small"
-        disabled={disabled}
-        aria-label={t("workbench.sectionsVisibility.trigger")}
-      >
-        {t("workbench.sectionsVisibility.trigger")}
-      </Button>
-    </Popover>
+      </Modal>
+    </>
   );
 }
