@@ -1,9 +1,9 @@
 {
   "version": 2,
-  "generatedAt": "2026-11-04",
+  "generatedAt": "2026-11-06",
   "rule": "Legacy CJK ceilings plus language-independent AST product-copy fingerprints",
   "src": {
-    "total": 195,
+    "total": 198,
     "files": {
       "App.tsx": 0,
       "api/aiTasks.ts": 0,
@@ -108,6 +108,19 @@
       "components/ThemeSwitch.tsx": 0,
       "components/UpdateCheckButton.tsx": 0,
       "components/UserGuideModal.tsx": 0,
+      "components/ai-jobs/ActionCards.tsx": 0,
+      "components/ai-jobs/ConfirmationTable.tsx": 0,
+      "components/ai-jobs/ConnectionCard.tsx": 0,
+      "components/ai-jobs/GreetingEditor.tsx": 0,
+      "components/ai-jobs/JobDetailDrawer.tsx": 0,
+      "components/ai-jobs/JobResultsTable.tsx": 0,
+      "components/ai-jobs/PreflightPanel.tsx": 0,
+      "components/ai-jobs/ReplyInbox.tsx": 0,
+      "components/ai-jobs/RunHistoryTable.tsx": 0,
+      "components/ai-jobs/ScoreTracePanel.tsx": 3,
+      "components/ai-jobs/SettingsForm.tsx": 0,
+      "components/ai-jobs/StatusBadge.tsx": 0,
+      "components/ai-jobs/TaskProgress.tsx": 0,
       "components/analytics/BarChart.tsx": 0,
       "components/analytics/ChartBlock.tsx": 0,
       "components/analytics/DataGapNotice.tsx": 0,
@@ -918,6 +931,7 @@
       "hooks/remoteSearchOptions.ts": 0,
       "hooks/unsavedDrafts.ts": 0,
       "hooks/useAbortableRequest.ts": 0,
+      "hooks/useAiJobsPolling.ts": 0,
       "hooks/useApi.ts": 0,
       "hooks/useApplyBatchItems.ts": 0,
       "hooks/useBackgroundTasks.ts": 0,
@@ -971,6 +985,7 @@
       "i18n/localeTypes.ts": 0,
       "i18n/messageRegistry.ts": 0,
       "main.tsx": 0,
+      "pages/AiJobsPage.tsx": 0,
       "pages/AnalyticsPage.tsx": 0,
       "pages/ApplyPage.tsx": 0,
       "pages/AssistantPage.tsx": 0,
@@ -1020,6 +1035,7 @@
       "pages/jobs/JobFilterBar.tsx": 0,
       "pages/jobs/bulkActionItems.tsx": 0,
       "pages/jobs/jobFilterOptions.ts": 0,
+      "pages/jobs/useImportUrlParam.ts": 0,
       "pages/jobs/useJobBackfill.ts": 0,
       "pages/jobs/useJobBatchActions.ts": 0,
       "pages/jobs/useJobBulkActions.ts": 0,
@@ -1171,7 +1187,7 @@
     }
   },
   "tests": {
-    "total": 1443,
+    "total": 1473,
     "files": {
       "App.shortcuts.test.tsx": 8,
       "App.test.tsx": 11,
@@ -1241,6 +1257,11 @@
       "components/SuggestionScanWatcher.test.tsx": 0,
       "components/ThemeSwitch.test.tsx": 0,
       "components/UserGuideModal.test.tsx": 42,
+      "components/ai-jobs/ConfirmationTable.gate.test.tsx": 5,
+      "components/ai-jobs/ConfirmationTable.test.tsx": 9,
+      "components/ai-jobs/ScoreTracePanel.test.tsx": 7,
+      "components/ai-jobs/StatusBadge.test.tsx": 5,
+      "components/ai-jobs/TaskProgress.test.tsx": 4,
       "components/analytics/BarChart.test.tsx": 0,
       "components/analytics/DataGapNotice.test.tsx": 2,
       "components/analytics/FunnelChart.test.tsx": 0,
@@ -1687,6 +1708,7 @@
       "features/webform/webFormScopeStorage.test.ts": 0,
       "features/webform/webFormSessionStorage.test.ts": 0,
       "hooks/useAbortableRequest.test.ts": 0,
+      "hooks/useAiJobsPolling.test.ts": 0,
       "hooks/useApi.test.tsx": 0,
       "hooks/useBatchSelection.test.ts": 0,
       "hooks/useBrowserStatus.test.ts": 0,
@@ -1779,6 +1801,7 @@
       "pages/interview/janeFaces.test.ts": 0,
       "pages/jobs/BulkActionsMenu.test.tsx": 0,
       "pages/jobs/JobFilterBar.test.tsx": 0,
+      "pages/jobs/useImportUrlParam.test.tsx": 0,
       "pages/jobs/useSelectAllJobs.test.tsx": 1,
       "pages/registry.test.ts": 0,
       "pages/resumes/ResumeCardList.test.tsx": 0,
@@ -6676,5 +6699,6 @@
         "fingerprints": {}
       }
     }
-  }
+  },
+  "note": "2026-11-06 ai-jobs 前端整体移植（会话 B）：登记 1.x 原样文件的真实计数（ScoreTracePanel JSX 全角冒号 3 行；5 个移植测试文件的中文断言）。移植是整仓快照而非新增散文案，全部 UI 文案已进 i18n 双包；除此之外的棘轮语义不变。"
 }

@@ -14,6 +14,7 @@ const navigation = {
   "navigation.item.tracker": "Job tracker",
   "navigation.item.interview": "Mock interview",
   "navigation.item.assistant": "Job assistant",
+  "navigation.item.aiJobs": "AI Jobs",
   "navigation.item.settings": "Settings",
   "navigation.item.profile": "My Profile",
   "navigation.item.favorites": "Favorites",

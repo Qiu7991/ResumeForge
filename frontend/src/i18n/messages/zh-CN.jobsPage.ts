@@ -93,6 +93,11 @@ const jobsPage = {
     "当前筛选下共 {count} 个岗位，超出单次批量上限 {limit} 个；请先用筛选或搜索缩小范围",
   "jobsPage.selectAll.done": "已选中当前筛选下的全部 {count} 个岗位（所有页）",
   "jobsPage.selectAll.failed": "获取岗位列表失败",
+  // 页内收录（浏览器扩展 /?import_url= 自动导入，B-6）。
+  "jobsPage.importUrl.failed": "导入失败，请稍后重试",
+  "jobsPage.importUrl.networkUnavailable":
+    "本地服务暂时没有响应（可能正在重启），请稍后重试",
+  "jobsPage.importUrl.imported": "已导入岗位",
 } as const;
 
 export default jobsPage;

@@ -73,12 +73,16 @@ ACTIVE_STATUSES = frozenset(
 SOURCE_APPLY = "apply"
 SOURCE_MANUAL = "manual"
 SOURCE_RECOGNIZED = "recognized"
-SOURCES = (SOURCE_APPLY, SOURCE_MANUAL, SOURCE_RECOGNIZED)
+# AI 求职（feat/ai-jobs-sidecar）：与 1.x models/tracker.py:77-78 逐字一致，
+# 供 delivery_sync 把已投递岗位写回求职进度时标记来源。
+SOURCE_AI_JOBS = "ai_jobs"
+SOURCES = (SOURCE_APPLY, SOURCE_MANUAL, SOURCE_RECOGNIZED, SOURCE_AI_JOBS)
 
 SOURCE_LABELS = {
     SOURCE_APPLY: "投递台自动记录",
     SOURCE_MANUAL: "手动添加",
     SOURCE_RECOGNIZED: "识别导入",
+    SOURCE_AI_JOBS: "AI 求职",
 }
 
 # ===== ②′ 投递渠道（RF-18）：用户自己选的"这份工作从哪来的" =====

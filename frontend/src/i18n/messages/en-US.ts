@@ -166,6 +166,7 @@ import enumsKnowledge from "./en-US.enumsKnowledge";
 import enumsReferral from "./en-US.enumsReferral";
 import enumsResumeCatalog from "./en-US.enumsResumeCatalog";
 import enumsTracker from "./en-US.enumsTracker";
+import aiJobs from "./en-US.aiJobs";
 
 const enUS = {
   ...core,
@@ -333,6 +334,8 @@ const enUS = {
   ...enumsReferral,
   ...enumsResumeCatalog,
   ...enumsTracker,
+  /** AI 求职（BossHunter sidecar，2026-11-06）。 */
+  ...aiJobs,
 } as const satisfies Record<keyof ZhCNMessages, string>;
 
 export default enUS;
