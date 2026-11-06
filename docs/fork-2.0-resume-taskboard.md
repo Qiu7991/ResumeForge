@@ -14,7 +14,7 @@
 | R5 画像导入（改目标） | [x] | c7a9f1f / 闸门 **PASS=12 FAIL=0 SKIP=0** | 1.x 本写 claims（非 profile_facts）；三文件零改动 + `--dry-run` 别名；dry-run 已跑，**未 --apply** |
 | R6 测试移植 | [x] | 闸门 PASS=12 FAIL=0 SKIP=0 / 定向 97 绿 | 1.x 9 用例零改动；另补 3 条 (容错/v2 文本项/API 往返) |
 | R7 对抗审查 | [x] | b68cc88 / A 3/3 · **B 4/4** · C 3/3 · D 2/2 | B③ 打出真实泄漏并修掉（手写创建路径） |
-| R8 全量闸门与报告 | [ ] | | |
+| R8 全量闸门与报告 | [x] | 晨报 / 闸门 PASS=32 FAIL=3 SKIP=6 | 3 条 FAIL 同源 = phase_1 环境断言（BLOCKED-ENV-1） |
 
 ## 红线自检（每卡复核）
 
