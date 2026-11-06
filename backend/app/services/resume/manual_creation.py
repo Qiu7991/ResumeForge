@@ -33,11 +33,13 @@ from ...services import trash
 from ...services.resume import document_io
 from ...services.resume.document_conversion_types import ConversionError
 from ...services.resume.document_view import header_text
+from ...services.profile.generation_preferences import show_tech_stack
 from ...services.resume.resume_record import build_manual_title
 from ...services.resume.resume_sections import (
     default_section_order_config,
     persistable_format_config,
 )
+from ...services.resume.resume_tech_stack import strip_resume_tech_stack
 from ...services.resume.resume_template_format import validated_format_config
 from .generate_snapshot import (
     GenerationSnapshot,
@@ -131,9 +133,14 @@ def _validated_content(
 
     请求体接受 v1 与 v2；非法结构返回 422（不做静默修复）。返回值附带转换报告，
     让创建响应能告诉用户"旧内容已升级为 v2"（只在真的转换过时非 None）。
+
+    **「显示技术栈」在这里也要兜一次**：创建手写/底稿简历走的是本函数，不经过
+    ``document_save.save_content``（那条路是给已存在记录的 PUT）。只挂 save_content 的话，
+    「新建一份手写简历 → 技术栈照样出现」就是漏的。方向与其它写路径一致：
+    关闭 → ``placement=hidden``；打开 → 原样（不恢复已隐藏的项）。
     """
     try:
-        return document_io.prepare_document_for_save_with_report(
+        content, report = document_io.prepare_document_for_save_with_report(
             payload.content,
             language=payload.language,
             format_config=format_config or payload.format_config,
@@ -141,6 +148,9 @@ def _validated_content(
         )
     except (ConversionError, DocumentValidationError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not show_tech_stack(db):
+        content = strip_resume_tech_stack(content)
+    return content, report
 
 
 def _freeze_creation_snapshot(

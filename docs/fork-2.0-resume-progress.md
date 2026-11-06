@@ -588,3 +588,85 @@ $ npx vitest run src/components/resume/CoverageActions.test.tsx coverageGroups.t
 
 **没有修改任何测试断言使它们通过**：1.x 搬来的 9 个用例逐字未改；
 新增/补写的用例都是按实测行为写期望（两次红都是我先写错了预期，见 R3 记录）。
+
+## R7 对抗审查（A/B 全 PASS）
+
+产出 `docs/fork-2.0-resume-adversarial.md`。四类结果：
+
+| 类 | 结果 |
+|---|---|
+| **A 去重误删** | 3/3 PASS（重复→1 条 / 相似→都留 / 无身份→不删） |
+| **B 技术栈泄漏** | **4/4 PASS**，其中 **B③ 首轮 FAIL → 已修 → PASS** |
+| C 画像导入污染 | 3/3 PASS（对账准确 / 不重复 / 不覆盖，全程只 dry-run） |
+| D 覆盖清单补全 | 2/2 PASS（补 A 不误加 B / 补入后技术栈不复发） |
+
+### B③ 打出真实缺口并修掉（本轮最重要的一次发现）
+
+攻击：开关关闭时，用 `POST /api/resumes/manual` 新建一份带 `tech_stack` 的手写简历。
+
+**首轮 FAIL**：`manual_creation._validated_content` 直接走
+`prepare_document_for_save_with_report`，**不经过** `document_save.save_content`，
+所以技术栈仍以 `placement=trail` 上纸面（`可见技术栈项: 1`）。1.x 同样有此洞
+（`grep include_tech_stack backend/app/services/resume/manual_creation.py` = 0 命中）。
+
+**修复**：`manual_creation.py::_validated_content` 转换后读偏好，关闭则
+`strip_resume_tech_stack(content)`。方向与其它路径一致（只隐藏、不删数据）。
+
+**回归测试**：`tests/test_tech_stack_preference.py::test_manual_creation_strips_tech_stack_when_off`
+（走真实 HTTP，断言可见 0 + 数据仍在 `placement=hidden`）。
+
+修复后 B 类三条路径全部 0：
+
+```
+偏好: {'show_tech_stack': False}
+① AI 生成 (save_record): 0
+② 手工保存 PUT status: 200 → 可见技术栈: 0
+③ 手写创建 status: 201 → 可见技术栈: 0
+对照组（开关打开）: 1（说明不是无条件删）
+```
+
+### 计划书偏差（以代码为准，E5）
+
+- 卡 R7 要求的「底稿模式」在 2.0 **不存在**（`base_resume_id` 在 2.0 schema 0 命中，
+  是 1.x 独有）。第三条路径改用 2.0 现状的「手写/底稿创建」（`source=manual`+`draft`），
+  并把 1.x 的"v2 文本项里的技术栈行"用例一并纳入。
+
+### L3 与一处环境红
+
+```
+PASS resume_dedupe.py 可导入
+PASS 去重已接进生成链路 — 调用点=['services/resume/resume_record.py']
+PASS 去重与截断分离 — 命中违禁词=无
+PASS 技术栈开关设置项 show_tech_stack 存在
+PASS 技术栈开关默认关 — show_tech_stack: bool = False
+PASS 技术栈两条路径都生效 — 生成路径=[resume_record.py] 手工保存=[document_save.py]
+PASS 覆盖清单补入能力存在或已记 GONE
+PASS scripts/import_portrait.py 存在
+PASS 画像导入无 profile_facts 引用 — 命中 0 处 []
+PASS portrait_extract.md 存在
+PASS N8 定向测试绿 — 24 passed
+FAIL 前 8 阶段复跑无 FAIL — 复跑 FAIL=1 [('FAIL','1.x 库未被修改','当前 166531072 / 记录 160989184')]
+
+汇总：PASS=11 FAIL=1 SKIP=0
+```
+
+**这条 FAIL 来自 `phase_1`，不是 N8 的检查**，根因是用户自己开着的 1.x 应用在 14:27
+跑完一次 11/11 全成功的自动投递并把 WAL checkpoint 进主库（+5.29MB）。详见
+`fork-2.0-resume-blocked.md` → `BLOCKED-ENV-1`。红线禁止改 phase_0..phase_8，
+所以本轮不修、只取证。
+
+### 探测数据的清理（自审）
+
+R7 的对抗探测直接调用了真实 HTTP 端点，往 **2.0 开发库**写了 13 条测试简历 +
+1 条资料条目 + 1 个偏好 key。这些是我自己造的，已全部清掉：
+
+```
+软删 13 条 → POST /api/trash/purge（purged: 13, ok: True ×13）
+剩余 resume_record: 0
+探测 profile_entry 15ea38592db94ce79f689fdc 已删除；剩余 profile_entry: 0
+claim_record: 0
+app_setting: apply_config / ui.locale / profile_generation_preferences（值 false = 默认）
+```
+
+（2.0 开发库在开工前本来就没有简历与资料条目，所以清空等于回到原状。
+偏好 key 保留默认值 `{"show_tech_stack": false}`——它同时是 R3 的默认态证据。）

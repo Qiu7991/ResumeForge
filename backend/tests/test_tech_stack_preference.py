@@ -184,3 +184,46 @@ def test_strip_cleans_v2_text_items_with_tech_stack_lines():
     assert items[0]["placement"] == "hidden"
     assert items[0]["values"] == ["Docker", "Caddy"]
     assert items[1]["text"] == "独立搭建家庭网络。"
+
+
+# ===== 创建手写/底稿简历也是写路径（R7 对抗审查 B③ 打出来的缺口）=====
+
+
+def test_manual_creation_strips_tech_stack_when_off(client):
+    """新建一份手写简历（`source=manual`，含 draft）不能绕过技术栈开关。
+
+    这条路走 `create_manual_resume_record` → `_validated_content`，**不经过**
+    `document_save.save_content`（那条是给已存在记录的 PUT）。只挂 save_content 的话，
+    「新建手写简历 → 技术栈照样出现」就是漏的。
+    """
+    created = client.post(
+        "/api/resumes/manual",
+        json={
+            "content": {
+                "name": "赵岚柯",
+                "projects": [
+                    {
+                        "name": "AI 简历工作台",
+                        "tech_stack": ["React", "FastAPI"],
+                        "description": ["闭环交付。"],
+                    }
+                ],
+            },
+            "draft": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    detail = client.get(f"/api/resumes/{created.json()['id']}")
+    assert detail.status_code == 200
+    document = detail.json()["content"]
+    assert visible_tech_stack_count(document) == 0
+    # 数据仍在（hidden 而非删除），编辑器可拖回。
+    stored = [
+        item
+        for section in document.get("sections") or []
+        for entry in section.get("entries") or []
+        for item in entry.get("items") or []
+        if item.get("key") == "tech_stack"
+    ]
+    assert stored and stored[0].get("placement") == "hidden"
