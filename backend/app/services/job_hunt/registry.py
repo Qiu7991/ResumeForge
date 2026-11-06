@@ -46,8 +46,13 @@ class JobHuntRegistry:
 
 
 def default_registry() -> JobHuntRegistry:
-    """构建默认注册表。平台适配器随各卡（J4/J5/J6）落地后在此注册。"""
+    """构建默认注册表：加平台 = 加一个子类 + 在这里 register 一行。"""
+    from .sites.job51 import Job51Adapter
+    from .sites.zhilian import ZhilianAdapter
+
     registry = JobHuntRegistry()
+    registry.register(ZhilianAdapter())
+    registry.register(Job51Adapter())
     return registry
 
 

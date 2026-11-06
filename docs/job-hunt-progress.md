@@ -83,3 +83,23 @@ criteria 归一化/无链卡片丢弃/fragment 去重/假 CDP 客户端消息编
 
 **闸门（J3 后 --phase 10）**：检查 6「runner.py 存在」PASS；检查 8 PASS（35 passed in
 5.26s）；其余同前（唯一 FAIL 仍为 1.x 库尺寸存量问题）。
+
+## J4 智联采集适配器（commit 待填）
+
+**结构实证**（zhilian_list.html 1.6MB / zhilian_detail.html 2.2MB）：
+- 列表：SSR JSON `"positionList":[...]`，20 条富记录（name/companyName/cityDistrict/
+  cardCustomJson 内嵌 address/salary60/positionURL/publishTime/jobDescription）；
+- 详情：`__INITIAL_STATE__` → `jobDetail.detailedPosition`（85 字段），description
+  666 字完整 JD（职责+要求混排），薪资明文（80-120元/天）；
+- 提取器用**字符串感知的括号配对**（朴素计数会被字符串里的 `]` 骗走——实测踩过）。
+
+**实现**：`sites/zhilian.py`（ZhilianAdapter）——parse_list 20 条、parse_detail 完整
+JD、build_search_url（kw/jl/p，城市编码取自夹具实证 cityId=763=广州）、supports；
+注册进 default_registry。空 `positionList:[]` 返回空列表（runner 走 no_results），
+marker 缺失才抛错（区分"翻过头"与"登录失效/改版"）。
+
+**闸门（J4 后 --phase 10）**：PASS=11 FAIL=1 SKIP=1——检查 8 PASS（44 passed in 9.75s），
+唯一 FAIL 仍为 1.x 库尺寸存量问题。
+
+**测试**：9 例（注册/URL 拼接/20 条记录断言/结构改版抛错/详情断言/支持域/runner 集成）。
+URL 形态未实测 → blocked.md ZHILIAN-URL-UNVERIFIED。
