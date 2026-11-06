@@ -139,6 +139,16 @@ export function importJobs(rows: JobImportRow[]): Promise<JobImportResult> {
   return request("/jobs/import", { method: "POST", body: JSON.stringify({ rows }) });
 }
 
+/** 按招聘网站链接导入岗位（页内悬浮收录扩展的 `?import_url=` 流程用）；按 URL 幂等。 */
+export function importJobFromUrl(url: string): Promise<Job> {
+  return request("/jobs/import-url", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+    // 要开一次页面并等网络响应，default 15s 不够（站点慢时更久）。
+    budget: "recognition",
+  });
+}
+
 /** 已缓存的解读（R2）：不调用模型，秒回；`stale` 表示岗位内容改过。 */
 export interface JobAnalysisCache {
   cached: boolean;

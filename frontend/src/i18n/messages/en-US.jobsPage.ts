@@ -87,6 +87,11 @@ const jobsPage = {
     "The current filters match {count} jobs, over the {limit}-job per-batch limit. Narrow the range with filters or search first.",
   "jobsPage.selectAll.done": "Selected all {count} jobs matching the current filters (all pages)",
   "jobsPage.selectAll.failed": "Could not load the job list",
+  // Page-capture extension (?import_url= auto import, B-6).
+  "jobsPage.importUrl.failed": "Import failed. Please try again.",
+  "jobsPage.importUrl.networkUnavailable":
+    "The local service did not respond (it may be restarting). Please try again.",
+  "jobsPage.importUrl.imported": "Job imported",
 } as const;
 
 export default jobsPage;

@@ -16,6 +16,7 @@ import AppShell from "./components/shell/AppShell";
 import {
   AnalyticsPage,
   ApplyPage,
+  AiJobsPage,
   AssistantPage,
   ClaimsPage,
   DrillPage,
@@ -51,6 +52,7 @@ export const APP_ROOT_ROUTE: ReactElement = (
     <Route path="/analytics" element={<AnalyticsPage />} />
     <Route path="/favorites" element={<FavoritesPage />} />
     <Route path="/assistant" element={<AssistantPage />} />
+    <Route path="/ai-jobs" element={<AiJobsPage />} />
     <Route path="/materials" element={<MaterialsPage />} />
     <Route path="/knowledge" element={<KnowledgePage />} />
     <Route path="/skills" element={<SkillsPage />} />

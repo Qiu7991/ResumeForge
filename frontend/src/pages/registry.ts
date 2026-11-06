@@ -87,3 +87,4 @@ export const InterviewPage = lazyPage(() => import("./InterviewPage"));
 export const AnalyticsPage = lazyPage(() => import("./AnalyticsPage"));
 export const SettingsPage = lazyPage(() => import("./SettingsPage"));
 export const TrashPage = lazyPage(() => import("./TrashPage"));
+export const AiJobsPage = lazyPage(() => import("./AiJobsPage"));

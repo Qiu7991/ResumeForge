@@ -174,6 +174,7 @@ import enumsKnowledge from "./zh-CN.enumsKnowledge";
 import enumsReferral from "./zh-CN.enumsReferral";
 import enumsResumeCatalog from "./zh-CN.enumsResumeCatalog";
 import enumsTracker from "./zh-CN.enumsTracker";
+import aiJobs from "./zh-CN.aiJobs";
 
 const namespaces = {
   /** 简历制作台（2026-10-23）。 */
@@ -403,6 +404,8 @@ const namespaces = {
   ...enumsReferral,
   ...enumsResumeCatalog,
   ...enumsTracker,
+  /** AI 求职（BossHunter sidecar，2026-11-06）。 */
+  ...aiJobs,
 } as const;
 
 export default namespaces;

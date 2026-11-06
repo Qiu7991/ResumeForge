@@ -16,6 +16,7 @@ const navigation = {
   "navigation.item.tracker": "求职进度",
   "navigation.item.interview": "模拟面试",
   "navigation.item.assistant": "求职助手",
+  "navigation.item.aiJobs": "AI 求职",
   "navigation.item.settings": "设置",
   "navigation.item.profile": "我的资料",
   "navigation.item.favorites": "收藏夹",
