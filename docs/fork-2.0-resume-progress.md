@@ -348,3 +348,73 @@ GET 200 {'show_tech_stack': False}  ← 用 TestClient 走真实 app，默认关
    处置：断言改成 1.x 的实测输出，实现不动。
 2. `en-US.settingsUi.ts` TS1005：我在双引号字符串里直接写了 `"Tech stack: ..."`。
    处置：转义成 `\"`。
+
+## R4 覆盖清单「从资料补上这段」
+
+### R1 结论复核：EXISTS，但**只覆盖自建分区**（一处真实差异）
+
+2.0 已有的部分（R1 已列证据，不重写）：
+
+| 能力 | 2.0 文件 | 现状 |
+|---|---|---|
+| 缺什么（集合比对） | `services/resume/resume_coverage.py`（457 行） | ✅ 在用 |
+| 确定性补入 | `services/resume/resume_profile_append.py` | ✅ 在用 |
+| API | `POST /api/resumes/{id}/append-profile-entries` | ✅ 在用 |
+| 前端 | `api/resumeAppend.ts` + `CoverageGroupCard.tsx` + `coverageGroups.ts` | ✅ 在用 |
+
+实测两条测试链全绿：
+
+```
+$ pytest tests/test_resume_coverage.py -q          → 14 passed
+$ pytest tests/test_append_profile_entries.py -q   → 14 passed
+$ npx vitest run src/components/resume/CoverageActions.test.tsx \
+                 src/components/resume/coverageGroups.test.ts → 31 passed
+```
+
+### 差异（以代码为准）
+
+| 项 | 1.x | 2.0 |
+|---|---|---|
+| 内置分区（项目/经历/教育）缺条目时 | 「从资料补上这段」→ `fillCoverageNote` 按身份确定性补进**已有条目**/追加 | `resolveCoverageAction` 只对 `custom:` 分区返回 `append`；内置分区一律 `revise`（AI 修订） |
+| 自建分区缺条目 | 同上 | ✅ `append`（走 `/append-profile-entries`） |
+
+证据：
+
+```
+$ grep -n "function resolveCoverageAction" -A10 frontend/src/components/resume/coverageGroups.ts
+208:  if (canAppend && group.entryIds.length > 0 && isCustomSection(group.rawSection)) {
+209:    return "append";
+
+$ grep -n "_projected_custom_entries" -A12 backend/app/services/resume/resume_profile_append.py
+145:    """``entry_id -> v1 自建条目``（与生成链同一份投影，含截断与空条目跳过）。"""
+146:    projected = project_paper_content(consumed)
+147:    for section in getattr(projected, "custom_sections", None) or []:
+```
+
+1.x 侧的对应实现是 `frontend/src/features/profile-library/projectionContent.ts`（615 行，
+`fillCoverageNote` / `fillProjectionCandidate` / `mergeProjectionCandidate`），**前端**
+按投影接口返回的候选做合并，不新增后端能力。
+
+### 处置：登记 DEFERRED，不移植
+
+理由（逐条对计划卡 R4 的约束）：
+
+1. **卡 R4 步骤 1 写明「若 R1 判定 2.0 已有对应物 → 只补差异，不重写」。** 对应物确实存在，
+   差异是"内置分区只能走 AI 修订"。
+2. 补齐这条差异需要移植 `projectionContent.ts`（615 行）+ 改 `coverageGroups.ts` 的
+   动作判定 + 在 `ResumeDetailPreview` 里接投影请求。这已经**超出「补差异」**，且
+   `projectionContent.ts` 依赖 1.x 的 `ProfileProjection` 类型形状，2.0 的
+   `PaperProjectionOut` 是另一套（`profile_workspace.py:150` 返回 v1 投影，但前端类型没接）。
+3. 更关键：**2.0 的自建分区路径已经是"确定性补入、不走 AI"**，这正是卡 R4 步骤 3
+   强调的那条正确做法（1.x 曾因「按钮走 AI 修订导致预览无变化」修过一次）。内置分区的
+   AI 修订兜底是 2.0 上游的既定交互，不是 bug。
+
+写进 `blocked.md` 的 DEFERRED-3，并在 R7 的 D 类对抗里**实测自建分区那条路**
+（能补 A、不误加 B、补完预览更新），而不是假装覆盖了内置分区。
+
+### 逆向风险的补强（本轮做了，代价小）
+
+覆盖清单补入走 `document_save.save_content`，而 R3 在 `save_content` 里加了技术栈隐藏。
+这条组合正是 1.x 注释里点名的复发路径："生成时藏好了 → 补一段 → 又露出来"。R3 的
+挂点已经覆盖它（补进来的 `tech_stack` 是 `placement=trail`，落库前被置 hidden），
+R7 的 D 类对抗会实测这一点。
