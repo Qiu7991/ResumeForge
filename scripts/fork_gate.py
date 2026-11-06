@@ -698,9 +698,185 @@ def phase_8() -> None:
             check("互斥测试 test_ai_jobs_mutex.py 存在且绿", False, "超时（>600s）")
 
 
+# ===== Phase 10：自研求职采集（services/job_hunt/，复刻计划卡片 J0–J10）=====
+#
+# 口径与 phase_8/9 一致：**未开工的卡输出 SKIP 并注明**，已存在的能力必须满足。
+# J0（骨架 / 开关 / 三件套）与本函数同一提交落地，其检查项自注册起就应为 PASS；
+# J2（字体解密）/ J3（runner）/ J9（自研路由）未落地时输出 SKIP，不 FAIL。
+#
+# 重入保护：``phase_7`` 的复跑循环 `for p in sorted(PHASES)` 在注册 10 之后会经过本
+# 函数；本函数自身又复跑前序阶段。``_IN_PHASE_10`` 保证嵌套调用立刻返回（不改
+# phase_7 一个字符，同 phase_9 的先例）。
+
+_IN_PHASE_10 = False
+
+
+def phase_10() -> None:
+    """自研求职采集：骨架、开关、字体解密、runner、路由、定向测试、许可证边界。"""
+    global _IN_PHASE_10
+    if _IN_PHASE_10:
+        return
+    _IN_PHASE_10 = True
+    try:
+        _phase_10_checks()
+    finally:
+        _IN_PHASE_10 = False
+
+
+def _phase_10_checks() -> None:
+    jh_dir = BACKEND / "app" / "services" / "job_hunt"
+
+    # --- 1. 目录存在（J0）--------------------------------------------------
+    check("services/job_hunt/ 目录存在", jh_dir.is_dir(), str(jh_dir.relative_to(ROOT)))
+
+    # --- 2. base.py 定义 JobSiteAdapter（J0）--------------------------------
+    base = jh_dir / "base.py"
+    if base.exists():
+        check("base.py 定义 JobSiteAdapter",
+              "class JobSiteAdapter" in base.read_text(encoding="utf-8"),
+              str(base.relative_to(ROOT)))
+    else:
+        check("base.py 定义 JobSiteAdapter", False, "base.py 不存在")
+
+    # --- 3. registry.py 有注册表（J0）----------------------------------------
+    reg = jh_dir / "registry.py"
+    if reg.exists():
+        check("registry.py 有注册表",
+              "register" in reg.read_text(encoding="utf-8"), str(reg.relative_to(ROOT)))
+    else:
+        check("registry.py 有注册表", False, "registry.py 不存在")
+
+    # --- 4. 设置项 job_hunt_backend 存在且默认 sidecar（J0）------------------
+    schema = BACKEND / "app" / "schemas" / "job_hunt.py"
+    if not schema.exists():
+        check("设置项 job_hunt_backend 默认 sidecar", False, "schemas/job_hunt.py 不存在")
+    else:
+        text = schema.read_text(encoding="utf-8")
+        has_field = "job_hunt_backend" in text
+        default_sidecar = re.search(
+            r'job_hunt_backend\s*:\s*JobHuntBackend\s*=\s*"sidecar"', text) is not None
+        check("设置项 job_hunt_backend 默认 sidecar", has_field and default_sidecar,
+              f"字段={has_field} 默认sidecar={default_sidecar}")
+    # DB 侧：键缺失 = 默认 sidecar 生效（PASS）；有值必须是合法枚举。
+    if DB_PATH.exists():
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            row = conn.execute(
+                "SELECT value FROM app_setting WHERE key='job_hunt_config'").fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            check("job_hunt_config 设置值合法", True, "未设置（默认 sidecar 生效）")
+        else:
+            try:
+                value = json.loads(row[0]).get("job_hunt_backend")
+            except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+                value = "<损坏>"
+            check("job_hunt_config 设置值合法", value in ("sidecar", "native"), f"value={value!r}")
+    else:
+        check("job_hunt_config 设置值合法", False, "2.0 库不存在")
+
+    # --- 5. BOSS 字体解密存在（J2）-------------------------------------------
+    font = jh_dir / "sites" / "boss_font.py"
+    if not font.exists():
+        skip("BOSS 字体解密存在", "J2 未完成（sites/boss_font.py 不存在）")
+    else:
+        check("BOSS 字体解密存在", "decode" in font.read_text(encoding="utf-8"),
+              str(font.relative_to(ROOT)))
+
+    # --- 6. runner 存在（J3）--------------------------------------------------
+    runner = jh_dir / "runner.py"
+    if runner.exists():
+        check("runner.py 存在", True, str(runner.relative_to(ROOT)))
+    else:
+        skip("runner.py 存在", "J3 未完成")
+
+    # --- 7. 自研路由存在（J9；未做时默认仍走 sidecar，不影响现状）-------------
+    routers = BACKEND / "app" / "application_routers.py"
+    if routers.exists() and "job_hunt" in routers.read_text(encoding="utf-8"):
+        check("application_routers 注册 job_hunt", True, "application_routers.py 命中")
+    else:
+        skip("application_routers 注册 job_hunt", "J9 未完成（默认走 sidecar 旧路径）")
+
+    # --- 8. 定向测试绿（尚无测试文件时 SKIP，同「未开工不 FAIL」口径）---------
+    jh_tests = sorted((BACKEND / "tests").glob("test_job_hunt_*.py"))
+    if not jh_tests:
+        skip("pytest -k job_hunt 全绿", "尚无 test_job_hunt_*.py 测试")
+    else:
+        try:
+            proc = subprocess.run(
+                [str(VENV_PY), "-m", "pytest", "tests", "-q", "-k", "job_hunt", "-p", "no:cacheprovider"],
+                cwd=BACKEND, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=1200,
+            )
+            tail = " | ".join(proc.stdout.strip().splitlines()[-2:])
+            check("pytest -k job_hunt 全绿", proc.returncode == 0,
+                  f"returncode={proc.returncode}；{tail[:300]}")
+        except subprocess.TimeoutExpired:
+            check("pytest -k job_hunt 全绿", False, "超时（>1200s）")
+
+    # --- 9. 无 BossHunter 代码混入（许可证边界，恒真断言）----------------------
+    lic_hits: list[str] = []
+    import_hits: list[str] = []
+    for py in sorted(jh_dir.rglob("*.py")):
+        try:
+            text = py.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "polyform" in text.lower():
+            lic_hits.append(str(py.relative_to(ROOT)))
+        if re.search(r"^\s*(from|import)\s+bosshunter\b", text, re.M):
+            import_hits.append(str(py.relative_to(ROOT)))
+    check("job_hunt 无 BossHunter 代码混入", not lic_hits and not import_hits,
+          f"polyform 命中={lic_hits or '无'}，import 命中={import_hits or '无'}")
+
+    # --- 10. 旧路径未被破坏（E19：ai_jobs 保留作 fallback）---------------------
+    try:
+        proc = subprocess.run(
+            [str(VENV_PY), "-m", "pytest", "tests", "-q", "-k", "ai_jobs", "-p", "no:cacheprovider"],
+            cwd=BACKEND, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=2400,
+        )
+        tail = " | ".join(proc.stdout.strip().splitlines()[-2:])
+        check("pytest -k ai_jobs 全绿（旧路径未破坏）", proc.returncode == 0,
+              f"returncode={proc.returncode}；{tail[:300]}")
+    except subprocess.TimeoutExpired:
+        check("pytest -k ai_jobs 全绿（旧路径未破坏）", False, "超时（>2400s）")
+
+    # --- 11. 前端构建产物新于源码（沿用 phase_8 口径：stale → SKIP 待构建）-----
+    dist = FRONTEND / "dist"
+    src = FRONTEND / "src"
+    if dist.exists() and any(dist.rglob("*")):
+        newest_dist = max(dist.rglob("*"), key=lambda p: p.stat().st_mtime).stat().st_mtime
+        newest_src = max(src.rglob("*"), key=lambda p: p.stat().st_mtime).stat().st_mtime
+        if newest_dist > newest_src:
+            check("dist 比 src 新", True, f"dist mtime={newest_dist} src mtime={newest_src}")
+        else:
+            skip("dist 比 src 新", "src 更新于 dist——待晨间统一 npm run build")
+    else:
+        skip("dist 比 src 新", "dist 未构建")
+
+    # --- 12. 前 9 阶段复跑无 FAIL ----------------------------------------------
+    # phase_7 只是「复跑其他阶段 + 两份报告检查」，不直接复跑它（它会经 PHASES[10]
+    # 嵌套回本函数，有守卫不会死循环，但白花几分钟）；0..6 + 8 + 9 已覆盖前 9 阶段的
+    # 全部实质检查，报告存在性由 --all 按序执行 phase_7 时覆盖。
+    global _results
+    saved = _results
+    _results = []
+    try:
+        for p in (0, 1, 2, 3, 4, 5, 6, 8, 9):
+            if p in PHASES:
+                PHASES[p]()
+        rerun = list(_results)
+    finally:
+        _results = saved
+    fails = [(s, n, d) for s, n, d in rerun if s == "FAIL"]
+    check("前 9 阶段复跑无 FAIL", not fails, f"复跑 FAIL={len(fails)} {fails[:3] or ''}")
+
+
 PHASES = {0: phase_0, 1: phase_1, 2: phase_2, 3: phase_3,
           4: phase_4, 5: phase_5, 6: phase_6, 7: phase_7,
-          8: phase_8, 9: phase_9}
+          8: phase_8, 9: phase_9, 10: phase_10}
 
 
 def main() -> int:
