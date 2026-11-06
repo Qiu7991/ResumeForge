@@ -39,3 +39,24 @@ def test_corrupt_setting_falls_back_to_default(db_session):
     db_session.commit()
 
     assert get_generation_preferences(db_session).show_tech_stack is False
+
+
+def test_api_roundtrip_default_off_then_on(client):
+    """接口往返（对应 1.x 同款用例）：默认关，PUT 后读回为开。
+
+    路径与 1.x 不同（1.x 在 `/api/profile/generation-preferences`，2.0 在设置域下），
+    字段名也不同（1.x `include_tech_stack`，2.0 `show_tech_stack`）——语义一致。
+    """
+    initial = client.get("/api/settings/generation-preferences")
+    assert initial.status_code == 200
+    assert initial.json() == {"show_tech_stack": False}
+
+    saved = client.put(
+        "/api/settings/generation-preferences",
+        json={"show_tech_stack": True},
+    )
+    assert saved.status_code == 200
+    assert saved.json() == {"show_tech_stack": True}
+    assert client.get("/api/settings/generation-preferences").json() == {
+        "show_tech_stack": True
+    }

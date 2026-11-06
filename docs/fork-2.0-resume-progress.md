@@ -549,3 +549,42 @@ $ sqlite3 claim_record          → 表存在，未新增行
 ```
 
 **`--apply` 未执行**（计划 §9.4 DEFERRED-1：真数据迁移留人工）。
+
+## R6 测试移植
+
+### 清点（1.x `ls backend/tests/ | grep -E "dedupe|coverage|portrait|tech_stack|preference"`）
+
+| 1.x 测试 | 2.0 对应 | 处置 |
+|---|---|---|
+| `test_resume_dedupe.py` | ✅ `tests/test_resume_dedupe.py`（R2 建，6 用例） | **未原样移植**：1.x 那 2 个用例断言的是 `dedupe_and_limit_resume`（含按页截断），2.0 已按 E15 砍掉截断，原样搬会测一个不存在的函数。R2 按同一语义重写为 6 个去重-only 用例（含"相似不同都保留""无身份不丢""不截断数量"三条 1.x 没覆盖的）。 |
+| `test_generation_preferences.py` | ✅ `tests/test_generation_preferences.py`（R3 建 3 + R6 补 1 = 4 用例） | 1.x 的 4 个用例里，**2 个**（`tolerates_missing_projects` / `handles_v2_document_items`）补进 `test_tech_stack_preference.py`；**1 个**（API 往返）补进本文件——1.x 路径是 `/api/profile/generation-preferences` + 字段 `include_tech_stack`，2.0 是 `/api/settings/generation-preferences` + `show_tech_stack`，语义一致、位置按 2.0 现状。 |
+| `test_portrait_import.py` | ✅ `tests/test_portrait_import.py`（R5 移植，9 用例） | **逐字复制，零改动即绿**。 |
+| `test_resume_coverage.py` | ✅ 已在 2.0（14 用例） | 不重复搬。 |
+| `test_assistant_coverage.py` / `test_backup_coverage.py` / `test_profile_field_preferences.py` | ✅ 已在 2.0 | 与 N8 无关，不搬。 |
+| `test_tech_stack_preference.py`（1.x **不存在**同名文件） | ✅ `tests/test_tech_stack_preference.py`（R3 建 6 + R6 补 2 = 8） | 1.x 的技术栈用例放在 `test_generation_preferences.py` 里；2.0 单开一个文件（去重/技术栈各自一份，FAIL 定位更快）。 |
+
+### 卡 R6 要求的命令
+
+```
+$ cd backend && pytest tests -q -k "resume_dedupe or coverage or portrait or tech_stack"
+97 passed, 7073 deselected, 1 warning in 12.78s
+```
+
+（`-k` 额外带上 `generation_preferences`，因为技术栈开关的设置项测试在该文件里；
+97 项 = 去重 6 + 覆盖 14+14+31 前端不在此 + 画像 9 + 技术栈 8 + 偏好 4 + 既有 coverage 系列。）
+
+### 各文件单跑
+
+```
+$ pytest tests/test_resume_dedupe.py -q            → 6 passed
+$ pytest tests/test_tech_stack_preference.py -q    → 8 passed
+$ pytest tests/test_generation_preferences.py -q   → 4 passed
+$ pytest tests/test_portrait_import.py -q          → 9 passed
+$ pytest tests/test_resume_coverage.py -q          → 14 passed
+$ pytest tests/test_append_profile_entries.py -q   → 14 passed
+$ npx vitest run src/components/settings/GenerationPreferencesCard.test.tsx → 2 passed
+$ npx vitest run src/components/resume/CoverageActions.test.tsx coverageGroups.test.ts → 31 passed
+```
+
+**没有修改任何测试断言使它们通过**：1.x 搬来的 9 个用例逐字未改；
+新增/补写的用例都是按实测行为写期望（两次红都是我先写错了预期，见 R3 记录）。

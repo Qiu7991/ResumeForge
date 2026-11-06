@@ -140,3 +140,47 @@ def test_tech_stack_detected_by_source_field_id():
     strip_resume_tech_stack(content)
 
     assert content["sections"][0]["entries"][0]["items"][0]["placement"] == "hidden"
+
+
+# ===== 从 1.x test_generation_preferences.py 补齐的三条（容错 / v2 文本项 / API 往返）=====
+
+
+def test_strip_tolerates_missing_or_malformed_projects():
+    """没有 projects、或 projects 不是列表时原样返回（不能把生成打挂）。"""
+    assert strip_resume_tech_stack({"summary": "x"}) == {"summary": "x"}
+    assert strip_resume_tech_stack({"projects": "bad"}) == {"projects": "bad"}
+
+
+def test_strip_cleans_v2_text_items_with_tech_stack_lines():
+    """底稿模式返回的 v2 文档：列表项要 hidden，正文文本行里的「技术栈/工具：」也要删。"""
+    content = {
+        "version": 2,
+        "sections": [
+            {
+                "key": "projects",
+                "entries": [
+                    {
+                        "items": [
+                            {
+                                "kind": "list",
+                                "key": "tech_stack",
+                                "placement": "trail",
+                                "values": ["Docker", "Caddy"],
+                            },
+                            {
+                                "kind": "text",
+                                "text": "技术栈/工具：Docker、Caddy\n独立搭建家庭网络。",
+                            },
+                        ]
+                    }
+                ],
+            }
+        ],
+    }
+
+    strip_resume_tech_stack(content)
+    items = content["sections"][0]["entries"][0]["items"]
+
+    assert items[0]["placement"] == "hidden"
+    assert items[0]["values"] == ["Docker", "Caddy"]
+    assert items[1]["text"] == "独立搭建家庭网络。"
