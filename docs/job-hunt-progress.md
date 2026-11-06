@@ -65,3 +65,21 @@ job_hunt 全绿」PASS（21 passed in 4.33s）；其余同 J0（唯一 FAIL 仍�
 **测试**：21 例全绿（decode 边界 / 对照对 / 约束求解 / 合成字体含复合字形 / 真夹具断言）。
 fontTools 实测坑已记录：fontBuilder 编译 cmap format 4 会丢 glyphId=1 的映射（合成字体
 用垫片字形绕开）；`endPtsOfContours` 存终点索引而非计数。
+
+## J3 采集器抽象层（commit 待填）
+
+**实现**（`services/job_hunt/runner.py`）：
+- `JobHuntRunner.run(criteria, fetch=, on_progress=)`：拼 URL → 取页面 → 解析 → 翻页 →
+  URL 去重（fragment 归一）→ `HuntReport`（stubs/pages_fetched/duplicates/stopped_reason/
+  errors/visited_pages，visited_pages 留给 J7 游标）；
+- 停止语义五档：max_pages / no_results / repeated_page（整页全重复，站点循环推送）/
+  stopped（on_progress 返回 False）/ parse_error+fetch_error（记账即停）；
+- 抓取器注入：生产 `cdp_fetcher(client)` 复用既有 CdpClient.navigate + page_ready
+  轮询原语 + outerHTML（不自建浏览器管理）；无 fetcher 快速失败（防止被逐页 except
+  吞成 fetch_error）；测试注入假抓取器（E17 夜间不连真实网站）。
+
+**测试**：14 例（翻页/跨页去重/上限/整页重复早停/解析与抓取错误记账/进度喊停/
+criteria 归一化/无链卡片丢弃/fragment 去重/假 CDP 客户端消息编排/超时大声失败/空页）。
+
+**闸门（J3 后 --phase 10）**：检查 6「runner.py 存在」PASS；检查 8 PASS（35 passed in
+5.26s）；其余同前（唯一 FAIL 仍为 1.x 库尺寸存量问题）。
