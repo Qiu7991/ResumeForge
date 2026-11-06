@@ -12,6 +12,7 @@ import { useLocale } from "../../i18n/i18nContext";
 import { t } from "../../i18n";
 import { RESUME_CATALOG_SECTION_LABEL_KEYS } from "../../i18n/enum/resumeCatalog";
 import type { ResumeDocument } from "../../types/resumeDocument";
+import { layer } from "../../theme/tokens";
 
 interface Props {
   document: ResumeDocument;
@@ -103,6 +104,10 @@ export default function PreviewSectionsControl({
     <Popover
       trigger="click"
       placement="bottomRight"
+      // 预览挂在 Modal 里，而 Modal 的 z-index 由 `popupBase` 抬到 3200；
+      // Popover 若留在 antd 默认档（~1030），弹层虽已渲染却被 Modal 盖住——
+      // 表现就是「点了没反应」。取 popupBase+200，确保在单层 Modal 之上。
+      overlayStyle={{ zIndex: layer.popupBase + 200 }}
       title={t("workbench.sectionsVisibility.title")}
       content={
         <div style={{ width: 280 }}>
