@@ -74,10 +74,17 @@ PLAN: list[tuple[str, str, list[str], list[str]]] = [
     ("resume_record", "resume_record", ["id"], []),
     ("resume_generation_plan", "resume_generation_plan", ["id"], []),
     ("resume_phrase", "resume_phrase", ["id"], []),
-    # ---- 投递记录（只迁记录，不迁队列/任务态）----
+    # ---- 投递记录（申请追踪台账）----
     ("application_track", "application_track", ["id"], ["failure_step", "failure_target", "failure_reason"]),
     ("application_track_event", "application_track_event", ["id"], []),
     ("resume_delivery_record", "resume_delivery_record", ["id"], []),
+    # ---- 投递任务历史（让「投递记录」标签页也能看到 1.x 的批次）----
+    # 前置条件：1.x 的 apply_task 全部是终态（completed/failed/stopped），
+    # 没有任何 running/pending，否则导入后会让「开始投递」按钮误判有任务在跑。
+    # 脚本会在导入前校验这一点，非终态就中止。
+    ("apply_task", "apply_task", ["id"], []),
+    ("apply_task_item", "apply_task_item", ["id"], []),
+    ("apply_queue_item", "apply_queue_item", ["id"], []),
     # ---- 其他可复用资料 ----
     ("interview_experience", "interview_experience", ["id"], []),
     ("knowledge_entry", "knowledge_entry", ["id"], []),
@@ -140,6 +147,28 @@ NULL_FILL = {
 
 def table_cols(conn: sqlite3.Connection, table: str) -> list[str]:
     return [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")')]
+
+
+# 只有这些状态算「已终结」，不会让 2.0 误判有任务在跑。
+TERMINAL_TASK_STATUS = {"completed", "failed", "stopped", "cancelled", "canceled"}
+
+
+def check_apply_task_terminal(src: sqlite3.Connection) -> list[str]:
+    """校验 1.x 的投递任务全部是终态。
+
+    为什么必须校验：2.0 判断「有任务在跑」看的是 apply_task.status。
+    若把 running/pending 的历史任务导进去，用户点「开始投递」会被误判为
+    已有任务而拒绝（或更糟：显示一个永不结束的进度条）。
+    """
+    problems: list[str] = []
+    if not table_exists(src, "apply_task"):
+        return problems
+    rows = src.execute("SELECT id, status FROM apply_task").fetchall()
+    for row in rows:
+        st = (row["status"] or "").strip().lower()
+        if st not in TERMINAL_TASK_STATUS:
+            problems.append(f"apply_task id={row['id']} status={row['status']!r}（非终态）")
+    return problems
 
 
 def table_exists(conn: sqlite3.Connection, table: str) -> bool:
@@ -309,6 +338,16 @@ def main() -> int:
     src, tmp = backup_readonly(src_path)
     dst = sqlite3.connect(str(TARGET))
     dst.row_factory = sqlite3.Row
+
+    # 前置校验：投递任务必须是终态
+    task_problems = check_apply_task_terminal(src)
+    if task_problems:
+        print("\nFAIL 源库存在非终态的投递任务，拒绝导入：")
+        for p in task_problems[:10]:
+            print(f"  {p}")
+        print("  处置：先在 1.x 里把这些任务停掉/等它结束，再重跑本脚本。")
+        return 4
+    print("PASS 投递任务全部为终态（不会让 2.0 误判有任务在跑）")
 
     # 目标非空守卫
     non_empty = []
