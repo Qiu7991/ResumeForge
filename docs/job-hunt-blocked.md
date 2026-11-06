@@ -38,3 +38,18 @@ FAIL 在晨间报告里如实呈现，由人工更新基线常量（需改 phase
 
 **影响**：晨间真实采集首跑时若搜索页不返回岗位，先核对该 URL 形态（`kw` 是否被
 改写成路径编码）；解析层不需要动。
+
+## BLOCKED-JOB51-URL-UNVERIFIED（J5：列表 URL 拼法未实测）
+
+51job 列表解析已用真实夹具验证（20/20 卡全字段）；但卡片**没有岗位链接**（Vue 点击
+导航，唯一 `<a>` 是公司链接），岗位 URL 只能按数字 jobId 构造
+`jobs.51job.com/all/{jobId}.html`——该形态是公开历史格式，**当前站点是否仍解析未知**
+（站内现在用的是另一套混淆码）。搜索 URL（`we.51job.com/pc/search?keyword=&jobArea=
+&pageNo=`）同样未实测。
+**影响**：晨间首跑时先人工打开一个列表页核对两种 URL 形态；解析层不需要动。
+
+## BLOCKED-LIEPIN-URL-UNVERIFIED（J6：搜索翻页参数未实测）
+
+猎聘解析（列表 40/40、详情全字段）已用真实夹具验证；搜索基路径
+`liepin.com/zhaopin/` 有夹具 canonical 实证，但 `key`/`dq`/`curPage` 参数组合夜间
+未实测（`curPage` 按 0 起实现）。**影响**：晨间首跑时核对翻页参数；解析层不需要动。

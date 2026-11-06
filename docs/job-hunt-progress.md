@@ -103,3 +103,34 @@ marker 缺失才抛错（区分"翻过头"与"登录失效/改版"）。
 
 **测试**：9 例（注册/URL 拼接/20 条记录断言/结构改版抛错/详情断言/支持域/runner 集成）。
 URL 形态未实测 → blocked.md ZHILIAN-URL-UNVERIFIED。
+
+## J5 51job 采集适配器——只列表（commit 待填）
+
+**结构实证**（job51_list.html）：20 张卡全部带 `sensorsname="JobShortExposure"
+sensorsdata="{...}"`（HTML 转义 JSON，含 jobId/jobTitle/jobSalary/jobArea/jobYear/
+jobDegree/companyId/jobTime）；20/20 可解析。**卡片没有岗位链接**（Vue 点击导航，
+唯一 `<a>` 是右侧 `class="comp"` 的公司链接——同公司 3 张卡同链接，实测确认）；
+公司名在 `<span title=".." class="cname">`（20/20）。
+
+**实现**：`sites/job51.py`（Job51Adapter）——按卡切分 → sensorsdata JSON + cname 提取；
+岗位 URL 按数字 jobId 构造（未实测 → blocked.md JOB51-URL-UNVERIFIED）；
+parse_detail 显式抛错（详情需登录，BLOCKED-FIXTURE-JOB51，不假装能解析）。
+
+**测试**：6 例（注册/URL/20 条断言/同公司多卡/详情抛错/支持域）。
+
+## J6 猎聘采集适配器（commit 待填）
+
+**结构实证**（liepin_list 40 卡 / liepin_detail）：卡片锚点 `<div class="ellipsis-1"
+title="..">内部文本`；**岗位链接在标题节点之前**（卡片包在 `<a href="/job/{id}.shtml">`
+里，需向前回看，40/40 提取）；薪资明文（形状正则优先，防 CSS 混淆类名改版）；地区在
+【】括号内；发布时间"N小时前在线"。详情页：主薪资是 `<span class="salary">`
+（`job-salary` 全是相似岗位——先抓错后纠正）；JD 在 `data-selector="job-intro-content"`
+，职责/要求按「任职要求：」分节；公司名取 meta keywords 最后一段。
+
+**实现**：`sites/liepin.py`（LiepinAdapter）+ 注册；build_search_url 基路径有夹具
+canonical 实证（/zhaopin/），翻页参数未实测 → blocked.md LIEPIN-URL-UNVERIFIED。
+
+**测试**：7 例（注册/URL/40 条断言/结构改版抛错/详情断言含分节/支持域/文本清洗）。
+
+**闸门（J5/J6 后 --phase 10）**：PASS=11 FAIL=1 SKIP=1——检查 8 PASS（57 passed in
+7.27s，J7 测试当时尚未写完不计入）；唯一 FAIL 仍为 1.x 库尺寸存量问题。
