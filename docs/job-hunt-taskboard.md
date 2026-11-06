@@ -15,5 +15,5 @@
 | J6 猎聘采集 | [x] | 485d117 | 列表 40/40+详情全字段；URL 未实测→blocked |
 | J7 断点续采 | [x] | 1cf41b0 | 游标 KV 持久化（未建表）；中断→恢复不重抓已测 |
 | J8 回复监测 | [x] | 1cf41b0 | 意向分类+汇总（只读红线自检）；抓取侧 BLOCKED-REPLIES-FIXTURE |
-| J9 前端切换 | [ ] | | /api/job-hunt/* + 设置页开关卡，默认 sidecar |
-| J10 全量闸门与报告 | [ ] | | 必做；晨间报告 docs/job-hunt-morning-report.md |
+| J9 前端切换 | [x] | a36c7df | /api/job-hunt/* + 设置页开关卡；闸门 PASS=12 FAIL=1 SKIP=0 |
+| J10 全量闸门与报告 | [x] | 见晨间报告 | --all PASS=59 FAIL=4（同源：1.x 库尺寸）；报告 docs/job-hunt-morning-report.md |
