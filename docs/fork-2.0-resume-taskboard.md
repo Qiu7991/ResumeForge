@@ -6,7 +6,7 @@
 
 | 任务 | 状态 | 结论 / commit | 备注 |
 |---|---|---|---|
-| R0 分支与三件套 + phase_9 | [x] | 见 progress | 从 feat/ai-jobs-sidecar 直接 `git switch feat/fork-port`，**未合并线2** |
+| R0 分支与三件套 + phase_9 | [x] | 26a878c / 闸门 PASS=2 FAIL=0 SKIP=10 | 从 feat/ai-jobs-sidecar 直接 `git switch feat/fork-port`，**未合并线2**；QueueItemEditor.test.tsx → BLOCKED-Q1 |
 | R1 落点复核 | [ ] | | |
 | R2 生成结果去重 | [ ] | | |
 | R3 技术栈开关（默认关） | [ ] | | |
