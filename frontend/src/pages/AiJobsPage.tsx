@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import ConnectionCard from "../components/ai-jobs/ConnectionCard";
 import JobDetailDrawer from "../components/ai-jobs/JobDetailDrawer";
+import JobHuntBackendCard from "../components/ai-jobs/JobHuntBackendCard";
 import JobResultsTable from "../components/ai-jobs/JobResultsTable";
 import ReplyInbox from "../components/ai-jobs/ReplyInbox";
 import RunHistoryTable from "../components/ai-jobs/RunHistoryTable";
@@ -165,7 +166,13 @@ export default function AiJobsPage() {
           { key: "jobs", label: t("aiJobs.jobs.tab"), children: jobsTab },
           { key: "monitor", label: t("aiJobs.monitor.tab"), children: <ReplyInbox /> },
           { key: "records", label: t("aiJobs.records.tab"), children: <RunHistoryTable /> },
-          { key: "settings", label: t("aiJobs.settings.tab"), children: <SettingsForm onSaved={reloadAll} /> },
+          { key: "settings", label: t("aiJobs.settings.tab"), children: (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* J9：自研后端开关（默认 sidecar）；下面的表单仍是 sidecar 引擎配置 */}
+              <JobHuntBackendCard onSaved={reloadAll} />
+              <SettingsForm onSaved={reloadAll} />
+            </div>
+          ) },
         ]}
       />
       <JobDetailDrawer

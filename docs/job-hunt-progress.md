@@ -134,3 +134,38 @@ canonical 实证（/zhaopin/），翻页参数未实测 → blocked.md LIEPIN-UR
 
 **闸门（J5/J6 后 --phase 10）**：PASS=11 FAIL=1 SKIP=1——检查 8 PASS（57 passed in
 7.27s，J7 测试当时尚未写完不计入）；唯一 FAIL 仍为 1.x 库尺寸存量问题。
+
+## J7 断点续采 + J8 回复监测（commit 1cf41b0）
+
+**J7**：`HuntCursor`（site_key + criteria_hash + last_page + done_urls）挂在 runner 的
+全部退出路径上（`HuntReport.next_cursor`）；`run(cursor=)` 从 last_page+1 续翻、
+已见 URL 按重复计、**只记成功解析的页**（错误页不进游标）。持久化走 `AppSetting`
+KV（`cursor_store.py`，键 `job_hunt_cur_{site}_{hash}`，损坏即丢弃），**未建新表**。
+测试含「中断→恢复不重抓」（两次 run 合计恰好 N 页抓取）、错误页不进游标、KV 往返。
+
+**J8**：`replies.py` 纯分类（确定性关键词规则，优先级 拒绝>约面>要简历>普通——
+"简历不太合适"必须落拒绝）；`monitor_reply` 汇总会话意向。红线自检测试用词边界
+正则断言模块内**无任何发送行为**。抓取侧（BOSS 聊天页 DOM → Conversation）无夹具
+不实现 → blocked.md BLOCKED-REPLIES-FIXTURE。
+
+**闸门（J7/J8 后 --phase 10）**：PASS=11 FAIL=1 SKIP=1——检查 8 PASS（**74 passed**
+in 8.27s）；唯一 FAIL 仍为 1.x 库尺寸存量问题。
+
+## J9 前端切换（commit 待填）
+
+**后端**：`api/job_hunt.py`（`/api/job-hunt/status|config|collect`）注册进
+application_routers（与 `/api/ai-jobs/*` 并存，旧路径一字未动）：
+- status/config 读写 `job_hunt_backend` 开关（Literal 校验，非法值 422）；
+- collect：sidecar 模式下**拒绝执行（409）**；native 模式走 registry 适配器 +
+  runner + `cdp_fetcher`（复用投递台浏览器管理，不自建），浏览器没启动给
+  503 + 可操作提示；`resume=True` 读游标续采，翻到头自动清游标。
+
+**前端**：`types/jobHunt.ts` + `api/jobHunt.ts`（status/config）+
+`components/ai-jobs/JobHuntBackendCard.tsx`（设置页新卡：Radio 切换 sidecar/native，
+默认 sidecar，失败回滚显示；展示 native 已支持平台 Tag）。挂载在 AI 求职页设置 Tab
+（SettingsForm 上方，旧表单未动）。i18n 中英各加 6 键（key 数相等口径保持）。
+`aiJobs.ts` 一字未改（E19：工作台等能力继续走旧路径直到自研补齐）。
+
+**测试**：`test_job_hunt_api.py` 8 例（默认 sidecar、切换往返、422、sidecar 下 collect
+409、未知平台 404、浏览器不可用 503、假 runner 下游标落 KV）；全量 job_hunt
+**82 passed**。前端 typecheck 绿 + `npm run build` 绿。

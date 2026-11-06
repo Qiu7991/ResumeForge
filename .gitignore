@@ -96,3 +96,4 @@ mokahr_apply_controls.json
 desktop/payload/
 desktop/out/
 desktop/python-runtime.zip
+docs/job-hunt-fixtures/*.html

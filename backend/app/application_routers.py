@@ -33,6 +33,7 @@ from .api import (
     interview_answer_review,
     interview_experiences,
     interview_history,
+    job_hunt,
     job_match,
     jobs,
     jobs_analysis,
@@ -104,6 +105,9 @@ ROUTERS = (
     ai_tasks.router,
     # AI 求职（BossHunter sidecar）：独立前缀 /api/ai-jobs，不与其他前缀抢路径。
     ai_jobs.router,
+    # 自研求职采集（services/job_hunt）：独立前缀 /api/job-hunt，与 sidecar 并存，
+    # 用 job_hunt_backend 开关切换（默认 sidecar，旧路径不动）。
+    job_hunt.router,
     jobs.router,
     jobs_analysis.router,
     resumes.router,
