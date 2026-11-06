@@ -30,6 +30,7 @@ from . import document_io
 from .document_conversion_types import ConversionError
 from .document_view import header_text
 from .resume_sections import default_section_order_config, persistable_format_config
+from .resume_dedupe import dedupe_resume
 from .resume_template_store import (
     resolve_format_config,
     resolve_style_config,
@@ -157,6 +158,13 @@ def save_record(
         if page_limit is not None and int(page_limit) == UNLIMITED_PAGE_LIMIT
         else normalize_page_limit(page_limit, mode)
     )
+    # 生成结果去重（E15）：只把"同一身份被写了两遍"的条目合并成一条、要点取并集，
+    # **不做任何篇幅裁剪**——页数/行预算由 resume_space_gate 与 document_truncate 负责，
+    # 两条路径互不调用。放在转换之前处理 v1（模型输出），转换之后处理 v2（SSE 复用的
+    # 那份 document，是另一个对象），两侧都收口，done 事件与落库内容才不会不一致。
+    dedupe_resume(content)
+    if document is not None:
+        dedupe_resume(document)
     # 落库的永远是 v2：生成链路内部仍按 v1（模型只写值），在唯一落库点一次性转换。
     # 标题/岗位意图在上面已按 v1 视图取过，不受影响；自定义字段位置来自当前方案定义。
     # document 参数供 SSE 复用**同一个转换结果**（done 事件与落库内容 id 一致）。

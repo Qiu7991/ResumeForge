@@ -144,3 +144,100 @@ $ grep -n "profile_facts\|ClaimRecord" backend/app/services/profile/portrait_imp
 - 技术栈：生成路径挂 `save_record`；手工保存挂 `document_save.save_content`
   （与 1.x `document_save.py:255` 逐字对齐）；修订路径挂 `ai_edits_routes` 的 finalize
 - 画像导入：独立离线脚本，不进运行时路由
+
+## R2 生成结果去重
+
+### 改动
+
+| 文件 | 动作 |
+|---|---|
+| `backend/app/services/resume/resume_dedupe.py` | **新增**（移植 1.x，**只保留 `dedupe_resume`**） |
+| `backend/app/services/resume/resume_record.py` | 加 import + 在 `save_record` 转换前后各调一次 |
+| `backend/tests/test_resume_dedupe.py` | **新增**（6 个用例） |
+
+**为什么砍掉 `limit_resume` / `dedupe_and_limit_resume`**：E15 与 phase_9 第 3 项要求
+「去重与截断分离」。1.x 把两者塞进同一个模块甚至同一个包装函数，才出了
+「点一次 AI 修订少一个项目」的事故。2.0 的篇幅控制已有两条独立链路
+（`resume_space_gate.finalize_page_budget` 行预算、导出层按页收敛），不需要也不允许
+`resume_dedupe` 再持有一份截断逻辑。
+
+**为什么挂 `save_record` 而不是 `document_io.prepare_document_for_save`**：
+后者被 9 处调用（含手工保存 `_shared.py:149`、版本回滚、来源认领、助手工具）。塞进去
+等于让「用户手工保存」也被去重，直接违反 §10「去重删掉用户手动加的条目」。
+
+**为什么转换前后各调一次**：SSE 链路（`generate_routes.py:283`）会把转换好的
+`document` 传进 `save_record` 复用给 `done` 事件。v1 `content` 与 v2 `document` 是两个
+对象，只处理一侧会让「落库内容」和「前端拿到的 done.resume」条目数不一致。
+
+### L1 / L2 / L3
+
+```
+$ python -c "ast.parse(...)"                       → AST OK
+$ python -c "import app.services.resume.resume_dedupe" → import OK ['dedupe_resume']
+$ python -c "import app.services.resume.resume_record" → record import OK
+
+$ pytest tests/test_resume_dedupe.py -q -p no:cacheprovider
+6 passed, 1 warning in 0.61s
+
+$ pytest tests/test_resume_section_order_materialize.py tests/test_resume_fact_annotations.py \
+         tests/test_generation_normalization.py -q
+16 passed, 1 warning in 2.54s
+```
+
+### L3（phase 9）
+
+```
+PASS resume_dedupe.py 可导入 — returncode=0
+PASS 去重已接进生成链路 — 调用点=['services/resume/resume_record.py']
+PASS 去重与截断分离 — resume_dedupe.py 命中违禁词=无
+SKIP 技术栈开关设置项 show_tech_stack 存在 — R3 未移植（schemas/generation_preferences.py 不存在）
+SKIP 技术栈开关默认关 — R3 未移植
+SKIP 技术栈两条路径都生效 — R3 未移植（resume_tech_stack.py 不存在）
+PASS 覆盖清单补入能力存在或已记 GONE — resume_profile_append.py=True resume_coverage.py=True GONE登记=False
+SKIP scripts/import_portrait.py 存在 — R5 未移植
+SKIP 画像导入无 profile_facts 引用 — R5 未移植
+SKIP portrait_extract.md 存在 — R5 未移植
+PASS N8 定向测试绿 — returncode=0；6 passed, 1 warning
+PASS 前 8 阶段复跑无 FAIL — 复跑 FAIL=0
+
+汇总：PASS=6 FAIL=0 SKIP=6
+```
+
+### E13 改前/改后对照（同一份内容，绕过 vs 经过 `dedupe_resume`）
+
+输入：6 个项目（含 1 组同名对、1 组「CreatorDistill」相似对、1 条无身份半成品）
++ 2 条完全相同经历。
+
+| 项 | 改前 | 改后 | 判定 |
+|---|---|---|---|
+| 项目数 | 6 | **5** | 只合并完全同名的那一对 |
+| 经历数 | 2 | **1** | 复合身份 (company, role, start, end) 全同才合并 |
+| 合并后第一条要点 | desc=[闭环] / hl=[] | desc=[闭环] / **hl=[20 个 API]** | 并集，内容没丢 ✅ |
+| 相似条目（CreatorDistill ×2） | 2 | **2** | 都保留 ✅ |
+| 无身份半成品 | 1 | **1** | 保留 ✅ |
+| 经历合并后 description | — | `['补充要点']` | 并集 ✅ |
+
+原样输出见本节末尾「E13 原始输出」。
+
+### 一次 FAIL 与处置（未改闸门）
+
+phase_9 首跑报 `FAIL 去重与截断分离 — 命中违禁词=['truncate']`。根因是我的**模块
+docstring 里写了 `document_truncate` 这个模块名**（字符串包含 `truncate`），代码本身
+没有任何截断逻辑。处置：改写那句话，不提该模块名——闸门一个字未改（E10）。
+
+### E13 原始输出
+
+```
+=== 改前（无去重） ===
+projects: [["AI 简历工作台",1,0],["民生账号",1,0],["AI 简历工作台",0,1],
+           ["CreatorDistill 创作者内容分析系统",0,0],["CreatorDistill 爆款拆解语料库",0,0],["半成品",1,0]]
+experience: [["蓝粤","测试工程师",false],["蓝粤","测试工程师",true]]
+=== 改后（经 dedupe_resume） ===
+projects: [["AI 简历工作台",1,1],["民生账号",1,0],["CreatorDistill 创作者内容分析系统",0,0],
+           ["CreatorDistill 爆款拆解语料库",0,0],["半成品",1,0]]
+experience: [["蓝粤","测试工程师",true]]
+条目数 改前: 6 2 → 改后: 5 1
+内容保全检查：合并后第一条是否同时有 description 与 highlights: True
+相似条目是否都保留: ['CreatorDistill 创作者内容分析系统', 'CreatorDistill 爆款拆解语料库']
+半成品是否保留: True
+```
