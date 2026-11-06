@@ -238,6 +238,16 @@ export interface WebFormRelaxedModeSetting {
 }
 
 /**
+ * 生成偏好（设置页，默认**不显示**项目技术栈）。
+ *
+ * 关闭只影响"上不上纸面"：技术栈数据仍在文档里，编辑器可以拖回来；
+ * 旧简历不受影响——偏好只在生成/保存那一刻读取。
+ */
+export interface GenerationPreferences {
+  show_tech_stack: boolean;
+}
+
+/**
  * 「投投」悬浮球的设置（入口与提示标语，默认均开）。
  *
  * **每个后端字段都必须在这里出现**：这个接口是整份替换语义，少声明一个字段就会在

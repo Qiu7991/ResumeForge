@@ -9,6 +9,7 @@ import type {
   AssistantOrbSetting,
   AssistantRelaxedModeSetting,
   ExportSaveLocation,
+  GenerationPreferences,
   LLMApiKeyRevealResult,
   LLMConfig,
   LLMConfigRecord,
@@ -183,6 +184,21 @@ export function saveWebFormRelaxedMode(enabled: boolean): Promise<WebFormRelaxed
   return request("/settings/webform-relaxed-mode", {
     method: "PUT",
     body: JSON.stringify({ enabled }),
+  });
+}
+
+/** 生成偏好：是否在简历里单独显示项目技术栈（默认关）。 */
+export function getGenerationPreferences(): Promise<GenerationPreferences> {
+  return request("/settings/generation-preferences");
+}
+
+/** 整对象 PUT：只带一个字段会让以后新增的偏好项被整份覆盖打回默认。 */
+export function saveGenerationPreferences(
+  preferences: GenerationPreferences,
+): Promise<GenerationPreferences> {
+  return request("/settings/generation-preferences", {
+    method: "PUT",
+    body: JSON.stringify(preferences),
   });
 }
 

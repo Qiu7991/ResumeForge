@@ -184,6 +184,19 @@ const settingsUi = {
   "settingsUi.webFormRelaxed.warning":
     "开启后程序会尝试代点下拉/弹层选项并代勾你逐条确认过的声明项，存在选错可能，填完请核对；" +
     "四类始终不代填：日期选择器、文件上传、密码/验证码/银行卡、无弹层的只读点选框——这些都需要你自己操作。",
+
+  // ── 生成偏好卡：简历是否显示项目技术栈 ──────────────────────
+  "settingsUi.generationPrefs.title": "生成偏好 · 简历内容",
+  "settingsUi.generationPrefs.intro":
+    "控制生成的简历里要不要单独出现一行「技术栈：…」。技术栈在资料库里始终保留，" +
+    "用于岗位匹配与面试准备，这个开关只管它「上不上简历纸面」。",
+  "settingsUi.generationPrefs.toggleAria": "简历显示项目技术栈",
+  "settingsUi.generationPrefs.enableToast": "已开启：生成的简历会显示项目技术栈",
+  "settingsUi.generationPrefs.disableToast": "已关闭：生成的简历不再显示项目技术栈",
+  "settingsUi.generationPrefs.saveFailed": "保存生成偏好失败",
+  "settingsUi.generationPrefs.hint":
+    "关闭后技术栈数据不会丢：它只是不上纸面，在简历编辑器里仍能看到并拖回来。" +
+    "已生成的旧简历不受影响。",
 } as const;
 
 export default settingsUi;

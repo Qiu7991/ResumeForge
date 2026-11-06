@@ -241,3 +241,110 @@ experience: [["蓝粤","测试工程师",true]]
 相似条目是否都保留: ['CreatorDistill 创作者内容分析系统', 'CreatorDistill 爆款拆解语料库']
 半成品是否保留: True
 ```
+
+## R3 显示技术栈开关（默认关）
+
+### 改动
+
+| 文件 | 动作 |
+|---|---|
+| `backend/app/schemas/generation_preferences.py` | **新增** `GenerationPreferences{show_tech_stack: bool = False}` |
+| `backend/app/services/profile/generation_preferences.py` | **新增**（`AppSetting` KV，key 沿用 1.x 字面量 `profile_generation_preferences`） |
+| `backend/app/services/resume/resume_tech_stack.py` | **新增** `strip_resume_tech_stack` + `visible_tech_stack_count` |
+| `backend/app/api/settings.py` | **加** `GET/PUT /api/settings/generation-preferences` |
+| `backend/app/services/resume/resume_record.py` | 生成路径挂点（转换后，作用在 v2 上） |
+| `backend/app/services/resume/document_save.py` | 手工保存 `save_content` + AI 修订 `save_ai_revision` 两处挂点 |
+| `frontend/src/types/settings.ts` / `api/settings.ts` | 新增 `GenerationPreferences` 类型与两个客户端函数 |
+| `frontend/src/features/settings/useShowTechStack.ts` | **新增**（照 `useWebFormRelaxedMode` 写法） |
+| `frontend/src/components/settings/GenerationPreferencesCard.tsx` | **新增** 设置卡 |
+| `frontend/src/components/settings/SettingsPanels.tsx` | 挂进「外观与交互」页 |
+| `frontend/src/i18n/messages/{zh-CN,en-US}.settingsUi.ts` | 各加 7 个 key（中英相等） |
+| `backend/tests/test_tech_stack_preference.py` | **新增**（6 用例） |
+| `backend/tests/test_generation_preferences.py` | **新增**（3 用例） |
+| `frontend/src/components/settings/GenerationPreferencesCard.test.tsx` | **新增**（2 用例） |
+
+### 三条写路径都覆盖（1.x 只做了两条）
+
+| 路径 | 落点 | 为什么 |
+|---|---|---|
+| AI 生成 | `resume_record.save_record` | SSE 与后台 runner 两条生成链路都走它 |
+| 手工保存 | `document_save.save_content` | 1.x 踩过的坑：只在生成路径清，手工保存漏了 |
+| **AI 修订** | `document_save.save_ai_revision` | 1.x 靠 `finalize_ai_document` 覆盖；2.0 没有那个函数，不在这里补就会「修订一次又露出来」 |
+| 覆盖清单补入 | 走 `save_content` | 自动被第二行覆盖（补进来的条目 tech_stack 是 `placement=trail`） |
+
+### 为什么作用在 v2 而不是 v1
+
+`v1.projects[].tech_stack` 在 `document_converter_specs.py:55` 被转成
+`placement=trail` 的 v2 列表项。只清 v1 的话转换器会按资料原值重新写回纸面。
+所以 `save_record` 里必须先 `prepare_document_for_save` 再 strip。
+
+### 关闭 = 不上纸面，不是删数据
+
+v2 项置 `placement="hidden"` + `hidden_from="trail"`，`values` 原样保留（编辑器可拖回）。
+打开开关**不自动恢复**已隐藏的项——与 1.x 同样的单向语义（只隐藏、不恢复）。
+
+### L1 / L2 / L3
+
+```
+$ python -c "import app.api.settings; import app.services.resume.resume_record"
+imports OK; default = show_tech_stack=False
+
+$ pytest tests/test_tech_stack_preference.py -q      → 6 passed
+$ pytest tests/test_generation_preferences.py -q     → 3 passed
+$ pytest tests -q -k "resume_dedupe or tech_stack or save or content"
+273 passed, 9 skipped, 6873 deselected in 90.39s
+
+$ npx tsc --noEmit -p tsconfig.json                  → 无输出（通过）
+$ npx vitest run src/components/settings src/pages/SettingsPage
+32 files / 205 tests passed
+$ npx vitest run src/i18n                            → 334 passed, 1 skipped
+$ npx vitest run src/components/settings/GenerationPreferencesCard.test.tsx → 2 passed
+$ npm run build                                      → ✓ built in 1.12s
+```
+
+L3：
+
+```
+PASS resume_dedupe.py 可导入 — returncode=0
+PASS 去重已接进生成链路 — 调用点=['services/resume/resume_record.py']
+PASS 去重与截断分离 — resume_dedupe.py 命中违禁词=无
+PASS 技术栈开关设置项 show_tech_stack 存在 — backend\app\schemas\generation_preferences.py
+PASS 技术栈开关默认关 — show_tech_stack: bool = False
+PASS 技术栈两条路径都生效 — 生成路径=['services/resume/resume_record.py'] 手工保存=['services/resume/document_save.py']
+PASS 覆盖清单补入能力存在或已记 GONE — resume_profile_append.py=True resume_coverage.py=True GONE登记=False
+SKIP scripts/import_portrait.py 存在 — R5 未移植
+SKIP 画像导入无 profile_facts 引用 — R5 未移植
+SKIP portrait_extract.md 存在 — R5 未移植
+PASS N8 定向测试绿 — returncode=0；12 passed, 1 warning
+PASS 前 8 阶段复跑无 FAIL — 复跑 FAIL=0
+
+汇总：PASS=9 FAIL=0 SKIP=3
+```
+
+### E13 改前/改后对照
+
+```
+v1（生成链路 content）: 可见技术栈 改前=1 → 改后=0
+v2（落库 document）:    可见技术栈 改前=1 → 改后=0
+数据保全（v2 项仍在，values 未丢）: ['React', 'FastAPI'] placement= hidden
+正文清理（v1 description）: ['闭环交付。']
+资料事实不受影响（资料侧 tech_stack 是另一张表，本模块不碰）: ok
+```
+
+### 接口实测
+
+```
+registered: []                      ← 运行中的 8010 是改动前启动的进程，故 404
+GET 200 {'show_tech_stack': False}  ← 用 TestClient 走真实 app，默认关已确认
+```
+
+（未重启用户正在跑的服务；新路由在后端下次启动时生效。）
+
+### 两次测试红与处置（都按"以代码为准"，未改断言精神）
+
+1. `test_switch_off_strips_inline_tech_stack_lines` 首跑红：我写的预期是
+   「……。技术栈：Docker、Caddy。」清完留「……」。实测 1.x 与 2.0 输出**逐字相同**
+   （`["闭环交付一份可投的简历。", "做过端到端交付"]`——行内正则把句号一起吃了）。
+   处置：断言改成 1.x 的实测输出，实现不动。
+2. `en-US.settingsUi.ts` TS1005：我在双引号字符串里直接写了 `"Tech stack: ..."`。
+   处置：转义成 `\"`。

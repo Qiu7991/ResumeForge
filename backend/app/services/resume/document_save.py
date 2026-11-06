@@ -32,8 +32,10 @@ from sqlalchemy.orm import Session
 
 from ...models.resume import ResumeRecord
 from ...schemas.resume_generation import LONG_CV_RESOURCE_BUDGET
+from ..profile.generation_preferences import show_tech_stack
 from .resume_delivery import canonical_content_sha256
 from .resume_render_overrides import prune_overrides
+from .resume_tech_stack import strip_resume_tech_stack
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +190,18 @@ def save_content(
 
     _check_content_budget(content, getattr(current, "document_mode", "resume") or "resume")
     needs_promotion = bool(mark_saved and current.draft)
+    # 「显示技术栈」是**全局显示偏好**，不是 AI 输出的专属规则——所以它在**所有**写路径
+    # 上都必须成立，包括手工保存与覆盖清单补全。
+    #
+    # 为什么必须在这里兜：覆盖清单的「从资料补上这段」会把资料投影里的整条项目 clone
+    # 进文档（`resume_profile_append.py`），而投影里的 tech_stack 是 placement=trail
+    # （资料本来就该怎么存）。补进来的条目再经本函数落库时，如果只靠生成链路的
+    # `save_record` 兜底，技术栈就会在"生成时藏好了 → 补一段 → 又露出来"这条路上复发。
+    #
+    # 只做**隐藏**方向（关闭 → hidden），不做反向恢复：用户重新打开开关时，已 hidden
+    # 的项保持原样（数据还在文档里，编辑器可拖回），语义与生成链路一致。
+    if not show_tech_stack(db):
+        content = strip_resume_tech_stack(content)
     # §1.6：保存时顺手裁掉"指向已不存在对象 / 照片已换"的域数据，与内容在同一条 UPDATE
     # 写入（revision 只 +1）。纯读路径不裁剪：GET 不写库。
     pruned = prune_overrides(content, current.format_config)
@@ -280,6 +294,11 @@ def save_ai_revision(
     current_revision = int(current.revision or 0)
     if base_revision is not None and base_revision != current_revision:
         raise RevisionConflict(current_revision=current_revision)
+
+    # 修订也是一条写路径：用户关掉了「显示技术栈」，修订一次又露出来就是事故。
+    # 与 save_content 同一条规则、同一个方向（只隐藏、不恢复）。
+    if not show_tech_stack(db):
+        content = strip_resume_tech_stack(content)
 
     saved = _conditional_update(
         db,

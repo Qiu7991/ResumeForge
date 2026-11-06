@@ -147,6 +147,19 @@ const settingsUi = {
   "settingsUi.webFormRelaxed.warning":
     "Once on, the program tries to click dropdown and popup options for you and to tick the declaration items you confirmed one by one; something can be picked wrong, so check the form afterwards. " +
     "Four categories are never filled for you: date pickers, file uploads, password / verification code / bank card, and read-only radio or checkbox options without a popup - you need to handle these yourself.",
+
+  // ── Generation preferences: show project tech stack ──────────
+  "settingsUi.generationPrefs.title": "Generation preferences · Resume content",
+  "settingsUi.generationPrefs.intro":
+    "Controls whether generated resumes show a separate \"Tech stack: ...\" line. " +
+    "The tech stack stays in your profile for job matching and interview prep; this switch only decides whether it appears on the resume page.",
+  "settingsUi.generationPrefs.toggleAria": "Show project tech stack on resumes",
+  "settingsUi.generationPrefs.enableToast": "On: generated resumes will show project tech stack",
+  "settingsUi.generationPrefs.disableToast": "Off: generated resumes no longer show project tech stack",
+  "settingsUi.generationPrefs.saveFailed": "Could not save generation preferences",
+  "settingsUi.generationPrefs.hint":
+    "Nothing is deleted when this is off - the tech stack items simply stay off the page and remain visible (and draggable back) in the resume editor. " +
+    "Resumes generated earlier are not affected.",
 } as const;
 
 export default settingsUi;

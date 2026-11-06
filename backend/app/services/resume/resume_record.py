@@ -26,11 +26,13 @@ from ...schemas.resume import ResumeContent
 from ...schemas.resume_document import DocumentValidationError
 from ...schemas.resume_generation import RESUME_MODES, UNLIMITED_PAGE_LIMIT, ResumeLanguage
 from ..exporter import normalize_page_limit
+from ..profile.generation_preferences import show_tech_stack
 from . import document_io
 from .document_conversion_types import ConversionError
 from .document_view import header_text
-from .resume_sections import default_section_order_config, persistable_format_config
 from .resume_dedupe import dedupe_resume
+from .resume_sections import default_section_order_config, persistable_format_config
+from .resume_tech_stack import strip_resume_tech_stack, visible_tech_stack_count
 from .resume_template_store import (
     resolve_format_config,
     resolve_style_config,
@@ -159,7 +161,7 @@ def save_record(
         else normalize_page_limit(page_limit, mode)
     )
     # 生成结果去重（E15）：只把"同一身份被写了两遍"的条目合并成一条、要点取并集，
-    # **不做任何篇幅裁剪**——页数/行预算由 resume_space_gate 与 document_truncate 负责，
+    # **不做任何篇幅裁剪**——页数/行预算由 resume_space_gate 与导出层负责，
     # 两条路径互不调用。放在转换之前处理 v1（模型输出），转换之后处理 v2（SSE 复用的
     # 那份 document，是另一个对象），两侧都收口，done 事件与落库内容才不会不一致。
     dedupe_resume(content)
@@ -178,6 +180,12 @@ def save_record(
             )
         except (ConversionError, DocumentValidationError) as exc:
             raise HTTPException(status_code=422, detail=f"生成内容无法落库：{exc}") from exc
+    # 「显示技术栈」是**全局显示偏好**，不是 AI 输出的专属规则（默认关）。
+    # 必须作用在 v2 上：v1 的 projects[].tech_stack 转成 v2 是 placement=trail 的列表项，
+    # 只清 v1 的话转换器会按资料原值把它重新写回纸面。
+    if not show_tech_stack(db):
+        strip_resume_tech_stack(document)
+        logger.info("生成技术栈收口：可见技术栈项=%s", visible_tech_stack_count(document))
     record = ResumeRecord(
         title=title,
         job_id=job.id if job is not None else None,

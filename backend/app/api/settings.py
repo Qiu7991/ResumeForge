@@ -52,6 +52,7 @@ from ..services.llm import create_provider
 from ..services.llm.base import LLMError
 from ..services.llm.connection_probe import connection_probe_config
 from ..services.llm.model_catalog import list_available_models
+from ..schemas.generation_preferences import GenerationPreferences
 from ..services.llm.thinking import probe_thinking, thinking_support
 from ..services.llm.usage_tasks import (
     DEFAULT_AUDIT_LANGUAGE,
@@ -59,6 +60,10 @@ from ..services.llm.usage_tasks import (
     TASK_SETTINGS_PROBE,
     set_ambient_scope,
     set_ambient_task,
+)
+from ..services.profile.generation_preferences import (
+    get_generation_preferences,
+    save_generation_preferences,
 )
 from ..services.settings_service import (
     get_assistant_orb_setting,
@@ -399,3 +404,21 @@ def write_batch_export(payload: BatchExportConfig, db: Session = Depends(get_db)
         return save_batch_export_config(db, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+# ===== 生成偏好：是否显示项目技术栈（默认关）=====
+
+
+@router.get("/generation-preferences", response_model=GenerationPreferences)
+def read_generation_preferences(db: Session = Depends(get_db)):
+    """生成偏好（默认**不显示**项目技术栈）。
+
+    关闭只影响"上不上纸面"：技术栈数据仍在文档里（v2 记 placement=hidden），
+    编辑器可以拖回来。旧简历不受影响——偏好只在生成/保存那一刻读取。
+    """
+    return get_generation_preferences(db)
+
+
+@router.put("/generation-preferences", response_model=GenerationPreferences)
+def write_generation_preferences(payload: GenerationPreferences, db: Session = Depends(get_db)):
+    """整对象落库：只写单个字段会让以后新增的偏好项被静默清空。"""
+    return save_generation_preferences(db, payload)

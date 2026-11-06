@@ -28,6 +28,7 @@ import AssistantRelaxedModeCard from "./AssistantRelaxedModeCard";
 import SkillsCard from "./SkillsCard";
 import AssistantOrbCard from "./AssistantOrbCard";
 import WebFormRelaxedModeCard from "./WebFormRelaxedModeCard";
+import GenerationPreferencesCard from "./GenerationPreferencesCard";
 import LocaleSettingsCard from "./LocaleSettingsCard";
 import ResumeFontCard from "./ResumeFontCard";
 import NavigationSettingsCard from "./NavigationSettingsCard";
@@ -130,6 +131,9 @@ export function AppearancePanel() {
       <ResumeFontCard />
       <NavigationSettingsCard />
       <ShortcutSettingsCard />
+      {/* 生成偏好：简历里要不要单独显示项目技术栈（默认关）。放在外观页是因为它和
+          「简历字体」一样，描述的是"产出长什么样"，不是"界面长什么样"。 */}
+      <GenerationPreferencesCard />
       {/* 批量操作：岗位广场的批量生成与简历中心的批量导出共用这一套参数（未配置时两处会拦截）。 */}
       <SettingsGroupTitle text={t("batchOperation.title")} hint={t("batchOperation.group.hint")} />
       <BatchOperationCard />
