@@ -35,3 +35,33 @@ FAIL 前 9 阶段复跑无 FAIL — 复跑 FAIL=2（根因：1.x 库 167444480B 
 
 **结论**：J0 自身 11 项全 PASS/SKIP；唯一 FAIL 为继承的 1.x 库尺寸基线问题（非本轮
 造成，证据见 blocked.md）。按 E8 不重试，J0 完成。
+
+## J2 BOSS 薪资字体解密（commit 待填）
+
+**夹具实证（boss_list.html + boss_detail.html）**：
+- 列表 15 张卡薪资全部是 U+E031–U+E03A 的 PUA 编码；夹具里**没有字体文件**
+  （无 @font-face、唯一 base64 块是 PNG）；
+- **详情页主岗位薪资是明文**（`<span class="salary">8-12K</span>` + meta + JS 三处），
+  与列表第一张卡同岗位（AI人工智能技术员（服装方向））→ 得到 ground-truth 对照对
+  `[E039]-[E032][E033]K == 8-12K`；
+- 跨平台（智联/猎聘/51job）无同名岗位，交叉匹配路径穷尽。
+
+**实现**（`services/job_hunt/sites/boss_font.py`，全部自写）：
+1. `build_digit_map_from_font`：fontTools 读 glyf 轮廓 → 包围盒归一化量化签名 →
+   与同字体数字字形比对（支持复合字形展开）；woff2 缺 brotli 时诚实降级；
+2. `mapping_from_pairs`：明文对照逐位对齐 + 多数票（生产上每打开一个详情页就多一对）；
+3. `mapping_from_constraints`：整页区间「左<右 + 一一对应 + 量级合理」穷举，**只输出
+   全部可行解中取值唯一的符号**（18 个可行解，宁缺毋假）；
+4. `decode_salary`：纯替换，映射缺失保留原字符并标 `ok=False`，永不抛异常。
+
+**解密成果**：6/10 符号有实证钉死（E032=1/E033=2/E039=8 来自明文对照；
+E031=0/E034=3/E035=4 为约束唯一解）；E036/E037/E038/E03A 候选 ⊆ {5,6,7,9} 且多解，
+**老实留在候选集**（真实字体文件或更多详情页明文可收敛）。4 张卡完整还原：
+8-12K / 8-13K×2 / 12-24K（字符集 ⊆ 已钉死符号）。
+
+**闸门（J2 后 --phase 10）**：检查 5「BOSS 字体解密存在」PASS；检查 8「pytest -k
+job_hunt 全绿」PASS（21 passed in 4.33s）；其余同 J0（唯一 FAIL 仍为 1.x 库尺寸存量问题）。
+
+**测试**：21 例全绿（decode 边界 / 对照对 / 约束求解 / 合成字体含复合字形 / 真夹具断言）。
+fontTools 实测坑已记录：fontBuilder 编译 cmap format 4 会丢 glyphId=1 的映射（合成字体
+用垫片字形绕开）；`endPtsOfContours` 存终点索引而非计数。
