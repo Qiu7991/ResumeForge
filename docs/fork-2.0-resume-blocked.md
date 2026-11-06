@@ -28,3 +28,19 @@
 ## DEFERRED-2：去重的相似度阈值
 
 沿用 1.x 的确定性规则（身份键完全相同才合并），不做阈值调优（计划 §9.4）。
+
+## DEFERRED-3：覆盖清单——内置分区（项目/经历/教育）缺条目时只能走 AI 修订
+
+- **现状**：2.0 的 `resolveCoverageAction`（`frontend/src/components/resume/coverageGroups.ts:204`）
+  只对 `custom:` 分区返回 `append`；内置分区返回 `revise`（AI 修订）。
+- **2.0 已具备的部分**：自建分区的「从资料补上这段」是**确定性补入、不调模型**
+  （`services/resume/resume_profile_append.py` + `POST /append-profile-entries`），
+  正是计划卡 R4 步骤 3 要的正确做法。14+14 后端测试与 31 前端测试全绿。
+- **1.x 的对应实现**：`frontend/src/features/profile-library/projectionContent.ts`（615 行，
+  `fillCoverageNote` / `fillProjectionCandidate` / `mergeProjectionCandidate`），纯前端合并。
+- **为什么不移植**：卡 R4 步骤 1 授权「已有对应物 → 只补差异，不重写」；而补这条差异要
+  搬 615 行 + 改动作判定 + 接投影请求（2.0 的 `PaperProjectionOut` 与 1.x 前端类型不同构），
+  已超出「补差异」的边界，且触碰 `ResumeDetailPreview` 会牵连已验收的预览链路。
+- **影响面**：只影响"内置分区整条缺失"这一种清单项；自建分区、AI 修订、去制作台三条路
+  都正常。
+- **留人工**：若要补，建议单开一张卡，先对齐 `PaperProjectionOut` 的前端类型再搬。
