@@ -418,3 +418,134 @@ $ grep -n "_projected_custom_entries" -A12 backend/app/services/resume/resume_pr
 这条组合正是 1.x 注释里点名的复发路径："生成时藏好了 → 补一段 → 又露出来"。R3 的
 挂点已经覆盖它（补进来的 `tech_stack` 是 `placement=trail`，落库前被置 hidden），
 R7 的 D 类对抗会实测这一点。
+
+## R5 画像导入（目标：claims + 资料字段，**不是** profile_facts）
+
+### 关键事实（R1 已核实，这里再钉一次）
+
+计划书 §1.4 / §9.1 / §R5 的前提是「1.x 画像导入写 `profile_facts`，2.0 已删该表所以要改目标」。
+**实测 1.x 的画像导入写的就是 `ClaimRecord` + `ProfileEntry`**，从来不是 `profile_facts`：
+
+```
+$ grep -n "profile_facts/ClaimRecord" backend/app/services/profile/portrait_import.py
+33:    ClaimRecord,
+472:        for row in db.query(ClaimRecord)...
+527:        db.add(ClaimRecord(**claim))
+```
+
+所以本卡的「目标改写」实际落成：**照 1.x 原本的 claims + 资料条目移植，并且
+一个字符都不碰 `profile_facts` / `fact_store`**（这才是 E14 的本意）。
+phase_9 第 9 项 `画像导入无 profile_facts 引用 == 0` 实测通过。
+
+### 改动
+
+| 文件 | 动作 |
+|---|---|
+| `backend/app/services/profile/portrait_import.py` | **新增**（从 1.x 逐字复制，549 行，**零改动**） |
+| `backend/app/prompts/portrait_extract.md` | **新增**（从 1.x 逐字复制，85 行，**零改动**） |
+| `scripts/import_portrait.py` | **新增**（从 1.x 复制 + 加显式 `--dry-run` 别名） |
+| `backend/tests/test_portrait_import.py` | **新增**（从 1.x 逐字复制，9 用例，**零改动即绿**） |
+
+### 为什么只加了一个参数
+
+1.x 的 dry-run 是「不加 `--apply` 的隐含默认」。计划卡 R5 步骤 6 写的是
+`python scripts/import_portrait.py --dry-run`。加一个显式别名（行为完全不变，
+与 `--apply` 同时给出时以 `--apply` 为准并打印一句提示），让"我这次只看看"在命令行里
+可读、可 grep。**没有新增任何写库路径。**
+
+### 依赖核对（R1 预判的 import 路径问题不存在）
+
+R1 担心 `app.services.llm_settings` 在 2.0 改名。实测 2.0 **同路径同签名**：
+```
+backend/app/services/llm_settings.py:169:def get_llm_config(db: Session) -> LLMConfig
+backend/app/services/llm/__init__.py:10:def create_provider(config: LLMConfig, ...)
+backend/app/database.py:106:SessionLocal = ...
+```
+字段 ID 也对齐（`catalog_experience.py:45-60` 的 `projects.name/role/start_date/
+end_date/tech_stack/description/highlights/public_url/outcome_type` 与 1.x 写入的键
+完全一致，`outcome_type` 五个枚举值也相同）。所以**服务层零改动**。
+
+### L1 / L2 / L3
+
+```
+$ python -c "ast.parse(scripts/import_portrait.py)"            → AST OK
+$ python -c "import app.services.profile.portrait_import"      → service import OK
+$ python -c "exec scripts/import_portrait.py"                  → script import OK
+
+$ pytest tests/test_portrait_import.py -q                      → 9 passed
+```
+
+L3：
+```
+PASS scripts/import_portrait.py 存在 — scripts/import_portrait.py
+PASS 画像导入无 profile_facts 引用 — 命中 0 处 []
+PASS portrait_extract.md 存在 — backend\app\prompts\portrait_extract.md
+PASS N8 定向测试绿 — returncode=0；21 passed, 1 warning
+PASS 前 8 阶段复跑无 FAIL — 复跑 FAIL=0
+
+汇总：PASS=12 FAIL=0 SKIP=0     ← phase_9 首次全项满分
+```
+
+### dry-run 对账输出（★ 只跑 dry-run，未执行 --apply）
+
+```
+复用已有抽取结果：...\简历通\runtime\portrait-bundle.json（加 --extract 可重新抽取）
+抽取摘要：{"projects": 10, "experiences": 1, "skills": 54}
+
+预览（尚未写库）：
+  识别到教育经历（不写入资料库，避免和已有教育经历重复）：
+    - 哈尔滨信息工程学院
+  新增资料库条目（65）：
+    + AI 简历工作台
+    + CreatorDistill 创作者内容分析系统
+    + 基于 ESP32-S3 的居家康养异常行为检测系统
+    + ESP-SparkBot AI 桌面机器人复刻
+    + STM32F070 + SHT31 + RS485 温湿度传感节点
+    + PixelBeads 拼豆网站复刻
+    + 家庭网络与自托管
+    + CreatorDistill 爆款拆解语料库
+    + 微信公众号民生消费类
+    + AIGC 短视频生产体系
+    + 成都纳界盛科技有限公司 · 工程师…
+    + （技能 54 条：C / TypeScript / JavaScript / Python / SQL / Shell / C++ /
+       LLM 结构化输出 / OpenAI 兼容协议 / 提示词工程 / JD 抽取 / 匹配度分析 /
+       Codex·ZCode / WorkBuddy / Next.js / Vue3 / Fastify / Drizzle / SQLite /
+       Playwright / Vitest / Docker / Git / LVGL / ESP-IDF / MCU / 驱动协议 /
+       立创EDA / Modbus / ROS2 / BLE / 逻辑分析仪 …）
+  更新已有条目（0）：
+  新增事实台账（11）：
+    + AI 简历工作台 · 项目事实｜已确认｜承担：项目负责人
+    + CreatorDistill 创作者内容分析系统 · 项目事实｜已确认｜承担：负责模块
+    + 基于 ESP32-S3 的居家康养异常行为检测系统 · 项目事实｜已确认｜承担：项目负责人
+    + ESP-SparkBot AI 桌面机器人复刻 · 项目事实｜已确认｜承担：负责模块
+    + STM32F070 + SHT31 + RS485 温湿度传感节点 · 项目事实｜已确认｜承担：负责模块
+    + PixelBeads 拼豆网站复刻 · 项目事实｜已确认｜承担：参与
+    + 家庭网络与自托管 · 项目事实｜已确认｜承担：负责模块
+    + CreatorDistill 爆款拆解语料库 · 项目事实｜待确认｜承担：负责模块
+    + 微信公众号民生消费类 · 项目事实｜已确认｜承担：主导方案或交付
+    + AIGC 短视频生产体系 · 项目事实｜待确认｜承担：主导方案或交付
+    + 成都纳界盛科技有限公司 · 经历事实｜待确认｜承担：参与
+
+未写入数据库。确认以上明细后加 --apply 执行；写入前会自动备份数据库。
+```
+
+对账四项都成立：
+1. **源行数**：10 项目 / 1 经历 / 54 技能（与 bundle 逐项相符）；
+2. **预计写入**：65 条资料条目 + 11 条事实；
+3. **跳过原因**：教育 1 条（`哈尔滨信息工程学院`，不写资料库避免与已有教育重复）；
+4. **不覆盖**：「更新已有条目（0）」——2.0 库的 `profile_entry` 是空的（新库），
+   所以没有可覆盖对象；一旦有，`plan_portrait` 的"只补空字段"逻辑由
+   `test_portrait_import.py` 的 9 个用例守住（含现有用例里对只补空的断言）。
+
+### 未写入证明（dry-run 前后库指纹一致）
+
+```
+$ ls -la backend/data/resume_forge.db
+-rw-r--r-- 1 Administrator 197121 1085440 Nov  6 13:38 backend/data/resume_forge.db
+（dry-run 之后 mtime 仍是 13:38，即请求前的值）
+
+$ sqlite3 profile_entry count → 0     （导入前就是 0，未新增）
+$ sqlite3 claim_record          → 表存在，未新增行
+```
+
+**`--apply` 未执行**（计划 §9.4 DEFERRED-1：真数据迁移留人工）。
