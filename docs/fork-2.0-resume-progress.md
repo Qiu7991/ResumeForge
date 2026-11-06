@@ -104,3 +104,43 @@ $ npm run build                        → ✓ built in 989ms
 **处置**：删掉拷入的文件（保持 2.0 目录干净），登记 BLOCKED 后继续。
 红线 §2.2#4 禁止改测试断言，而补这两个功能属于投递台（N3/N4 已验收范围，
 §13 明确「不碰」）。见 `fork-2.0-resume-blocked.md`。
+
+## R1 落点复核（只读）
+
+产出 `docs/fork-2.0-resume-baseline.md`。四条结论：
+
+| 块 | 判定 | 关键证据 |
+|---|---|---|
+| ① 去重 | **GONE**，需移植+找挂点 | 2.0 无 `resume_dedupe.py` / `document_invariants.py`；`grep dedupe_resume` = 0 |
+| ② 技术栈开关 | **GONE**，三处落点全缺 | `grep show_tech_stack` / `include_tech_stack` = 0；但 `AppSetting` 与 1.x 同构 |
+| ③ 覆盖清单 | **EXISTS**，2.0 已完整实现 | `resume_profile_append.py` + `POST /append-profile-entries` + 前端 `CoverageActions.tsx` |
+| ④ 画像导入 | **GONE**，但**目标无需改写** | 1.x 画像导入本来就写 `ClaimRecord`，不是 `profile_facts` |
+
+### 两处与计划书不符（以代码为准，E5）
+
+**偏差 1（③）**：计划 §1.4 写覆盖清单「需核对」，§R4 准备移植。实测 2.0 已有完整实现
+（后端 `resume_coverage.py` 457 行 + `resume_profile_append.py` + 专用 API + 前端组件 +
+三条测试）。R4 改为「只补差异 + 对抗验证」，不新增代码。
+
+**偏差 2（④，关键）**：计划 §1.4/§9.1/§R5 的前提是「1.x 画像导入写 `profile_facts`，
+2.0 已删表所以要改目标」。实测**1.x 的画像导入写的就是 `ClaimRecord`**：
+
+```
+$ grep -n "profile_facts\|ClaimRecord" backend/app/services/profile/portrait_import.py
+33:    ClaimRecord,
+472:        for row in db.query(ClaimRecord).filter(ClaimRecord.deleted_at.is_(None)).all()
+527:        db.add(ClaimRecord(**claim))
+```
+
+`profile_facts` 在 1.x 属于**另一套功能**（扩展栏目资料表 `api/profile_facts.py` /
+`models/profile_fact.py` / `fact_store.py`），与画像导入无关。所以 R5 的「改目标」
+落地为：**照 1.x 原本的 claims+资料条目目标移植，并且绝不引入 `fact_store`/`profile_facts`**
+（这正是 E14 的本意）。phase_9 第 9 项「画像导入无 profile_facts 引用 == 0」照样成立。
+
+### 挂点决策（R2/R3 直接用）
+
+- 去重挂 `resume_record.save_record`（**不是** `document_io.prepare_document_for_save`：
+  后者被 9 处调用，含手工保存，塞进去会删用户手动条目）
+- 技术栈：生成路径挂 `save_record`；手工保存挂 `document_save.save_content`
+  （与 1.x `document_save.py:255` 逐字对齐）；修订路径挂 `ai_edits_routes` 的 finalize
+- 画像导入：独立离线脚本，不进运行时路由
