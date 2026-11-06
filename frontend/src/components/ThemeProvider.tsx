@@ -52,7 +52,6 @@ export default function ThemeProvider({ children }: { children: ReactNode }) {
     <ConfigProvider
       locale={antdLocale(locale)}
       theme={dark ? darkTheme : appTheme}
-      getPopupContainer={() => document.body}
     >
       <AntdApp message={MESSAGE_CONFIG}>{children}</AntdApp>
     </ConfigProvider>
