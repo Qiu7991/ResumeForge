@@ -53,6 +53,14 @@ const applyQueue = {
   "applyQueue.detail.updatedAt": "Last updated",
   "applyQueue.detail.greeting": "Greeting",
   "applyQueue.detail.defaultGreeting": "Default greeting",
+  "applyQueue.detail.noResume": "No tailored Resume yet",
+  "applyQueue.greeting.unconfirmed": "Greeting not confirmed",
+  "applyQueue.greeting.unconfirmedHint": "No greeting saved yet: this item is skipped when sending. Click this tag to edit, generate and save one.",
+  "applyQueue.greeting.pendingConfirm": "Greeting pending review",
+  "applyQueue.greeting.pendingConfirmHint":
+    "Generated for this Job but not yet confirmed: this item is skipped when sending. Click this tag to edit and save, or use “Confirm greetings” in the toolbar to confirm in bulk.",
+  "applyQueue.greeting.clickToEdit": "Click to edit",
+  "applyQueue.greeting.editAria": "Edit greeting for {job}",
 
   "applyQueue.admission.needsConfirm": "Confirm each one",
   "applyQueue.admission.unanalyzed": "Not analyzed",

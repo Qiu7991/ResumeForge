@@ -57,6 +57,14 @@ const applyQueue = {
   "applyQueue.detail.updatedAt": "最近更新",
   "applyQueue.detail.greeting": "招呼语",
   "applyQueue.detail.defaultGreeting": "默认招呼语",
+  "applyQueue.detail.noResume": "还没有岗位版简历",
+  "applyQueue.greeting.unconfirmed": "招呼语未确认",
+  "applyQueue.greeting.unconfirmedHint": "还没确认招呼语：开始投递时会被跳过。点这条标签直接编辑，按岗位生成并保存即可。",
+  "applyQueue.greeting.pendingConfirm": "招呼语待确认",
+  "applyQueue.greeting.pendingConfirmHint":
+    "AI 已按岗位生成，但还没经你确认：开始投递时会被跳过。点这条标签编辑并保存，或点工具栏「确认招呼语」批量确认。",
+  "applyQueue.greeting.clickToEdit": "点击编辑",
+  "applyQueue.greeting.editAria": "编辑招呼语：{job}",
 
   // 准入徽标自己的两枚固定标签（准入结论的展示名仍来自 types 的 ADMISSION_META）。
   "applyQueue.admission.needsConfirm": "需逐条确认",

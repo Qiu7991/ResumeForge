@@ -51,6 +51,7 @@ function renderTable(items: ApplyQueueItem[]) {
           selectedIds={[]}
           setSelectedIds={vi.fn()}
           setDetail={vi.fn()}
+          setEditing={vi.fn()}
           rowMenuItems={() => [{ key: "x", label: "占位项" }]}
         />
       </ContextMenuHost>

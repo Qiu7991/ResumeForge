@@ -14,6 +14,18 @@ const workbench = {
   "workbench.group.template": "Template",
   "workbench.group.page": "Page setup",
   "workbench.group.style": "Styles",
+  // Section visibility (ported from 1.x: hidden = section.hidden=true, data kept, off the page).
+  "workbench.sectionsVisibility.trigger": "Sections",
+  "workbench.sectionsVisibility.syncProfile": "Sync Profile order",
+  "workbench.sectionsVisibility.hideTechStack": "Hide all tech stack",
+  "workbench.sectionsVisibility.showTechStack": "Show all tech stack",
+  "workbench.sectionsVisibility.title": "Visible sections",
+  "workbench.sectionsVisibility.count": "{hidden}/{total} hidden",
+  "workbench.sectionsVisibility.hint":
+    "Hidden sections stay in this resume but are left off the page; you can turn them back on anytime.",
+  "workbench.sectionsVisibility.hide": "Hide {label}",
+  "workbench.sectionsVisibility.show": "Show {label}",
+  "workbench.sectionsVisibility.keepOne": "Keep at least one section visible",
   "workbench.group.layout": "Templates and layout presets",
   "workbench.group.measure": "Typography settings",
   "workbench.group.spacing": "Hierarchy and spacing",

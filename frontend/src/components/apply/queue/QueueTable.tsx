@@ -29,6 +29,7 @@ export function QueueTable({
   selectedIds,
   setSelectedIds,
   setDetail,
+  setEditing,
   rowMenuItems,
 }: {
   items: ApplyQueueItem[];
@@ -36,6 +37,8 @@ export function QueueTable({
   selectedIds: number[];
   setSelectedIds: (ids: number[]) => void;
   setDetail: (item: ApplyQueueItem) => void;
+  /** 点招呼语/未确认标签直接打开编辑弹窗（不再要求先走「更多操作」）。 */
+  setEditing: (item: ApplyQueueItem) => void;
   rowMenuItems: (record: ApplyQueueItem) => RowMenuItem[];
 }) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后列头停在旧文案。
@@ -144,16 +147,53 @@ export function QueueTable({
         <Space orientation="vertical" size={0} style={{ width: "100%" }}>
           <Typography.Text
             type="secondary"
-            ellipsis={{ tooltip: item.resume_title || t("applyQueue.detail.defaultResume") }}
+            ellipsis={{ tooltip: item.resume_title || t("applyQueue.detail.noResume") }}
           >
-            {item.resume_title || t("applyQueue.detail.defaultResume")}
+            {item.resume_title || t("applyQueue.detail.noResume")}
           </Typography.Text>
-          <Typography.Text
-            type="secondary"
-            ellipsis={{ tooltip: item.greeting || t("applyQueue.detail.defaultGreeting") }}
-          >
-            {item.greeting || t("applyQueue.detail.defaultGreeting")}
-          </Typography.Text>
+          {item.greeting ? (
+            // 招呼语本身就是编辑入口：单击打开编辑弹窗，不再要求先走「更多操作 → 编辑」。
+            // 移植自 1.x 同名实现（2.0 原先只渲染纯文本，点了没任何反应）。
+            <Typography.Text
+              type="secondary"
+              ellipsis={{
+                tooltip: `${item.greeting} · ${t("applyQueue.greeting.clickToEdit")}`,
+              }}
+              className="apply-queue-greeting-edit"
+              role="button"
+              tabIndex={0}
+              aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+              onClick={() => setEditing(item)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  setEditing(item);
+                }
+              }}
+            >
+              {item.greeting}
+            </Typography.Text>
+          ) : (
+            <Typography.Text
+              type="secondary"
+              ellipsis={{ tooltip: t("applyQueue.greeting.unconfirmedHint") }}
+              className="apply-queue-greeting-edit"
+              role="button"
+              tabIndex={0}
+              aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+              onClick={() => setEditing(item)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  setEditing(item);
+                }
+              }}
+            >
+              <Tag color="warning" style={{ marginInlineEnd: 0 }}>
+                {t("applyQueue.greeting.unconfirmed")}
+              </Tag>
+            </Typography.Text>
+          )}
         </Space>
       ),
     },

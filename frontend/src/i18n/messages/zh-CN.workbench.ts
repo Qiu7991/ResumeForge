@@ -54,6 +54,17 @@ const workbench = {
   "workbench.group.template": "模板",
   "workbench.group.page": "版面",
   "workbench.group.style": "样式",
+  // 板块显隐（移植自 1.x：隐藏 = section.hidden=true，数据保留、不上面）。
+  "workbench.sectionsVisibility.trigger": "板块",
+  "workbench.sectionsVisibility.syncProfile": "按资料顺序同步",
+  "workbench.sectionsVisibility.hideTechStack": "隐藏全部技术栈",
+  "workbench.sectionsVisibility.showTechStack": "显示全部技术栈",
+  "workbench.sectionsVisibility.title": "显示板块",
+  "workbench.sectionsVisibility.count": "已隐藏 {hidden}/{total}",
+  "workbench.sectionsVisibility.hint": "关掉的板块不上纸面，内容仍保留在本份简历里，随时可以再打开。",
+  "workbench.sectionsVisibility.hide": "隐藏「{label}」",
+  "workbench.sectionsVisibility.show": "显示「{label}」",
+  "workbench.sectionsVisibility.keepOne": "至少保留一个显示板块",
   /** 第一组：模板与版式（L1 / L2，既有控件）。 */
   "workbench.group.layout": "模板与版式",
   /** 第二组：排版参数（L3，既有 `ResumeMeasureControls`）。 */

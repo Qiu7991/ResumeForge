@@ -198,6 +198,12 @@ def paper_document(document: ResumeDocument) -> ResumeDocument:
     changed = False
     sections = []
     for section in document.sections:
+        # 板块级隐藏（移植自 1.x）：整个板块不上纸面，数据仍保留在源文档里。
+        # 放在条目循环之前——板块被关掉时连标题都不该出现，与「条目全被隐藏后
+        # 空板块自然不渲染标题」是同一条路径。
+        if section.hidden:
+            changed = True
+            continue
         entries = []
         section_changed = False
         for entry in section.entries:
