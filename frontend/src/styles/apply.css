@@ -102,10 +102,18 @@
 }
 
 /* 队列里的招呼语本身就是编辑入口：单击直接打开编辑弹窗，不再要求走「更多操作」。
-   逐字移植自 1.x apply.css 同名规则（只这三条，不要加 display/width 之类——
-   1.x 在同样的 tableLayout="fixed" 下就能稳定工作，多改反而会改变单元格测量时机）。 */
+ *
+ * 关于宽度（2026-11-07 实测补充）：
+ * `Typography.Text ellipsis` 渲染成 `inline-block`，在 `tableLayout="fixed"` 的单元格里
+ * 它会按**内容宽度**撑开（实测 300px，列只有 260px），于是元素溢出单元格。
+ * rc-tooltip 每次重新定位时拿到的锚点矩形都在变（实测 y 在 372 ↔ 463 之间来回跳，
+ * 正好是一行的高度），这就是「悬停疯狂抖动」的物理来源。
+ * 把宽度锁死在 100% 后锚点矩形恒定，tooltip 只算一次。 */
 .apply-queue-greeting-edit {
   cursor: pointer;
+  /* 收敛到单元格内：`inline-block` 也要让 `max-width` 生效，ellipsis 才会截断。 */
+  max-width: 100%;
+  vertical-align: top;
 }
 
 .apply-queue-greeting-edit:hover {
@@ -116,6 +124,13 @@
   outline: 2px solid currentColor;
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+/* 招呼语所在单元格里的 antd 省略号容器同样要收敛，否则外层 `Space` 的 100% 宽度
+   与内层内容宽度不一致，测量结果仍在两档之间跳。 */
+.apply-queue-greeting-edit .ant-typography-ellipsis,
+.ant-typography.apply-queue-greeting-edit {
+  max-width: 100%;
 }
 
 .apply-collect-unmapped {
