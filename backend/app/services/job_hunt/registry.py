@@ -47,11 +47,13 @@ class JobHuntRegistry:
 
 def default_registry() -> JobHuntRegistry:
     """构建默认注册表：加平台 = 加一个子类 + 在这里 register 一行。"""
+    from .sites.boss import BossAdapter
     from .sites.job51 import Job51Adapter
     from .sites.liepin import LiepinAdapter
     from .sites.zhilian import ZhilianAdapter
 
     registry = JobHuntRegistry()
+    registry.register(BossAdapter())
     registry.register(ZhilianAdapter())
     registry.register(Job51Adapter())
     registry.register(LiepinAdapter())

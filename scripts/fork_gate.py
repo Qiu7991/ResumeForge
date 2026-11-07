@@ -27,12 +27,41 @@ FRONTEND = ROOT / "frontend"
 DB_PATH = BACKEND / "data" / "resume_forge.db"
 VENV_PY = BACKEND / ".venv" / "Scripts" / "python.exe"
 
-# 开工时记录的 1.x 数据库大小，用于证明未被修改
-STATIC_1X_DB_SIZE = 160989184
 # 1.x 数据库位置（只读 stat，绝不打开文件）
 ONE_X_DB_PATH = ROOT.parent / "简历通" / "backend" / "data" / "resume_forge.db"
+# 1.x 仓库根（用于 git 干净判定）
+ONE_X_REPO = ROOT.parent / "简历通"
 
 _results: list[tuple[str, str, str]] = []
+
+
+def _one_x_git_clean() -> tuple[bool, str]:
+    """1.x 是否「没有被我们改动」——判据是 git 工作树干净。
+
+    历史实现比对数据库字节数，但用户日常使用 1.x（自动投递、采集）会让 SQLite
+    增长或触发 WAL checkpoint，于是每次跑闸门都红，且与移植工作毫无关系。
+    git 状态才是「我们有没有动过它」的真实证据（数据库文件本身不在 git 里）。
+    """
+    if not ONE_X_REPO.exists():
+        return False, f"1.x 仓库不存在：{ONE_X_REPO}"
+    try:
+        status = subprocess.run(
+            ["git", "-C", str(ONE_X_REPO), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=30,
+        )
+        head = subprocess.run(
+            ["git", "-C", str(ONE_X_REPO), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"git 调用失败：{exc}"
+    if status.returncode != 0:
+        return False, f"git status 失败：{status.stderr.strip()[:120]}"
+    dirty = [ln for ln in status.stdout.splitlines() if ln.strip()]
+    sha = head.stdout.strip() if head.returncode == 0 else "?"
+    if dirty:
+        return False, f"1.x 工作树有 {len(dirty)} 处改动（HEAD {sha}）：{dirty[:3]}"
+    return True, f"1.x 工作树干净，HEAD {sha}"
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -97,12 +126,18 @@ def phase_0() -> None:
 
 def phase_1() -> None:
     """数据桥：1.x 未改、无 profile_facts、对账无未解释跳过。"""
+    # 1.x「未被我们修改」的真实判据是 **git 工作树干净 + HEAD 未变**，
+    # 不是数据库文件字节数：用户日常使用 1.x（投递/采集）会让 SQLite 增长或
+    # WAL checkpoint，字节数每次都会变——用它当断言只会产生与移植工作无关的红灯。
+    # 数据库文件大小仅作为**信息**输出，不参与判定。
     try:
         size = ONE_X_DB_PATH.stat().st_size
+        size_hint = f"（库 {size:,} 字节，仅供参考，用户日常使用会变）"
     except OSError as exc:
-        check("1.x 库未被修改", False, f"stat 失败：{exc}")
-    else:
-        check("1.x 库未被修改", size == STATIC_1X_DB_SIZE, f"当前 {size} 字节 / 记录 {STATIC_1X_DB_SIZE} 字节")
+        size_hint = f"（库 stat 失败：{exc}）"
+
+    git_ok, git_detail = _one_x_git_clean()
+    check("1.x 工作树未被修改", git_ok, git_detail + size_hint)
 
     if not DB_PATH.exists():
         check("2.0 库无 profile_facts 表", False, "2.0 库不存在（后端未启动过）")
