@@ -165,8 +165,28 @@
   *::before,
   *::after {
     scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    /*
+     * ⚠️ 这里**只能**关滚动平滑，绝不能压缩 animation / transition。
+     * 2026-11-07 实测（花了很长时间才定位到）：
+     *
+     * 上游 2.0 原来在这里写了
+     *     animation-duration: 0.01ms !important;
+     *     transition-duration: 0.01ms !important;
+     * 而 rc-trigger 的浮层定位依赖 rc-motion 的**动画结束回调**：
+     *
+     *   trigger/index.js:244  打开时 setInMotion(true)  → 挡住 onAlign()
+     *   trigger/index.js:308  onVisibleChanged 里 setInMotion(false) → 才放行
+     *   onVisibleChanged 由 rc-motion 在动画结束时回调
+     *
+     * 动画被压到 0.01ms 后，结束回调来不及触发（监听还没挂上），
+     * inMotion 永远是 true → onAlign() 从不执行 → 浮层停在占位位置
+     * `left: -1000vw; top: -1000vh`，实测即 x=-12803 / y=-7204（1000×视口）。
+     * 表现：所有下拉 / Popover / Tooltip 点开后什么都不出现。
+     *
+     * 1.x 的同一段只有 scroll-behavior 一条，所以从没出过这个问题。
+     * 跟随 1.x 的做法即可。牺牲的只是系统级「减少动画」这个偏好，
+     * 换来的是浮层能用——两者相权，能用优先。
+     */
   }
 }
+

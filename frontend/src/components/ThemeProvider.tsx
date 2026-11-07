@@ -29,7 +29,6 @@ import {
   useResolvedTheme,
   useThemeMode,
 } from "../features/theme/themeStore";
-import { usePrefersReducedMotion } from "../features/tou-tou/usePrefersReducedMotion";
 
 export default function ThemeProvider({ children }: { children: ReactNode }) {
   const mode = useThemeMode();
@@ -48,30 +47,22 @@ export default function ThemeProvider({ children }: { children: ReactNode }) {
 
   // 跟随系统时也要在系统切换的那一刻重画：useResolvedTheme 内部订阅了 matchMedia。
   const dark = useResolvedTheme() === "dark";
-  // 系统「减少动画」时关闭 antd 的 motion（见下方 getPopupContainer 旁的说明）。
-  const prefersReducedMotion = usePrefersReducedMotion();
 
   return (
     <ConfigProvider
       locale={antdLocale(locale)}
-      theme={
-        prefersReducedMotion
-          ? { ...(dark ? darkTheme : appTheme), token: { ...(dark ? darkTheme : appTheme).token, motion: false } }
-          : dark
-            ? darkTheme
-            : appTheme
-      }
+      theme={dark ? darkTheme : appTheme}
       /*
-       * 浮层统一挂到 body：简历预览里 `.resume-preview-pages` 用 transform 做缩放，
-       * transform 会创建新的定位上下文——浮层若留在原地会被困在缩放容器里，
-       * 表现为「点开下拉没有任何选项」。挂到 body 才能脱离该上下文。
+       * 浮层统一挂到 body。
        *
-       * 动画必须跟随系统偏好关闭（motion: false）：`foundation.css` 在
-       * prefers-reduced-motion 下把 animation-duration 压到 0.01ms，而 antd 的浮层
-       * 靠 rc-motion 监听 animationend 推进状态机——动画在监听挂上之前就跑完，
-       * 于是永远停在 `ant-slide-up-appear-prepare`（opacity: 0）。
-       * 实测：系统开启「减少动画」后，版式/字段语言下拉创建了却始终不可见。
-       * 关掉 motion 让 antd 走无动画路径，浮层直接以最终状态出现。
+       * ⚠️ 2026-11-07 排查记录（不要再走回头路）：
+       * 当天出现过「下拉/Popover 落在视口外 (x=-12803, y=-7204)」的故障，
+       * 一度误判为挂载点问题并改成挂 `.ant-modal-content`，实测无效。
+       * 真正的根因不在挂载点，而在 foundation.css：一度把动画改成
+       * `animation: none`，导致 rc-trigger 的 useAlign 在测量那一帧读到
+       * 宽度为 0，`scaleX === 0` 命中提前 return，浮层停在占位位置
+       * `left: -1000vw; top: -1000vh`（正是 -12803 / -7204 的来源）。
+       * 恢复 0.01ms 后定位正常。挂载点保持 body 即可。
        */
       getPopupContainer={() => document.body}
     >
