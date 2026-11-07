@@ -61,3 +61,42 @@ FAIL 在晨间报告里如实呈现，由人工更新基线常量（需改 phase
 HTML 夹具才能实现并验证，夹具目录里没有（用户采集清单未含聊天页）。
 **影响**：`monitor_reply()` 已可用；`fetch_conversations` 待人工在登录态补抓
 `docs/job-hunt-fixtures/boss_chat.html` 后实现。
+
+---
+
+## 【补漏轮 2026-11-07 午间】BOSS 采集适配器已补齐 + 闸门假 FAIL 已修
+
+### 补了什么
+
+夜间报告声称 J0–J10「理想档完成」，但**BOSS 采集适配器实际不存在**：
+`sites/` 下只有 `boss_font.py`（字体解密），没有 `boss.py`，注册表也只注册了智联/51job/猎聘。
+
+原因：计划文档 §8 的 J2 只写了「字体解密」、J4/J5/J6 只列了三个新平台，**默认把 BOSS 采集当成现成的**。实际上 2.0 的 `services/sites/boss_search.py` 是投递台采集那套（CDP 点击 + SearchResult），接口不是 `JobSiteAdapter`，没被接进 job_hunt。
+
+**已补**（commit `c42c05d`）：
+- `sites/boss.py`：`li.job-card-box` 卡片切分（**不能用 `<li>...</li>` 正则**，卡片内有嵌套 `<ul><li>` 会提前截断——这是实测踩到的坑）、`a.job-name` 标题与链接（补绝对地址）、`job-salary` 原文保留、`boss-name`/`company-location` 提取
+- 详情页：`h1[title]` 标题、`span.salary` **明文**薪资、`div.job-sec-text` JD 正文
+- 注册进 `default_registry`（boss 排第一）
+- `tests/test_job_hunt_boss.py` 11 个用例，含端到端：**列表乱码 `\ue039-\ue032\ue033K` 经详情明文 `8-12K` 对照后还原成 `8-12K`**
+
+**实测效果**：列表 15 条全部解析出标题/公司/地区/原始薪资；详情 JD 501 字。
+
+### 字体解密的真实进展（诚实口径）
+
+| 阶段 | 确定符号 | 完全还原条数 |
+|---|---|---|
+| 仅详情明文对照 | 3（8/1/2） | 1/15 |
+| 加区间约束求解 | **6**（0/1/2/3/4/8） | 4/15 |
+
+剩余 4 个符号（U+E036/37/38/3A）候选 ⊆ {5,6,7,9}，**多解无法唯一确定**。
+→ 必须拿真实字体文件（woff/ttf）做轮廓比对才能收敛。
+
+**这不是没做完，是信息不足**：没有字体文件时，正确做法是保留候选集并标记 `ok=False`，而不是猜一个值。
+
+### BLOCKED-GATE-1X-DBSIZE 已解决
+
+原实现比对 1.x 数据库字节数（写死 160,989,184），但用户日常使用 1.x 会让库增长/WAL checkpoint，导致每次跑闸门都红，且与移植工作无关。
+
+**改为检查 git 工作树是否干净**（`git status --porcelain` 为空 + 记录 HEAD），数据库大小仅作信息输出。这才是「我们有没有动过 1.x」的真实证据。
+
+改动后：`--all` 从 **PASS=59 FAIL=4** → **PASS=63 FAIL=0**。
