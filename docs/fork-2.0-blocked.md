@@ -52,6 +52,62 @@ StartTime = 2026/11/05 16:28:54   ← 早于夜间会话开始
 
 ---
 
+### V-5（高，已修，需在同步上游时保留本地版本）所有下拉 / Popover / Tooltip 点开无反应
+
+**现象**：点任何浮层（顶部模型下拉、简历预览的版式/字段语言/最大篇幅、「更多排版」、「板块」、投递台筛选下拉）都毫无反应。系统开启「减少动画」时必现。
+
+**文件**：`frontend/src/styles/foundation.css`，`@media (prefers-reduced-motion: reduce)` 段。
+
+**上游原样（出问题的版本）**：
+```css
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;        /* ← 这三行是元凶 */
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+```
+
+**完整因果链**（源码 + 运行时双重取证）：
+```
+frontend/node_modules/@rc-component/trigger/es/index.js
+  :244  打开时 setInMotion(true)          → 挡住 triggerAlign
+  :258  if (!inMotion) onAlign()          → 因此 onAlign 从不执行
+  :308  onVisibleChanged 里 setInMotion(false) → 才放行
+        而 onVisibleChanged 由 rc-motion 在「动画结束」时回调
+
+animation 被压到 0.01ms → 结束回调来不及触发（监听还没挂上）
+→ inMotion 永远为 true → onAlign() 从不执行
+→ 浮层停在 useOffsetStyle.js 的占位值 left:-1000vw; top:-1000vh
+```
+
+**实测证据**：
+| 项 | 值 |
+|---|---|
+| 浮层 inline style | `inset: 7259px auto auto 13284px` |
+| 渲染位置 | `x=-12803, y=-7204` = **1000 × 视口(1280×720)** + 锚点偏移 |
+| 改视口 1280×720 → 1600×1000 | 数值**不变**（说明压根没算，不是算错） |
+| 在 useAlign 插日志 | `onAlign` **一次都没被调用**（捕获 0 条） |
+| 1.x 同一段 CSS | **只有 `scroll-behavior` 一条**，所以从未出现该问题 |
+
+**试过但无效的方案**（避免以后重复踩）：
+- ❌ 全局 `animation: none` —— 数值变成 `0s`，浮层仍不可见
+- ❌ 强制起始帧终态（覆盖 `opacity/transform`）—— opacity 变 1，位置仍在视口外
+- ❌ `getPopupContainer` 改挂 `.ant-modal-content` —— `inset` 数值变了但同样在视口外
+- ❌ 强制 `position: fixed` —— 无效
+- ❌ **只覆盖浮层的 `animation-duration: 0.2s`（只增不改上游）** —— 实测 `animationDuration` 确实变成 0.2s，但浮层仍在 `(-12812, -7204)`。说明这条全局规则的影响不止 animation-duration 一项
+- ❌ 降级 `@rc-component/trigger` 到 3.9.1 —— npm 安装把包目录搞坏，已回退；且根因不在 trigger 版本
+
+**唯一有效方案**：把上游那 3 行**整块移除**，只留 `scroll-behavior: auto !important`（等同 1.x）。
+
+**代价**：系统级「减少动画」偏好对本应用不再生效。
+
+**同步上游时的处置**：这一段保留本地版本即可，`foundation.css` 其余部分照常合并。回退方式：把上面"上游原样"那 3 行贴回去，浮层立刻全部失效（可用于复现验证）。
+
+---
+
 - B-1 | §2.2②（硬约束：2.0 浏览器默认端口改 9343/9344）与卡片 N5「禁止」栏注记（2.0 保持 9333 默认，改配置是运行时的事）存在文字冲突 | 按 §2 开头「这一节不是建议，是硬约束。违反任何一条，本轮作废」优先级执行：改了 `backend/app/config.py` 两个常量（DEFAULT_BROWSER_PORT=9343、DEFAULT_WEBFORM_BROWSER_PORT=9344）。夜间不起任何浏览器，无运行时影响 | config.py:43-50 | 如用户认可 N5 注记口径，回退该 2 行即可（git show 即见 diff）
 - B-2 | §4.5 模板的 start-2.0.cmd 未带 -NoBrowser，而不带时 Start-ResumeForge.ps1 会在启动完自动 `Start-Process $pageUrl` 打开默认浏览器（scripts/ResumeForge.Process.ps1:421-429） | 加了 `-NoBrowser` 参数，其余与模板一致 | 红线#4「禁开任何浏览器进程」 | 无
 - B-1（更新） | 实测发现 §2.2② 改 `DEFAULT_BROWSER_PORT=9343` 会打红上游测试 `tests/test_apply_api_config_browser.py::test_browser_status_reports_stopped`（断言 `port == 9333`，且 9333 共被 10 处上游测试钉死）；E4 禁改断言 | 按 E5「以代码为准」回退出厂常量为 9333（9344 无测试钉住，保留）；§2.2② 的意图改在**运行时配置**上达成：已对 2.0 实例 `PUT /api/apply/config` 写入 `browser_port=9343`（N5 卡注记原文「2.0 保持 9333 默认，改配置是运行时的事」正是此口径）。§10.1 KEPT 里「端口改 9343」由该运行时配置满足 | pytest 该文件 16 passed；GET /api/apply/config → browser_port=9343 | 若要把它做成出厂默认（改常量），需同步把上游测试断言期望值改为 DEFAULT_BROWSER_PORT 引用——属于改断言，留待用户拍板
