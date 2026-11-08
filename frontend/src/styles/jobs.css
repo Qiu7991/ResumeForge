@@ -135,11 +135,12 @@
   width: 100%;
 }
 
-/* 辅助行：小号无边框文字按钮，一行放得下 6 个；多出「前往投递」时允许折行。 */
+/* 辅助行：默认按钮（有边框 + 图标，与 1.x 一致）。按钮宽度随文案变化，靠 flex-wrap
+   自然折行；gap 用 8px 让相邻按钮的边框之间有清晰间隔（4px 时两个圆角几乎贴上）。 */
 .job-detail-actions-secondary {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 8px;
   align-items: center;
   justify-content: flex-start;
   padding-top: 8px;
