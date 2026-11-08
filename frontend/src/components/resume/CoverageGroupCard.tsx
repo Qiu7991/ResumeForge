@@ -103,6 +103,13 @@ export default function CoverageGroupCard({
           {t("resume.coverage.sectionCount", { label: sectionLabel, count: group.total })}
         </span>
         {reasonSummary ? <span className="resume-coverage-reasons">{reasonSummary}</span> : null}
+        {group.sectionHidden ? (
+          <Tooltip title={t("resume.coverage.sectionHiddenAction")}>
+            <span className="resume-coverage-hidden-hint">
+              {t("resume.coverage.sectionHidden")}
+            </span>
+          </Tooltip>
+        ) : null}
       </div>
       <ul className="resume-coverage-items">
         {visibleItems.map((item) => {

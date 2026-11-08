@@ -13,7 +13,6 @@ from alembic import command
 from app.database_migrations import build_alembic_config
 from app.services.data_backup.manifest import build_manifest, current_head_revision
 from sqlalchemy import create_engine
-from tests.migration_refs import BASELINE_REVISION
 
 _OLD_LIBRARY_REVISION = "0075_profile_section_job_filter"
 
@@ -68,8 +67,14 @@ def test_manifest_without_snapshot_keeps_code_head(tmp_path) -> None:
     assert manifest["alembic_revision"] == expected
 
 
-def test_current_2_0_library_snapshot_reports_baseline_revision(tmp_path) -> None:
-    """回归确认：2.0 自己导出的包，外层清单的 revision 仍是新基线。"""
+def test_current_2_0_library_snapshot_reports_chain_head(tmp_path) -> None:
+    """回归确认：2.0 自己导出的包，外层清单的 revision 是**当前迁移链的 head**。
+
+    这个用例守的性质是"从 2.0 自己建的库里读到的是这条链的真实版本"，而不是
+    "这条链只有 0001 一条"。二开分支在基线之后合法追加了 0002，旧断言
+    （`== BASELINE_REVISION`）因此假红——它把"2.0 基线"与"链 head"当成了同一件事。
+    改成与 ``current_head_revision`` 一致：仍然能抓住"读到的版本跟代码不一致"这个真问题。
+    """
     database_file = tmp_path / "resume_forge.db"
     engine = create_engine(f"sqlite:///{database_file.as_posix()}")
     try:
@@ -78,7 +83,8 @@ def test_current_2_0_library_snapshot_reports_baseline_revision(tmp_path) -> Non
         engine.dispose()
     bind = _memory_bind()
     try:
+        expected = current_head_revision(bind)
         manifest = build_manifest(bind, snapshot=database_file)
     finally:
         bind.dispose()
-    assert manifest["alembic_revision"] == BASELINE_REVISION
+    assert manifest["alembic_revision"] == expected

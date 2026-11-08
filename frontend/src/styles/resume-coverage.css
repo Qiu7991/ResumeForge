@@ -35,6 +35,16 @@
   color: rgba(0, 0, 0, 0.45);
 }
 
+/* 「这个板块当前是隐藏的」：补入前的如实提醒。
+   与原因汇总同一档小字，但用琥珀色——它不是"为什么没收录"的解释，而是一个
+   会导致"补了也看不见"的前提条件，必须比中性灰显眼。 */
+.resume-coverage-hidden-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--rf-accent-amber, #d97706);
+  cursor: help;
+}
+
 /* 正文：一条一行；12.5px / 行高 1.6（长句不再折三行）。 */
 .resume-coverage-items {
   margin: 4px 0 0;

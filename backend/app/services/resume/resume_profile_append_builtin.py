@@ -48,6 +48,12 @@ BUILTIN_SECTIONS: dict[str, str] = {
     "research_projects": "research_projects",
     "patents": "patents",
     "credentials": "credentials",
+    # 技能（2026-11-08 补）：资料侧 `skills` 是 multi 表单（每条 = 一个技能，
+    # name/category/level），简历侧 `skills` 是 inline 板块、每条一个 entry。
+    # 两边同名、结构同源，转换器实测能把单条技能转成与生成结果一致的 entry。
+    # 加进来之前，66 条未收录技能只能整组走「AI 补上这段」——正是用户明确反对的
+    # "全让 AI 做决策"。
+    "skills": "skills",
 }
 
 #: 各板块的身份字段（资料侧 field_id 的后缀）：用于「这条已经写进简历了吗」。
@@ -63,6 +69,8 @@ IDENTITY_FIELDS: dict[str, str] = {
     "research_projects": "name",
     "patents": "name",
     "credentials": "name",
+    # 技能的身份字段是技能名本身（同一份资料里技能名不该重复）。
+    "skills": "name",
 }
 
 

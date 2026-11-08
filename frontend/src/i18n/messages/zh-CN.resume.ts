@@ -182,6 +182,10 @@ const resume = {
   "resume.coverage.append": "补进简历",
   /** 逐条补入（2026-11-08）：只补这一条，其余不动。 */
   "resume.coverage.appendThis": "从资料补上这段",
+  /** 板块被隐藏时补入前必须先说清楚：补进去也不上纸面（不然用户以为按钮坏了）。 */
+  "resume.coverage.sectionHidden": "这个板块当前是隐藏的，补进去也不会出现在简历上",
+  /** 同上，给出下一步：去把板块打开。 */
+  "resume.coverage.sectionHiddenAction": "在「板块」里打开",
   "resume.coverage.appendedTag": "已补入",
   "resume.coverage.polishThis": "AI 润色这段",
   /** 逐条补入成功的回执（带条目名，用户才知道补进去的是哪条）。 */

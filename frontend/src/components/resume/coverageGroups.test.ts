@@ -239,12 +239,38 @@ describe("resolveCoverageAction decision table (3-A)", () => {
     expect(resolveCoverageAction({ ...appendable, entryIds: [] })).toBe("workbench");
   });
 
-  it("keeps the AI revise button for sections that already have writable fields", () => {
-    for (const section of ["skills", "languages", "summary"]) {
+  /*
+   * 2026-11-08 口径变更（**产品能力变了，不是放松断言**）：
+   *
+   * 技能从「只能整组 AI 改写」变成「可以逐条确定性补入」。用户原话：「我的目的是
+   * 能够有按键，我选择性的要补上哪些，而不是全让 ai 做决策」。后端 `skills` 现在是
+   * 可补入板块（`resume_profile_append_builtin.BUILTIN_SECTIONS` 增加了 skills，
+   * 资料侧每条技能 = 一条条目，简历侧每条也是独立 entry），所以有 entry_ids 就给
+   * 「从资料补上这段」，而不是整组交给模型。
+   *
+   * `languages` / `summary` 没有条目概念（是整段文本），仍然只能靠修订。
+   * 技能定位不到条目时（旧记录、资料改过名）仍会回落到 revise —— 见下面那条。
+   */
+  it("keeps the AI revise button for sections that are one whole text block", () => {
+    for (const section of ["languages", "summary"]) {
       expect(resolveCoverageAction({ section, rawSection: section, entryIds: ["e1"] })).toBe(
         "revise",
       );
     }
+  });
+
+  it("offers per-entry append for skills once they can be located", () => {
+    expect(
+      resolveCoverageAction({ section: "skills", rawSection: "skills", entryIds: ["e1"] }),
+    ).toBe("append");
+  });
+
+  it("still falls back to AI revise for skills whose entries cannot be located", () => {
+    // 旧记录 / 生成后资料改过名：没有 entry_ids ⇒ 不能承诺"补哪一条"，但也不该送进
+    // 制作台那条死路（技能本来就靠在正文里改写就能补）。
+    expect(
+      resolveCoverageAction({ section: "skills", rawSection: "skills", entryIds: [] }),
+    ).toBe("revise");
   });
 
   /*

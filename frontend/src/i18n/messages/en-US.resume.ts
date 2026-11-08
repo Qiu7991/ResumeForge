@@ -101,6 +101,9 @@ const resume = {
   "resume.coverage.collapse": "Show less",
   "resume.coverage.append": "Add to Resume",
   "resume.coverage.appendThis": "Add this from my profile",
+  "resume.coverage.sectionHidden":
+    "This Section is currently hidden, so adding it will not show it on the Resume",
+  "resume.coverage.sectionHiddenAction": "Turn it on under Sections",
   "resume.coverage.appendedTag": "Added",
   "resume.coverage.polishThis": "Polish with AI",
   "resume.coverage.appendedThis": "Added “{name}”",

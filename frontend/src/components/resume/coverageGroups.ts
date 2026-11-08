@@ -122,6 +122,12 @@ export interface CoverageGroup {
    * 旧记录没有这个键，按 `"entry"` 处理，行为与改动前一致。
    */
   granularity: "entry" | "field";
+  /**
+   * 该分区在文档里是隐藏状态（`section.hidden`）：补进去也不上纸面。
+   *
+   * 老后端不发这个键，按 `false` 处理（不吓唬人）。
+   */
+  sectionHidden: boolean;
 }
 
 /** 三种按钮分支（3-A 决策表）。 */
@@ -131,9 +137,13 @@ export type CoverageAction = "append" | "revise" | "workbench";
  * 「靠改写就能补」的分区：这些分区在简历文档里**已经有可写字段**，AI 修订只要改写
  * 已有 path 的 value 就行，不需要新增条目。其余分区一律只能去制作台添加。
  *
- * 注意这里是**分区级**口径，只覆盖"整个分区都是列表/长文本"的类型。
- * 条目级分区（projects / experience / …）的**字段级**缺口另由 note 上的
- * `granularity: "field"` 标记，见 {@link resolveCoverageAction}。
+ * 注意这里是**分区级**口径，只覆盖"整段文本"的类型。条目级分区（projects /
+ * experience / …）的**字段级**缺口另由 note 上的 `granularity: "field"` 标记，
+ * 见 {@link resolveCoverageAction}。
+ *
+ * `skills` 同时出现在这里和 `APPENDABLE_BUILTIN_SECTIONS` 里，是刻意的：**append 先判**，
+ * 所以只要能定位到资料条目就逐条确定性补入（用户自己选补哪几条）；定位不到时（旧记录、
+ * 生成后资料改过名）回落到这里的整组 AI 改写，而不是掉进「去制作台添加」那条死路。
  */
 const AI_REWRITABLE_SECTIONS: ReadonlySet<string> = new Set(["skills", "languages", "summary"]);
 
@@ -181,10 +191,13 @@ export function groupCoverageNotes(notes: ResumeCoverageNote[]): CoverageGroup[]
         entryIds: [],
         entryIdByName: {},
         granularity: "entry",
+        sectionHidden: false,
       };
       groups.set(key, group);
     }
     group.total += note.total;
+    // 板块隐藏状态：同一组的所有 note 同属一个分区，任一标了就算隐藏。
+    if (note.section_hidden) group.sectionHidden = true;
     // 逐条补入：把后端下发的「名字 -> entry_id」并进组里，供每一行按名字取自己的 id。
     for (const [name, entryId] of Object.entries(note.entry_id_by_name ?? {})) {
       const value = String(entryId ?? "");
@@ -236,6 +249,10 @@ const APPENDABLE_BUILTIN_SECTIONS: ReadonlySet<string> = new Set([
   "research_projects",
   "patents",
   "credentials",
+  // 技能（2026-11-08）：资料侧每条技能就是一条条目，简历侧每条也是独立 entry，
+  // 后端已支持按 entry_id 逐条补入。先前只认上面那批，于是「专业技能 · 66 条」
+  // 只能整组走「AI 补上这段」——用户明确反对的"全让 AI 做决策"。
+  "skills",
 ]);
 
 /**
@@ -243,7 +260,7 @@ const APPENDABLE_BUILTIN_SECTIONS: ReadonlySet<string> = new Set([
  *
  * 1. 有 `entry_ids`（至少一个名字能定位到资料条目）**且**板块支持确定性补入
  *    （自建板块，或上面那批内置板块）→ `append`（确定性插入，不调模型）；
- * 2. `skills` / `languages` / `summary`（已有可写字段，改写就能补）→ `revise`
+ * 2. `languages` / `summary`（已有可写字段，改写就能补）→ `revise`
  *    （走既有修订弹窗）；
  * 3. 其余 → `workbench`（AI 修订只能改写已有内容，不能新增条目）。
  *
