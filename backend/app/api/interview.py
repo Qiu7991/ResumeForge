@@ -364,11 +364,12 @@ async def coach_answer(session_id: int, db: Session = Depends(get_db)):
         raw = await provider.chat(messages, thinking=False)
     except Exception as exc:  # noqa: BLE001 - LLMError 之外也可能是网络层异常
         logger.warning("面试教练调用失败 session=%s", session_id, exc_info=True)
-        raise HTTPException(status_code=502, detail="参考答案生成失败，请稍后重试") from exc
+        # detail 只写原因，动作段由前端 `formatErrorGuidance()` 统一补（规范 §2.4 / §4.6）。
+        raise HTTPException(status_code=502, detail="参考答案生成失败") from exc
 
     parsed = parse_coach_answer(raw)
     if not parsed["answer"].strip():
-        raise HTTPException(status_code=502, detail="参考答案生成失败，请稍后重试")
+        raise HTTPException(status_code=502, detail="参考答案生成失败")
 
     # 落一条 coach 消息：报告末尾附录与赛后复盘都从这里取，按时间顺序天然有序。
     # `context.question` 记下它对应哪道题——复盘时"这条答案是为哪个问题写的"必须能对上。

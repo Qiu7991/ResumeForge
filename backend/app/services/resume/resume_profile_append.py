@@ -240,6 +240,14 @@ def _prune_note(note: Mapping[str, Any], drop: set[str]) -> dict[str, Any] | Non
         updated["reasons"] = {
             str(name): reason for name, reason in reasons.items() if str(name) not in drop
         }
+    # 逐条补入的映射也要摘：名字已经补进正文了，留着它的 entry_id 只会让下一次
+    # 读取把"已补入"的条目重新算进可补集合（服务端读取侧只对**缺失**该键的 note 回填，
+    # 摘干净后那份快照才自洽）。
+    by_name = note.get("entry_id_by_name")
+    if isinstance(by_name, Mapping):
+        updated["entry_id_by_name"] = {
+            str(name): entry_id for name, entry_id in by_name.items() if str(name) not in drop
+        }
     return updated
 
 
