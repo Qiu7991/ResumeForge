@@ -33,7 +33,20 @@ from .resume_content import coerce_resume, extract_json, resume_has_content
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 MAX_INSTRUCTION_CHARS = 2_000
-MAX_RESUME_CHARS = 12_000
+# 修订的输入预算（序列化后的字符数）。
+#
+# 2026-11-08 从 12_000 提到 40_000：原值对真实简历偏小——实测用户的三份简历
+# 里，53 是 12,979 字节（超 979，差一点就失败）、50 是 18,109 字节，
+# 于是「AI 修改简历」直接报「简历内容过长，无法在安全预算内完成修订」，
+# 而这两份简历本身并不长（4~8 个项目的正常量）。
+#
+# 依据：输入侧只受**模型上下文窗口**约束（当前主流 128K token ≈ 40 万字符），
+# 12,000 字符只是 3~6K token，过于保守；输出侧由 provider 的 max_tokens 控制
+# （用户配「不限制」时为 0），不因这里放宽而受影响。
+#
+# 保留硬上限的意义仍在：修订以「逐字保留原文」为第一原则，超限时如实拒绝，
+# 而不是截断后假装完整。只是把门槛放到"真实简历够用"的量级。
+MAX_RESUME_CHARS = 40_000
 
 # 模型不可见、由代码强制回填的字段：身份与联系方式。与 resume_suggestions 的
 # 提示词排除名单一致——模型侧永远拿不到这些值，泄露与篡改都无从谈起。

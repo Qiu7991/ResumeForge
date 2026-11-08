@@ -155,13 +155,31 @@ async def test_unparsable_output_raises_llm_error():
 
 
 def test_oversized_resume_is_rejected_before_calling_the_model():
-    """简历超出安全预算时如实拒绝：截断再回填会把"逐字保留"变成谎言。"""
-    from app.services.resume.resume_revision import _resume_prompt_json
+    """简历超出安全预算时如实拒绝：截断再回填会把"逐字保留"变成谎言。
 
-    # summary 的 schema 上限是 50000 字，取 20000 字即可越过 12000 的提示词预算。
-    huge = ResumeContent(name="张示例", summary="字" * 20_000)
+    2026-11-08：预算从 12_000 提到 40_000（原值对真实简历偏小，实测 13KB 的正常
+    简历就被拒），所以这里按**常量本身**构造超限输入，而不是写死一个旧数值——
+    断言的不变量是「超预算必须拒绝」，不该绑死在具体阈值上。
+    """
+    from app.services.resume.resume_revision import MAX_RESUME_CHARS, _resume_prompt_json
+
+    # summary 的 schema 上限是 50000 字；取比预算多 10_000 字即可稳定越界。
+    huge = ResumeContent(name="张示例", summary="字" * (MAX_RESUME_CHARS + 10_000))
     with pytest.raises(ValueError):
         _resume_prompt_json(huge)
+
+
+def test_real_sized_resume_is_accepted_by_the_revision_budget():
+    """真实量级的简历不能因预算过小而拒——这是把 12_000 提到 40_000 的直接原因。
+
+    实测用户简历：13KB（4 个项目）与 18KB（8 个项目）都曾报「内容过长」。
+    """
+    from app.services.resume.resume_revision import _resume_prompt_json
+
+    for size in (13_000, 18_000):
+        content = ResumeContent(name="张示例", summary="字" * size)
+        serialized = _resume_prompt_json(content)
+        assert serialized, f"约 {size} 字的简历应当能进入修订"
 
 
 # ===== W06 正文锁：提示词显式声明锁定条目 =====

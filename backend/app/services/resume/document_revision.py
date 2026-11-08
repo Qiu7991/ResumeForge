@@ -238,7 +238,7 @@ async def revise_document(
     instructions: str,
     *,
     career_context_block: str = "",
-    max_chars: int = 12_000,
+    max_chars: int = 40_000,
 ) -> dict:
     values = editable_document_values(document)
     serialized = json.dumps(values, ensure_ascii=False, separators=(",", ":"))
