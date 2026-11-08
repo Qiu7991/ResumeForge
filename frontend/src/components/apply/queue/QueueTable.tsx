@@ -13,6 +13,7 @@ import { Button, Dropdown, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 import type { TableRowSelection } from "antd/es/table/interface";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useState } from "react";
 import { t } from "../../../i18n";
 import { QUEUE_STATUS_LABEL_KEYS } from "../../../i18n/enum/apply";
 import { useLocale } from "../../../i18n/i18nContext";
@@ -43,6 +44,13 @@ export function QueueTable({
 }) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后列头停在旧文案。
   useLocale();
+  // 每页条数：默认 10 条（队列行高较高，一页塞太多会挤满整屏），由分页器切换。
+  //
+  // **必须是 state，不能直接写 `pageSize: 10`**（2026-11-08 用户截图：「10 条/页」
+  // 切换后毫无反应）。antd 的 `pagination.pageSize` 一旦传值就是**受控属性**——
+  // 用户切「20 条/页」时组件内部改了状态，下一帧又被这个常量按回 10。
+  // 1.x 修过同一处（注释原文「pageSize 一旦写成固定值就是受控属性」），2.0 移植时丢了。
+  const [pageSize, setPageSize] = useState(10);
   /** 招呼语格子兼作编辑入口：Enter / 空格与点击同效（移植自 1.x）。 */
   const activateEdit = (event: ReactKeyboardEvent<HTMLElement>, item: ApplyQueueItem) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -258,10 +266,12 @@ export function QueueTable({
         // 每页 10 条：队列条目行高较高，一页塞太多会把整屏挤满；分页形态与岗位广场 /
         // 简历中心一致（条数切换 + 总数显示）。hideOnSinglePage：队列很短时不打扰。
         pagination={{
-          pageSize: 10,
+          pageSize,
           hideOnSinglePage: true,
           showSizeChanger: true,
           showTotal: (total) => t("applyQueue.table.total", { total }),
+          // pageSize 是受控属性：不在这里回写 state，切「20 条/页」就永远停在 10。
+          onChange: (_page, size) => setPageSize(size),
         }}
         rowSelection={rowSelection}
         tableLayout="fixed"
