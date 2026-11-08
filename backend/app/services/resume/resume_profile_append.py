@@ -118,13 +118,30 @@ def _same_name(left: Any, right: Any) -> bool:
     return a in b or b in a
 
 
-def _document_entry_name(entry: Mapping[str, Any]) -> str:
-    """文档里一条 entry 的"身份名"：首个文本项正文，否则首个字段项的值。
+def _document_entry_name(entry: Mapping[str, Any], section_key: str = "") -> str:
+    """文档里一条 entry 的"身份名"。
 
-    与 ``profile_custom_filter._written_custom_names`` 同口径（那边读 v1 条目，这边读 v2
-    entry），两边必须一致——否则"已经补过"和"没补过"会给出相反答案。
+    **内置板块按身份字段取，自建板块按"首个文本项"取**（2026-11-08 修复）：
+
+    内置板块（projects / experience / …）的身份字段是 name / company / school，
+    而正文条目里的 highlights 也是 text item 且排在前面。旧实现"先找首个 text item"
+    于是把「做了 X」当成项目名——后果是幂等判重失效（下次补同一条资料按名字比对不上，
+    会再插一条），用户看到两份同名项目。
+
+    自建板块保持旧口径（与 `profile_custom_filter._written_custom_names` 一致），
+    那边没有身份字段的概念。
     """
+    from .resume_profile_append_builtin import IDENTITY_FIELDS
+
     items = entry.get("items") or []
+    identity_key = IDENTITY_FIELDS.get(section_key) if section_key else None
+    if identity_key:
+        # 内置板块：**只认身份字段**，first match wins。取不到才退回通用扫描。
+        for item in items:
+            if isinstance(item, Mapping) and item.get("key") == identity_key:
+                value = _clean(item.get("value"))
+                if value:
+                    return value
     for item in items:
         if not isinstance(item, Mapping):
             continue
@@ -326,8 +343,27 @@ def append_profile_entries(
     section = _resolve_section(consumed, section_key)
     _ensure_same_group(db, record, consumed)
 
-    projected = _projected_custom_entries(consumed, section_key)
-    missing = [entry_id for entry_id in requested if entry_id not in projected]
+    # 两条取数路径（2026-11-08）：
+    # - 自建板块：资料投影的 custom_sections，条目是 v1 的 text/lines 结构；
+    # - 内置板块：资料投影的强类型条目（projects/experience/…），走
+    #   `resume_profile_append_builtin` 复用生成链转换器。
+    #
+    # 旧实现只有第一条路径，于是用户在「未收录」里看到「项目经历 · 8 条」（后端
+    # `builtin_entry_ids` 确实定位到了这 8 条），点补入却报"资料已删除"——那句话是错的。
+    from .resume_profile_append_builtin import (
+        build_builtin_entries,
+        identity_of,
+        supports_builtin,
+    )
+
+    builtin_entries: dict[str, dict[str, Any]] = {}
+    if supports_builtin(section_key):
+        builtin_entries = build_builtin_entries(consumed, section_key, requested)
+        projected = {}
+        missing = [entry_id for entry_id in requested if entry_id not in builtin_entries]
+    else:
+        projected = _projected_custom_entries(consumed, section_key)
+        missing = [entry_id for entry_id in requested if entry_id not in projected]
     if missing:
         logger.info(
             "补入资料条目失败（已删除/不在当前组） record_id=%s section=%s missing=%s",
@@ -358,7 +394,7 @@ def append_profile_entries(
         }
         document.setdefault("sections", []).append(target)
     existing = {
-        _document_entry_name(entry)
+        _document_entry_name(entry, section_key)
         for entry in target.get("entries") or []
         if isinstance(entry, dict)
     }
@@ -367,6 +403,31 @@ def append_profile_entries(
     appended: list[str] = []
     skipped: list[str] = []
     for entry_id in requested:
+        if builtin_entries:
+            # 内置板块：条目已经是 v2 entry（由生成链转换器产出），直接插入。
+            # 身份名取身份字段（项目名/公司名/学校名），与"已在简历里"的判定同口径。
+            v2_entry = builtin_entries[entry_id]
+            name = identity_of(v2_entry, section_key)
+            if not name:
+                raise AppendError(
+                    ERROR_ENTRY_MISSING, "这条资料没有任何可写入的内容，无法补入", status_code=409
+                )
+            existing_ids = {
+                str(item.get("id") or "")
+                for item in (target.get("entries") or [])
+                if isinstance(item, dict)
+            }
+            # 幂等双保险：id 相同（同一条资料）或身份名相同（已手写过同名条目）都跳过。
+            if str(v2_entry.get("id") or "") in existing_ids or any(
+                _same_name(name, written) for written in existing
+            ):
+                skipped.append(name)
+                continue
+            target.setdefault("entries", []).append(v2_entry)
+            existing.add(name)
+            appended.append(name)
+            continue
+
         legacy_entry = projected[entry_id]
         name = _entry_identity(legacy_entry)
         if not name:

@@ -80,6 +80,33 @@ def _section_keys(record: ResumeRecord, section_key: str) -> dict:
 
 
 def _entry_names(section: dict) -> list[str]:
+    """每个条目的**身份名**。内置板块按身份字段取（highlights 也是 text item 且排在
+    前面，先找 text 会把「做了 X」当项目名）；自建板块回退到首个 text/field。"""
+    from app.services.resume.resume_profile_append_builtin import IDENTITY_FIELDS
+
+    identity_key = IDENTITY_FIELDS.get(str(section.get("key") or ""))
+    names: list[str] = []
+    for entry in section.get("entries") or []:
+        items = [item for item in entry.get("items") or [] if isinstance(item, dict)]
+        if identity_key:
+            value = next(
+                (str(item.get("value") or "") for item in items if item.get("key") == identity_key),
+                "",
+            )
+            if value:
+                names.append(value)
+                continue
+        name = next(
+            (item["text"] for item in items if item.get("kind") == "text" and item.get("text")),
+            "",
+        )
+        if not name:
+            name = next((item["value"] for item in items if item.get("value")), "")
+        names.append(name)
+    return names
+
+
+def _legacy_entry_names_unused(section: dict) -> list[str]:
     """每个条目的**身份名**，口径与后端 ``_document_entry_name`` 一致。
 
     v2 自建条目并不总是"一个 text item + 若干「标签：值」行"：只有资料侧显式指定了主文本
@@ -478,3 +505,113 @@ def test_prune_ignores_empty_names(names):
     ]
 
     assert prune_coverage_notes(notes, "projects", names) == notes
+
+
+# ===== 内置板块补入（2026-11-08）=====
+#
+# 用户路径：未收录清单里看到「项目经历 · 8 条」→ 点「补进简历」。
+# 旧实现只支持自建板块，内置板块会报"资料已删除"（那句话是错的，资料明明在）。
+
+
+# ===== 内置板块补入（2026-11-08）=====
+#
+# 用户路径：未收录清单里看到「项目经历 · 8 条」→ 点「补进简历」。
+# 旧实现只支持自建板块，内置板块会报"资料已删除"（那句话是错的，资料明明在）。
+
+
+def _seed_builtin_projects(db) -> list[str]:
+    """往资料库写两条 project 条目，返回 [entry_id, ...]。"""
+    workspace_bootstrap.ensure_workspace(db)
+    ids: list[str] = []
+    for name in ("AIGC 短视频生产体系", "CreatorDistill 内容分析系统"):
+        row = entry_store.upsert_entry(
+            db,
+            "projects",
+            values={
+                "projects.name": name,
+                "projects.role": "独立开发",
+                "projects.start_date": "2026-01",
+                "projects.end_date": "2026-03",
+                "projects.tech_stack": "Python\nRedis",
+                "projects.description": "",
+                "projects.highlights": "做了 X\n做了 Y",
+            },
+        )
+        ids.append(str(row.entry_id))
+    return ids
+
+
+def _empty_v2_record(db) -> ResumeRecord:
+    record = ResumeRecord(
+        title="内置板块补入测试",
+        content={"version": 2, "language": "zh-CN", "sections": []},
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def _builtin_consumed(db):
+    from app.services.profile.ai_profile import load_ai_consumed_profile
+
+    return load_ai_consumed_profile(db)
+
+
+def test_builtin_section_append_inserts_a_real_entry(db_session):
+    """projects 这类内置板块现在能确定性补入，且条目结构与生成链同源。"""
+    from app.services.resume import document_io
+    from app.services.resume.resume_profile_append import append_profile_entries
+
+    entry_ids = _seed_builtin_projects(db_session)
+    record = _empty_v2_record(db_session)
+
+    outcome = append_profile_entries(
+        db_session, record_id=record.id, section_key="projects", entry_ids=[entry_ids[0]]
+    )
+    db_session.refresh(record)
+
+    assert outcome.appended, "内置板块应补入成功"
+    document, _ = document_io.document_for_record(db_session, record)
+    projects = next(s for s in document["sections"] if s["key"] == "projects")
+    names = _entry_names(projects)
+    assert outcome.appended[0] in names
+
+
+def test_builtin_append_is_idempotent(db_session):
+    """重复点补入不该写出第二条：entry id 由 entry_id 派生，天然幂等。"""
+    from app.services.resume import document_io
+    from app.services.resume.resume_profile_append import append_profile_entries
+
+    entry_ids = _seed_builtin_projects(db_session)
+    record = _empty_v2_record(db_session)
+
+    first = append_profile_entries(
+        db_session, record_id=record.id, section_key="projects", entry_ids=[entry_ids[0]]
+    )
+    second = append_profile_entries(
+        db_session, record_id=record.id, section_key="projects", entry_ids=[entry_ids[0]]
+    )
+    db_session.refresh(record)
+
+    assert first.appended
+    assert not second.appended, "第二次不该再插一条"
+    assert second.skipped, "第二次应记为已存在"
+    document, _ = document_io.document_for_record(db_session, record)
+    projects = next(s for s in document["sections"] if s["key"] == "projects")
+    assert _entry_names(projects).count(first.appended[0]) == 1
+
+
+def test_builtin_entry_ids_are_unique_per_source_entry(db_session):
+    """不同资料条目必须拿到不同 entry id。
+
+    转换器用「在本次输入里的序号」派生 id，而我们每次只喂单条资料（序号恒为 0），
+    不重写就会让两个不同项目撞同一个 id —— 实测发生过。
+    """
+    from app.services.resume.resume_profile_append_builtin import build_builtin_entries
+
+    entry_ids = _seed_builtin_projects(db_session)
+    built = build_builtin_entries(_builtin_consumed(db_session), "projects", entry_ids)
+    assert len(built) == 2
+    generated = [entry["id"] for entry in built.values()]
+    assert len(set(generated)) == 2, f"entry id 重复了：{generated}"

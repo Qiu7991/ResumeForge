@@ -204,14 +204,35 @@ export function groupCoverageNotes(notes: ResumeCoverageNote[]): CoverageGroup[]
 }
 
 /**
+ * 能确定性补入的**内置**板块（2026-11-08 起后端支持）。
+ *
+ * 与自建板块的差别只在取数路径：自建走 `custom_sections`，这些走强类型投影
+ * （见后端 `resume_profile_append_builtin`，复用生成链转换器把资料条目转成 v2 entry）。
+ * 前端判定口径完全一致：**有 entry_ids 就能补**。
+ *
+ * 之前这里只认 `custom:` 前缀，于是「项目经历 · 8 条」出的是「去制作台添加」——
+ * 而制作台里并没有"补这段"入口，用户点进去是死路。
+ */
+const APPENDABLE_BUILTIN_SECTIONS: ReadonlySet<string> = new Set([
+  "education",
+  "experience",
+  "projects",
+  "campus_experience",
+  "awards",
+  "publications",
+  "research_projects",
+  "patents",
+  "credentials",
+]);
+
+/**
  * 3-A 决策表（唯一口径）：决定这一组该出哪个按钮。
  *
- * 1. 有 `entry_ids`（至少一个名字能定位到资料条目）**且**是自建板块 → `append`
- *    （确定性插入，不调模型）；
+ * 1. 有 `entry_ids`（至少一个名字能定位到资料条目）**且**板块支持确定性补入
+ *    （自建板块，或上面那批内置板块）→ `append`（确定性插入，不调模型）；
  * 2. `skills` / `languages` / `summary`（已有可写字段，改写就能补）→ `revise`
  *    （走既有修订弹窗）；
- * 3. 其余（条目级分区、以及没有 `entry_ids` 的旧记录自建板块）→ `workbench`
- *    （AI 修订只能改写已有内容，不能新增条目）。
+ * 3. 其余 → `workbench`（AI 修订只能改写已有内容，不能新增条目）。
  *
  * `canAppend = false` 表示宿主没有给出 `resumeId`/刷新回调：此时「补进简历」按钮点了
  * 也没法落库，降级成「去制作台添加」——它永远不会给出做不到的承诺。
@@ -223,13 +244,20 @@ export function resolveCoverageAction(
   canAppend = true,
 ): CoverageAction {
   const hasEntryIds = group.entryIds.length > 0;
-  if (canAppend && hasEntryIds && isCustomSection(group.rawSection)) {
+  /*
+   * 字段级缺口**必须**先判，不能落到 append：
+   *
+   * `granularity: "field"` 的含义是「这条条目已经在简历里了，只缺几句亮点/技术栈」。
+   * 此时 append 会把整条资料**再插一遍**——正文里出现两份同名项目，
+   * 比漏几句严重得多。这类缺口的唯一可达动作是 AI 修订（改写已有条目）。
+   */
+  if (group.granularity === "field") return "revise";
+
+  const appendable =
+    isCustomSection(group.rawSection) || APPENDABLE_BUILTIN_SECTIONS.has(group.section);
+  if (canAppend && hasEntryIds && appendable) {
     return "append";
   }
-  // 字段级缺口（条目在、缺几句亮点/技术栈）：AI 修订能改写这一条已有条目，
-  // 这是唯一可达动作——既不能 append（后端只补整条），也不该推去制作台。
-  // 判定用后端显式下发的 `granularity`，不靠 `entry_ids` 推断（技能也带 entry_ids）。
-  if (group.granularity === "field") return "revise";
   if (AI_REWRITABLE_SECTIONS.has(group.section)) return "revise";
   return "workbench";
 }
