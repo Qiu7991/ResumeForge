@@ -28,9 +28,11 @@ from ..profile.profile_relevance import build_job_prompt_text
 from ..profile.profile_service import update_profile
 from ._shared import (
     _RESUME_CONTENT_BUDGET,
+    _RESUME_CONTENT_BUDGET_LEGACY,
     DEFAULT_LIST_LIMIT,
     MAX_JOB_RESULT_CHARS,
     MAX_LIST_LIMIT,
+    MAX_RESUME_RESULT_CHARS,
     PROFILE_EDITABLE_FIELDS,
     _job_brief,
     _load_profile,
@@ -149,6 +151,45 @@ def _tool_list_resumes(db: Session, arguments: dict) -> ToolResult:
     )
 
 
+def _strip_photo_from_content(content: dict) -> dict:
+    """去掉简历里的照片，避免把几百 KB 的 base64 塞进模型上下文。
+
+    **v2 结构（2026-11-08 修复）**：旧实现只 ``content.pop("photo")``——那是 v1 的扁平
+    字段。2.0 的文档把照片放在 ``header.items[].value``（``key="photo"``、
+    ``value="data:image/jpeg;base64,..."``）。实测一份简历 header 400,859 字节、
+    其中照片 399,975 字节，即 97% 的体积都是它。
+
+    这个体积有两个后果：
+    1. 正文预算（4500 字节）永远不可能满足，裁剪逻辑把 skills/projects/education
+       全摘了还是 403KB —— 用户要"改写项目经历"，而项目刚好被摘掉；
+    2. 整份请求体远超 provider 限制，直接报错，界面表现为助手连试几轮工具后失败。
+
+    只摘照片的值（置空），保留 item 本身：模型仍知道"这份简历有照片位"，
+    路径 ``header.photo`` 依然能解析。
+    """
+    result = dict(content)
+    # v1：顶层扁平字段。
+    result.pop("photo", None)
+    # v2：header.items 里的 photo item。
+    header = result.get("header")
+    if isinstance(header, dict):
+        items = header.get("items")
+        if isinstance(items, list):
+            cleaned: list[Any] = []
+            changed = False
+            for item in items:
+                if isinstance(item, dict) and item.get("key") == "photo":
+                    value = item.get("value")
+                    if isinstance(value, str) and value.startswith("data:"):
+                        cleaned.append({**item, "value": ""})
+                        changed = True
+                        continue
+                cleaned.append(item)
+            if changed:
+                result["header"] = {**header, "items": cleaned}
+    return result
+
+
 def _tool_get_resume(db: Session, arguments: dict) -> ToolResult:
     """按 id 读一份简历的**全部**内容。
 
@@ -159,8 +200,7 @@ def _tool_get_resume(db: Session, arguments: dict) -> ToolResult:
     record = trash.get_live(db, ResumeRecord, int(arguments["resume_id"]))
     if record is None:
         raise ValueError(f"简历 {arguments['resume_id']} 不存在")
-    content = dict(record.content or {})
-    content.pop("photo", None)
+    content = _strip_photo_from_content(dict(record.content or {}))
 
     payload: dict[str, Any] = {
         "id": record.id,
@@ -185,7 +225,15 @@ def _tool_get_resume(db: Session, arguments: dict) -> ToolResult:
         "tone": record.tone,
         "custom_instruction": record.custom_instruction,
     }
-    trimmed, dropped = _resume_content_for_model(content, _RESUME_CONTENT_BUDGET)
+    # v2 文档（有 sections）用大预算；v1 扁平结构沿用旧的小预算。
+    #
+    # 为什么分开：v1 是导入期/旧记录的过渡形态，`_resume_content_for_model` 对它的
+    # 省略语义已有测试钉住（超长必须省略并说明、experience 要留到最后）。
+    # 直接把预算整体抬到 30KB 会让 v1 结构不再触发省略，那条契约就失效了。
+    # 而 v2 是主流形态、且照片曾把体积顶到 400KB，必须给它足够的正文空间。
+    is_v2 = isinstance(content.get("sections"), list)
+    budget = _RESUME_CONTENT_BUDGET if is_v2 else _RESUME_CONTENT_BUDGET_LEGACY
+    trimmed, dropped = _resume_content_for_model(content, budget)
     payload["content"] = trimmed
     if dropped:
         # 必须**说出来**：从中间截断字符串会让模型以为简历就这么多内容，进而漏掉后面的经历。
@@ -196,7 +244,11 @@ def _tool_get_resume(db: Session, arguments: dict) -> ToolResult:
         )
 
     return ToolResult(
-        text=_trim(json.dumps(payload, ensure_ascii=False), MAX_JOB_RESULT_CHARS),
+        # 用简历专属上限，而不是通用的 `MAX_JOB_RESULT_CHARS`（6000）：
+        # 正文预算已经按 30KB 算过（见 `_RESUME_CONTENT_BUDGET`），再拿 6000 去 `_trim`
+        # 会把刚保住的正文**从中间切断**——实测切在字符 5819 处，JSON 直接不完整，
+        # 模型侧解析失败。两个上限必须同源。
+        text=_trim(json.dumps(payload, ensure_ascii=False), MAX_RESUME_RESULT_CHARS),
         summary=f"查看了简历「{record.title}」",
         link="/resumes",
     )
