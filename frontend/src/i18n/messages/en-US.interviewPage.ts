@@ -41,6 +41,14 @@ const interviewPage = {
   "interviewPage.report.score": "{score} pts",
   "interviewPage.report.strengths": "What went well",
   "interviewPage.report.improvements": "What to improve next time",
+  "interviewPage.report.coachAppendix": "Reference answers you viewed",
+  "interviewPage.report.coachAppendixHint":
+    "These do not count toward your score. They are for review only: how you personally could answer the questions you could not.",
+  "interviewPage.report.coachQuestion": "Question: ",
+  "interviewPage.report.coachGaps": "Missing from your materials: ",
+  "interviewPage.report.coachGapSeparator": "; ",
+  "interviewPage.report.coachPartial":
+    "Includes transferable wording — do not present it as real experience; follow-up questions will expose it.",
   "interviewPage.report.saveToMaterial": "Save this interview to the material library",
 
   // ===== Timer / ready gate =====

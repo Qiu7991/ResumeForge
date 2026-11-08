@@ -539,3 +539,36 @@
 .interview-setup-hint {
   grid-column: 1 / -1;
 }
+
+/* 报告末尾的教练参考答案附录：与报告正文用分隔线隔开，避免被误读成评分的一部分。 */
+.interview-report-coach {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--rf-border-subtle);
+}
+
+.interview-report-coach-item {
+  padding: 10px 12px;
+  margin-top: 10px;
+  border-left: 3px solid var(--rf-info-strong, var(--rf-brand));
+  background: var(--rf-surface-alt, #f8fafc);
+  border-radius: 8px;
+}
+
+.interview-report-coach-question {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.interview-report-coach-answer {
+  margin: 0;
+  line-height: 1.8;
+}
+
+.interview-report-coach-gaps,
+.interview-report-coach-note {
+  display: block;
+  font-size: 12px;
+  margin-top: 6px;
+  margin-bottom: 0;
+}

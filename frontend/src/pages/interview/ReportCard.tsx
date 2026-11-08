@@ -101,6 +101,42 @@ export function ReportCard({
           </div>
         </>
       )}
+      {/* Coach reference appendix: only rendered when the user actually asked for one.
+          Not part of the score; purely for post-interview review. */}
+      {(report.coach_references ?? []).length > 0 ? (
+        <div className="interview-report-coach">
+          <Typography.Title level={5}>{t("interviewPage.report.coachAppendix")}</Typography.Title>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+            {t("interviewPage.report.coachAppendixHint")}
+          </Typography.Paragraph>
+          {(report.coach_references ?? []).map((ref, index) => (
+            <div className="interview-report-coach-item" key={`${ref.question}-${index}`}>
+              {ref.question ? (
+                <Typography.Paragraph className="interview-report-coach-question">
+                  <Typography.Text type="secondary">
+                    {t("interviewPage.report.coachQuestion")}
+                  </Typography.Text>
+                  {ref.question}
+                </Typography.Paragraph>
+              ) : null}
+              <Typography.Paragraph className="interview-report-coach-answer">
+                {ref.answer}
+              </Typography.Paragraph>
+              {ref.gaps.length > 0 ? (
+                <Typography.Paragraph type="secondary" className="interview-report-coach-gaps">
+                  {t("interviewPage.report.coachGaps")}
+                  {ref.gaps.join(t("interviewPage.report.coachGapSeparator"))}
+                </Typography.Paragraph>
+              ) : null}
+              {ref.grounded ? null : (
+                <Typography.Text type="warning" className="interview-report-coach-note">
+                  {t("interviewPage.report.coachPartial")}
+                </Typography.Text>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null}
       <Button onClick={onSaveToMaterial} loading={saving} icon={<PlusOutlined />}>
         {t("interviewPage.report.saveToMaterial")}
       </Button>

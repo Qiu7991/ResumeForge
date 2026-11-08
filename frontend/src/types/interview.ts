@@ -105,6 +105,25 @@ export interface InterviewReport {
   summary?: string;
   /** 报告生成失败时后端留下说明，界面按"无报告"处理并展示原因。 */
   error?: boolean;
+  /**
+   * 本场点过的**教练参考答案**（2026-11-08）。
+   *
+   * 只在真的点过时才有这个键；不参与评分，纯粹供赛后复盘
+   * "当时这题我没答上，我该怎么答"。后端直接附在报告 JSON 里，不再调模型
+   * （答案已是成稿，再让模型整理只会改写措辞并可能引入新的事实错误）。
+   */
+  coach_references?: InterviewCoachReference[];
+}
+
+/** 报告附录里的一条教练参考答案。 */
+export interface InterviewCoachReference {
+  /** 这段答案对应哪道题。复盘必须先看到问题，否则答案没有意义。 */
+  question: string;
+  answer: string;
+  outline: string[];
+  sources: string[];
+  gaps: string[];
+  grounded: boolean;
 }
 
 export interface InterviewBrief {

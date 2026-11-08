@@ -66,12 +66,21 @@ def _profile_text(db: Session) -> str:
     return text[:MAX_PROFILE_CHARS]
 
 
-def _previous_question(session: InterviewSession) -> str:
-    """候选人没答上来的那道题：最后一条面试官消息。"""
+def previous_question(session: InterviewSession) -> str:
+    """候选人没答上来的那道题：最后一条面试官消息。
+
+    公开导出（API 层要用它把"这条参考答案对应哪道题"写进消息 context）：
+    复盘时如果只看答案、不知道它答的是哪个问题，等于没有价值。
+    """
     for message in reversed(session.messages or []):
         if message.role == "interviewer":
             return str(message.content or "").strip()
     return ""
+
+
+def _previous_question(session: InterviewSession) -> str:
+    """兼容旧调用名（模块内部用）。"""
+    return previous_question(session)
 
 
 def _previous_answer(session: InterviewSession) -> str:
@@ -168,6 +177,7 @@ def parse_coach_answer(raw: str) -> dict[str, Any]:
 __all__ = [
     "build_coach_messages",
     "parse_coach_answer",
+    "previous_question",
     "MAX_ANSWER_CHARS",
     "MAX_PROFILE_CHARS",
     "MAX_CLAIMS_CHARS",

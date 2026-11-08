@@ -590,8 +590,10 @@ def test_api_coach_answer_returns_reference_without_touching_transcript(
     assert body["sources"] == ["AIGC 短视频生产体系"]
 
     after = client.get(f"/api/interview/{session_id}").json()
-    # 消息数与轮数都不变：参考答案不是候选人说的话
-    assert len(after["messages"]) == len(before["messages"])
+    # 2026-11-08 口径更新：参考答案**会**落一条 coach 消息（报告末尾附录要取它），
+    # 但它不是候选人说的话——轮次与状态都不该变。
+    coach = [item for item in after["messages"] if item["role"] == "coach"]
+    assert len(coach) == 1
     assert after["answered_rounds"] == before["answered_rounds"]
     assert after["status"] == before["status"]
 
@@ -611,3 +613,149 @@ def test_api_coach_answer_reports_model_failure_as_502(client, db_session, monke
     )
 
     assert client.post(f"/api/interview/{session_id}/coach-answer").status_code == 502
+
+
+def test_coach_answer_is_stored_but_never_enters_the_transcript(client, db_session, monkeypatch):
+    """参考答案落库（供报告附录与复盘），但**绝不**进 transcript / 评分。
+
+    这是双轨设计的核心不变量：教练说的话不是候选人说的话。
+    落库后消息数会 +1，但 answered_rounds 不变、面试官上下文里看不到它。
+    """
+    from app.models.interview import MESSAGE_PHASE_COACH
+    from app.services.interview.interview import _transcript
+
+    _configure(monkeypatch, [{"question": "第一题", "feedback": "", "done": False}])
+    session_id = _start(client, db_session, rounds=3).json()["id"]
+    client.post(f"/api/interview/{session_id}/answers", json={"content": "不知道"})
+
+    reference = json.dumps(
+        {
+            "answer": "我在 A 项目里搭了 7 套工作流。",
+            "outline": ["先说做过什么"],
+            "sources": ["A 项目"],
+            "gaps": [],
+            "grounded": True,
+        }
+    )
+
+    class _CoachProvider:
+        async def chat(self, _messages, *, thinking: bool = True):
+            return reference
+
+    monkeypatch.setattr(
+        "app.api.interview._require_provider", lambda _db: (_CoachProvider(), "test-model")
+    )
+    assert client.post(f"/api/interview/{session_id}/coach-answer").status_code == 200
+
+    detail = client.get(f"/api/interview/{session_id}").json()
+    coach_messages = [item for item in detail["messages"] if item["role"] == "coach"]
+    assert len(coach_messages) == 1
+    # 参考答案对应哪道题，必须记下来（复盘要看）
+    assert coach_messages[0]["content"].startswith("我在 A 项目里")
+
+    session = db_session.get(InterviewSession, session_id)
+    db_session.refresh(session)
+    assert session is not None
+    stored = [m for m in session.messages if m.phase == MESSAGE_PHASE_COACH]
+    assert stored and stored[0].context["question"] == "第一题"
+    # 关键：面试官看到的 transcript 里没有教练的话
+    transcript = _transcript(session)
+    assert "我在 A 项目里搭了 7 套工作流" not in transcript
+    # 轮次也不受影响
+    assert detail["answered_rounds"] == 1
+
+
+def test_report_appends_coach_references_only_when_used(client, db_session, monkeypatch):
+    """报告末尾附参考答案；没点过就不出现这个键（旧报告形状逐字节不变）。"""
+    _configure(monkeypatch, [{"question": "第一题", "feedback": "", "done": False}])
+    session_id = _start(client, db_session, rounds=3).json()["id"]
+    client.post(f"/api/interview/{session_id}/answers", json={"content": "不知道"})
+
+    # 没点过参考答案：报告里不该有这个键
+    finished = client.post(f"/api/interview/{session_id}/finish").json()
+    assert "coach_references" not in (finished.get("report") or {})
+
+
+def test_report_carries_coach_reference_with_question(client, db_session, monkeypatch):
+    """点过参考答案后，报告里要能读到「哪道题 + 参考答案」。"""
+    reference = json.dumps(
+        {
+            "answer": "我在 A 项目里搭了 7 套工作流。",
+            "outline": ["先说做过什么"],
+            "sources": ["A 项目"],
+            "gaps": ["没有 To B 客户对接"],
+            "grounded": False,
+        }
+    )
+
+    class _Provider:
+        """同一个 provider 既当面试官（出题）又当教练（给答案）。"""
+
+        async def chat(self, messages, *, thinking: bool = True):
+            system = messages[0]["content"] if messages else ""
+            if "面试教练" in system:
+                return reference
+            return json.dumps({"question": "第一题", "feedback": "点评", "done": False})
+
+    monkeypatch.setattr(
+        "app.api.interview._require_provider", lambda _db: (_Provider(), "test-model")
+    )
+
+    async def build_report(_provider, _session_):
+        return _DEFAULT_REPORT
+
+    monkeypatch.setattr("app.api.interview.generate_report", build_report)
+
+    session_id = _start(client, db_session, rounds=3).json()["id"]
+    client.post(f"/api/interview/{session_id}/answers", json={"content": "不知道"})
+    assert client.post(f"/api/interview/{session_id}/coach-answer").status_code == 200
+
+    finished = client.post(f"/api/interview/{session_id}/finish").json()
+    refs = (finished.get("report") or {}).get("coach_references") or []
+    assert len(refs) == 1
+    assert refs[0]["question"] == "第一题"
+    assert refs[0]["answer"].startswith("我在 A 项目里")
+    assert refs[0]["gaps"] == ["没有 To B 客户对接"]
+    assert refs[0]["grounded"] is False
+
+
+def test_coach_answer_backfills_appendix_into_existing_report(client, db_session, monkeypatch):
+    """已出报告的会话再点参考答案：附录要就地补进报告，不用重新生成报告。
+
+    赛后复盘是最常见的使用时机——用户翻回一场结束的面试，哪题没答上就点一下。
+    如果此时报告不更新，他回看报告会找不到刚看到的答案。
+    """
+    _configure(monkeypatch, [{"question": "第一题", "feedback": "", "done": False}])
+    session_id = _start(client, db_session, rounds=3).json()["id"]
+    client.post(f"/api/interview/{session_id}/answers", json={"content": "不知道"})
+
+    # 先出报告（此时还没点过参考答案 → 没有附录）
+    finished = client.post(f"/api/interview/{session_id}/finish").json()
+    assert "coach_references" not in (finished.get("report") or {})
+
+    reference = json.dumps(
+        {
+            "answer": "我在 A 项目里搭了 7 套工作流。",
+            "outline": ["先说做过什么"],
+            "sources": ["A 项目"],
+            "gaps": [],
+            "grounded": True,
+        }
+    )
+
+    class _CoachProvider:
+        async def chat(self, _messages, *, thinking: bool = True):
+            return reference
+
+    monkeypatch.setattr(
+        "app.api.interview._require_provider", lambda _db: (_CoachProvider(), "test-model")
+    )
+    assert client.post(f"/api/interview/{session_id}/coach-answer").status_code == 200
+
+    # 报告已被就地补上附录，且原有评分不变
+    detail = client.get(f"/api/interview/{session_id}").json()
+    report = detail["report"] or {}
+    assert report.get("coach_references"), "报告应被补上参考答案附录"
+    assert report["coach_references"][0]["answer"].startswith("我在 A 项目里")
+    assert report["score"] == _DEFAULT_REPORT["score"]
+    assert report["summary"] == _DEFAULT_REPORT["summary"]

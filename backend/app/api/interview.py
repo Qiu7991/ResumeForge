@@ -104,6 +104,11 @@ async def _ensure_report(db: Session, session: InterviewSession, provider) -> No
 
     报告失败时留下说明而不是让整场面试不可用：重试要再烧一次整场转录的 token，而用户
     真正需要的是"记录还在、能复盘"。所以错误报告也算"已有报告"，不重复生成。
+
+    报告末尾附上本场点过的**教练参考答案**（2026-11-08）：这些答案不参与评分，
+    但它们是赛后复习最有价值的部分——"当时这题我没答上，我该怎么答"。
+    直接附在 JSON 里而不是再调一次模型：参考答案已是成稿，再让模型"整理一遍"只会
+    改写措辞并可能引入新的事实错误。
     """
     if session.report:
         return
@@ -112,10 +117,42 @@ async def _ensure_report(db: Session, session: InterviewSession, provider) -> No
     except LLMError as exc:
         logger.warning("面试报告生成失败 session=%s：%s", session.id, exc)
         session.report = {"summary": f"报告生成失败：{exc}", "error": True}
+    session.report = _with_coach_appendix(session)
     # 兜一层：调用方可能只要求出报告、还没收盘（历史数据 / 直连测试）。
     mark_finished(session)
     db.commit()
     db.refresh(session)
+
+
+def _with_coach_appendix(session: InterviewSession) -> dict[str, Any]:
+    """把本场的教练参考答案挂到报告 JSON 的 `coach_references` 键上。
+
+    只在**确实点过**参考答案时才有这个键：没点过就和改动前的报告逐字节一致，
+    旧前端拿到也不会多渲染一块空区域。
+    """
+    from ..models.interview import MESSAGE_PHASE_COACH
+
+    references: list[dict[str, Any]] = []
+    for message in session.messages or []:
+        if getattr(message, "phase", None) != MESSAGE_PHASE_COACH:
+            continue
+        context = message.context or {}
+        references.append(
+            {
+                "question": str(context.get("question") or ""),
+                "answer": str(message.content or ""),
+                "outline": list(context.get("outline") or []),
+                "sources": list(context.get("sources") or []),
+                "gaps": list(context.get("gaps") or []),
+                "grounded": context.get("grounded") is True,
+            }
+        )
+    report = dict(session.report or {})
+    if references:
+        report["coach_references"] = references
+    else:
+        report.pop("coach_references", None)
+    return report
 
 
 async def _auto_close(db: Session, session: InterviewSession, provider=None) -> None:
@@ -298,8 +335,9 @@ async def coach_answer(session_id: int, db: Session = Depends(get_db)):
 
     与 `/answers` 是两条互不影响的轨道（见 `services/interview/interview_coach.py` 头注释）：
 
-    - 这里**不写任何消息**、不改会话状态、不进评分。候选人仍然要自己作答（或继续放弃），
-      评分只认他自己的回答。
+    - 参考答案**不进 transcript、不进评分**：它以 `phase="coach"` 单独落一条消息，
+      `_transcript_text` / `answered_rounds` 都不消费这个 phase，所以面试官与报告
+      都不会把它当成候选人说过的话。落库只为「报告末尾附录」与「赛后复盘」能取到它。
     - 允许在 `finished` 之后调用：报告出完后回来复盘「这题我该怎么答」是最常见的用法。
     - 数据范围是简历 + 资料库 + 已确认事实台账。资料里答不了就如实说明并给可迁移回答，
       不拿 JD 反推事实（吹出来的答案在真实面试追问里必崩）。
@@ -308,9 +346,14 @@ async def coach_answer(session_id: int, db: Session = Depends(get_db)):
     provider, _model = _require_provider(db)
 
     # 教练复盘在最末尾那轮尤其常用，所以这里不要求 status=active；只要有题目可回顾即可。
-    from ..services.interview.interview import _load_prompt, _render  # noqa: F401  # 保持导入路径单一
-    from ..services.interview.interview_coach import build_coach_messages, parse_coach_answer
+    from ..models.interview import MESSAGE_PHASE_COACH
+    from ..services.interview.interview_coach import (
+        build_coach_messages,
+        parse_coach_answer,
+        previous_question,
+    )
 
+    question = previous_question(session)
     messages = build_coach_messages(
         db,
         session,
@@ -326,6 +369,32 @@ async def coach_answer(session_id: int, db: Session = Depends(get_db)):
     parsed = parse_coach_answer(raw)
     if not parsed["answer"].strip():
         raise HTTPException(status_code=502, detail="参考答案生成失败，请稍后重试")
+
+    # 落一条 coach 消息：报告末尾附录与赛后复盘都从这里取，按时间顺序天然有序。
+    # `context.question` 记下它对应哪道题——复盘时"这条答案是为哪个问题写的"必须能对上。
+    add_message(
+        session,
+        role="coach",
+        content=parsed["answer"],
+        phase=MESSAGE_PHASE_COACH,
+        context={
+            "question": question,
+            "outline": parsed["outline"],
+            "sources": parsed["sources"],
+            "gaps": parsed["gaps"],
+            "grounded": parsed["grounded"],
+        },
+    )
+    db.commit()
+
+    # 报告已经出过（赛后复盘是最常见的使用时机）：把附录就地补进去。
+    # 不做的话，用户点完参考答案回看报告，会找不到刚才那份答案——而这正是他要的。
+    # 只重算附录、**不重新调模型**：报告正文不该因为看了一次参考答案而改写。
+    if session.report:
+        session.report = _with_coach_appendix(session)
+        db.commit()
+        db.refresh(session)
+
     return InterviewCoachAnswerOut(**parsed)
 
 
