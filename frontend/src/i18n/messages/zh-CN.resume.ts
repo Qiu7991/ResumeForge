@@ -172,12 +172,24 @@ const resume = {
   "resume.coverage.reasonSeparator": " · ",
   /** 组头里单个原因 + 条数：{label} 是原因名，{count} 是条数。 */
   "resume.coverage.reasonCount": "{label} {count}",
+  /** 逐条那枚小徽标的悬停说明：讲清"为什么这条没进简历"。 */
+  "resume.coverage.reasonHint": "这条没有进简历的原因（岗位筛选或模型取舍，资料本身没有丢失）",
   /** 展开该组剩余条目的按钮：{count} 是该组总条数。 */
   "resume.coverage.expandAll": "展开全部 {count} 条",
   /** 收起回到默认的前 5 条。 */
   "resume.coverage.collapse": "收起",
   /** 3-A：把资料条目确定性补进简历（不调模型）。 */
   "resume.coverage.append": "补进简历",
+  /** 逐条补入（2026-11-08）：只补这一条，其余不动。 */
+  "resume.coverage.appendThis": "从资料补上这段",
+  "resume.coverage.appendedTag": "已补入",
+  "resume.coverage.polishThis": "AI 润色这段",
+  /** 逐条补入成功的回执（带条目名，用户才知道补进去的是哪条）。 */
+  "resume.coverage.appendedThis": "已补入「{name}」",
+  "resume.coverage.skippedThis": "「{name}」已经在正文里了，没有重复添加",
+  /** 润色刚补的这一条：走既有修订通道，范围限定在这一条。 */
+  "resume.coverage.polishInstruction":
+    "请只润色这份简历 {section} 里的这一条：{name}。只改表达（措辞、语序、书面度），不要新增任何事实、数字、公司名或项目名，也不要改动其它条目。",
   /** 3-A：需要新增条目/分区的分区只能去制作台手动添加。 */
   "resume.coverage.goWorkbench": "去制作台添加",
   /** 3-A：「去制作台添加」的悬停说明（说清 AI 修订的能力边界）。 */

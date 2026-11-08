@@ -36,6 +36,7 @@ from ..profile.profile_relevance_constants import section_limit
 from .resume_coverage_notes import (
     builtin_entry_ids,
     custom_entry_ids,
+    entry_id_map,
     with_reasons,
 )
 from .resume_grounding_helpers import _similar, _similar_skill
@@ -179,16 +180,24 @@ def find_unwritten_details(
         if not filtered and not model_omitted:
             continue
         missing_names = sorted(missing)
+        note: dict[str, Any] = {
+            "section": section,
+            "section_label": label,
+            "names": missing_names,
+            "filtered": filtered,
+            "model_omitted": model_omitted,
+            "total": len(missing),
+        }
+        if consumed is not None:
+            # 逐条补入（2026-11-08）：前端要"这一条对应哪个 entry_id"才能一条一条补。
+            # 数组 `entry_ids` 会跳过匹配不到的名字，前端无法把名字与 id 对齐，
+            # 只能整组补——这正是用户抱怨"只能全让 AI 决策"的原因。
+            mapping = entry_id_map(consumed, section, identity_field, missing_names)
+            if mapping:
+                note["entry_id_by_name"] = mapping
         details.append(
             with_reasons(
-                {
-                    "section": section,
-                    "section_label": label,
-                    "names": missing_names,
-                    "filtered": filtered,
-                    "model_omitted": model_omitted,
-                    "total": len(missing),
-                },
+                note,
                 # 3-A：只有能从消费快照唯一定位到条目的名字才给 entry_ids；旧入口
                 # （只带身份名）拿不到，于是这个键缺席，前端退回"去制作台添加"。
                 entry_ids=(

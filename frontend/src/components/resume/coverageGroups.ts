@@ -109,6 +109,13 @@ export interface CoverageGroup {
   /** 该组所有 note 的 `entry_ids` 并集（3-A 确定性补入用；空数组 = 无可补入条目）。 */
   entryIds: string[];
   /**
+   * `名字 -> entry_id`（逐条补入用）。缺席 = 这条定位不到资料条目，那一行不给补入按钮。
+   *
+   * 与 `entryIds` 的区别：数组会跳过匹配不到的名字且丢失对应关系，只能整组补；
+   * 这个映射让前端能按「这一行的名字」取到它自己的 entry_id，从而一条一条补。
+   */
+  entryIdByName: Record<string, string>;
+  /**
    * 该组的缺口粒度：组内任一条 note 标了 `field` 即为 `"field"`（字段级），否则 `"entry"`。
    *
    * 决定按钮走 revise 还是 workbench（见 {@link resolveCoverageAction}）。
@@ -172,11 +179,17 @@ export function groupCoverageNotes(notes: ResumeCoverageNote[]): CoverageGroup[]
         unknownCount: 0,
         mixedReason: false,
         entryIds: [],
+        entryIdByName: {},
         granularity: "entry",
       };
       groups.set(key, group);
     }
     group.total += note.total;
+    // 逐条补入：把后端下发的「名字 -> entry_id」并进组里，供每一行按名字取自己的 id。
+    for (const [name, entryId] of Object.entries(note.entry_id_by_name ?? {})) {
+      const value = String(entryId ?? "");
+      if (name && value) group.entryIdByName[name] = value;
+    }
     // 组内任一条标了 field，整组按字段级处理（同组同 section_label，粒度本应一致；
     // 万一不一致，字段级是更保守的那个——它不会给出「补进简历」这种做不到的承诺）。
     if (note.granularity === "field") group.granularity = "field";

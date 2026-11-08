@@ -30,6 +30,8 @@ import ResumeCoverageNotes from "./ResumeCoverageNotes";
 export const TITLE: string = t("resume.coverage.title");
 export const REVISE: string = t("resume.coverage.revise");
 export const APPEND: string = t("resume.coverage.append");
+export const APPEND_THIS: string = t("resume.coverage.appendThis");
+export const POLISH_THIS: string = t("resume.coverage.polishThis");
 export const GO_WORKBENCH: string = t("resume.coverage.goWorkbench");
 
 /**

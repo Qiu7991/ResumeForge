@@ -69,8 +69,12 @@ export function ResumeCoverageNotesBody({
 }: Props) {
   const { t } = useI18n();
   const { message } = App.useApp();
-  /** 正在补入的那一组（`group.key`）：只锁这一组的按钮，别的组仍可操作。 */
-  const [appendingKey, setAppendingKey] = useState<string | null>(null);
+  /** 正在补入的那一条名字：只锁这一行，别的行仍可操作。 */
+  const [appendingName, setAppendingName] = useState<string | null>(null);
+  /** 本弹层里已经补进正文的名字（补完后那行换成「AI 润色这段」）。 */
+  const [appendedNames, setAppendedNames] = useState<Set<string>>(() => new Set());
+  /** 正在润色的那一条名字。 */
+  const [polishingName] = useState<string | null>(null);
   if (notes.length === 0 && legacyWarnings.length === 0) return null;
 
   const groups = groupCoverageNotes(notes);
@@ -84,21 +88,32 @@ export function ResumeCoverageNotesBody({
     group.names.map((name) => `「${name}」`).join("、") + // i18n-ok: 同上，模型 prompt 里的中文引号与顿号
     "。补充时使用这些条目在个人资料中的原文事实，不要虚构细节。"; // i18n-ok: 同上，模型 prompt
 
-  /** 3-A：确定性补入。成功后宿主刷新简历，清单由后端修剪，不需要前端自己删条目。 */
-  const handleAppend = async (group: CoverageGroup): Promise<void> => {
+  /**
+   * **逐条**确定性补入（2026-11-08）。
+   *
+   * 用户要的是「我自己选补哪几条」，不是整组全补。后端 `append-profile-entries`
+   * 本来就接收 entry_ids 数组，所以每次只传这一条的 id 即可——不需要新接口。
+   */
+  const handleAppendItem = async (group: CoverageGroup, name: string): Promise<void> => {
     if (resumeId === undefined || !onAppended) return;
-    setAppendingKey(group.key);
+    const entryId = group.entryIdByName[name];
+    if (!entryId) return;
+    setAppendingName(name);
     try {
       const result = await appendProfileEntries(resumeId, {
         sectionKey: group.rawSection,
-        entryIds: group.entryIds,
+        entryIds: [entryId],
         baseRevision,
       });
       if (result.appended.length > 0) {
-        message.success(t("resume.coverage.appended", { count: result.appended.length }));
+        // 记下「这条已经补进去了」：那一行就地换成「AI 润色这段」，
+        // 让用户马上能做第二步（是否润色由他决定，不自动做）。
+        setAppendedNames((prev) => new Set(prev).add(name));
+        message.success(t("resume.coverage.appendedThis", { name }));
       }
       if (result.skipped.length > 0) {
-        message.info(t("resume.coverage.skipped", { count: result.skipped.length }));
+        setAppendedNames((prev) => new Set(prev).add(name));
+        message.info(t("resume.coverage.skippedThis", { name }));
       }
       onAppended(result.resume);
     } catch (error) {
@@ -107,8 +122,25 @@ export function ResumeCoverageNotesBody({
         error instanceof Error && error.message ? error.message : t("resume.coverage.appendFailed"),
       );
     } finally {
-      setAppendingKey(null);
+      setAppendingName(null);
     }
+  };
+
+  /**
+   * 润色**刚补进来的这一条**。
+   *
+   * 与「补入」严格分开：补入是原文事实（确定性、不改写），润色是可选的后处理。
+   * 合并成一步会让"这段到底是谁写的"说不清——用户要的正是这个控制权。
+   * 走既有修订通道：把范围限定在这条内容上。
+   */
+  const handlePolishItem = (group: CoverageGroup, name: string): void => {
+    onRevise(
+      t("resume.coverage.polishInstruction", {
+        // i18n-ok: 喂给模型的修订指令，作为 prompt 保持中文
+        section: group.sectionLabel,
+        name,
+      }),
+    );
   };
 
   return (
@@ -121,10 +153,13 @@ export function ResumeCoverageNotesBody({
           key={group.key}
           group={group}
           action={resolveCoverageAction(group, canAppend)}
-          appendPending={appendingKey === group.key}
-          onAppend={(target) => {
-            void handleAppend(target);
+          appendingName={appendingName}
+          appendedNames={appendedNames}
+          polishingName={polishingName}
+          onAppendItem={(target, name) => {
+            void handleAppendItem(target, name);
           }}
+          onPolishItem={handlePolishItem}
           onRevise={(target) => onRevise(reviseInstructions(target))}
           onOpenEditor={onOpenEditor}
         />
