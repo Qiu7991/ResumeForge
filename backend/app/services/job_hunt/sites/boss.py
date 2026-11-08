@@ -187,6 +187,14 @@ class BossAdapter(JobSiteAdapter):
     def supports(self, url: str) -> bool:
         return "zhipin.com" in (url or "")
 
+    def content_ready_selector(self) -> str:
+        """列表页内容就绪判据：岗位卡片出现。
+
+        实测：BOSS 搜索页 ``readyState=complete`` 时搜索结果尚未渲染（Vue 异步），
+        直接取 outerHTML 会拿到空壳；等这个选择器命中再取才稳定。
+        """
+        return "li.job-card-box"
+
     def max_pages(self) -> int:
         # BOSS 列表页实测一页 15 条；翻页上限按 10 页保守设。
         return 10

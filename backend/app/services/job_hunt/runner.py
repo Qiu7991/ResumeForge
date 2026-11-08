@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -224,15 +225,44 @@ def _dedup_key(url: str) -> str:
 
 
 def cdp_fetcher(
-    client: Any, *, timeout_seconds: float = 20.0, poll_interval: float = 0.4
+    client: Any,
+    adapter: JobSiteAdapter | None = None,
+    *,
+    timeout_seconds: float = 20.0,
+    poll_interval: float = 0.4,
+    content_wait_seconds: float = 8.0,
 ) -> Callable[[str], str]:
     """生产抓取器：复用既有 CDP 客户端（导航 + 就绪等待 + 取 outerHTML）。
 
-    就绪等待复用 ``services/browser/page_ready`` 的轮询原语（只等文档可用，不做
-    站点特定的内容判定——内容是否解析得出来由适配器负责）。超时/轮询间隔可调
-    （测试注入小值，不真等 20 秒）。
+    就绪等待分两层，**两层的必要性都是实测出来的**：
+
+    1. **文档就绪**（``readyState``）：复用 ``services/browser/page_ready`` 的轮询原语。
+    2. **内容就绪**（列表容器出现）：BOSS 这类 Vue 站点 ``readyState=complete`` 时
+       搜索结果是**异步后到**的——实测在真实浏览器里直接取 outerHTML 拿到的是空壳
+       （岗位卡片 0 张），而同一页面等一两秒再取就是 15 张。只等 DOT ready 会得到
+       「页面里没有岗位卡片」的假失败。
+
+    内容就绪的判据由适配器提供（``adapter.content_ready_selector`` 返回 CSS 选择器）；
+    适配器不声明时退化为「等固定时长」，保证通用层不依赖任何具体站点。
     """
     from ..browser.page_ready import ReadyWait, wait_for_page_state
+
+    selector = ""
+    probe = getattr(adapter, "content_ready_selector", None)
+    if callable(probe):
+        try:
+            selector = probe() or ""
+        except Exception:  # noqa: BLE001 — 适配器实现异常不应让抓取整体失败
+            selector = ""
+
+    def _count_matches() -> int:
+        expr = (
+            f"document.querySelectorAll({json.dumps(selector)}).length"
+            if selector
+            else "0"
+        )
+        value = client.evaluate(expr)
+        return int(value) if isinstance(value, (int, float)) else 0
 
     def fetch(url: str) -> str:
         client.navigate(url)
@@ -242,6 +272,27 @@ def cdp_fetcher(
             on_timeout=lambda state: TimeoutError(f"页面加载超时：{url}（state={state}）"),
             config=ReadyWait(timeout=timeout_seconds, poll_interval=poll_interval),
         )
+
+        # 第二层：等内容渲染出来。没声明选择器时用固定短等（保守，不拖慢其它站点）。
+        if selector:
+            try:
+                wait_for_page_state(
+                    lambda: {"hits": _count_matches()},
+                    is_ready=lambda state: int(state.get("hits") or 0) > 0,
+                    on_timeout=lambda state: TimeoutError(
+                        f"内容未渲染：{url}（等待 {selector} 超时，hits={state.get('hits')}）"
+                    ),
+                    config=ReadyWait(
+                        timeout=content_wait_seconds, poll_interval=poll_interval
+                    ),
+                )
+            except TimeoutError:
+                # 内容没等到也不直接失败：交给适配器判定（它可能能解析别的结构，
+                # 或抛出带中文诊断的 JobParseError，比通用层的超时消息更有用）。
+                logger.info("内容就绪等待超时，仍尝试解析：%s", url)
+        else:
+            time.sleep(min(1.5, content_wait_seconds))
+
         html = client.evaluate("document.documentElement.outerHTML")
         if not isinstance(html, str) or not html:
             raise JobParseError("页面内容为空", site_key="")

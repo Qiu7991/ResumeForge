@@ -84,7 +84,7 @@ def collect(req: JobHuntCollectIn, db: Session = Depends(get_db)) -> dict:
     criteria = HuntCriteria(keywords=req.keywords, city=req.city, extra=extra)
     cursor = load_cursor(db, adapter.key, hash_criteria(adapter.key, criteria)) \
         if req.resume else None
-    report = runner.run(criteria, fetch=cdp_fetcher(client), cursor=cursor)
+    report = runner.run(criteria, fetch=cdp_fetcher(client, adapter), cursor=cursor)
     if report.next_cursor is not None:
         if report.stopped_reason in ("no_results", "repeated_page"):
             # 翻到头了：游标使命完成，清掉（下次重开从头）。

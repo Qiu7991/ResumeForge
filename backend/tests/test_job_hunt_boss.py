@@ -141,3 +141,19 @@ def test_decode_refuses_to_guess_unknown_symbols(adapter):
     result = boss_font.decode_salary(second.salary_raw, mapping)
     if boss_font.encoded_chars_in(result.text):
         assert result.ok is False, "仍有未解码字符时必须标记 ok=False"
+
+
+# ---------- 内容就绪选择器（实测踩坑的回归锁）----------
+
+
+def test_content_ready_selector_declared(adapter):
+    """列表页内容就绪判据必须声明。
+
+    实测：BOSS 搜索页 ``readyState=complete`` 时 Vue 列表尚未渲染，
+    直接取 outerHTML 会拿到空壳（0 张卡）。通用层靠这个选择器等内容出现。
+    """
+    selector = adapter.content_ready_selector()
+    assert selector == "li.job-card-box"
+    # 该选择器必须真的能在夹具里命中，否则等待毫无意义
+    html = load("boss_list.html")
+    assert html.count("job-card-box") >= 10
