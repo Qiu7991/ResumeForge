@@ -133,12 +133,18 @@ class BossAdapter(JobSiteAdapter):
             if not location and tags:
                 # 标签里有时混着地区/经验，地区优先取含「·」的那条
                 location = next((t for t in tags if "·" in t), "")
+            salary_raw = _clean(salary_m.group(1)) if salary_m else ""
+            # 列表页直接给出解码结果：字体映射已实证收敛（见 boss_font.BOSS_TTF_MAP），
+            # 不必等详情页的明文对照。解不完整时 decode_salary 会保持 ok=False。
+            decoded = boss_font.decode_salary(salary_raw, boss_font.default_mapping())
             stubs.append(
                 JobStub(
                     title=title,
                     company=_clean(company_m.group(1)) if company_m else "",
                     location=location,
-                    salary_raw=_clean(salary_m.group(1)) if salary_m else "",
+                    salary_raw=salary_raw,
+                    salary_decoded=decoded.text,
+                    salary_decoded_ok=decoded.ok,
                     url=url,
                 )
             )

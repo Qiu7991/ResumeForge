@@ -157,3 +157,45 @@ def test_content_ready_selector_declared(adapter):
     # 该选择器必须真的能在夹具里命中，否则等待毫无意义
     html = load("boss_list.html")
     assert html.count("job-card-box") >= 10
+
+
+# ---------- 完整字体映射（2026-11-08 实证收敛）----------
+
+
+def test_default_mapping_covers_all_ten_symbols():
+    """BOSS 现行字体的 10 个 PUA 符号必须都有确定映射。"""
+    mapping = boss_font.default_mapping()
+    assert len(mapping) == 10
+    assert set(mapping.values()) == set("0123456789")
+
+
+def test_default_mapping_decodes_all_cards():
+    """用固定映射解真实夹具里的全部卡片，必须 15/15 成功。
+
+    这是「映射正确」的端到端锁：任何一位搞错，都会出现「下限 > 上限」
+    或解码不完整（ok=False）。
+    """
+    adapter = BossAdapter()
+    stubs = adapter.parse_list(load("boss_list.html"))
+    assert len(stubs) >= 10
+    for s in stubs:
+        assert s.salary_decoded_ok is True, f"{s.title} 未完整解码：{s.salary_raw}"
+        assert boss_font.encoded_chars_in(s.salary_decoded) == set()
+
+
+def test_default_mapping_ranges_are_sane():
+    """区间型薪资必须满足「下限 < 上限」——映射错一位就会违反。"""
+    import re
+
+    adapter = BossAdapter()
+    stubs = adapter.parse_list(load("boss_list.html"))
+    rng = re.compile(r"(\d+)\s*-\s*(\d+)")
+    checked = 0
+    for s in stubs:
+        m = rng.search(s.salary_decoded)
+        if not m:
+            continue
+        lo, hi = int(m.group(1)), int(m.group(2))
+        assert lo < hi, f"{s.title} 薪资区间倒挂：{s.salary_decoded}"
+        checked += 1
+    assert checked >= 10, f"应至少校验 10 条区间薪资，实际 {checked}"

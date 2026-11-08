@@ -33,6 +33,10 @@ class JobStub:
     location: str = ""
     # 站点原样薪资文本（BOSS 是字体编码的乱码，还原见 sites/boss_font.py）。
     salary_raw: str = ""
+    # 还原后的薪资。列表页就能给出（BOSS 有已知字体映射），不必等详情页；
+    # 无法还原时与 salary_raw 相同、decoded_ok 为 False。
+    salary_decoded: str = ""
+    salary_decoded_ok: bool = False
     url: str = ""
     # 发布时间原文（"昨天"、"3 天前" 等）；解析不出就空串。
     posted_at: str = ""

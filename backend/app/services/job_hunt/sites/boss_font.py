@@ -317,11 +317,57 @@ def mapping_from_constraints(
     return ConstraintMapping(certain=certain, candidates=candidates)
 
 
+# ---------------------------------------------------------------------------
+# BOSS 现行字体的实测映射（2026-11-08 实证收敛，非猜测）
+# ---------------------------------------------------------------------------
+# 来源分两步，互相印证：
+#
+# 1. **6 个符号有独立证据**：详情页主岗位薪资是明文（如 ``8-12K``），与列表同一岗位的
+#    编码串（``\ue039-\ue032\ue033K``）逐位对照 → E039=8 / E032=1 / E033=2；
+#    再把全部区间型薪资喂给 :func:`mapping_from_constraints`，E031=0 / E034=3 /
+#    E035=4 被区间约束唯一定出。
+#
+# 2. **剩 4 个符号用真实字体字形收敛**：从浏览器拦到的 woff2（10 个 PUA 字形 + 1 个
+#    .notdef，**没有任何标准数字字形**——所以 build_digit_map_from_font 在这份字体上
+#    必然返回 None）。改按字形拓扑判定：
+#      E038  7 点 / 1 轮廓 / 上下点比 2.50  ← 与 E032(=1) 完全同形 → 只能是 7
+#      E03A  2 轮廓 / 上多下少（1.83）      → 上半有环 → 9
+#      E037  2 轮廓 / 下多上少（0.52）      → 下半有环 → 6
+#      E036  1 轮廓 / 无环（0.68）          → 5
+#
+# 3. **交叉验证**：用完整映射解 15 条真实卡片，15/15 全部成功，且每条都满足
+#    「下限 < 上限」「量与单位匹配」（含 ``130-250元/天`` 这种三位数日薪）。
+BOSS_TTF_MAP: dict[str, str] = {
+    chr(0xE031): "0",
+    chr(0xE032): "1",
+    chr(0xE033): "2",
+    chr(0xE034): "3",
+    chr(0xE035): "4",
+    chr(0xE036): "5",
+    chr(0xE037): "6",
+    chr(0xE038): "7",
+    chr(0xE039): "8",
+    chr(0xE03A): "9",
+}
+
+
+def default_mapping() -> dict[str, str]:
+    """BOSS 现行字体的完整映射（0-9 全覆盖）。
+
+    页面换字体时这份映射会失效——失效的表现是解出来的数字出现「下限 > 上限」这类
+    矛盾。调用方应优先用 :func:`mapping_from_pairs` 的实时对照做校准，本常量只是
+    **没有明文对照时的兜底**。
+    """
+    return dict(BOSS_TTF_MAP)
+
+
 __all__ = [
     "PUA_MIN",
     "PUA_MAX",
     "SalaryDecode",
     "ConstraintMapping",
+    "BOSS_TTF_MAP",
+    "default_mapping",
     "is_encoded_char",
     "encoded_chars_in",
     "decode_salary",
