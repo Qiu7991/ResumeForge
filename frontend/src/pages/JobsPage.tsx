@@ -5,7 +5,7 @@ import type { TableRowSelection } from "antd/es/table/interface";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { markCandidateJobImported } from "../api/candidateJob";
-import { openWebFormUrl } from "../api/webform";
+import { openBrowserUrl } from "../api/apply";
 import { deleteJob, getJob, updateJob } from "../api/jobs";
 import GenerateResumeModal from "../components/GenerateResumeModal";
 import JobAnalysisModal from "../components/JobAnalysisModal";
@@ -212,8 +212,19 @@ export default function JobsPage() {
       if (!job.source_url || webFormJobId !== null) return;
       setWebFormJobId(job.id);
       try {
-        await openWebFormUrl(job.source_url);
-        message.success(t("pagesMisc.jobsPage.toast.webFormOpened"));
+        /*
+         * 「前往投递」必须走**投递台专用浏览器**（apply/browser/open-url，端口 9333）。
+         *
+         * 上游 2.0 把它接到了网申填表浏览器（webform/browser/open-url，端口 9344），
+         * 于是用户在投递台已经登录/开着 9333 的情况下点「前往投递」会再拉起一个
+         * 完全独立的 9344 实例——看起来就是"又开了一个新的浏览器环境"（2026-11-08 反馈）。
+         *
+         * 1.x 的口径是 openBrowserUrl（与投递台同源、共用登录态），这里改回它：
+         * 两个浏览器是**故意**分开的（网申填表不能碰投递台的登录态），
+         * 但"前往投递"这个动作属于投递台，不该落到网申那边。
+         */
+        await openBrowserUrl(job.source_url);
+        message.success(t("pagesMisc.jobsPage.toast.applyBrowserOpened"), 8);
       } catch (error) {
         message.error(
           error instanceof Error ? error.message : t("pagesMisc.jobsPage.error.webFormFailed"),

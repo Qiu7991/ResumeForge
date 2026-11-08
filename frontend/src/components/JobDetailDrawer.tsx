@@ -208,6 +208,7 @@ export default function JobDetailDrawer({
                   icon={<LinkOutlined />}
                   loading={webFormLoading}
                   disabled={webFormLoading}
+                  title={t("jobDetail.tooltip.goApply")}
                   onClick={() => onOpenWebForm(job)}
                 >
                   {t("jobDetail.action.goApply")}
@@ -220,6 +221,14 @@ export default function JobDetailDrawer({
     >
       {job && (
         <>
+          {/* 「前往投递」用的是投递台专用浏览器（1333/9333），用户第一次点容易误以为
+              又开了一个新环境，这里常驻一行说明"它和投递台共用登录态"。
+              （移植自 1.x；上游 2.0 把这行删了，同时把动作接到了网申浏览器上。） */}
+          {job.source_url ? (
+            <Typography.Paragraph type="secondary" style={{ margin: "0 0 8px", fontSize: 12 }}>
+              {t("jobDetail.hint.goApplyBrowser")}
+            </Typography.Paragraph>
+          ) : null}
           <div className="job-detail-title-row">
             <Typography.Title level={4} style={{ margin: 0 }}>
               {job.title}
