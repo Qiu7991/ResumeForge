@@ -65,7 +65,13 @@ function DiagnosticsEntry({ label, ariaLabel, badge, attention, children }: Entr
       // 31 条清单在弹层里可能很长：限高 + 内部滚动（不为此改成抽屉，会又开一层遮罩）。
       content={<div className="resume-diagnostics-popover">{children}</div>}
     >
-      <Button type="text" size="small" className="resume-diagnostics-entry" aria-label={ariaLabel}>
+      {/*
+        用**默认按钮**（有边框）而不是 `type="text"`（2026-11-08 用户反馈）：
+        这四个入口原来是纯文字样式，用户看不出能点——"未收录 90" 摆在那儿，
+        而他要找的「补进简历」全在它后面的弹层里，结果以为功能没做。
+        它们承载"展开一大块内容"的真实动作，必须有可辨识的按钮外观。
+      */}
+      <Button size="small" className="resume-diagnostics-entry" aria-label={ariaLabel}>
         {attention ? <span className="resume-diagnostics-dot" aria-hidden /> : null}
         <span>{label}</span>
         {badge ? (

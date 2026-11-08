@@ -307,14 +307,24 @@
   container-type: inline-size;
 }
 
-/* 单个入口：antd 的 text Button + 一颗条数徽标，高度与正文行一致（≈28px）。 */
+/* 单个入口：antd 默认按钮（有边框）+ 一颗条数徽标，高度与正文行一致（≈28px）。
+   2026-11-08 从 `type="text"`（无边框）改回默认按钮：用户看不出这几个能点，
+   「未收录 90」后面那整套「补进简历」因此一直没被发现。 */
 .resume-diagnostics-entry {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
   white-space: nowrap;
-  padding-inline: 8px;
+  padding-inline: 10px;
+  /* 边框要比 antd 默认的 #e7ebf0 明显：实测默认色在浅色底上几乎看不见，
+     用户还是会当成普通文字。这里用中性灰边 + 略深的文字色。 */
+  border-color: #c9d1d9;
+}
+
+.resume-diagnostics-entry:hover {
+  border-color: var(--rf-brand, #1f3f6b);
+  color: var(--rf-brand, #1f3f6b);
 }
 
 .resume-diagnostics-count {
