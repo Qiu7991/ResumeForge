@@ -56,4 +56,15 @@ export interface ResumeCoverageNote {
    * "不知道"，后者是"没有可确定性补入的条目"，前端据此区分"补进简历"与"去制作台添加"。
    */
   entry_ids?: string[];
+  /**
+   * 缺口粒度（2026-11-08 新增，显式优于推断）：
+   * - `"entry"`（或缺省）：整条资料没写进简历。
+   * - `"field"`：条目在，但条目内的列表字段（项目亮点 / 技术栈 / 科研成果）缺几句。
+   *
+   * 为什么要显式标而不是靠 `entry_ids` 去猜：`skills` 与 `projects` 都会带 entry_ids，
+   * 但前者能靠 AI 改写补进去（技能本是列表项），后者整条补入需要新增条目
+   * （后端 `resume_profile_append` 不支持），只能去制作台。粒度决定动作，必须由
+   * 产出方（后端）说清楚。
+   */
+  granularity?: "entry" | "field";
 }

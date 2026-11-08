@@ -108,6 +108,13 @@ export interface CoverageGroup {
   mixedReason: boolean;
   /** 该组所有 note 的 `entry_ids` 并集（3-A 确定性补入用；空数组 = 无可补入条目）。 */
   entryIds: string[];
+  /**
+   * 该组的缺口粒度：组内任一条 note 标了 `field` 即为 `"field"`（字段级），否则 `"entry"`。
+   *
+   * 决定按钮走 revise 还是 workbench（见 {@link resolveCoverageAction}）。
+   * 旧记录没有这个键，按 `"entry"` 处理，行为与改动前一致。
+   */
+  granularity: "entry" | "field";
 }
 
 /** 三种按钮分支（3-A 决策表）。 */
@@ -116,6 +123,10 @@ export type CoverageAction = "append" | "revise" | "workbench";
 /**
  * 「靠改写就能补」的分区：这些分区在简历文档里**已经有可写字段**，AI 修订只要改写
  * 已有 path 的 value 就行，不需要新增条目。其余分区一律只能去制作台添加。
+ *
+ * 注意这里是**分区级**口径，只覆盖"整个分区都是列表/长文本"的类型。
+ * 条目级分区（projects / experience / …）的**字段级**缺口另由 note 上的
+ * `granularity: "field"` 标记，见 {@link resolveCoverageAction}。
  */
 const AI_REWRITABLE_SECTIONS: ReadonlySet<string> = new Set(["skills", "languages", "summary"]);
 
@@ -161,10 +172,14 @@ export function groupCoverageNotes(notes: ResumeCoverageNote[]): CoverageGroup[]
         unknownCount: 0,
         mixedReason: false,
         entryIds: [],
+        granularity: "entry",
       };
       groups.set(key, group);
     }
     group.total += note.total;
+    // 组内任一条标了 field，整组按字段级处理（同组同 section_label，粒度本应一致；
+    // 万一不一致，字段级是更保守的那个——它不会给出「补进简历」这种做不到的承诺）。
+    if (note.granularity === "field") group.granularity = "field";
     for (const entryId of note.entry_ids ?? []) {
       const value = String(entryId ?? "");
       if (value && !group.entryIds.includes(value)) group.entryIds.push(value);
@@ -202,12 +217,19 @@ export function groupCoverageNotes(notes: ResumeCoverageNote[]): CoverageGroup[]
  * 也没法落库，降级成「去制作台添加」——它永远不会给出做不到的承诺。
  */
 export function resolveCoverageAction(
-  group: Pick<CoverageGroup, "section" | "rawSection" | "entryIds">,
+  group: Pick<CoverageGroup, "section" | "rawSection" | "entryIds"> & {
+    granularity?: CoverageGroup["granularity"];
+  },
   canAppend = true,
 ): CoverageAction {
-  if (canAppend && group.entryIds.length > 0 && isCustomSection(group.rawSection)) {
+  const hasEntryIds = group.entryIds.length > 0;
+  if (canAppend && hasEntryIds && isCustomSection(group.rawSection)) {
     return "append";
   }
+  // 字段级缺口（条目在、缺几句亮点/技术栈）：AI 修订能改写这一条已有条目，
+  // 这是唯一可达动作——既不能 append（后端只补整条），也不该推去制作台。
+  // 判定用后端显式下发的 `granularity`，不靠 `entry_ids` 推断（技能也带 entry_ids）。
+  if (group.granularity === "field") return "revise";
   if (AI_REWRITABLE_SECTIONS.has(group.section)) return "revise";
   return "workbench";
 }

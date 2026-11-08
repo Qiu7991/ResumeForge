@@ -269,6 +269,40 @@ describe("resolveCoverageAction decision table (3-A)", () => {
     expect(resolveCoverageAction(appendable, false)).toBe("workbench");
   });
 
+  // 2026-11-08：字段级缺口（条目在、缺几句亮点/技术栈）。
+  // 后端 `find_unwritten_field_details` 会显式标 `granularity: "field"`。
+  // 这类缺口 append 做不到（`resume_profile_append` 只补整条），AI 修订却能改写
+  // 已有项目的 highlights/tech_stack——所以必须给 revise，不能推去制作台。
+  it("routes field-level gaps to AI revise even for entry-level sections", () => {
+    for (const section of ["projects", "research_projects"]) {
+      expect(
+        resolveCoverageAction({
+          section,
+          rawSection: section,
+          // entry_ids 可能为空（字段级没有单一条目身份），也可能带着——
+          // 两种情况都必须走 revise，粒度标记说了算。
+          entryIds: [],
+          granularity: "field",
+        }),
+      ).toBe("revise");
+      expect(
+        resolveCoverageAction({
+          section,
+          rawSection: section,
+          entryIds: ["e1"],
+          granularity: "field",
+        }),
+      ).toBe("revise");
+    }
+  });
+
+  it("still sends whole-entry gaps in entry-level sections to the workbench", () => {
+    // granularity 缺省 = entry：整条项目没写，append 后端不支持 → 制作台。
+    expect(
+      resolveCoverageAction({ section: "projects", rawSection: "projects", entryIds: ["e1"] }),
+    ).toBe("workbench");
+  });
+
   it("recognises the custom section prefix only", () => {
     expect(isCustomSection("custom:abc")).toBe(true);
     expect(isCustomSection("projects")).toBe(false);

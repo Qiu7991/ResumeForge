@@ -326,16 +326,28 @@ def find_unwritten_field_details(
             if not missing:
                 continue
             prefix = "项目" if section_key == "projects" else "科研项目"
+            # 字段级差异（技术栈 / 亮点 / 科研成果）**不能确定性补入**：
+            # `resume_profile_append` 只处理「整条条目」，不写条目内的列表字段
+            # （`_projected_custom_entries` 只遍历 custom_sections）。
+            #
+            # 第一性原理：清单的原子单位必须是**一个可执行的动作**。
+            # 这里的缺口是「这一条项目里还差那几句」，唯一可达动作是让 AI 改写
+            # 这一条已有项目的 highlights / tech_stack。所以显式标 `granularity: "field"`，
+            # 由前端稳定地走 revise 分支——不再靠"有没有 entry_ids"去猜（那个推断
+            # 对 skills 不成立：技能也带 entry_ids，但技能确实能靠改写补进去）。
             details.append(
                 with_reasons(
                     {
                         "section": section_key,
                         "section_label": f"{prefix}「{name}」的{label}",
+                        "granularity": "field",
                         "names": missing,
                         "filtered": [],
                         "model_omitted": missing,
                         "total": len(missing),
                     }
+                    # 显式传 None：字段级差异没有可定位的单一条目身份，
+                    # 不给 entry_ids 才能让前端区别于「整条未写」的可补入分支。
                 )
             )
     # 2) 技能条目：整条没写的技能单列，并按"有没有进过候选"分开归因。
