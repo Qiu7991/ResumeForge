@@ -8,26 +8,37 @@
  * 生成中按钮换成它——点下去 abort 掉 SSE，界面立刻回到可继续提问的状态，服务端把这一轮
  * 标成 interrupted（回答保留，可重答）。**不是**"结束面试"：那是 RoomHeader 上的另一件事。
  */
-import { StopOutlined } from "@ant-design/icons";
-import { Button, Input, Typography } from "antd";
+import { BulbOutlined, StopOutlined } from "@ant-design/icons";
+import { Button, Input, Tooltip, Typography } from "antd";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
 
 export function Composer({
   value,
   submitting,
+  coachLoading,
   onChange,
   onSubmit,
   onStop,
+  onAskCoach,
 }: {
   /** 输入框里的文字（受控）。 */
   value: string;
   /** 是否正在生成：输入框禁用，按钮换成「停止本轮」。 */
   submitting: boolean;
+  /**
+   * 是否正在生成参考答案。
+   *
+   * 与 `submitting` 分开：教练与面试官是两条独立轨道（见后端
+   * `services/interview/interview_coach.py`），一个在跑不该锁住另一个。
+   */
+  coachLoading?: boolean;
   onChange: (value: string) => void;
   onSubmit: () => void;
   /** 停止本轮：abort 当前请求，页面立刻回到可提问状态。 */
   onStop: () => void;
+  /** 「我不太会」：让教练基于自己的资料给一份参考答案（不写消息、不进评分）。 */
+  onAskCoach?: () => void;
 }) {
   useLocale();
   return (
@@ -47,6 +58,19 @@ export function Composer({
       />
       <div className="interview-composer-actions">
         <Typography.Text type="secondary">{t("interview.hint.dontKnow")}</Typography.Text>
+        {/*
+          「给我参考答案」：原来答不上来只有"面试官给回答思路"这一条路，用户学到的是
+          框架而不是"我自己该怎么答"（2026-11-08 用户反馈）。这个按钮走教练轨道：
+          读他自己的简历 + 资料库 + 事实台账，给一份能说出口的答案，并明确标注
+          不计入评分、资料里没有的部分会如实说明。
+        */}
+        {onAskCoach ? (
+          <Tooltip title={t("interview.coach.hint")}>
+            <Button icon={<BulbOutlined />} loading={coachLoading} onClick={onAskCoach}>
+              {t("interview.coach.action")}
+            </Button>
+          </Tooltip>
+        ) : null}
         {submitting ? (
           // 生成中：主按钮换成「停止本轮」，不加载动画——这时候"转圈"传达的是"请等"，
           // 而我们要说的是"可以不等"。

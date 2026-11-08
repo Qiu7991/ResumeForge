@@ -51,7 +51,24 @@ const interview = {
   "interview.placeholder":
     "Answer as in a real interview: conclusion first, then what you did and how it turned out (Ctrl+Enter to send)",
   "interview.hint.dontKnow":
-    "If you cannot answer, say “I don't know” — the interviewer will suggest an approach.",
+    "If you cannot answer, say “I don't know” for an approach, or click “Show me a reference answer” to see how you could answer it.",
+  "interview.coach.action": "Show me a reference answer",
+  "interview.coach.hint":
+    "Built from your own resume, profile entries and confirmed facts. Not scored, and anything missing from your materials is called out.",
+  "interview.coach.title": "Coach reference answer",
+  "interview.coach.groundedTag": "Entirely from your materials",
+  "interview.coach.partialTag": "Includes transferable parts",
+  "interview.coach.dismiss": "Dismiss reference answer",
+  "interview.coach.outlineLabel": "Answer structure",
+  "interview.coach.sourcesLabel": "Your materials used",
+  "interview.coach.gapsLabel": "Missing from your materials",
+  "interview.coach.noteGrounded":
+    "Every fact here comes from your own resume, profile entries or confirmed facts — you can say it as written.",
+  "interview.coach.notePartial":
+    "Some parts are transferable wording, not your real experience. Do not present them as experience — follow-up questions in a real interview will expose it, which hurts more than saying “I don't know”.",
+  "interview.coach.noteNotScored":
+    "Reference answers are not scored; only your own answers count toward the report.",
+  "interview.coach.failed": "Could not generate a reference answer. Please try again.",
   "interview.action.submit": "Submit answer",
   "interview.action.stopRound": "Stop this round",
   "interview.action.retryRound": "Answer again",

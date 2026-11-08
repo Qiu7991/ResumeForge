@@ -495,3 +495,119 @@ def test_api_auto_rounds_cap_forces_finish(client, db_session, monkeypatch):
     detail = client.get(f"/api/interview/{session_id}").json()
     assert detail["status"] == "finished"
     assert detail["answered_rounds"] == 4
+
+
+# ===== 面试教练：答不上来时的参考答案（2026-11-08）=====
+#
+# 与面试官是两条独立轨道：教练读候选人的全部资料，教他怎么答；
+# 参考答案**不进评分**，也不写任何消息（候选人仍要自己作答）。
+
+
+def test_parse_coach_answer_keeps_fields_and_defaults_grounded_false():
+    """缺 grounded 时按 false：宁可保守标注"不完全有据"，也不谎称全来自资料。"""
+    from app.services.interview.interview_coach import parse_coach_answer
+
+    parsed = parse_coach_answer(
+        '{"answer": "我做过 A 项目", "outline": ["先说结论"], "sources": ["A 项目"]}'
+    )
+    assert parsed["answer"] == "我做过 A 项目"
+    assert parsed["outline"] == ["先说结论"]
+    assert parsed["sources"] == ["A 项目"]
+    assert parsed["grounded"] is False
+
+
+def test_parse_coach_answer_survives_non_json_output():
+    """模型偶尔不回 JSON：按纯文本答案兜底，绝不把异常抛给前端。"""
+    from app.services.interview.interview_coach import parse_coach_answer
+
+    parsed = parse_coach_answer("这道题你可以先讲结论，再举项目。")
+    assert parsed["answer"].startswith("这道题你可以")
+    assert parsed["grounded"] is False
+    assert parsed["gaps"] == []
+
+
+def test_coach_prompt_reads_profile_not_only_resume(db_session):
+    """教练必须能读到资料库与事实台账——只喂简历等于把用户最真实的弹药丢掉。
+
+    这是本功能的核心契约：参考答案要"从他自己的资料里长出来"，
+    资料库里有大量没写进简历的真实经历（简历受篇幅限制写不全）。
+    """
+    from app.services.interview.interview_coach import build_coach_messages
+
+    class _FakeSession:
+        interview_type = "技术面"
+        difficulty = "中级"
+        job_title = "AI 应用工程师"
+        company = "示例公司"
+        messages = []
+
+    messages = build_coach_messages(
+        db_session, _FakeSession(), resume_text="简历内容", job_text="JD 内容"
+    )
+    payload = json.loads(messages[1]["content"])
+    assert "简历内容" in payload["候选人的简历"]
+    # 三个数据源都必须出现在提示词里（资料库/台账为空时是占位文案，但键必须在）
+    assert "候选人的资料库（全部条目，未写入简历的也在里面）" in payload
+    assert "已确认的事实台账" in payload
+    # JD 只用于判断角度，提示词里必须写清"不要据此编造经历"
+    jd_key = "目标岗位的招聘信息（只用于判断该答哪个角度，不要据此编造经历）"
+    assert jd_key in payload
+
+
+def test_api_coach_answer_returns_reference_without_touching_transcript(
+    client, db_session, monkeypatch
+):
+    """教练接口不写消息、不改状态、不影响已答轮数——它只是"给一份参考答案"。"""
+    _configure(monkeypatch, [{"question": "第一题", "feedback": "", "done": False}])
+    session_id = _start(client, db_session, rounds=3).json()["id"]
+    client.post(f"/api/interview/{session_id}/answers", json={"content": "不知道"})
+
+    before = client.get(f"/api/interview/{session_id}").json()
+
+    reference = json.dumps(
+        {
+            "answer": "我在 A 项目里用 ComfyUI 搭了 7 套工作流，产出 20 部成片。",
+            "outline": ["先说做过什么", "再给数字"],
+            "sources": ["AIGC 短视频生产体系"],
+            "gaps": [],
+            "grounded": True,
+        }
+    )
+
+    class _CoachProvider:
+        async def chat(self, _messages, *, thinking: bool = True):
+            return reference
+
+    monkeypatch.setattr(
+        "app.api.interview._require_provider", lambda _db: (_CoachProvider(), "test-model")
+    )
+
+    result = client.post(f"/api/interview/{session_id}/coach-answer")
+    assert result.status_code == 200
+    body = result.json()
+    assert body["answer"].startswith("我在 A 项目里")
+    assert body["grounded"] is True
+    assert body["sources"] == ["AIGC 短视频生产体系"]
+
+    after = client.get(f"/api/interview/{session_id}").json()
+    # 消息数与轮数都不变：参考答案不是候选人说的话
+    assert len(after["messages"]) == len(before["messages"])
+    assert after["answered_rounds"] == before["answered_rounds"]
+    assert after["status"] == before["status"]
+
+
+def test_api_coach_answer_reports_model_failure_as_502(client, db_session, monkeypatch):
+    """模型挂了给 502，而不是把空答案当成功返回（用户会以为"我没资料"）。"""
+    _configure(monkeypatch, [{"question": "第一题", "feedback": "", "done": False}])
+    session_id = _start(client, db_session, rounds=3).json()["id"]
+    client.post(f"/api/interview/{session_id}/answers", json={"content": "不知道"})
+
+    class _BrokenProvider:
+        async def chat(self, _messages, *, thinking: bool = True):
+            raise RuntimeError("模型超时")
+
+    monkeypatch.setattr(
+        "app.api.interview._require_provider", lambda _db: (_BrokenProvider(), "test-model")
+    )
+
+    assert client.post(f"/api/interview/{session_id}/coach-answer").status_code == 502

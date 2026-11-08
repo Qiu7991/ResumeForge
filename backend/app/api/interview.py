@@ -30,6 +30,7 @@ from ..schemas.interview import (
     InterviewAnswerCreate,
     InterviewAnswerResult,
     InterviewBrief,
+    InterviewCoachAnswerOut,
     InterviewCreate,
     InterviewDetail,
     InterviewDurationUpdate,
@@ -289,6 +290,43 @@ async def submit_answer(
         # 客户端断开：短任务没有"后台继续"的语义，这一轮标成未完成（回答保留，可重答）。
         _mark_interrupted(db, answer)
         raise
+
+
+@router.post("/{session_id}/coach-answer", response_model=InterviewCoachAnswerOut)
+async def coach_answer(session_id: int, db: Session = Depends(get_db)):
+    """「我不太会，给我参考答案」：基于**候选人自己的资料**生成一份能说出口的答案。
+
+    与 `/answers` 是两条互不影响的轨道（见 `services/interview/interview_coach.py` 头注释）：
+
+    - 这里**不写任何消息**、不改会话状态、不进评分。候选人仍然要自己作答（或继续放弃），
+      评分只认他自己的回答。
+    - 允许在 `finished` 之后调用：报告出完后回来复盘「这题我该怎么答」是最常见的用法。
+    - 数据范围是简历 + 资料库 + 已确认事实台账。资料里答不了就如实说明并给可迁移回答，
+      不拿 JD 反推事实（吹出来的答案在真实面试追问里必崩）。
+    """
+    session = _session_or_404(db, session_id)
+    provider, _model = _require_provider(db)
+
+    # 教练复盘在最末尾那轮尤其常用，所以这里不要求 status=active；只要有题目可回顾即可。
+    from ..services.interview.interview import _load_prompt, _render  # noqa: F401  # 保持导入路径单一
+    from ..services.interview.interview_coach import build_coach_messages, parse_coach_answer
+
+    messages = build_coach_messages(
+        db,
+        session,
+        resume_text=_resume_text(db, session),
+        job_text=_session_job_text(db, session),
+    )
+    try:
+        raw = await provider.chat(messages, thinking=False)
+    except Exception as exc:  # noqa: BLE001 - LLMError 之外也可能是网络层异常
+        logger.warning("面试教练调用失败 session=%s", session_id, exc_info=True)
+        raise HTTPException(status_code=502, detail="参考答案生成失败，请稍后重试") from exc
+
+    parsed = parse_coach_answer(raw)
+    if not parsed["answer"].strip():
+        raise HTTPException(status_code=502, detail="参考答案生成失败，请稍后重试")
+    return InterviewCoachAnswerOut(**parsed)
 
 
 async def _answer_after_recording(

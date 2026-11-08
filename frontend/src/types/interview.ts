@@ -176,6 +176,25 @@ export interface InterviewAnswerResult {
   needs_report?: boolean;
 }
 
+/**
+ * 「我不太会，给我参考答案」的结果（2026-11-08）。
+ *
+ * 这是**教练轨道**的产物，不是面试官的评分依据：它不进 transcript、不改会话状态，
+ * 只用于学习与赛后复盘。答案只能从用户自己的简历 / 资料库 / 已确认事实里长出来。
+ */
+export interface InterviewCoachAnswer {
+  /** 第一人称、可直接说出口的参考答案。 */
+  answer: string;
+  /** 答案结构要点（2-4 条），用来记框架而不是死背。 */
+  outline: string[];
+  /** 引用的资料条目名。 */
+  sources: string[];
+  /** 资料里缺什么。非空 = 这题他确实没有直接经历，答案是可迁移表述。 */
+  gaps: string[];
+  /** 答案是否完全来自资料。false 时前端要明确提示「别当真实经历讲」。 */
+  grounded: boolean;
+}
+
 /** 一次追问的结果（#41）：面试官的回答 + 刷新后的整场会话。 */
 export interface InterviewFollowUpResult {
   session: InterviewDetail;
