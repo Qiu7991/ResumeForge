@@ -615,3 +615,72 @@ def test_builtin_entry_ids_are_unique_per_source_entry(db_session):
     assert len(built) == 2
     generated = [entry["id"] for entry in built.values()]
     assert len(set(generated)) == 2, f"entry id 重复了：{generated}"
+
+
+def test_builtin_append_uses_resume_side_section_key(db_session):
+    """补入 history 类板块时，文档里的分区 key 必须是**简历侧**名字。
+
+    资料侧叫 `experiences` / `educations`（复数），v2 文档规范是
+    `experience` / `education`（单数）。直接用资料侧 key 新建分区，文档里就会多出
+    一个非规范板块（实测发生过：一次补入后 sections 里同时有 experience/experiences）。
+    """
+    from app.services.resume import document_io
+    from app.services.resume.resume_profile_append import append_profile_entries
+
+    workspace_bootstrap.ensure_workspace(db_session)
+    row = entry_store.upsert_entry(
+        db_session,
+        "experiences",
+        values={
+            "experiences.company": "某实习公司",
+            "experiences.title": "实习生",
+            "experiences.start_date": "2025-11",
+            "experiences.end_date": "2026-03",
+            "experiences.description": "做了 A\n做了 B",
+        },
+    )
+    record = _empty_v2_record(db_session)
+
+    outcome = append_profile_entries(
+        db_session, record_id=record.id, section_key="experiences", entry_ids=[str(row.entry_id)]
+    )
+    db_session.refresh(record)
+
+    assert outcome.appended
+    document, _ = document_io.document_for_record(db_session, record)
+    keys = [s.get("key") for s in document["sections"]]
+    assert "experience" in keys, f"文档分区 key 应为简历侧单数，实际 {keys}"
+    assert "experiences" not in keys, f"不该出现资料侧复数 key，实际 {keys}"
+
+
+def test_builtin_append_works_for_plural_profile_sections(db_session):
+    """资料侧是复数名的板块（experiences / educations）也必须能补入。
+
+    `BUILTIN_SECTIONS` 曾经按简历侧单数写键，导致查不到分区 → 报"资料已删除"，
+    而资料明明在。这里对两个复数板块各跑一次。
+    """
+    from app.services.resume.resume_profile_append import append_profile_entries
+
+    workspace_bootstrap.ensure_workspace(db_session)
+    cases = [
+        (
+            "experiences",
+            {"experiences.company": "实习公司甲", "experiences.description": "A"},
+            "experience",
+        ),
+        (
+            "educations",
+            {"educations.school": "某大学", "educations.major": "计算机"},
+            "education",
+        ),
+    ]
+    for section_key, values, _doc_key in cases:
+        row = entry_store.upsert_entry(db_session, section_key, values=values)
+        record = _empty_v2_record(db_session)
+        outcome = append_profile_entries(
+            db_session,
+            record_id=record.id,
+            section_key=section_key,
+            entry_ids=[str(row.entry_id)],
+        )
+        assert outcome.appended, f"{section_key} 应当补入成功"

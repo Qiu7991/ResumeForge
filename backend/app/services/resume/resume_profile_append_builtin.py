@@ -35,10 +35,14 @@ from .document_converter import convert_content
 #: 内置板块 key → v1 ResumeContent 的列表属性名。
 #: 与 `document_converter._V1_LIST_ATTRS` 同源；这里只列"能从资料补入"的那些。
 BUILTIN_SECTIONS: dict[str, str] = {
-    "education": "education",
-    "experience": "experience",
+    # 键必须是**资料侧**的分区键（与 `ConsumedProfile.section()` 同口径）。
+    # 注意 experience / education / campus_experience 在资料侧是**复数**
+    # （experiences / educations / campus_experiences），与简历侧字段名不同——
+    # 2026-11-08 实测：用单数查不到分区，报"资料已删除"，而资料明明在。
+    "educations": "education",
+    "experiences": "experience",
     "projects": "projects",
-    "campus_experience": "campus_experience",
+    "campus_experiences": "campus_experience",
     "awards": "awards",
     "publications": "publications",
     "research_projects": "research_projects",
@@ -49,10 +53,11 @@ BUILTIN_SECTIONS: dict[str, str] = {
 #: 各板块的身份字段（资料侧 field_id 的后缀）：用于「这条已经写进简历了吗」。
 #: 与 `resume_coverage._SECTION_MAP` 的身份字段口径一致。
 IDENTITY_FIELDS: dict[str, str] = {
-    "education": "school",
-    "experience": "company",
+    # 同样按**资料侧**键。身份字段是"这条是不是同一条"的判据。
+    "educations": "school",
+    "experiences": "company",
     "projects": "name",
-    "campus_experience": "organization",
+    "campus_experiences": "organization",
     "awards": "name",
     "publications": "title",
     "research_projects": "name",
@@ -158,11 +163,13 @@ def build_builtin_entries(
             continue
         legacy = _legacy_entry(values, section_key)
         # 用转换器生成 entry：与生成链完全同源，字段位置与列表切分都一致。
+        # 注意 v1 入参用**简历侧**属性名（`experience` 单数），转换器输出也用简历侧
+        # 分区 key；而 `section_key` 是资料侧（`experiences`）。两边必须分开取。
         document, _report = convert_content(
             {"version": 1, "language": "zh-CN", BUILTIN_SECTIONS[section_key]: [legacy]},
             language="zh-CN",
         )
-        target = next((s for s in document.sections if s.key == section_key), None)
+        target = next((s for s in document.sections if s.key == BUILTIN_SECTIONS[section_key]), None)
         if target is None or not target.entries:
             continue
         payload = target.entries[0].model_dump(mode="json")

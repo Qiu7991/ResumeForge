@@ -351,6 +351,7 @@ def append_profile_entries(
     # 旧实现只有第一条路径，于是用户在「未收录」里看到「项目经历 · 8 条」（后端
     # `builtin_entry_ids` 确实定位到了这 8 条），点补入却报"资料已删除"——那句话是错的。
     from .resume_profile_append_builtin import (
+        BUILTIN_SECTIONS,
         build_builtin_entries,
         identity_of,
         supports_builtin,
@@ -383,12 +384,17 @@ def append_profile_entries(
         raise AppendError(
             ERROR_SECTION_MISSING, "这份简历的正文结构不可读，无法补入", status_code=422
         )
-    target = _find_document_section(document, section_key)
+    # 文档里的分区 key 用**简历侧**名字（v2 规范是 `experience` / `education`），
+    # 而 `section_key` 是资料侧（`experiences` / `educations`）。两者在
+    # experience/education/campus_experience 上不同名——直接用资料侧 key 新建分区，
+    # 文档里就会出现 `experiences` 这种非规范板块（2026-11-08 实测发生过）。
+    doc_section_key = BUILTIN_SECTIONS.get(section_key, section_key)
+    target = _find_document_section(document, doc_section_key)
     if target is None:
         # 分区不存在 → 新建。标题用资料分区名（自建板块即用户起的名字）。
         target = {
-            "key": section_key,
-            "title": section.name or section_key,
+            "key": doc_section_key,
+            "title": section.name or doc_section_key,
             "kind": "entries",
             "entries": [],
         }
