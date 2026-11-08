@@ -156,6 +156,57 @@ def _validated_content(
         raise HTTPException(status_code=422, detail=conversion_error_detail(exc)) from exc
 
 
+def _coverage_notes_with_entry_map(
+    record: ResumeRecord, db: Session | None
+) -> list[dict[str, Any]]:
+    """给未收录清单补上 ``entry_id_by_name``（逐条补入用）。
+
+    **为什么在读取侧补**（2026-11-08）：这个键是生成时写进 ``coverage_notes`` 的，
+    但用户手上已有的简历都是旧数据（实测 52/53/50 三份，7 条 note 里 0 条带映射）。
+    不补的话「逐条补上这段」在他们的简历上永远出不来按钮——功能等于没做。
+
+    读取侧现场算的依据是**当前资料库**：清单里的名字本来就是资料条目的身份名，
+    按名字回查资料库就能拿到 entry_id。代价是"生成后资料被改名"的名字查不到，
+    那种情况不写这个键，前端那一行就不给补入按钮（不猜）。
+
+    只补**缺失**的 note：已有映射的保持生成时的快照（那才是当时的真相）。
+    """
+    notes = record.coverage_notes or []
+    if not notes or db is None:
+        return notes
+    if all(isinstance(item, dict) and item.get("entry_id_by_name") for item in notes):
+        return notes
+
+    from ...services.profile.ai_profile import load_ai_consumed_profile
+    from ...services.resume.resume_coverage import _SECTION_MAP
+    from ...services.resume.resume_coverage_notes import entry_id_map
+
+    identity_by_section = {section: field for _field, section, field, _label in _SECTION_MAP}
+    consumed = None
+    enriched: list[dict[str, Any]] = []
+    for item in notes:
+        if not isinstance(item, dict) or item.get("entry_id_by_name"):
+            enriched.append(item)
+            continue
+        section = str(item.get("section") or "")
+        identity_field = identity_by_section.get(section)
+        names = [str(name) for name in (item.get("names") or []) if str(name)]
+        if not identity_field or not names:
+            enriched.append(item)
+            continue
+        if consumed is None:
+            try:
+                consumed = load_ai_consumed_profile(db)
+            except Exception:  # noqa: BLE001 - 资料读取失败不该让详情接口挂掉
+                return notes
+        mapping = entry_id_map(consumed, section, identity_field, names)
+        if mapping:
+            enriched.append({**item, "entry_id_by_name": mapping})
+        else:
+            enriched.append(item)
+    return enriched
+
+
 def _to_resume_out(
     record: ResumeRecord,
     db: Session | None = None,
@@ -205,7 +256,7 @@ def _to_resume_out(
         warnings=record.warnings or [],
         parse_error=record.parse_error,
         rationale=record.rationale or "",
-        coverage_notes=record.coverage_notes or [],
+        coverage_notes=_coverage_notes_with_entry_map(record, db),
         # JSON 列里存的是 dict，逐条显式校验成 FactAnnotation（与 pydantic 构造时的
         # 隐式校验同语义，这里写明让类型检查器也看得到）。
         fact_annotations=[

@@ -349,13 +349,26 @@
   flex: 0 0 auto;
 }
 
-/* 弹层内容：31 条清单可能很长，限高 + 内部滚动（不改成抽屉）。 */
+/* 弹层内容：内容可能很长，限高 + 内部滚动（不改成抽屉）。
+ *
+ * 2026-11-08 放宽尺寸：原来 max-width 560 / max-height 360，用户实测「这个框太小了」——
+ * 未收录清单要**逐条阅读整段正文再决定补不补**（每条带一个操作按钮），
+ * 560px 宽要塞下「内容 + 按钮」，正文被挤成碎行；360px 高一次只看得到 4~5 条。
+ *
+ * 宽度取 `min(760px, 78vw)`：760 是"正文 + 行尾按钮"一行的舒适宽，
+ * 78vw 保证 1000px 窗口下是 780 → 减去 popover 内边距仍有余量，不会顶到屏幕边。
+ * （上一版 88vw 在 1000px 窗口算出 880，加上内边距就到 884，右侧几乎贴边。）
+ */
 .resume-diagnostics-popover {
-  min-width: 280px;
-  max-width: min(560px, 88vw);
-  max-height: 360px;
+  width: min(760px, 78vw);
+  max-height: min(70vh, 720px);
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/* 约束 Popover 容器本身（antd 默认按内容撑宽，内层 width 未必能压住它）。 */
+.resume-diagnostics-popover .resume-coverage-item-row {
+  gap: 10px;
 }
 
 /* 窄档（用户把窗口拖窄 / 抽屉形态）：允许换行，别横向溢出。

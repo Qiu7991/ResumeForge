@@ -63,6 +63,11 @@ function DiagnosticsEntry({ label, ariaLabel, badge, attention, children }: Entr
       trigger="click"
       placement="bottomLeft"
       // 31 条清单在弹层里可能很长：限高 + 内部滚动（不为此改成抽屉，会又开一层遮罩）。
+      //
+      // 宽度必须在**容器**上限制（2026-11-08）：antd 的 Popover 默认按内容撑宽，
+      // 只在里面那层 div 上写 width 压不住——实测 1000px 宽的窗口里弹层被撑到 884
+      // 并横向出屏。这里用 vw 兜底，任何窗口宽度都留出边距。
+      overlayStyle={{ maxWidth: "min(900px, 92vw)" }}
       content={<div className="resume-diagnostics-popover">{children}</div>}
     >
       {/*
