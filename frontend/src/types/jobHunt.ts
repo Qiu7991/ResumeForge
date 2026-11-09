@@ -21,3 +21,49 @@ export interface JobHuntStatus {
   backend: JobHuntBackend;
   platforms: JobHuntPlatform[];
 }
+
+/** 采集到的一张岗位卡片（后端 `JobStub` 的投影）。 */
+export interface JobHuntStub {
+  title: string;
+  company: string;
+  location: string;
+  /** 站点原样薪资（BOSS 是字体编码乱码）。 */
+  salary_raw: string;
+  /** 还原后的明文薪资；无法还原时与 salary_raw 相同。 */
+  salary_decoded: string;
+  salary_decoded_ok: boolean;
+  url: string;
+  posted_at: string;
+}
+
+/** 入库账目：inserted + skipped_duplicate 应等于采到的卡片数（errors 除外）。 */
+export interface JobHuntPersistLedger {
+  inserted: number;
+  skipped_duplicate: number;
+  errors: string[];
+}
+
+export interface JobHuntCollectResult {
+  stubs: JobHuntStub[];
+  pages_fetched: number;
+  duplicates: number;
+  stopped_reason: string;
+  errors: string[];
+  resumed_from_page: number;
+  persisted: JobHuntPersistLedger;
+  /** 有新增岗位且开启分析时的后台任务 id（hex 字符串）。 */
+  analyze_task_id: string | null;
+}
+
+export interface JobHuntCollectRequest {
+  site_key: string;
+  keywords?: string;
+  city?: string;
+  max_pages?: number;
+  city_code?: string;
+  resume?: boolean;
+  /** 是否写进岗位广场（默认 true）。 */
+  persist?: boolean;
+  /** 是否对本次新增岗位触发一次分析（默认 true；服务端 force=false 不重复评分）。 */
+  analyze?: boolean;
+}

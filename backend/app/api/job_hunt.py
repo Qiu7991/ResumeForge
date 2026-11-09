@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -37,6 +38,12 @@ class JobHuntCollectIn(BaseModel):
     # 平台特有参数原样透传（如智联的城市编码 city_code）。
     city_code: str = ""
     resume: bool = False
+    # 采到的岗位是否写进岗位广场（默认写）。关闭时只返回卡片，不落库。
+    persist: bool = True
+    # 入库后是否对「本次新增」的岗位触发一次批量分析。
+    # 复用的批量任务传 ``force=False``：已分析过的岗位服务端自动跳过，
+    # 因此同一岗位不会重复评分（不需要新表/新字段）。
+    analyze: bool = True
 
 
 @router.get("/status")
@@ -91,6 +98,14 @@ def collect(req: JobHuntCollectIn, db: Session = Depends(get_db)) -> dict:
             clear_cursor(db, adapter.key, report.next_cursor.criteria_hash)
         else:
             save_cursor(db, report.next_cursor)
+
+    persisted = {"inserted": 0, "skipped_duplicate": 0, "errors": []}
+    new_job_ids: list[int] = []
+    if req.persist and report.stubs:
+        persisted, new_job_ids = _persist_stubs(db, report.stubs)
+
+    analyze_task_id = _start_analysis(db, new_job_ids) if (req.analyze and new_job_ids) else None
+
     return {
         "stubs": [asdict(stub) for stub in report.stubs],
         "pages_fetched": report.pages_fetched,
@@ -98,7 +113,85 @@ def collect(req: JobHuntCollectIn, db: Session = Depends(get_db)) -> dict:
         "stopped_reason": report.stopped_reason,
         "errors": report.errors,
         "resumed_from_page": report.resumed_from_page,
+        # 入库账目：inserted + skipped_duplicate 应等于 stubs 总数（errors 除外）。
+        "persisted": persisted,
+        # 有新增岗位且开启分析时给出后台任务 id（前端可轮询进度）。
+        "analyze_task_id": analyze_task_id,
     }
+
+
+def _persist_stubs(
+    db: Session, stubs: list[Any]
+) -> tuple[dict[str, Any], list[int]]:
+    """把采集卡片写进岗位广场。
+
+    去重复用 ``find_job_by_identity``（判据是「同一链接，或同一公司下同名岗位」）——
+    与岗位广场手动录入、CSV 导入共用同一份判据，不另写一套。
+
+    返回 ``(账目, 新增岗位 id 列表)``。单条失败不中断整批：记进 errors 后继续。
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from ..schemas.job import JobCreate
+    from ..services.job.job_service import create_job_record, find_job_by_identity
+
+    ledger: dict[str, Any] = {"inserted": 0, "skipped_duplicate": 0, "errors": []}
+    new_ids: list[int] = []
+
+    for stub in stubs:
+        try:
+            existing = find_job_by_identity(
+                db,
+                title=stub.title,
+                company=stub.company,
+                source_url=stub.url,
+            )
+            if existing is not None:
+                ledger["skipped_duplicate"] += 1
+                continue
+            job = create_job_record(
+                db,
+                JobCreate(
+                    title=stub.title or "(未命名岗位)",
+                    company=stub.company,
+                    location=stub.location,
+                    # salary_decoded 已是明文（BOSS 的字体已在适配器里还原）
+                    salary=(stub.salary_decoded or stub.salary_raw)[:64],
+                    description="",
+                    requirements="",
+                    source_url=stub.url,
+                    posted_at=stub.posted_at,
+                ),
+                source="job_hunt",
+            )
+            db.flush()
+            new_ids.append(int(job.id))
+            ledger["inserted"] += 1
+        except (SQLAlchemyError, ValueError) as exc:
+            # 一条脏数据不该让整次采集失败——记下来，继续下一条。
+            ledger["errors"].append(f"{stub.title or '(未命名)'}: {exc}")
+    db.commit()
+    return ledger, new_ids
+
+
+def _start_analysis(db: Session, job_ids: list[int]) -> str | None:
+    """对本次新增岗位启动一次批量分析（复用现有后台任务）。
+
+    ``force=False`` 是「评一次不重复」的全部实现：服务端对已有分析记录的岗位直接跳过，
+    所以这里不需要任何新的存储或状态字段。启动失败返回 None，不影响采集本身。
+    """
+    try:
+        from ..services.job.job_match_background import (
+            create_job_match_background_task,
+            get_job_match_background_runner,
+        )
+
+        task = create_job_match_background_task(db, job_ids, force=False, mode="match")
+        get_job_match_background_runner().start(task.task_id)
+        return str(task.task_id)
+    except Exception as exc:  # noqa: BLE001 — 分析是增强项，失败不该连累采集
+        logger.info("采集后启动分析失败（不影响入库）：%s: %s", type(exc).__name__, exc)
+        return None
 
 
 def _acquire_client(db: Session):
