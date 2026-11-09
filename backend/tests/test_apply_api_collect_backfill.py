@@ -42,6 +42,20 @@ def test_collect_task_requires_keywords(client, db_session, fake_runner):
     assert response.status_code == 400
 
 
+def test_collect_task_allows_interest_source_without_keywords(client, db_session, fake_runner):
+    """「我的感兴趣」来源（source=interest）没有关键词/城市维度：必须放行。
+
+    2026-11-09 真实链路验收发现：守卫没认识新来源，配置存成功但建任务 400——
+    小样本采集根本开不起来。搜索来源的校验保持原样（上面的 requires_keywords 钉着）。
+    """
+    assert client.put("/api/collect/config", json={"source": "interest"}).status_code == 200
+
+    created = client.post("/api/collect/tasks")
+
+    assert created.status_code == 200
+    assert created.json()["config"]["source"] == "interest"
+
+
 def test_collect_task_omits_the_sample_flag_by_default(client, db_session, fake_runner):
     """默认不保存站点原文：不带该字段时任务 config 里**没有**这个键（保持旧任务的形状）。"""
     client.put("/api/collect/config", json={"keywords": ["后端"], "city": "北京"})
