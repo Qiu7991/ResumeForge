@@ -12,6 +12,8 @@ const hooksUi = {
   "hooksUi.remoteSearch.empty": "No matches — type a keyword to search",
 
   "hooksUi.option.resumeFallback": "Resume #{id}",
+  "hooksUi.option.resumeForJob": " (this Job)",
+  "hooksUi.option.resumeFavorite": " (favorite)",
 
   "hooksUi.batchItems.error.load": "Could not load the batch items",
 

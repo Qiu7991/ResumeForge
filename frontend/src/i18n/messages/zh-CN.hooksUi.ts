@@ -14,6 +14,10 @@ const hooksUi = {
 
   /** 简历没填标题时的下拉兜底名；`{id}` 是简历 id。 */
   "hooksUi.option.resumeFallback": "简历 #{id}",
+  /** 投递队列简历下拉：这份简历就是为该岗位写的（同时是收藏时只标这个，语义更强）。 */
+  "hooksUi.option.resumeForJob": "（本岗位）",
+  /** 投递队列简历下拉：来自收藏的简历（用户实测 1.x 会把收藏的都列出来）。 */
+  "hooksUi.option.resumeFavorite": "（收藏）",
 
   /** 展开批次后拉取明细失败（后端没给出更具体的原因时）。 */
   "hooksUi.batchItems.error.load": "加载批次明细失败",
