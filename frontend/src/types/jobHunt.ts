@@ -67,3 +67,28 @@ export interface JobHuntCollectRequest {
   /** 是否对本次新增岗位触发一次分析（默认 true；服务端 force=false 不重复评分）。 */
   analyze?: boolean;
 }
+
+/** 五维评分中的单项。 */
+export interface ScoredComponent {
+  key: string;
+  label: string;
+  score: number;
+  limit: number;
+  evidence: string;
+}
+
+/** 语义评分结果（后端 `semantic_score` 子键的投影）。 */
+export interface SemanticScore {
+  total: number;
+  raw_total: number;
+  components: ScoredComponent[];
+  /** 命中封顶规则（technical_required / sales_acquisition_core / weak_core_transfer）。 */
+  caps: string[];
+  /** JD 明确必备但未获证据支持的项。 */
+  hard_gaps: string[];
+  role_summary: string;
+  reason: string;
+  missing: string;
+  ok: boolean;
+  error: string;
+}

@@ -22,6 +22,7 @@ import { useNavigate } from "react-router-dom";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
 import { useJobHuntNative } from "../../hooks/useJobHuntNative";
+import ScorePanel from "./ScorePanel";
 import type { JobHuntStatus } from "../../types/jobHunt";
 import type { JobList } from "../../types/job";
 
@@ -216,6 +217,15 @@ export default function NativeJobHuntView({ status }: Props) {
           locale={{ emptyText: <Empty description={t("aiJobs.native.empty")} /> }}
         />
       </Card>
+
+      {selected.length === 1 && <ScorePanel jobId={selected[0]} />}
+      {selected.length > 1 && (
+        <Alert
+          type="info"
+          showIcon
+          message={t("aiJobs.native.scoreHintMulti", { count: selected.length })}
+        />
+      )}
 
       <Alert type="info" showIcon message={t("aiJobs.native.replyNotAvailable")} />
     </div>

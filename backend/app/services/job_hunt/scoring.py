@@ -1,0 +1,300 @@
+# SPDX-License-Identifier: Apache-2.0
+"""LLM 语义评分（参考成熟实现的评分口径，代码为自研）。
+
+与 ``services/match_scoring.py`` 的分工
+--------------------------------------
+``match_scoring`` 是**纯本地规则**：技能命中率、年限比对、关键词覆盖。它不需要模型，
+但对「A 做过的事能不能迁移到 B 岗位」这类判断无能为力——只能按字面比对，结果往往是
+中性分（实测无 JD 时恒为 50）。
+
+本模块做**语义评估**：把完整简历 + 完整 JD 交给模型，按五个维度逐项打分，
+并要求每条分数附具体证据。核心规则（证据四态、可迁移需行动支撑、封顶）来自
+对成熟评分口径的参考，提示词见 ``prompts/job_hunt_scoring.md``。
+
+两者并存：本地规则作为「模型不可用」时的兜底，语义评分作为主路径。
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# 五个维度的满分上限。模型必须按此给分，程序统一求和。
+COMPONENT_LIMITS: dict[str, int] = {
+    "core_duties": 40,
+    "transferable_evidence": 25,
+    "hard_requirements": 15,
+    "tools_industry": 10,
+    "practical_fit": 10,
+}
+
+# 维度 key -> 中文名（前端与报告展示用）。
+COMPONENT_LABELS: dict[str, str] = {
+    "core_duties": "核心职责匹配",
+    "transferable_evidence": "可迁移证据",
+    "hard_requirements": "硬性要求",
+    "tools_industry": "工具与行业",
+    "practical_fit": "实际条件",
+}
+
+# 封顶规则：命中后总分不得超过该值。
+CAP_CEILINGS: dict[str, int] = {
+    "technical_required": 55,
+    "sales_acquisition_core": 65,
+    "weak_core_transfer": 70,
+}
+
+# 模型偶尔把维度名写成别名（实测有模型简写），解析前归一。
+_ALIASES = {
+    "transferable": "transferable_evidence",
+    "transferable_skills": "transferable_evidence",
+    "hard_requirement": "hard_requirements",
+    "core_duty": "core_duties",
+    "tools": "tools_industry",
+    "practical": "practical_fit",
+}
+
+_MARKDOWN_JSON_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.S)
+
+
+@dataclass
+class ScoredComponent:
+    key: str
+    label: str
+    score: int
+    limit: int
+    evidence: str = ""
+
+
+@dataclass
+class SemanticScore:
+    """一次语义评分的结论。"""
+
+    total: int = 0
+    raw_total: int = 0
+    components: list[ScoredComponent] = field(default_factory=list)
+    caps: list[str] = field(default_factory=list)
+    hard_gaps: list[str] = field(default_factory=list)
+    role_summary: str = ""
+    reason: str = ""
+    missing: str = ""
+    ok: bool = False
+    error: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "total": self.total,
+            "raw_total": self.raw_total,
+            "components": [
+                {
+                    "key": c.key,
+                    "label": c.label,
+                    "score": c.score,
+                    "limit": c.limit,
+                    "evidence": c.evidence,
+                }
+                for c in self.components
+            ],
+            "caps": self.caps,
+            "hard_gaps": self.hard_gaps,
+            "role_summary": self.role_summary,
+            "reason": self.reason,
+            "missing": self.missing,
+            "ok": self.ok,
+            "error": self.error,
+        }
+
+
+def _strip_fences(raw: str) -> str:
+    text = (raw or "").strip()
+    match = _MARKDOWN_JSON_RE.match(text)
+    if match:
+        return match.group(1).strip()
+    # 模型有时前后带解释；取第一个 { 到最后一个 }。
+    start, end = text.find("{"), text.rfind("}")
+    if start >= 0 and end > start:
+        return text[start : end + 1]
+    return text
+
+
+def _clamp(value: Any, lower: int, upper: int) -> int:
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return lower
+    return max(lower, min(upper, number))
+
+
+def parse_semantic_score(raw: str) -> SemanticScore:
+    """把模型输出解析成 :class:`SemanticScore`。
+
+    解析纪律：
+    - 五个维度缺任意一个 → ``ok=False``，不猜分；
+    - 单项超上限 → 夹到上限（模型常见错误，不应整份作废）；
+    - ``caps`` 只接受白名单里的值，未知 cap 丢弃（防模型自造规则）；
+    - 总分 = 五项之和，再按最强的 cap 封顶。
+    """
+    score = SemanticScore()
+    text = _strip_fences(raw)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        score.error = f"模型输出不是合法 JSON：{exc}"
+        return score
+    if not isinstance(payload, dict):
+        score.error = "模型输出不是 JSON 对象"
+        return score
+
+    # 维度别名归一
+    normalized: dict[str, Any] = {}
+    for key, value in payload.items():
+        normalized[_ALIASES.get(key, key)] = value
+
+    components: list[ScoredComponent] = []
+    for key, limit in COMPONENT_LIMITS.items():
+        node = normalized.get(key)
+        if not isinstance(node, dict):
+            score.error = f"缺少维度 {key}"
+            return score
+        raw_score = node.get("score")
+        if raw_score is None:
+            score.error = f"维度 {key} 没有 score"
+            return score
+        components.append(
+            ScoredComponent(
+                key=key,
+                label=COMPONENT_LABELS[key],
+                score=_clamp(raw_score, 0, limit),
+                limit=limit,
+                evidence=str(node.get("evidence") or "").strip(),
+            )
+        )
+
+    score.components = components
+    score.raw_total = sum(c.score for c in components)
+
+    caps_raw = normalized.get("caps") or []
+    if isinstance(caps_raw, (list, tuple)):
+        score.caps = [c for c in (str(x).strip() for x in caps_raw) if c in CAP_CEILINGS]
+
+    gaps_raw = normalized.get("hard_gaps") or []
+    if isinstance(gaps_raw, (list, tuple)):
+        score.hard_gaps = [str(g).strip() for g in gaps_raw if str(g).strip()]
+
+    score.role_summary = str(normalized.get("role_summary") or "").strip()
+    score.reason = str(normalized.get("reason") or "").strip()
+    score.missing = str(normalized.get("missing") or "").strip()
+
+    # 封顶：取所有命中 cap 里最严的那个。
+    ceiling = min((CAP_CEILINGS[c] for c in score.caps), default=100)
+    score.total = min(score.raw_total, ceiling)
+    score.ok = True
+    return score
+
+
+def build_scoring_prompt(
+    *,
+    resume: str,
+    title: str,
+    company: str,
+    city: str = "",
+    salary: str = "",
+    experience: str = "",
+    education: str = "",
+    recruitment_type: str = "",
+    jd: str = "",
+    candidate_education: str = "",
+    candidate_recruitment_type: str = "",
+    target_cities: str = "",
+    salary_min: float = 0,
+    salary_max: float = 0,
+    salary_ceil_ratio: float = 1.5,
+) -> str:
+    """拼装评分提示词（模板在 ``prompts/job_hunt_scoring.md``）。"""
+    from pathlib import Path
+
+    template = (Path(__file__).resolve().parents[2] / "prompts" / "job_hunt_scoring.md").read_text(
+        encoding="utf-8"
+    )
+    salary_ceil = salary_max * max(salary_ceil_ratio, 1.0) if salary_max > 0 else 0
+    return template.format(
+        resume=resume,
+        title=title,
+        company=company,
+        city=city or "未识别",
+        salary=salary or "未识别",
+        experience=experience or "未识别",
+        education=education or "未识别",
+        recruitment_type=recruitment_type or "未识别",
+        jd=jd or "（岗位未提供 JD 正文）",
+        candidate_education=candidate_education or "未填写",
+        candidate_recruitment_type=candidate_recruitment_type or "未填写",
+        target_cities=target_cities or "未填写",
+        salary_min=int(salary_min),
+        salary_max=int(salary_max),
+        salary_ceil=int(salary_ceil),
+        salary_fit=salary_fit_summary(salary, salary_min, salary_max, salary_ceil),
+    )
+
+
+def _parse_salary_range(text: str) -> tuple[float, float] | None:
+    """从 ``15-25K`` / ``1.2-1.5万`` / ``130-250元/天`` 里取月薪区间（单位 K）。"""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    numbers = re.findall(r"(\d+(?:\.\d+)?)", raw)
+    if len(numbers) < 2:
+        # 单值（如「10K以上」）：只取一个边界。
+        if len(numbers) == 1:
+            value = float(numbers[0])
+            if "万" in raw:
+                value *= 10
+            return (value, value)
+        return None
+    low, high = float(numbers[0]), float(numbers[1])
+    if "万" in raw:
+        low, high = low * 10, high * 10
+    elif "元/天" in raw or "/天" in raw:
+        # 日薪折月（按 22 天）：130-250 元/天 ≈ 2.9-5.5K
+        low, high = low * 22 / 1000, high * 22 / 1000
+    return (low, high)
+
+
+def salary_fit_summary(
+    job_salary: str, salary_min: float, salary_max: float, salary_ceil: float
+) -> str:
+    """给模型的薪资核对结论（程序算好，不让模型自己算）。
+
+    区间有交集即「可谈」，不因岗位下限低于期望就判不匹配。
+    """
+    parsed = _parse_salary_range(job_salary)
+    if parsed is None:
+        return "岗位薪资未能识别，不据此扣分"
+    low, high = parsed
+    if salary_max <= 0 and salary_min <= 0:
+        return f"岗位 {low:g}K-{high:g}K；候选人未填写期望薪资，不据此扣分"
+    expect_low = salary_min if salary_min > 0 else 0
+    expect_high = salary_ceil if salary_ceil > 0 else salary_max
+    if expect_high <= 0:
+        return f"岗位 {low:g}K-{high:g}K；期望上限未设置，不据此扣分"
+    if low <= expect_high and high >= expect_low:
+        return f"岗位 {low:g}K-{high:g}K 与期望 {expect_low:g}K-{expect_high:g}K 有交集，可谈"
+    if low > expect_high:
+        return f"岗位 {low:g}K-{high:g}K 高于期望上限 {expect_high:g}K，属于超预期（不是不匹配）"
+    return f"岗位 {low:g}K-{high:g}K 低于期望下限 {expect_low:g}K，需在「实际条件」扣分"
+
+
+__all__ = [
+    "COMPONENT_LIMITS",
+    "COMPONENT_LABELS",
+    "CAP_CEILINGS",
+    "ScoredComponent",
+    "SemanticScore",
+    "parse_semantic_score",
+    "build_scoring_prompt",
+    "salary_fit_summary",
+]

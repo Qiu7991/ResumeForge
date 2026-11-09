@@ -44,6 +44,9 @@ class JobHuntCollectIn(BaseModel):
     # 复用的批量任务传 ``force=False``：已分析过的岗位服务端自动跳过，
     # 因此同一岗位不会重复评分（不需要新表/新字段）。
     analyze: bool = True
+    # 入库后是否后台补抓 JD 正文（评分需要 JD 才能做语义匹配）。
+    # 逐个访问详情页、有限速，所以放后台线程，不阻塞本次采集响应。
+    backfill_jd: bool = True
 
 
 @router.get("/status")
@@ -103,6 +106,11 @@ def collect(req: JobHuntCollectIn, db: Session = Depends(get_db)) -> dict:
     new_job_ids: list[int] = []
     if req.persist and report.stubs:
         persisted, new_job_ids = _persist_stubs(db, report.stubs)
+
+    # JD 补抓：列表页没有正文，后台线程逐个抓详情页（限速、不阻塞本次响应）。
+    # 评分要靠 JD 才能做语义匹配，没有 JD 只能拿标题猜（实测全是中性分 50）。
+    if req.backfill_jd and new_job_ids:
+        _start_jd_backfill(new_job_ids, adapter)
 
     analyze_task_id = _start_analysis(db, new_job_ids) if (req.analyze and new_job_ids) else None
 
@@ -172,6 +180,28 @@ def _persist_stubs(
             ledger["errors"].append(f"{stub.title or '(未命名)'}: {exc}")
     db.commit()
     return ledger, new_ids
+
+
+def _start_jd_backfill(job_ids: list[int], adapter: Any) -> None:
+    """后台补抓 JD 正文（限速、只补空 JD）。
+
+    不阻塞采集响应：15 条详情页按 1.5s 间隔要 20+ 秒，挂在请求上会超时。
+    浏览器不可用时整批跳过，不影响已经入库的卡片。
+    """
+    try:
+        from ..database import SessionLocal
+        from ..services.job_hunt.detail_backfill import start_backfill_in_background
+        from ..services.job_hunt.runner import cdp_fetcher
+
+        def _fetch_factory(db: Session) -> Any:
+            client = _acquire_client(db)
+            return cdp_fetcher(client, adapter)
+
+        start_backfill_in_background(
+            SessionLocal, job_ids, fetch_factory=_fetch_factory, adapter=adapter
+        )
+    except Exception as exc:  # noqa: BLE001 — 补抓是增强项，失败不该连累采集
+        logger.info("JD 补抓启动失败（不影响入库）：%s: %s", type(exc).__name__, exc)
 
 
 def _start_analysis(db: Session, job_ids: list[int]) -> str | None:

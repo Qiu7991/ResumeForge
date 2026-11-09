@@ -10,6 +10,7 @@ import type {
   JobHuntCollectResult,
   JobHuntConfig,
   JobHuntStatus,
+  SemanticScore,
 } from "../types/jobHunt";
 import { request } from "./client";
 
@@ -41,4 +42,18 @@ export function runJobHuntCollect(
     // 采集要真开页面翻页，15s 默认预算必然误超时；用 analysis 档（180s）。
     budget: "analysis",
   });
+}
+
+/** 对单个岗位做语义评分（五维 + 封顶）。需要岗位已有 JD 正文。 */
+export function scoreJob(jobId: number, force = false): Promise<SemanticScore & { job_id: number; cached: boolean }> {
+  return request(`/job-hunt/jobs/${jobId}/score${force ? "?force=true" : ""}`, {
+    method: "POST",
+    // 评分要调模型，用 analysis 档（180s）。
+    budget: "analysis",
+  });
+}
+
+/** 读已落库的语义评分（未评分时 ok=false）。 */
+export function getJobScore(jobId: number): Promise<SemanticScore & { job_id: number }> {
+  return request(`/job-hunt/jobs/${jobId}/score`);
 }

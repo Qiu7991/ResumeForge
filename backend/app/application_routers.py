@@ -34,6 +34,7 @@ from .api import (
     interview_experiences,
     interview_history,
     job_hunt,
+    job_hunt_score,
     job_match,
     jobs,
     jobs_analysis,
@@ -108,6 +109,8 @@ ROUTERS = (
     # 自研求职采集（services/job_hunt）：独立前缀 /api/job-hunt，与 sidecar 并存，
     # 用 job_hunt_backend 开关切换（默认 sidecar，旧路径不动）。
     job_hunt.router,
+    # 自研求职语义评分（五维 + 封顶）：/api/job-hunt/jobs/{id}/score
+    job_hunt_score.router,
     jobs.router,
     jobs_analysis.router,
     resumes.router,
