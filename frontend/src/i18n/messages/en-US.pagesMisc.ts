@@ -54,6 +54,8 @@ const pagesMisc = {
   "pagesMisc.jobsPage.error.favoriteFailed": "Could not update the favorite",
   "pagesMisc.jobsPage.toast.webFormOpened":
     "Opened the application page in the dedicated web-form browser",
+  "pagesMisc.jobsPage.toast.applyBrowserOpened":
+    "Opened this job in the dedicated apply browser (shares the apply desk login)",
   "pagesMisc.jobsPage.error.webFormFailed": "Could not open the web form page",
   "pagesMisc.jobsPage.backfill.none": "No jobs on this page need their descriptions filled in",
   /** `{count}` is how many jobs get their descriptions filled in. */

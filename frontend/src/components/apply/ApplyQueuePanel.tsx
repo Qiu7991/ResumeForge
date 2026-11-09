@@ -293,6 +293,7 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
           selectedIds={selectedIds}
           setSelectedIds={setSelectedIds}
           setDetail={setDetail}
+          setEditing={setEditing}
           rowMenuItems={rowMenuItems}
         />
       )}

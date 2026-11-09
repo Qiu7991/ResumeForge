@@ -143,6 +143,47 @@
   flex-wrap: wrap;
 }
 
+/* 教练参考答案卡片：放在作答区上方，视觉上区别于对话气泡（浅底 + 左侧强调条），
+   让用户一眼看出"这不是我说的、也不是面试官说的"。 */
+.interview-coach-card {
+  border: 1px solid var(--rf-border-subtle);
+  border-left: 3px solid var(--rf-info-strong, var(--rf-brand));
+  border-radius: 10px;
+  background: var(--rf-surface-alt, #f8fafc);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.interview-coach-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.interview-coach-answer {
+  margin: 0 0 10px;
+  line-height: 1.8;
+  font-size: 14px;
+}
+
+.interview-coach-block {
+  margin-top: 8px;
+}
+
+.interview-coach-outline {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  line-height: 1.8;
+}
+
+.interview-coach-note {
+  display: block;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
 .interview-report-score {
   display: flex;
   align-items: center;
@@ -497,4 +538,37 @@
 
 .interview-setup-hint {
   grid-column: 1 / -1;
+}
+
+/* 报告末尾的教练参考答案附录：与报告正文用分隔线隔开，避免被误读成评分的一部分。 */
+.interview-report-coach {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--rf-border-subtle);
+}
+
+.interview-report-coach-item {
+  padding: 10px 12px;
+  margin-top: 10px;
+  border-left: 3px solid var(--rf-info-strong, var(--rf-brand));
+  background: var(--rf-surface-alt, #f8fafc);
+  border-radius: 8px;
+}
+
+.interview-report-coach-question {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.interview-report-coach-answer {
+  margin: 0;
+  line-height: 1.8;
+}
+
+.interview-report-coach-gaps,
+.interview-report-coach-note {
+  display: block;
+  font-size: 12px;
+  margin-top: 6px;
+  margin-bottom: 0;
 }

@@ -46,6 +46,14 @@ const interviewPage = {
   "interviewPage.report.score": "{score} 分",
   "interviewPage.report.strengths": "做得好的地方",
   "interviewPage.report.improvements": "下次可以改进",
+  "interviewPage.report.coachAppendix": "本场你看过的参考答案",
+  "interviewPage.report.coachAppendixHint":
+    "这些答案不参与评分，只供赛后复习：当时没答上的题，你本人该怎么答。",
+  "interviewPage.report.coachQuestion": "题目：",
+  "interviewPage.report.coachGaps": "资料里还缺：",
+  "interviewPage.report.coachGapSeparator": "；",
+  "interviewPage.report.coachPartial":
+    "含可迁移表述，别当成真实经历讲——真实面试追问细节会露馅。",
   "interviewPage.report.saveToMaterial": "把这场面试存进资料箱",
 
   // ===== 面试计时器 / 准备好了 =====

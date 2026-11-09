@@ -24,6 +24,9 @@ const jobDetail = {
   "jobDetail.action.askAssistant": "Ask the assistant",
   "jobDetail.section.progress": "Application progress for this Job",
   "jobDetail.action.interview": "Mock interview",
+  "jobDetail.hint.goApplyBrowser":
+    "“Go and apply” opens in the apply desk browser. If that window asks you to sign in, scan once there; it will be reused afterwards.",
+  "jobDetail.tooltip.goApply": "Opens in the apply browser with the same sign-in as the apply desk",
   "jobDetail.action.goApply": "Go and apply",
   "jobDetail.action.favorite": "Favorite this job",
   "jobDetail.action.unfavorite": "Remove from favorites",

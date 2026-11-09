@@ -31,10 +31,16 @@ interface Props {
   group: CoverageGroup;
   /** 该组该出哪个按钮（唯一判定入口见 `resolveCoverageAction`）。 */
   action: CoverageAction;
-  /** 「补进简历」请求在飞：转圈并禁用，避免连点写出两条。 */
-  appendPending?: boolean;
-  /** 「补进简历」：把该组的 entry_ids 确定性写进正文。 */
-  onAppend: (group: CoverageGroup) => void;
+  /** 该组里正在补入的那一条名字（逐条补：只锁这一行）。 */
+  appendingName?: string | null;
+  /** 该组里已经补进正文的名字（补完后那一行换成「AI 润色这段」）。 */
+  appendedNames?: ReadonlySet<string>;
+  /** 该组里正在润色的那一条名字。 */
+  polishingName?: string | null;
+  /** 逐条补入：只补这一条。 */
+  onAppendItem: (group: CoverageGroup, name: string) => void;
+  /** 润色刚补的那一条。 */
+  onPolishItem: (group: CoverageGroup, name: string) => void;
   /** 「AI 补上这段」：把拼好的修订指令交给弹窗。 */
   onRevise: (group: CoverageGroup) => void;
   /** 「去制作台添加」：宿主负责打开制作台。 */
@@ -44,8 +50,11 @@ interface Props {
 export default function CoverageGroupCard({
   group,
   action,
-  appendPending = false,
-  onAppend,
+  appendingName = null,
+  appendedNames,
+  polishingName = null,
+  onAppendItem,
+  onPolishItem,
   onRevise,
   onOpenEditor,
 }: Props) {
@@ -94,17 +103,36 @@ export default function CoverageGroupCard({
           {t("resume.coverage.sectionCount", { label: sectionLabel, count: group.total })}
         </span>
         {reasonSummary ? <span className="resume-coverage-reasons">{reasonSummary}</span> : null}
+        {group.sectionHidden ? (
+          <Tooltip title={t("resume.coverage.sectionHiddenAction")}>
+            <span className="resume-coverage-hidden-hint">
+              {t("resume.coverage.sectionHidden")}
+            </span>
+          </Tooltip>
+        ) : null}
       </div>
       <ul className="resume-coverage-items">
-        {visibleItems.map((item) => (
-          <CoverageItemRow
-            key={item.name}
-            name={item.name}
-            reason={item.reason}
-            // 只有混合原因的组才逐条补小徽标（纯因一组靠组头那一行就够了）。
-            showReason={group.mixedReason}
-          />
-        ))}
+        {visibleItems.map((item) => {
+          const entryId = group.entryIdByName[item.name];
+          const appended = appendedNames?.has(item.name) ?? false;
+          // 逐条补入只在 append 分支、且这一条能定位到资料条目时给按钮；
+          // 其余分支（revise / workbench）不承诺"补进正文"这件事。
+          const canAppendThis = action === "append" && Boolean(entryId);
+          return (
+            <CoverageItemRow
+              key={item.name}
+              name={item.name}
+              reason={item.reason}
+              // 只有混合原因的组才逐条补小徽标（纯因一组靠组头那一行就够了）。
+              showReason={group.mixedReason}
+              appended={appended}
+              appending={appendingName === item.name}
+              polishing={polishingName === item.name}
+              onAppend={canAppendThis ? () => onAppendItem(group, item.name) : undefined}
+              onPolish={appended ? () => onPolishItem(group, item.name) : undefined}
+            />
+          );
+        })}
       </ul>
       {collapsible ? (
         <Button
@@ -119,18 +147,6 @@ export default function CoverageGroupCard({
         </Button>
       ) : null}
       <div className="resume-coverage-actions">
-        {action === "append" ? (
-          <Button
-            size="small"
-            type="primary"
-            ghost
-            loading={appendPending}
-            disabled={appendPending}
-            onClick={() => onAppend(group)}
-          >
-            {t("resume.coverage.append")}
-          </Button>
-        ) : null}
         {action === "revise" ? (
           <Button size="small" type="primary" ghost onClick={() => onRevise(group)}>
             {t("resume.coverage.revise")}

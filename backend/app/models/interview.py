@@ -47,7 +47,13 @@ INTERVIEW_STATUS_FINISHED = "finished"
 # 默认是 ``interview``：历史行升级后行为逐字节不变（迁移里给了同样的 server_default）。
 MESSAGE_PHASE_INTERVIEW = "interview"
 MESSAGE_PHASE_FOLLOWUP = "followup"
-MESSAGE_PHASES = (MESSAGE_PHASE_INTERVIEW, MESSAGE_PHASE_FOLLOWUP)
+# 教练参考答案（2026-11-08）：**不是**对话消息，是"教练对他的问题说了什么"。
+# 单独一个 phase 而不是塞进 interview，原因有三：
+#   1. 它不能进 transcript（面试官与报告都不该把它当候选人说的话）；
+#   2. 它要能按时间顺序被报告末尾附录取到；
+#   3. 复盘时要能定位"这一条参考答案对应哪道题"——存在 context.question 里。
+MESSAGE_PHASE_COACH = "coach"
+MESSAGE_PHASES = (MESSAGE_PHASE_INTERVIEW, MESSAGE_PHASE_FOLLOWUP, MESSAGE_PHASE_COACH)
 
 
 class InterviewSession(Base):

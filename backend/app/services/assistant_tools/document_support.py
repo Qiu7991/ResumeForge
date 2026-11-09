@@ -172,21 +172,38 @@ def resolve_section(document: dict, raw: str) -> tuple[str, dict]:
 
 
 def sample_paths(document: dict, limit: int = 6) -> list[str]:
-    samples: list[str] = []
-    for section in document.get("sections") or []:
-        if not isinstance(section, dict):
-            continue
+    """报错时给模型看的路径样例。
+
+    **每个板块至少优先给一个条目路径**（2026-11-08 实测修复）：
+
+    旧实现按板块顺序把所有样例往一个列表里塞，塞满 limit 就返回。于是第一个板块
+    （education）的一个条目 + 它下面四个字段就吃满了 6 个名额，projects / experience /
+    skills 一个都看不到。模型拿到的提示是"可参考的路径：education.ob_xxx…"，
+    它据此以为其它板块也是那个格式、或者以为那些板块没有条目，于是反复试
+    `projects.1 / projects.2 / projects.3 / projects.4` 直到 4 次失败——
+    这正是用户看到的「助手做了什么（11）· 4 项失败」。
+
+    现在两轮收集：先每个板块给「板块.条目」一条（覆盖广度），有余量再补字段级样例
+    （覆盖深度）。
+    """
+    sections = [s for s in (document.get("sections") or []) if isinstance(s, dict)]
+    entry_samples: list[str] = []
+    field_samples: list[str] = []
+    for section in sections:
         key = str(section.get("key") or "")
         for entry in section.get("entries") or []:
             if not isinstance(entry, dict) or entry.get("hidden"):
                 continue
-            samples.append(f"{key}.{entry.get('id')}")
+            entry_samples.append(f"{key}.{entry.get('id')}")
             for item in entry.get("items") or []:
                 if isinstance(item, dict) and not item.get("hidden"):
-                    samples.append(f"{key}.{entry.get('id')}.{item.get('id')}")
-            if len(samples) >= limit:
-                return samples[:limit]
-    return samples[:limit]
+                    field_samples.append(f"{key}.{entry.get('id')}.{item.get('id')}")
+    # 先保证每个板块都被"点过名"，再拿剩余名额补字段级细节。
+    samples = entry_samples[:limit]
+    remaining = limit - len(samples)
+    if remaining > 0:
+        samples.extend(field_samples[:remaining])
+    return samples
 
 
 def require_path(document: dict, arguments: dict):

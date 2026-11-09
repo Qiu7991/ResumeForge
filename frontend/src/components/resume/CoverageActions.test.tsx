@@ -21,6 +21,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { t } from "../../i18n";
 import {
   APPEND,
+  APPEND_THIS,
   GO_WORKBENCH,
   REVISE,
   expandBlock,
@@ -70,7 +71,11 @@ describe("action buttons (3-A decision table)", () => {
     );
   });
 
-  it("offers 'add to resume' for a custom section whose entries can be located", () => {
+  it("offers a per-item 'add this' button for a custom section whose entries can be located", () => {
+    /*
+     * 2026-11-08：组级的「补进简历」被移除，改成**每条一个**「从资料补上这段」。
+     * 用户要的是"我自己选补哪几条"，整组按钮做不到这件事。
+     */
     renderNotes(
       [
         note({
@@ -79,13 +84,16 @@ describe("action buttons (3-A decision table)", () => {
           names: ["Alpha"],
           total: 1,
           entry_ids: ["e1"],
+          entry_id_by_name: { Alpha: "e1" },
         }),
       ],
       { resumeId: 7, baseRevision: 3 },
     );
     expandBlock();
 
-    expect(screen.getByRole("button", { name: APPEND })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: APPEND_THIS })).toBeInTheDocument();
+    // 组级按钮不再存在
+    expect(screen.queryByRole("button", { name: APPEND })).toBeNull();
     expect(screen.queryByRole("button", { name: REVISE })).toBeNull();
   });
 
@@ -131,29 +139,33 @@ describe("append request (3-A)", () => {
           names: ["Alpha", "Beta"],
           total: 2,
           entry_ids: ["e1", "e2"],
+          entry_id_by_name: { Alpha: "e1", Beta: "e2" },
         }),
       ],
       { resumeId: 7, baseRevision: 3 },
     );
     expandBlock();
 
-    fireEvent.click(screen.getByRole("button", { name: APPEND }));
+    // 逐条补：点第一条，只提交它自己的 id（不是整组两个）。
+    const rowButtons = screen.getAllByRole("button", { name: APPEND_THIS });
+    expect(rowButtons).toHaveLength(2);
+    fireEvent.click(rowButtons[0]);
 
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0].url).toBe("/api/resumes/7/append-profile-entries");
     expect(calls[0].init?.method).toBe("POST");
 
     const body = JSON.parse(String(calls[0].init?.body)) as Record<string, unknown>;
-    expect(body).toEqual({ section_key: "custom:abc", entry_ids: ["e1", "e2"], base_revision: 3 });
+    expect(body).toEqual({ section_key: "custom:abc", entry_ids: ["e1"], base_revision: 3 });
     // The 422 trap: a JSON-serialised AbortSignal would show up as `signal: {}` here.
     expect(Object.keys(body)).not.toContain("signal");
     // …it belongs to the fetch options only.
     expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
 
+    // 逐条回执带条目名：用户才知道补进去的是哪一条。
     expect(
-      await screen.findByText(t("resume.coverage.appended", { count: 1 })),
+      await screen.findByText(t("resume.coverage.appendedThis", { name: "Alpha" })),
     ).toBeInTheDocument();
-    expect(screen.getByText(t("resume.coverage.skipped", { count: 1 }))).toBeInTheDocument();
     // The refreshed resume goes back to the host, which re-reads `coverage_notes`.
     await waitFor(() =>
       expect(onAppended).toHaveBeenCalledWith(expect.objectContaining({ id: 7 })),
@@ -179,13 +191,14 @@ describe("append request (3-A)", () => {
           names: ["Alpha"],
           total: 1,
           entry_ids: ["e1"],
+          entry_id_by_name: { Alpha: "e1" },
         }),
       ],
       { resumeId: 7, baseRevision: 3 },
     );
     expandBlock();
 
-    fireEvent.click(screen.getByRole("button", { name: APPEND }));
+    fireEvent.click(screen.getByRole("button", { name: APPEND_THIS }));
 
     expect(await screen.findByText("entry deleted")).toBeInTheDocument();
     expect(onAppended).not.toHaveBeenCalled();

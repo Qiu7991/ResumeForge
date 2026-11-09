@@ -105,6 +105,25 @@ export interface InterviewReport {
   summary?: string;
   /** 报告生成失败时后端留下说明，界面按"无报告"处理并展示原因。 */
   error?: boolean;
+  /**
+   * 本场点过的**教练参考答案**（2026-11-08）。
+   *
+   * 只在真的点过时才有这个键；不参与评分，纯粹供赛后复盘
+   * "当时这题我没答上，我该怎么答"。后端直接附在报告 JSON 里，不再调模型
+   * （答案已是成稿，再让模型整理只会改写措辞并可能引入新的事实错误）。
+   */
+  coach_references?: InterviewCoachReference[];
+}
+
+/** 报告附录里的一条教练参考答案。 */
+export interface InterviewCoachReference {
+  /** 这段答案对应哪道题。复盘必须先看到问题，否则答案没有意义。 */
+  question: string;
+  answer: string;
+  outline: string[];
+  sources: string[];
+  gaps: string[];
+  grounded: boolean;
 }
 
 export interface InterviewBrief {
@@ -174,6 +193,25 @@ export interface InterviewAnswerResult {
   finished: boolean;
   /** 正式问答已收尾但报告还没生成：界面据此显示决策卡（需求 4）。 */
   needs_report?: boolean;
+}
+
+/**
+ * 「我不太会，给我参考答案」的结果（2026-11-08）。
+ *
+ * 这是**教练轨道**的产物，不是面试官的评分依据：它不进 transcript、不改会话状态，
+ * 只用于学习与赛后复盘。答案只能从用户自己的简历 / 资料库 / 已确认事实里长出来。
+ */
+export interface InterviewCoachAnswer {
+  /** 第一人称、可直接说出口的参考答案。 */
+  answer: string;
+  /** 答案结构要点（2-4 条），用来记框架而不是死背。 */
+  outline: string[];
+  /** 引用的资料条目名。 */
+  sources: string[];
+  /** 资料里缺什么。非空 = 这题他确实没有直接经历，答案是可迁移表述。 */
+  gaps: string[];
+  /** 答案是否完全来自资料。false 时前端要明确提示「别当真实经历讲」。 */
+  grounded: boolean;
 }
 
 /** 一次追问的结果（#41）：面试官的回答 + 刷新后的整场会话。 */

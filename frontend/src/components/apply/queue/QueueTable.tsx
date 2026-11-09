@@ -13,6 +13,7 @@ import { Button, Dropdown, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 import type { TableRowSelection } from "antd/es/table/interface";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useState } from "react";
 import { t } from "../../../i18n";
 import { QUEUE_STATUS_LABEL_KEYS } from "../../../i18n/enum/apply";
 import { useLocale } from "../../../i18n/i18nContext";
@@ -29,6 +30,7 @@ export function QueueTable({
   selectedIds,
   setSelectedIds,
   setDetail,
+  setEditing,
   rowMenuItems,
 }: {
   items: ApplyQueueItem[];
@@ -36,10 +38,26 @@ export function QueueTable({
   selectedIds: number[];
   setSelectedIds: (ids: number[]) => void;
   setDetail: (item: ApplyQueueItem) => void;
+  /** 点招呼语/未确认标签直接打开编辑弹窗（不再要求先走「更多操作」）。 */
+  setEditing: (item: ApplyQueueItem) => void;
   rowMenuItems: (record: ApplyQueueItem) => RowMenuItem[];
 }) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后列头停在旧文案。
   useLocale();
+  // 每页条数：默认 10 条（队列行高较高，一页塞太多会挤满整屏），由分页器切换。
+  //
+  // **必须是 state，不能直接写 `pageSize: 10`**（2026-11-08 用户截图：「10 条/页」
+  // 切换后毫无反应）。antd 的 `pagination.pageSize` 一旦传值就是**受控属性**——
+  // 用户切「20 条/页」时组件内部改了状态，下一帧又被这个常量按回 10。
+  // 1.x 修过同一处（注释原文「pageSize 一旦写成固定值就是受控属性」），2.0 移植时丢了。
+  const [pageSize, setPageSize] = useState(10);
+  /** 招呼语格子兼作编辑入口：Enter / 空格与点击同效（移植自 1.x）。 */
+  const activateEdit = (event: ReactKeyboardEvent<HTMLElement>, item: ApplyQueueItem) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setEditing(item);
+    }
+  };
   const buildMenu = useRowActionMenu();
   const run = useRowActionRunner();
   /** 右键菜单走全局单实例浮层（问题 25）：贴鼠标、夹进视口、层级取 `layer.aiPolish`。 */
@@ -144,16 +162,64 @@ export function QueueTable({
         <Space orientation="vertical" size={0} style={{ width: "100%" }}>
           <Typography.Text
             type="secondary"
-            ellipsis={{ tooltip: item.resume_title || t("applyQueue.detail.defaultResume") }}
+            ellipsis={{ tooltip: item.resume_title || t("applyQueue.detail.noResume") }}
           >
-            {item.resume_title || t("applyQueue.detail.defaultResume")}
+            {item.resume_title || t("applyQueue.detail.noResume")}
           </Typography.Text>
-          <Typography.Text
-            type="secondary"
-            ellipsis={{ tooltip: item.greeting || t("applyQueue.detail.defaultGreeting") }}
-          >
-            {item.greeting || t("applyQueue.detail.defaultGreeting")}
-          </Typography.Text>
+          {item.greeting ? (
+            // 招呼语本身就是编辑入口：单击打开编辑弹窗，不再要求先走「更多操作 → 编辑」。
+            //
+            // 用**原生 title** 而不是 antd <Tooltip>：
+            // 这一格同时是 `ellipsis`（宽度随内容变化）和 tooltip 锚点。antd Tooltip 用
+            // JS 每帧重算位置，而 ellipsis 的测量会改变元素尺寸 → 锚点矩形在
+            // y=372 / y=463 两档之间来回跳（实测序列），表现为鼠标一放上去就疯狂抖动。
+            // 原生 title 由浏览器自己管，不参与布局计算，零抖动，也不需要额外 DOM。
+            <Typography.Text
+              type="secondary"
+              className="apply-queue-greeting-edit"
+              role="button"
+              tabIndex={0}
+              title={`${item.greeting} · ${t("applyQueue.greeting.clickToEdit")}`}
+              aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+              onClick={() => setEditing(item)}
+              onKeyDown={(event) => activateEdit(event, item)}
+              ellipsis
+            >
+              {item.greeting}
+            </Typography.Text>
+          ) : (
+            // 同样用原生 title（理由见上）：这里是 Tag，尺寸固定，但保持「一格内
+            // 不混用两种 tooltip 机制」更不容易在后续改动里再踩同一个坑。
+            <Tag
+              color="orange"
+              role="button"
+              tabIndex={0}
+              className="apply-queue-greeting-edit"
+              title={t("applyQueue.greeting.unconfirmedHint")}
+              aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+              onClick={() => setEditing(item)}
+              onKeyDown={(event) => activateEdit(event, item)}
+              style={{ marginInlineEnd: 0, width: "fit-content" }}
+            >
+              {t("applyQueue.greeting.unconfirmed")}
+            </Tag>
+          )}
+          {/* 有字但没人工确认：AI 批量生成的草稿。有字不等于确认过，必须单独标出来。 */}
+          {item.greeting && item.greeting_confirmed !== true ? (
+            <Tag
+              color="gold"
+              role="button"
+              tabIndex={0}
+              className="apply-queue-greeting-edit"
+              title={t("applyQueue.greeting.pendingConfirmHint")}
+              aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+              onClick={() => setEditing(item)}
+              onKeyDown={(event) => activateEdit(event, item)}
+              style={{ marginInlineEnd: 0, width: "fit-content" }}
+            >
+              {t("applyQueue.greeting.pendingConfirm")}
+            </Tag>
+          ) : null}
         </Space>
       ),
     },
@@ -200,10 +266,12 @@ export function QueueTable({
         // 每页 10 条：队列条目行高较高，一页塞太多会把整屏挤满；分页形态与岗位广场 /
         // 简历中心一致（条数切换 + 总数显示）。hideOnSinglePage：队列很短时不打扰。
         pagination={{
-          pageSize: 10,
+          pageSize,
           hideOnSinglePage: true,
           showSizeChanger: true,
           showTotal: (total) => t("applyQueue.table.total", { total }),
+          // pageSize 是受控属性：不在这里回写 state，切「20 条/页」就永远停在 10。
+          onChange: (_page, size) => setPageSize(size),
         }}
         rowSelection={rowSelection}
         tableLayout="fixed"

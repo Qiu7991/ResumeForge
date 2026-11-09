@@ -285,3 +285,117 @@ def test_new_tools_are_registered_in_order_with_correct_flags():
     writes = {tool.name: tool.writes for tool in _TOOLS}
     assert [writes[name] for name in ("list_format_templates", "list_apply_records")] == [False, False]
     assert [writes[name] for name in ("update_resume", "update_reminder")] == [True, True]
+
+
+# ===== v2 文档结构下助手读简历的两处致命缺陷（2026-11-08）=====
+#
+# 症状：用户让助手「改写项目经历」，助手连试 11 次工具、4 次失败后放弃。
+# 根因有两层，都是 v1→v2 迁移遗留：
+#   1. 照片在 v2 里存在 header.items，而代码只 pop 顶层 "photo"（v1 写法），
+#      400KB base64 一起进上下文 → 请求超限 → provider 报错；
+#   2. _RESUME_CONTENT_DROP_ORDER 按 v1 扁平结构写，v2 顶层没有那些键，
+#      裁剪一次都没生效；而一旦生效又把 projects 先摘掉（用户要改的正是它）。
+
+
+def _v2_document_with_photo() -> dict:
+    """造一份 v2 文档：header 里带 base64 照片，sections 里 5 个板块都有内容。"""
+    big_photo = "data:image/jpeg;base64," + ("A" * 200_000)
+    return {
+        "version": 2,
+        "language": "zh-CN",
+        "header": {
+            "contact_breaks": [],
+            "items": [
+                {"id": "it_name", "key": "name", "kind": "field", "value": "张三"},
+                {"id": "it_photo", "key": "photo", "kind": "field", "value": big_photo},
+            ],
+        },
+        "sections": [
+            {"key": "education", "title": "教育经历", "entries": [{"id": "ob_e1", "items": []}]},
+            {"key": "experience", "title": "实习/工作经历", "entries": [{"id": "ob_x1", "items": []}]},
+            {"key": "projects", "title": "项目经历", "entries": [{"id": "ob_p1", "items": []}]},
+            {"key": "summary", "title": "个人总结", "entries": [{"id": "ob_s1", "items": []}]},
+            {"key": "skills", "title": "专业技能", "entries": [{"id": "ob_k1", "items": []}]},
+        ],
+    }
+
+
+def test_strip_photo_removes_v2_header_photo_but_keeps_the_item():
+    """v2 的照片在 header.items 里，必须摘值而不是只 pop 顶层键。
+
+    只 pop 顶层会留下 400KB base64 → 请求超限 → 助手整场任务失败。
+    保留 item 本身：模型仍知道"有照片位"，`header.photo` 路径也仍然可解析。
+    """
+    from app.services.assistant_tools.job_tools import _strip_photo_from_content
+
+    doc = _v2_document_with_photo()
+    assert len(json.dumps(doc, ensure_ascii=False)) > 200_000
+
+    stripped = _strip_photo_from_content(doc)
+    assert len(json.dumps(stripped, ensure_ascii=False)) < 5_000, "照片必须被摘掉"
+    photo_items = [i for i in stripped["header"]["items"] if i.get("key") == "photo"]
+    assert len(photo_items) == 1, "item 本身要保留"
+    assert photo_items[0]["value"] == ""
+
+
+def test_resume_content_trimming_handles_v2_sections():
+    """v2 结构下裁剪必须真的生效（旧实现比较的是顶层键，永远为假）。"""
+    from app.services.assistant_tools._shared import _resume_content_for_model
+
+    doc = _v2_document_with_photo()
+    # 塞满内容，确保超预算
+    doc["sections"][0]["entries"][0]["items"] = [
+        {"id": f"it_{i}", "key": "school", "kind": "field", "value": "X" * 500}
+        for i in range(40)
+    ]
+    trimmed, dropped = _resume_content_for_model(doc, 3_000)
+    assert dropped, "v2 结构下裁剪必须生效，否则整份正文会塞爆上下文"
+    remaining = [s.get("key") for s in trimmed.get("sections") or []]
+    assert len(remaining) < 5
+    # 体积下界只看 sections：header 里的照片由 `_strip_photo_from_content` 负责
+    # （生产链路先摘照片、再裁正文），两个函数各管一件事，不在这里重复断言总大小。
+    sections_size = len(json.dumps(trimmed.get("sections") or [], ensure_ascii=False))
+    assert sections_size < 3_000
+
+
+def test_projects_is_dropped_last_because_it_is_usually_the_target():
+    """projects / experience 是改写主体，必须最后才丢。
+
+    旧顺序把 projects 排在 education 前面，实测导致"用户要改项目经历、
+    模型拿到的简历里却没有项目"，只能瞎猜路径。
+    """
+    from app.services.assistant_tools._shared import _RESUME_CONTENT_DROP_ORDER
+
+    order = list(_RESUME_CONTENT_DROP_ORDER)
+    assert order.index("projects") > order.index("education")
+    assert order.index("projects") > order.index("skills")
+    assert order.index("experience") > order.index("awards")
+
+
+def test_resume_content_budget_fits_a_real_resume():
+    """预算要够装一份正常简历的正文（实测去照片后约 11KB）。
+
+    4500 的旧预算会把 skills/projects/education 整段摘掉。
+    """
+    from app.services.assistant_tools._shared import _RESUME_CONTENT_BUDGET
+
+    assert _RESUME_CONTENT_BUDGET >= 20_000
+
+
+def test_sample_paths_covers_every_section():
+    """报错时给的路径样例必须覆盖**每个板块**，不能被第一个板块占满。
+
+    旧实现塞满 limit 就返回，education 的一个条目 + 四个字段就吃光 6 个名额，
+    模型据此以为其它板块没有条目，于是反复试错路径。
+    """
+    from app.services.assistant_tools.document_support import sample_paths
+
+    doc = _v2_document_with_photo()
+    # education 条目下塞满字段，模拟"第一个板块就吃光名额"
+    doc["sections"][0]["entries"] = [
+        {"id": "ob_e1", "items": [{"id": f"it_{i}", "key": "f", "kind": "field", "value": "v"} for i in range(10)]}
+    ]
+    samples = sample_paths(doc, limit=6)
+    heads = {s.split(".", 1)[0] for s in samples}
+    for key in ("education", "experience", "projects", "summary", "skills"):
+        assert key in heads, f"样例里缺少板块 {key}，模型会找不到它"

@@ -60,13 +60,13 @@ def trusted_click(client: CdpClient, x: float, y: float) -> None:
     if ensure is not None and not ensure():
         # 无法还原窗口（无头/远程会话等）不在这里打死流程：继续点击并把情况写日志，
         # 真正点不动时由调用方的等待超时给出带 URL/标题的诊断。
+        #
+        # 这里**不再**额外 evaluate 一次 ``document.visibilityState``（2026-11-08 移除）：
+        # `ensure_page_visible` 的返回值就是"最终是否 visible"，额外那次探测只用于写一行
+        # 日志，却会给"按脚本逐条消费 evaluate 的离线 webform 客户端"多插一条调用，
+        # 把紧随其后的业务脚本（rf:read-back / rf:click-rect）挤位——
+        # `test_webform_engine_recovery` / `test_webform_execution_corpus` 三条因此假红。
         logger.warning("未能把浏览器窗口恢复到可见状态，点击可能不会生效")
-    try:
-        visibility = str(client.evaluate("document.visibilityState") or "")
-    except CdpError:
-        visibility = ""
-    if visibility and visibility != "visible":
-        logger.warning("点击前页面仍处于 %s 状态（站点可能忽略这次点击）", visibility)
     client.send(
         "Input.dispatchMouseEvent",
         {"type": "mouseMoved", "x": x, "y": y, "button": "none", "buttons": 0},

@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /** 岗位详情抽屉：JD 全文、技能标签、投递链接与操作入口。 */
 import {
+  BulbOutlined,
   CheckCircleOutlined,
   EditOutlined,
   FileTextOutlined,
   FolderOpenOutlined,
+  FunnelPlotOutlined,
   InfoCircleOutlined,
+  LinkOutlined,
+  MessageOutlined,
   PictureOutlined,
+  PlayCircleOutlined,
   PushpinOutlined,
+  RobotOutlined,
+  SendOutlined,
   StarFilled,
   StarOutlined,
 } from "@ant-design/icons";
@@ -140,13 +147,17 @@ export default function JobDetailDrawer({
                 {t("jobDetail.action.viewResume")}
               </Button>
             </Space>
-            {/* 辅助行统一 size="small" type="text" 且不带图标：6 个入口才放得下一行，
-                也避免和主行抢注意力。「加入投递台」禁用时只剩灰字，不再像一个坏按钮。 */}
+            {/* 辅助行：与 1.x 一致——**默认按钮（有边框）+ 图标**，不再用 type="text"。
+                上游 2.0 曾把这六个改成无边框小字（"避免和主行抢注意力"），实测在
+                深色/浅色下都像一段普通说明文字，用户认不出那是能点的按钮
+                （2026-11-08 用户反馈"有些按钮没有框呀"）。它们承载的是真实动作
+                （解读 / 匹配 / 入队 / 问助手 / 跨页跳转），必须看起来可点。
+                宽度不足时靠 `.job-detail-actions-secondary` 的 flex-wrap 折行。 */}
             <div className="job-detail-actions-secondary">
               {/* 两个"解读"性质不同，按钮相邻但用 Tooltip 讲清区别：需求解读只读 JD，
                   匹配分析会读取你的资料与简历。 */}
               <Tooltip title={t("jobDetail.hint.readRequirement")}>
-                <Button size="small" type="text" onClick={() => onAnalyze(job)}>
+                <Button icon={<BulbOutlined />} onClick={() => onAnalyze(job)}>
                   {t("jobDetail.action.readRequirement")}
                 </Button>
               </Tooltip>
@@ -155,12 +166,7 @@ export default function JobDetailDrawer({
                   matchAnalyzing ? t("jobDetail.hint.matchRunning") : t("jobDetail.hint.matchIdle")
                 }
               >
-                <Button
-                  size="small"
-                  type="text"
-                  loading={matchAnalyzing}
-                  onClick={() => onMatch(job)}
-                >
+                <Button icon={<RobotOutlined />} loading={matchAnalyzing} onClick={() => onMatch(job)}>
                   {matchAnalyzing ? t("jobDetail.action.analyzing") : t("jobDetail.action.match")}
                 </Button>
               </Tooltip>
@@ -172,8 +178,7 @@ export default function JobDetailDrawer({
                 }
               >
                 <Button
-                  size="small"
-                  type="text"
+                  icon={<SendOutlined />}
                   loading={queueLoading}
                   disabled={queueLoading || job.apply_supported === false}
                   onClick={() => onAddToQueue(job)}
@@ -181,31 +186,29 @@ export default function JobDetailDrawer({
                   {t("jobDetail.action.applyDesk")}
                 </Button>
               </Tooltip>
-              <Button size="small" type="text" onClick={() => onAskAssistant(job)}>
+              <Button icon={<MessageOutlined />} onClick={() => onAskAssistant(job)}>
                 {t("jobDetail.action.askAssistant")}
               </Button>
               {/* 带 id 的跨模块动作（RF-11）：目标页按 job_id 自行过滤/预填，
                   不必到了那边再选一遍岗位。纯跳页，无回调 prop。 */}
               <Button
-                size="small"
-                type="text"
+                icon={<FunnelPlotOutlined />}
                 onClick={() => navigate(`/tracker?job_id=${job.id}`)}
               >
                 {t("jobDetail.section.progress")}
               </Button>
               <Button
-                size="small"
-                type="text"
+                icon={<PlayCircleOutlined />}
                 onClick={() => navigate(`/interview?job_id=${job.id}`)}
               >
                 {t("jobDetail.action.interview")}
               </Button>
               {job.source_url && (
                 <Button
-                  size="small"
-                  type="text"
+                  icon={<LinkOutlined />}
                   loading={webFormLoading}
                   disabled={webFormLoading}
+                  title={t("jobDetail.tooltip.goApply")}
                   onClick={() => onOpenWebForm(job)}
                 >
                   {t("jobDetail.action.goApply")}
@@ -218,6 +221,14 @@ export default function JobDetailDrawer({
     >
       {job && (
         <>
+          {/* 「前往投递」用的是投递台专用浏览器（1333/9333），用户第一次点容易误以为
+              又开了一个新环境，这里常驻一行说明"它和投递台共用登录态"。
+              （移植自 1.x；上游 2.0 把这行删了，同时把动作接到了网申浏览器上。） */}
+          {job.source_url ? (
+            <Typography.Paragraph type="secondary" style={{ margin: "0 0 8px", fontSize: 12 }}>
+              {t("jobDetail.hint.goApplyBrowser")}
+            </Typography.Paragraph>
+          ) : null}
           <div className="job-detail-title-row">
             <Typography.Title level={4} style={{ margin: 0 }}>
               {job.title}

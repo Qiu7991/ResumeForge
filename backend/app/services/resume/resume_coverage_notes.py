@@ -162,9 +162,37 @@ def custom_entry_ids(
 
 __all__ = [
     "CoverageReason",
+    "entry_id_map",
     "REASON_PRIORITY",
     "builtin_entry_ids",
     "custom_entry_ids",
     "reasons_for",
     "with_reasons",
 ]
+
+
+def entry_id_map(
+    consumed: ConsumedProfile,
+    section_key: str,
+    identity_field: str,
+    names: Sequence[str],
+) -> dict[str, str]:
+    """``名字 -> entry_id`` 的显式映射（2026-11-08）。
+
+    为什么需要它：逐条补入要求前端知道"这一条对应哪个 entry_id"。
+    原来的 ``entry_ids`` 是**数组**且会跳过匹配不到的名字，前端无法把名字与 id
+    一一对上——只能整组一起补。
+
+    口径与 ``builtin_entry_ids`` 完全一致（只认身份字段完全相等），只是换了个形状。
+    匹配不到的名字不出现在结果里，前端据此把那一行的按钮设为不可用。
+    """
+    section = consumed.section(section_key)
+    if section is None:
+        return {}
+    field_id = f"{section_key}.{identity_field}"
+    by_name: dict[str, str] = {}
+    for entry in section.entries:
+        value = str(entry.values.get(field_id) or "").strip()
+        if value and value not in by_name:
+            by_name[value] = entry.entry_id
+    return {str(name): by_name[str(name)] for name in names if str(name) in by_name}

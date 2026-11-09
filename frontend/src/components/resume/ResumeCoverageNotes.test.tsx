@@ -98,17 +98,27 @@ describe("one row per item (5-A layout)", () => {
     expect(screen.queryByText(joined)).toBeNull();
   });
 
-  it("ellipsises long items and shows the full text in a tooltip", async () => {
+  it("shows long items in full so the user can read them before deciding", () => {
+    /*
+     * 2026-11-08 形态变更（**产品决策变了，不是放松断言**）：
+     *
+     * 旧形态是"单行省略号 + Tooltip 全文"。用户反馈读不到内容就没法判断要不要补，
+     * 而 1.x 的样子正是"每条整段可见、各自带按钮"。现在改成平铺换行显示。
+     *
+     * 新不变量：长条目的**全文直接渲染在行内**，不靠 Tooltip 才看得到；
+     * 且这一行有自己的操作按钮（补入或润色），不再需要滚到组底部。
+     */
     const long = "A".repeat(60);
     const { container } = renderNotes([note({ names: [long], total: 1 })]);
     expandBlock();
 
     const cell = within(rows(container)[0]).getByText(itemText(long));
-    // The ellipsis itself is CSS (`text-overflow`); pin the class that carries it.
     expect(cell).toHaveClass("resume-coverage-item");
-
-    fireEvent.mouseEnter(cell);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(long);
+    // 全文直接在行内渲染（不再靠 Tooltip 才读得到）。
+    expect(cell.textContent).toContain(long);
+    // 这份夹具没有 entry_id_by_name：定位不到资料条目，就不给「补上这段」
+    // ——不能承诺一次定位不到的插入。（有 id 时的逐条按钮由下一条用例覆盖。）
+    expect(rows(container)[0].querySelector(".resume-coverage-item-actions")).toBeNull();
   });
 
   it("does not attach a tooltip to short items", () => {
@@ -283,5 +293,49 @@ describe("aggregation still drives the header count", () => {
 
     fireEvent.click(screen.getByRole("button", { name: t("resume.coverage.openEditor") }));
     expect(onOpenEditor).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("per-item append (2026-11-08)", () => {
+  it("gives every locatable item its own 'add this' button", () => {
+    /*
+     * 用户要的核心：「我自己选补哪几条，而不是整组全让 AI 决策」。
+     *
+     * 后端下发 `entry_id_by_name`（名字 -> entry_id），前端据此给**每一条**
+     * 一个「从资料补上这段」按钮，点一次只补这一条。
+     * 组底部不再有整组的「补进简历」——那正是被抱怨"没法选择"的入口。
+     */
+    const { container } = renderNotes([
+      note({
+        names: ["项目甲", "项目乙"],
+        filtered: ["项目甲", "项目乙"],
+        total: 2,
+        entry_ids: ["e1", "e2"],
+        entry_id_by_name: { 项目甲: "e1", 项目乙: "e2" },
+      }),
+    ], { resumeId: 7 });
+    expandBlock();
+
+    const rowButtons = [...container.querySelectorAll(".resume-coverage-item-actions button")];
+    // 每一条各有一个按钮——这就是"我自己选补哪几条"的操作面。
+    expect(rowButtons).toHaveLength(2);
+    // 按钮文案是"补上这段"（逐条），不是组级的"补进简历"。
+    expect(rowButtons[0].textContent).toContain(t("resume.coverage.appendThis"));
+  });
+
+  it("does not offer a group-wide append button any more", () => {
+    // 整组按钮被移除：选择权交回给每一条。
+    const { container } = renderNotes([
+      note({
+        names: ["项目甲"],
+        filtered: ["项目甲"],
+        total: 1,
+        entry_ids: ["e1"],
+        entry_id_by_name: { 项目甲: "e1" },
+      }),
+    ], { resumeId: 7 });
+    expandBlock();
+    const groupActions = container.querySelector(".resume-coverage-actions");
+    expect(groupActions?.querySelector("button")).toBeNull();
   });
 });

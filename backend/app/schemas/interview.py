@@ -191,6 +191,25 @@ class InterviewAnswerResult(BaseModel):
     needs_report: bool = False
 
 
+class InterviewCoachAnswerOut(BaseModel):
+    """「我不太会，给我参考答案」的结果。
+
+    这是**教练轨道**的产物，不是面试官的评分依据：参考答案不进 transcript 的
+    评分口径，只用于学习与复习（见 `services/interview/interview_coach.py`）。
+    """
+
+    #: 第一人称、可直接说出口的参考答案。
+    answer: str
+    #: 答案的结构要点（2-4 条），便于记框架而不是死背。
+    outline: list[str] = []
+    #: 引用的资料条目名（都来自用户自己的简历 / 资料库 / 事实台账）。
+    sources: list[str] = []
+    #: 资料里缺什么。非空时说明这道题他确实没有直接经历。
+    gaps: list[str] = []
+    #: 答案是否完全来自资料。false = 含可迁移表述，提示用户别当真实经历讲。
+    grounded: bool = False
+
+
 class InterviewFollowUpCreate(BaseModel):
     """面试结束后的「追问」（#41）：不占正式轮次，只就这场面试继续聊。"""
 

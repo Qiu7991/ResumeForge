@@ -208,13 +208,27 @@ describe("JobDetailDrawer 操作栏分档", () => {
 
     expect(document.querySelectorAll(".job-detail-actions-primary button")).toHaveLength(3);
     expect(document.querySelectorAll(".job-detail-actions-secondary button")).toHaveLength(6);
-    // 主行只有一个实心按钮，辅助行整行都是无边框文字按钮——"主次一眼可分"的判据。
+    // 主行只有一个实心按钮——"主次一眼可分"的判据不变。
     expect(document.querySelectorAll(".job-detail-actions-primary .ant-btn-primary")).toHaveLength(
       1,
     );
+    /*
+     * 2026-11-08 断言口径修正（**不是为了让测试变绿而放松**）：
+     *
+     * 旧断言是「辅助行整行都是 `.ant-btn-text`（无边框文字按钮）」。用户实测反馈
+     * 这些按钮看起来像普通说明文字、认不出可点（"有些按钮没有框呀"），也与 1.0 的
+     * 形态（默认按钮 + 图标）不一致。产品结论：辅助行动作虽次要，但都是真实可点的
+     * 操作（解读 / 匹配 / 入队 / 问助手 / 跨页跳转），必须保留可辨识的按钮外观。
+     *
+     * 改成锁定这次改动真正要守住的不变量：辅助行没有一个无边框 text 按钮，
+     * 且每个按钮都带图标。
+     */
     expect(document.querySelectorAll(".job-detail-actions-secondary .ant-btn-text")).toHaveLength(
-      6,
+      0,
     );
+    for (const button of document.querySelectorAll(".job-detail-actions-secondary button")) {
+      expect(button.querySelector(".anticon")).not.toBeNull();
+    }
   });
 
   it("有 source_url 时辅助行多出「前往投递」，共 7 个", () => {

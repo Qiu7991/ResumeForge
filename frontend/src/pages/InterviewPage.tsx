@@ -18,6 +18,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   createInterview,
   deleteInterview,
+  fetchCoachAnswer,
   finishInterview,
   getInterview,
   interviewToMaterial,
@@ -32,6 +33,7 @@ import { toMaterialPayload } from "../features/interview/materialPayload";
 import { useInterviewTimer } from "../features/interview/useInterviewTimer";
 import { hasInterviewReport, useInterviewTurn } from "../features/interview/useInterviewTurn";
 import { Composer } from "./interview/Composer";
+import { CoachAnswerCard } from "./interview/CoachAnswerCard";
 import { FinishDecisionCard } from "./interview/FinishDecisionCard";
 import { FollowUpCard } from "./interview/FollowUpCard";
 import { HistoryCard } from "./interview/HistoryCard";
@@ -43,6 +45,7 @@ import { SetupForm, SetupTab } from "./interview/SetupTab";
 import type {
   InterviewBrief,
   InterviewDetail,
+  InterviewCoachAnswer,
   InterviewReviewRecord,
   QuestionBankRecord,
 } from "../types";
@@ -162,8 +165,7 @@ export default function InterviewPage() {
   });
 
   // 「正在生成这一轮」与「正在出报告」对界面是同一件事：作答区与其它操作都该按忙处理。
-  const busy = turn.submitting || ending;
-  /**
+  const busy = turn.submitting || ending;  /**
    * 等用户决定要不要出报告：`turn.awaitingReport` 是刚走完这一轮，`finished && !hasReport`
    * 覆盖**刷新恢复**——重开一场已收盘但没报告的面试，必须仍显示决策卡而不是空白报告。
    */
@@ -173,6 +175,32 @@ export default function InterviewPage() {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [active?.messages.length, turn.submitting, turn.pendingAnswer]);
+
+  /*
+   * 「我不太会，给我参考答案」（2026-11-08）。
+   *
+   * 走教练轨道：读他自己的简历 + 资料库 + 事实台账，给一份能说出口的答案。
+   * 与 turn.submit 完全独立——**不写消息、不改会话、不进评分**，候选人仍要自己作答。
+   * 结果放在页面状态里以卡片形式展示（不塞进对话流，否则分不清哪句是候选人说的）。
+   */
+  const [coachAnswer, setCoachAnswer] = useState<InterviewCoachAnswer | null>(null);
+  const [coachLoading, setCoachLoading] = useState(false);
+  const askCoach = useCallback(async () => {
+    if (!active || coachLoading) return;
+    setCoachLoading(true);
+    try {
+      setCoachAnswer(await fetchCoachAnswer(active.id));
+    } catch (error) {
+      // 失败不写进对话：教练挂了不该让整场面试看起来像出过错。
+      message.error(error instanceof Error ? error.message : t("interview.coach.failed"));
+    } finally {
+      setCoachLoading(false);
+    }
+  }, [active, coachLoading, message]);
+  // 换会话/换一轮时清掉旧答案：那份答案是对上一道题说的，留着会张冠李戴。
+  useEffect(() => {
+    setCoachAnswer(null);
+  }, [active?.id, active?.answered_rounds]);
 
   /** 退出房间（「回到设置」与「新建面试」共用）：先上报时长，再清掉所有房间状态。 */
   const leaveRoom = () => {
@@ -485,13 +513,26 @@ export default function InterviewPage() {
               resuming={timer.seconds > 0 || active.duration_seconds > 0}
             />
           ) : (
-            <Composer
-              value={turn.answer}
-              submitting={turn.submitting}
-              onChange={turn.setAnswer}
-              onSubmit={turn.submit}
-              onStop={turn.stop}
-            />
+            <>
+              {/* 教练给的参考答案：放在作答区**上方**，这样他看着答案写自己的回答。
+                  单独一块而不是塞进对话流——对话流里只有"候选人说过的话"与"面试官说过的话"，
+                  教练的话混进去会让复盘时分不清哪句是自己答的。 */}
+              {coachAnswer ? (
+                <CoachAnswerCard
+                  answer={coachAnswer}
+                  onDismiss={() => setCoachAnswer(null)}
+                />
+              ) : null}
+              <Composer
+                value={turn.answer}
+                submitting={turn.submitting}
+                coachLoading={coachLoading}
+                onChange={turn.setAnswer}
+                onSubmit={turn.submit}
+                onStop={turn.stop}
+                onAskCoach={() => void askCoach()}
+              />
+            </>
           )}
         </div>
       )}

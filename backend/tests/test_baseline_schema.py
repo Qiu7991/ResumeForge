@@ -25,7 +25,7 @@ from pathlib import Path
 from alembic import command
 from app.database_migrations import build_alembic_config
 from sqlalchemy import create_engine, inspect, text
-from tests.migration_refs import BASELINE_REVISION, alembic_version_of, head_revision
+from tests.migration_refs import alembic_version_of, head_revision
 from tests.test_database import _assert_head_schema
 
 # 2.0 删除的补充事实表（T08）：基线不能再建它们。
@@ -52,7 +52,11 @@ def test_upgrade_downgrade_upgrade_round_trip_rebuilds_the_same_schema(tmp_path)
     try:
         command.upgrade(config, "head")
         first_tables = _table_names(engine)
-        assert alembic_version_of(engine) == BASELINE_REVISION == head_revision()
+        # 断言"库是由**当前迁移链**建出来的"，所以取实际 head 而不是基线常量：
+        # 二开分支在 0001 之后合法地追加了 0002（招呼语确认 / 生成计划 / AI 求职链表）。
+        # 把 head 钉死在 BASELINE_REVISION 等于断言"整条链只有一条迁移"——那不是本用例
+        # 要守的性质（往返可用 + 版本号证明真的重跑），二开一加迁移就会假红。
+        assert alembic_version_of(engine) == head_revision()
         assert _epoch_rows(engine) == [2]
 
         command.downgrade(config, "base")
@@ -61,7 +65,7 @@ def test_upgrade_downgrade_upgrade_round_trip_rebuilds_the_same_schema(tmp_path)
 
         command.upgrade(config, "head")
         assert _table_names(engine) == first_tables, "往返后的表集合必须与首次建库一致"
-        assert alembic_version_of(engine) == BASELINE_REVISION
+        assert alembic_version_of(engine) == head_revision()
         assert _epoch_rows(engine) == [2]
     finally:
         engine.dispose()

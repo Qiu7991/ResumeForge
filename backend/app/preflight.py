@@ -37,6 +37,10 @@ _REQUIRED_FILES: Final[tuple[tuple[str, str], ...]] = (
     ("app/prompts/interview_analysis.md", "面试答题思路分析提示词"),
     ("app/prompts/interview_answer.md", "面试单题参考答案提示词"),
     ("app/prompts/interview_answer_review.md", "面试作答批改与示范提示词"),
+    # 2026-11-08 二开新增：模拟面试里"我不会，给我参考答案"的教练提示词。
+    # 它只从用户自己的资料里取材（资料答不了就标 grounded=false 并给可迁移答法），
+    # 漏打包会让这个入口在打包版里直接 500。
+    ("app/prompts/interview_coach_answer.md", "面试教练参考答案提示词"),
     ("app/prompts/interview_closing.md", "面试收尾时回应最后一答的提示词"),
     ("app/prompts/interview_followup.md", "面试结束后继续追问的答疑提示词"),
     ("app/prompts/interview_material_image.md", "面试材料截图逐字抄录提示词"),
@@ -50,6 +54,9 @@ _REQUIRED_FILES: Final[tuple[tuple[str, str], ...]] = (
     ("app/prompts/job_multi_extract.md", "多份招聘信息拆分提示词"),
     ("app/prompts/job_text_extract.md", "招聘信息识别提示词"),
     ("app/prompts/profile_text_extract.md", "个人资料识别提示词"),
+    # 2026-11-02 二开：画像导入（`scripts/import_portrait.py` 用）。之前漏登记，
+    # `test_prompt_files_in_the_repository_are_all_listed` 一直是红的。
+    ("app/prompts/portrait_extract.md", "个人画像抽取提示词"),
     ("app/prompts/resume_fix_json.md", "简历 JSON 修复提示词"),
     ("app/prompts/resume_generate_system.md", "简历生成系统提示词"),
     ("app/prompts/resume_generate_user.md", "简历生成用户提示词"),

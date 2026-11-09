@@ -80,6 +80,9 @@ _STRUCTURED_BACKSTOP = "2027-06-30"
 # DocumentEditor.header.test.tsx）已拆分并删除，常量随之移除。
 # CSS 历史存量（S1，2026-10-22）的豁免已于 2026-12-31 到期日执行拆分并全部删除，
 # 因此不再需要 `_CSS_BUDGET_BACKSTOP` 常量——CSS 现在与 .py/.ts/.tsx 同档，零豁免。
+# 二开移植（2026-11-08）期间长起来的文件走这一档：到期日 2026-12-31，
+# 决策依据与逐文件理由见生产豁免清单里那一段。
+_FORK_BACKSTOP = "2026-12-31"
 
 # 测试文件书面豁免清单（路径相对仓库根；理由必须具体，禁止「暂缓拆分」式空话）
 _TEST_EXEMPTIONS: dict[str, Exemption] = {
@@ -101,6 +104,22 @@ _TEST_EXEMPTIONS: dict[str, Exemption] = {
     # ProfilePage.test.tsx 的豁免（触发条件 >800 行）已于 2026-10-13 到期执行：
     # 按其自身预案拆出 ProfilePage.webform.test.tsx + src/test/profilePageHarness.tsx，
     # 不再豁免。
+    # ---- 二开移植（2026-11-08）：上游基线（d893243）这三个文件全部 <500 行 ----
+    # 超线来自 1.x 二开移植的用例（覆盖清单逐条补入 / 投递台招呼语与隐私问答 /
+    # 模拟面试教练轨道）。到期日 2026-12-31，届时按域拆出：
+    #   test_append_profile_entries → 自建板块 / 内置板块 / 幂等 三片
+    #   test_apply_greeting_and_privacy_qa → 招呼语闸门 / 隐私脱敏 两片
+    #   test_interview → 教练轨道 / 报告附录 两片（这部分与生产代码 interview.py
+    #   的拆分同批处理，避免测试与实现各拆一半）
+    "backend/tests/test_append_profile_entries.py": Exemption(
+        "二开加逐条补入用例（自建/内置/幂等），到期后按取数路径拆三片", _FORK_BACKSTOP
+    ),
+    "backend/tests/test_apply_greeting_and_privacy_qa.py": Exemption(
+        "二开加招呼语闸门与隐私问答用例，到期后按域拆两片", _FORK_BACKSTOP
+    ),
+    "backend/tests/test_interview.py": Exemption(
+        "二开加教练轨道用例，与 interview.py 拆分同批处理", _FORK_BACKSTOP
+    ),
 }
 
 # 书面豁免清单（路径相对仓库根；理由必须具体，禁止「暂缓拆分」式空话）
@@ -178,6 +197,52 @@ _EXEMPTIONS: dict[str, Exemption] = {
     # 全部为纯搬迁（分片首尾拼接与拆分前原文逐字节一致），选择器 / 声明 / 媒体查询 /
     # 层叠顺序未变；`@import` 位于各聚合文件最前，入口仍是 index.css 与 TouTouOrb.tsx
     # 各自的那一条 import，没有第二套入口。
+    # ---- 二开移植（2026-11-08）：上游 v2.0.0 基线全绿，这些是本地二开期间长起来的 ----
+    #
+    # 口径：**上游基线（d893243）逐个实测未超线**，超线全部来自本次 1.x 二开移植
+    # （投递台 / 模拟面试教练 / 覆盖清单逐条补入 / 画像导入 / 板块显隐）。到期日统一
+    # 2026-12-31：届时按"先拆行为、后拆文件"的次序处理，不与其它改动混批。
+    #
+    # 不立即拆分的理由（逐文件写具体，不写「暂缓拆分」）：
+    # - apply.py / task_apply.py / browser_manager.py / job_match.py / InterviewPage.tsx /
+    #   modules-interview.css：二开在这些文件里做的是**在既有职责内加分支**（招呼语闸门、
+    #   前往投递换专用浏览器、教练轨道），拆开会让"一条业务链路"横跨两个模块，
+    #   与 1.x 保持可回退的目标相冲突。
+    # - portrait_import.py / interview.py（后端 api）：二开新增的整块能力（画像导入、
+    #   教练参考答案落库），本可以作为独立模块拆出——列为到期日后的首选拆分对象。
+    # - document_html.py / resume_profile_append.py：**本次刚过线**（503 / 518），
+    #   document_html 只多 3 行（section 级 hidden 过滤），append 多的是双路径取数与
+    #   幂等注释。这两条必须在下一批改动前处理掉，否则会继续借势增长。
+    "backend/app/api/apply.py": Exemption(
+        "二开加招呼语闸门/失败分类分支，拆分会切断单条投递链路", _FORK_BACKSTOP
+    ),
+    "backend/app/api/interview.py": Exemption(
+        "二开加教练参考答案端点（整块能力，到期后优先拆出独立模块）", _FORK_BACKSTOP
+    ),
+    "backend/app/services/apply/task_apply.py": Exemption(
+        "二开加站点适配分支，与 task_runner 同一条执行链", _FORK_BACKSTOP
+    ),
+    "backend/app/services/browser/browser_manager.py": Exemption(
+        "二开加投递专用浏览器实例与端口隔离，状态机内聚", _FORK_BACKSTOP
+    ),
+    "backend/app/services/job/job_match.py": Exemption(
+        "二开加平台派生筛选（platform.py 已拆出），剩余为匹配主流程", _FORK_BACKSTOP
+    ),
+    "backend/app/services/profile/portrait_import.py": Exemption(
+        "二开新增整块能力，到期后优先整体拆为 portrait_* 子模块", _FORK_BACKSTOP
+    ),
+    "backend/app/services/resume/document_html.py": Exemption(
+        "本次刚过线 3 行（section 级 hidden 过滤），下批改动前必须处理", _FORK_BACKSTOP
+    ),
+    "backend/app/services/resume/resume_profile_append.py": Exemption(
+        "本次刚过线 18 行（自建/内置双路径 + 幂等注释），下批改动前必须处理", _FORK_BACKSTOP
+    ),
+    "frontend/src/pages/InterviewPage.tsx": Exemption(
+        "二开加教练入口与报告附录渲染，与面试页状态耦合", _FORK_BACKSTOP
+    ),
+    "frontend/src/styles/modules-interview.css": Exemption(
+        "二开加教练卡片样式 74 行，与面试模块同一分段", _FORK_BACKSTOP
+    ),
 }
 
 # scripts/（*.py，预算 800）的豁免清单：**当前为空**。

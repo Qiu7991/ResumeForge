@@ -192,6 +192,8 @@ export interface ResumeSection {
   key: string;
   title: string;
   kind: SectionKind;
+  /** 整个板块不上纸面（数据保留，编辑态仍可见）。移植自 1.x。 */
+  hidden?: boolean;
   layout: SectionLayout;
   entries: ResumeEntry[];
 }

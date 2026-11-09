@@ -5,6 +5,8 @@ import copy
 
 from app.models.provenance import ResumeBlockSource, ResumeFactLock
 from app.models.resume import ResumeRecord
+from app.schemas.generation_preferences import GenerationPreferences
+from app.services.profile.generation_preferences import save_generation_preferences
 from app.services.resume.content_locks import validate_content_locks_for
 from app.services.resume.document_io import ensure_document_version
 from app.services.resume.document_paths import read_document_value
@@ -65,6 +67,11 @@ def test_old_path_only_source_is_visible_through_native_paths_without_updating_r
 
 
 def test_old_path_only_adoption_preserves_hidden_and_all_other_native_items(db_session):
+    # 「显示技术栈」是全局显示偏好（二开 `9076765`，默认关）：关着时**所有**写路径都会把
+    # 技术栈项从 trail 改成 placement=hidden（数据仍在，编辑器可拖回）。本用例守的是
+    # "采纳一段来源文本时，hidden_values 与其它原生项一个都不许丢"，与技术栈显不显示
+    # 正交——不显式打开这个偏好，断言就会把"偏好生效"误读成"采纳丢了东西"。
+    save_generation_preferences(db_session, GenerationPreferences(show_tech_stack=True))
     record = _record(db_session)
     link = _old_link(db_session, record)
     expected = copy.deepcopy(record.content)

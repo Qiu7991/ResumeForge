@@ -95,9 +95,21 @@ const resume = {
   "resume.coverage.reason.unknown": "Reason not stated",
   "resume.coverage.reasonSeparator": ", ",
   "resume.coverage.reasonCount": "{count} {label}",
+  "resume.coverage.reasonHint":
+    "Why this entry is not in the Resume (job screening or model selection — nothing was lost from your profile)",
   "resume.coverage.expandAll": "Show all {count} items",
   "resume.coverage.collapse": "Show less",
   "resume.coverage.append": "Add to Resume",
+  "resume.coverage.appendThis": "Add this from my profile",
+  "resume.coverage.sectionHidden":
+    "This Section is currently hidden, so adding it will not show it on the Resume",
+  "resume.coverage.sectionHiddenAction": "Turn it on under Sections",
+  "resume.coverage.appendedTag": "Added",
+  "resume.coverage.polishThis": "Polish with AI",
+  "resume.coverage.appendedThis": "Added “{name}”",
+  "resume.coverage.skippedThis": "“{name}” is already in the Resume — nothing was added twice",
+  "resume.coverage.polishInstruction":
+    "Polish only this entry in {section} of this Resume: {name}. Change wording, order and register only — do not add any fact, number, company or project name, and do not touch other entries.",
   "resume.coverage.goWorkbench": "Add in the workbench",
   "resume.coverage.goWorkbenchHint":
     "AI edits can only rewrite existing content, not add new entries",

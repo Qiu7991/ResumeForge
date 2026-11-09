@@ -20,6 +20,7 @@ from jinja2 import Environment, select_autoescape
 
 from ...models.interview import (
     INTERVIEW_STATUS_FINISHED,
+    MESSAGE_PHASE_COACH,
     MESSAGE_PHASE_INTERVIEW,
     InterviewMessage,
     InterviewSession,
@@ -154,6 +155,11 @@ def reuse_interrupted_answer(session: InterviewSession, content: str) -> Intervi
 def _transcript(session: InterviewSession) -> str:
     lines: list[str] = []
     for item in session.messages:
+        # 教练参考答案（phase="coach"）**不进 transcript**（2026-11-08）：
+        # 那是"教练对他说的话"，不是候选人答的话。混进去会让面试官以为是他
+        # 自己答出来的，直接污染评分——双轨设计（评估 / 教学）会当场失效。
+        if getattr(item, "phase", None) == MESSAGE_PHASE_COACH:
+            continue
         speaker = {"interviewer": "面试官", "user": "候选人", "note": "系统"}.get(
             item.role, item.role
         )

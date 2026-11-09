@@ -161,6 +161,10 @@ export function generateResumeSuggestions(
 export function reviseResume(id: number, instructions: string): Promise<ResumeDetail> {
   return request(`/resumes/${id}/revise`, {
     method: "POST",
+    // 同步等模型改写**整份**简历：几十秒是常态，长简历更久。
+    // 不传 budget 会落到 default 15s，必然误报「请求超时，请重试」
+    // （1.x 的二开修过同一处，合并上游时这个参数丢了）。
+    budget: "analysis",
     body: JSON.stringify({ instructions }),
   });
 }

@@ -52,6 +52,19 @@ export default function ThemeProvider({ children }: { children: ReactNode }) {
     <ConfigProvider
       locale={antdLocale(locale)}
       theme={dark ? darkTheme : appTheme}
+      /*
+       * 浮层统一挂到 body。
+       *
+       * ⚠️ 2026-11-07 排查记录（不要再走回头路）：
+       * 当天出现过「下拉/Popover 落在视口外 (x=-12803, y=-7204)」的故障，
+       * 一度误判为挂载点问题并改成挂 `.ant-modal-content`，实测无效。
+       * 真正的根因不在挂载点，而在 foundation.css：一度把动画改成
+       * `animation: none`，导致 rc-trigger 的 useAlign 在测量那一帧读到
+       * 宽度为 0，`scaleX === 0` 命中提前 return，浮层停在占位位置
+       * `left: -1000vw; top: -1000vh`（正是 -12803 / -7204 的来源）。
+       * 恢复 0.01ms 后定位正常。挂载点保持 body 即可。
+       */
+      getPopupContainer={() => document.body}
     >
       <AntdApp message={MESSAGE_CONFIG}>{children}</AntdApp>
     </ConfigProvider>

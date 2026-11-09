@@ -46,7 +46,22 @@ const interview = {
   "interview.thinking": "正在思考下一个问题…",
   "interview.placeholder":
     "像真实面试那样回答：先说结论，再说做了什么、结果如何（Ctrl+Enter 发送）",
-  "interview.hint.dontKnow": "答不上来可以直接说「不知道」，面试官会给回答思路。",
+  "interview.hint.dontKnow": "答不上来可以说「不知道」拿思路，也可以点「给我参考答案」看你自己该怎么答。",
+  "interview.coach.action": "给我参考答案",
+  "interview.coach.hint":
+    "基于你自己的简历、资料库与已确认事实，给出一份你能说出口的答案。不计入评分，资料里没有的部分会如实说明。",
+  "interview.coach.title": "教练参考答案",
+  "interview.coach.groundedTag": "全部来自你的资料",
+  "interview.coach.partialTag": "含可迁移表述",
+  "interview.coach.dismiss": "收起参考答案",
+  "interview.coach.outlineLabel": "答题框架",
+  "interview.coach.sourcesLabel": "引用你的资料",
+  "interview.coach.gapsLabel": "你的资料里还缺",
+  "interview.coach.noteGrounded": "这段答案的事实都来自你自己的简历、资料库或已确认事实，可以照着说。",
+  "interview.coach.notePartial":
+    "有部分内容属于「可迁移表述」，不要当成真实经历讲——真实面试里被追问细节会露馅，比说「不知道」更伤。",
+  "interview.coach.noteNotScored": "参考答案不计入本场评分，评分只看你自己的回答。",
+  "interview.coach.failed": "参考答案生成失败，请稍后重试",
   "interview.action.submit": "提交回答",
   "interview.action.stopRound": "停止本轮",
   "interview.action.retryRound": "重新回答",

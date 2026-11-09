@@ -15,6 +15,7 @@ import type {
   InterviewAnalysisPayload,
   InterviewAnswerResult,
   InterviewBrief,
+  InterviewCoachAnswer,
   InterviewCreatePayload,
   InterviewDetail,
   InterviewFollowUpResult,
@@ -113,6 +114,19 @@ export function updateInterviewFollowUpState(
   return request(`/interview/${id}/answers`, {
     method: "POST",
     body: JSON.stringify({ content }),
+    budget: "analysis",
+  });
+}
+
+/**
+ * 「我不太会，给我参考答案」：让教练基于**候选人自己的资料**生成一份能说出口的答案。
+ *
+ * 不写消息、不改会话状态、不进评分——候选人仍要自己作答。赛后复盘也走这条。
+ * budget 用 `analysis`：要读资料库 + 事实台账，比普通对话重，但不需要 streaming。
+ */
+export function fetchCoachAnswer(id: number): Promise<InterviewCoachAnswer> {
+  return request(`/interview/${id}/coach-answer`, {
+    method: "POST",
     budget: "analysis",
   });
 }

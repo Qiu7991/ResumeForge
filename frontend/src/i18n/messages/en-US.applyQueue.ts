@@ -53,6 +53,14 @@ const applyQueue = {
   "applyQueue.detail.updatedAt": "Last updated",
   "applyQueue.detail.greeting": "Greeting",
   "applyQueue.detail.defaultGreeting": "Default greeting",
+  "applyQueue.detail.noResume": "No tailored Resume yet",
+  "applyQueue.greeting.unconfirmed": "Greeting not confirmed",
+  "applyQueue.greeting.unconfirmedHint": "No greeting saved yet: this item is skipped when sending. Click this tag to edit, generate and save one.",
+  "applyQueue.greeting.pendingConfirm": "Greeting pending review",
+  "applyQueue.greeting.pendingConfirmHint":
+    "Generated for this Job but not yet confirmed: this item is skipped when sending. Click this tag to edit and save, or use “Confirm greetings” in the toolbar to confirm in bulk.",
+  "applyQueue.greeting.clickToEdit": "Click to edit",
+  "applyQueue.greeting.editAria": "Edit greeting for {job}",
 
   "applyQueue.admission.needsConfirm": "Confirm each one",
   "applyQueue.admission.unanalyzed": "Not analyzed",
@@ -89,10 +97,30 @@ const applyQueue = {
     "Leave empty to use this Job's latest tailored Resume at run time",
   "applyQueue.editor.resumePlaceholder": "Resolved by default rules (type to search)",
   "applyQueue.editor.generate": "Generate a greeting for this Job",
+  "applyQueue.editor.focusProject.label": "Focus project (optional)",
+  "applyQueue.editor.focusProject.hint":
+    "Affects only this greeting, never the Resume; leave empty to pick the most relevant project from the JD.",
+  "applyQueue.editor.focusProject.placeholder": "Auto: pick from the JD",
+  "applyQueue.editor.focusProject.empty": "This Resume has no projects",
+  "applyQueue.editor.viewJd": "View job description",
+  "applyQueue.editor.hideJd": "Hide job description",
+  "applyQueue.editor.jdLoading": "Loading the JD…",
+  "applyQueue.editor.jdDescription": "Description",
+  "applyQueue.editor.jdRequirements": "Requirements",
+  "applyQueue.editor.jdEmpty":
+    "This Job has no JD yet: fetch its details in the Job board first.",
+  "applyQueue.editor.jdFailed": "Could not load the JD",
+  "applyQueue.editor.jdNoJob": "The job was deleted, so its JD is unavailable",
+  "applyQueue.editor.saveConfirm": "Save & confirm",
+  "applyQueue.editor.saveConfirmHint":
+    "Saving counts as confirming: this greeting is sent to the recruiter as written. Changing the Resume requires confirming again.",
   "applyQueue.toast.greetingGenerated": "Generated a greeting for this Job",
   "applyQueue.toast.greetingDefault": "Filled in the default greeting (no model configured)",
   "applyQueue.toast.greetingFailed": "Could not generate the greeting",
+  "applyQueue.toast.greetingNoResume": "This Job has no tailored Resume yet: generate one in the Job board first",
+  "applyQueue.toast.resumeChangedGreeting": "The Resume changed, so the greeting needs to be confirmed again",
   "applyQueue.toast.updated": "Queue item updated",
+  "applyQueue.toast.savedConfirmed": "Saved and confirmed — ready to send",
   "applyQueue.toast.updateFailed": "Could not update the queue item",
 } as const;
 

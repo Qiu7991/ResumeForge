@@ -108,6 +108,26 @@ export interface CoverageGroup {
   mixedReason: boolean;
   /** 该组所有 note 的 `entry_ids` 并集（3-A 确定性补入用；空数组 = 无可补入条目）。 */
   entryIds: string[];
+  /**
+   * `名字 -> entry_id`（逐条补入用）。缺席 = 这条定位不到资料条目，那一行不给补入按钮。
+   *
+   * 与 `entryIds` 的区别：数组会跳过匹配不到的名字且丢失对应关系，只能整组补；
+   * 这个映射让前端能按「这一行的名字」取到它自己的 entry_id，从而一条一条补。
+   */
+  entryIdByName: Record<string, string>;
+  /**
+   * 该组的缺口粒度：组内任一条 note 标了 `field` 即为 `"field"`（字段级），否则 `"entry"`。
+   *
+   * 决定按钮走 revise 还是 workbench（见 {@link resolveCoverageAction}）。
+   * 旧记录没有这个键，按 `"entry"` 处理，行为与改动前一致。
+   */
+  granularity: "entry" | "field";
+  /**
+   * 该分区在文档里是隐藏状态（`section.hidden`）：补进去也不上纸面。
+   *
+   * 老后端不发这个键，按 `false` 处理（不吓唬人）。
+   */
+  sectionHidden: boolean;
 }
 
 /** 三种按钮分支（3-A 决策表）。 */
@@ -116,6 +136,14 @@ export type CoverageAction = "append" | "revise" | "workbench";
 /**
  * 「靠改写就能补」的分区：这些分区在简历文档里**已经有可写字段**，AI 修订只要改写
  * 已有 path 的 value 就行，不需要新增条目。其余分区一律只能去制作台添加。
+ *
+ * 注意这里是**分区级**口径，只覆盖"整段文本"的类型。条目级分区（projects /
+ * experience / …）的**字段级**缺口另由 note 上的 `granularity: "field"` 标记，
+ * 见 {@link resolveCoverageAction}。
+ *
+ * `skills` 同时出现在这里和 `APPENDABLE_BUILTIN_SECTIONS` 里，是刻意的：**append 先判**，
+ * 所以只要能定位到资料条目就逐条确定性补入（用户自己选补哪几条）；定位不到时（旧记录、
+ * 生成后资料改过名）回落到这里的整组 AI 改写，而不是掉进「去制作台添加」那条死路。
  */
 const AI_REWRITABLE_SECTIONS: ReadonlySet<string> = new Set(["skills", "languages", "summary"]);
 
@@ -161,10 +189,23 @@ export function groupCoverageNotes(notes: ResumeCoverageNote[]): CoverageGroup[]
         unknownCount: 0,
         mixedReason: false,
         entryIds: [],
+        entryIdByName: {},
+        granularity: "entry",
+        sectionHidden: false,
       };
       groups.set(key, group);
     }
     group.total += note.total;
+    // 板块隐藏状态：同一组的所有 note 同属一个分区，任一标了就算隐藏。
+    if (note.section_hidden) group.sectionHidden = true;
+    // 逐条补入：把后端下发的「名字 -> entry_id」并进组里，供每一行按名字取自己的 id。
+    for (const [name, entryId] of Object.entries(note.entry_id_by_name ?? {})) {
+      const value = String(entryId ?? "");
+      if (name && value) group.entryIdByName[name] = value;
+    }
+    // 组内任一条标了 field，整组按字段级处理（同组同 section_label，粒度本应一致；
+    // 万一不一致，字段级是更保守的那个——它不会给出「补进简历」这种做不到的承诺）。
+    if (note.granularity === "field") group.granularity = "field";
     for (const entryId of note.entry_ids ?? []) {
       const value = String(entryId ?? "");
       if (value && !group.entryIds.includes(value)) group.entryIds.push(value);
@@ -189,23 +230,62 @@ export function groupCoverageNotes(notes: ResumeCoverageNote[]): CoverageGroup[]
 }
 
 /**
+ * 能确定性补入的**内置**板块（2026-11-08 起后端支持）。
+ *
+ * 与自建板块的差别只在取数路径：自建走 `custom_sections`，这些走强类型投影
+ * （见后端 `resume_profile_append_builtin`，复用生成链转换器把资料条目转成 v2 entry）。
+ * 前端判定口径完全一致：**有 entry_ids 就能补**。
+ *
+ * 之前这里只认 `custom:` 前缀，于是「项目经历 · 8 条」出的是「去制作台添加」——
+ * 而制作台里并没有"补这段"入口，用户点进去是死路。
+ */
+const APPENDABLE_BUILTIN_SECTIONS: ReadonlySet<string> = new Set([
+  "education",
+  "experience",
+  "projects",
+  "campus_experience",
+  "awards",
+  "publications",
+  "research_projects",
+  "patents",
+  "credentials",
+  // 技能（2026-11-08）：资料侧每条技能就是一条条目，简历侧每条也是独立 entry，
+  // 后端已支持按 entry_id 逐条补入。先前只认上面那批，于是「专业技能 · 66 条」
+  // 只能整组走「AI 补上这段」——用户明确反对的"全让 AI 做决策"。
+  "skills",
+]);
+
+/**
  * 3-A 决策表（唯一口径）：决定这一组该出哪个按钮。
  *
- * 1. 有 `entry_ids`（至少一个名字能定位到资料条目）**且**是自建板块 → `append`
- *    （确定性插入，不调模型）；
- * 2. `skills` / `languages` / `summary`（已有可写字段，改写就能补）→ `revise`
+ * 1. 有 `entry_ids`（至少一个名字能定位到资料条目）**且**板块支持确定性补入
+ *    （自建板块，或上面那批内置板块）→ `append`（确定性插入，不调模型）；
+ * 2. `languages` / `summary`（已有可写字段，改写就能补）→ `revise`
  *    （走既有修订弹窗）；
- * 3. 其余（条目级分区、以及没有 `entry_ids` 的旧记录自建板块）→ `workbench`
- *    （AI 修订只能改写已有内容，不能新增条目）。
+ * 3. 其余 → `workbench`（AI 修订只能改写已有内容，不能新增条目）。
  *
  * `canAppend = false` 表示宿主没有给出 `resumeId`/刷新回调：此时「补进简历」按钮点了
  * 也没法落库，降级成「去制作台添加」——它永远不会给出做不到的承诺。
  */
 export function resolveCoverageAction(
-  group: Pick<CoverageGroup, "section" | "rawSection" | "entryIds">,
+  group: Pick<CoverageGroup, "section" | "rawSection" | "entryIds"> & {
+    granularity?: CoverageGroup["granularity"];
+  },
   canAppend = true,
 ): CoverageAction {
-  if (canAppend && group.entryIds.length > 0 && isCustomSection(group.rawSection)) {
+  const hasEntryIds = group.entryIds.length > 0;
+  /*
+   * 字段级缺口**必须**先判，不能落到 append：
+   *
+   * `granularity: "field"` 的含义是「这条条目已经在简历里了，只缺几句亮点/技术栈」。
+   * 此时 append 会把整条资料**再插一遍**——正文里出现两份同名项目，
+   * 比漏几句严重得多。这类缺口的唯一可达动作是 AI 修订（改写已有条目）。
+   */
+  if (group.granularity === "field") return "revise";
+
+  const appendable =
+    isCustomSection(group.rawSection) || APPENDABLE_BUILTIN_SECTIONS.has(group.section);
+  if (canAppend && hasEntryIds && appendable) {
     return "append";
   }
   if (AI_REWRITABLE_SECTIONS.has(group.section)) return "revise";

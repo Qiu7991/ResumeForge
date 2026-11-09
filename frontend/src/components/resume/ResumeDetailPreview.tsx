@@ -22,6 +22,8 @@ import ResumeWorkbenchV2 from "./ResumeWorkbenchV2";
 import { useResumeTemplateCatalog } from "../../hooks/useResumeTemplateCatalog";
 import ResumeMeasureControls from "./ResumeMeasureControls";
 import ResumeTemplateControls from "./ResumeTemplateControls";
+import PreviewSectionsControl from "./PreviewSectionsControl";
+import type { ResumeDocument } from "../../types/resumeDocument";
 import {
   normalizeDocumentMode,
   pageLimitOptions,
@@ -208,6 +210,14 @@ export default function ResumeDetailPreview({
                 onApplyLayout({ ...layout, template, format_config: formatConfig })
               }
               onChange={(next) => onApplyLayout(next)}
+            />
+            {/* 板块显隐 + 顺序（移植自 1.x）：预览里直接控制哪些板块上纸面。
+                上游 2.0 把入口只留在制作台，用户在这里找不到「板块」按钮。 */}
+            <PreviewSectionsControl
+              document={detail.content as ResumeDocument}
+              sectionOrder={catalog?.profile_section_order ?? []}
+              disabled={relayouting}
+              onApply={(next) => onSaveEditedResume(next)}
             />
             {/* 「更多排版」（问题 8）：行距 / 页边距 / 字号 / 字体收进弹层，工具栏从两行
                 （≈90px）降到一行。控件本身一行没改，只是换了挂载位置——弹层一打开就是

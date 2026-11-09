@@ -36,6 +36,7 @@ from ..profile.profile_relevance_constants import section_limit
 from .resume_coverage_notes import (
     builtin_entry_ids,
     custom_entry_ids,
+    entry_id_map,
     with_reasons,
 )
 from .resume_grounding_helpers import _similar, _similar_skill
@@ -179,16 +180,24 @@ def find_unwritten_details(
         if not filtered and not model_omitted:
             continue
         missing_names = sorted(missing)
+        note: dict[str, Any] = {
+            "section": section,
+            "section_label": label,
+            "names": missing_names,
+            "filtered": filtered,
+            "model_omitted": model_omitted,
+            "total": len(missing),
+        }
+        if consumed is not None:
+            # 逐条补入（2026-11-08）：前端要"这一条对应哪个 entry_id"才能一条一条补。
+            # 数组 `entry_ids` 会跳过匹配不到的名字，前端无法把名字与 id 对齐，
+            # 只能整组补——这正是用户抱怨"只能全让 AI 决策"的原因。
+            mapping = entry_id_map(consumed, section, identity_field, missing_names)
+            if mapping:
+                note["entry_id_by_name"] = mapping
         details.append(
             with_reasons(
-                {
-                    "section": section,
-                    "section_label": label,
-                    "names": missing_names,
-                    "filtered": filtered,
-                    "model_omitted": model_omitted,
-                    "total": len(missing),
-                },
+                note,
                 # 3-A：只有能从消费快照唯一定位到条目的名字才给 entry_ids；旧入口
                 # （只带身份名）拿不到，于是这个键缺席，前端退回"去制作台添加"。
                 entry_ids=(
@@ -326,16 +335,28 @@ def find_unwritten_field_details(
             if not missing:
                 continue
             prefix = "项目" if section_key == "projects" else "科研项目"
+            # 字段级差异（技术栈 / 亮点 / 科研成果）**不能确定性补入**：
+            # `resume_profile_append` 只处理「整条条目」，不写条目内的列表字段
+            # （`_projected_custom_entries` 只遍历 custom_sections）。
+            #
+            # 第一性原理：清单的原子单位必须是**一个可执行的动作**。
+            # 这里的缺口是「这一条项目里还差那几句」，唯一可达动作是让 AI 改写
+            # 这一条已有项目的 highlights / tech_stack。所以显式标 `granularity: "field"`，
+            # 由前端稳定地走 revise 分支——不再靠"有没有 entry_ids"去猜（那个推断
+            # 对 skills 不成立：技能也带 entry_ids，但技能确实能靠改写补进去）。
             details.append(
                 with_reasons(
                     {
                         "section": section_key,
                         "section_label": f"{prefix}「{name}」的{label}",
+                        "granularity": "field",
                         "names": missing,
                         "filtered": [],
                         "model_omitted": missing,
                         "total": len(missing),
                     }
+                    # 显式传 None：字段级差异没有可定位的单一条目身份，
+                    # 不给 entry_ids 才能让前端区别于「整条未写」的可补入分支。
                 )
             )
     # 2) 技能条目：整条没写的技能单列，并按"有没有进过候选"分开归因。

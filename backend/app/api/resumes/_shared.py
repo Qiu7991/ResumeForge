@@ -156,6 +156,108 @@ def _validated_content(
         raise HTTPException(status_code=422, detail=conversion_error_detail(exc)) from exc
 
 
+def _coverage_notes_with_entry_map(
+    record: ResumeRecord, db: Session | None, *, hidden_sections: set[str] | None = None
+) -> list[dict[str, Any]]:
+    """给旧简历的未收录清单补上两个"读取侧才补"的键，并标明板块是否已隐藏。
+
+    **``entry_id_by_name``**（逐条补入用，2026-11-08）：这个键是生成时写进
+    ``coverage_notes`` 的，但用户手上已有的简历都是旧数据（实测 15 份里有清单的 5 份，
+    7 条 note 里 0 条带映射）。不补的话「从资料补上这段」在他们的简历上永远出不来按钮。
+
+    读取侧现场算的依据是**当前资料库**：清单里的名字本来就是资料条目的身份名，
+    按名字回查资料库就能拿到 entry_id。代价是"生成后资料被改名"的名字查不到，
+    那种情况不写这个键，前端那一行就不给补入按钮（不猜）。
+
+    **``granularity``**（2026-11-08）：字段级 note（``项目「X」的项目亮点``）与条目级
+    note（``项目经历``）由后端两个不同函数生成，只有新的那份会标 ``"field"``。
+    旧记录一条都没标 → 前端按条目级处理 → 落到「去制作台添加」这条**死路**
+    （制作台里没有"补这段"入口，用户实测点进去什么也做不了）。
+    这里用确定性规则回填：**分区标签不等于该分区的标准名** ⇒ 字段级。
+    两个生成点用的标签格式各自固定（条目级恒为标准名，字段级恒为
+    ``项目「X」的…``），所以这条规则不需要猜语义。
+
+    只补**缺失**的键：已有的保持生成时的快照（那才是当时的真相）。
+
+    **``section_hidden``**（2026-11-08）：板块被用户隐藏时（``section.hidden=true``，
+    「隐藏 = 数据保留、不上纸面」），清单里那些内容**本来就上不了纸**。实测用户 15 份
+    简历里 11 份把「专业技能」隐藏了，而清单照样报「66 条技能没写进简历」——
+    用户点「补进简历」补进去，纸面上什么都不会多出来，等于又一次"点了没反应"。
+    这里如实把板块隐藏状态带给前端，由它明说"这个板块当前是隐藏的，补进去也不显示"。
+    """
+    notes = record.coverage_notes or []
+    hidden = hidden_sections or set()
+    if not notes or db is None:
+        return notes
+    complete = all(
+        isinstance(item, dict)
+        and "granularity" in item
+        and (item.get("entry_id_by_name") or item.get("granularity") == "field")
+        and "section_hidden" in item
+        for item in notes
+    )
+    if complete:
+        return notes
+
+    from ...services.profile.ai_profile import load_ai_consumed_profile
+    from ...services.resume.resume_coverage import _SECTION_MAP
+    from ...services.resume.resume_coverage_notes import entry_id_map
+
+    identity_by_section = {section: field for _field, section, field, _label in _SECTION_MAP}
+    # 技能不在 ``_SECTION_MAP`` 里（那张表只登记"经历类"分区，技能走字段级比对），
+    # 但技能条目同样是"一条资料 = 一个技能"，可以逐条补入。身份字段是技能名。
+    identity_by_section["skills"] = "name"
+    # 条目级 note 的 ``section_label`` 恒等于这个标准名（见 ``find_unwritten_details``）；
+    # 字段级 note 的标签由 ``find_unwritten_field_details`` 拼成 ``项目「X」的…``。
+    label_by_section = {section: label for _field, section, _id, label in _SECTION_MAP}
+    # 技能的条目级 note 标签恒为「专业技能」（见 ``find_unwritten_field_details`` 第 2 段）。
+    label_by_section["skills"] = "专业技能"
+    # note 的 ``section`` 是**资料侧**键，文档分区是**简历侧**键：三个分区不同名。
+    # 与 ``_SECTION_MAP`` 的前两列同源（资料侧 -> 简历侧），其余分区同名。
+    doc_key_by_section = {section: field for field, section, _id, _label in _SECTION_MAP}
+    consumed = None
+    changed = False
+    enriched: list[dict[str, Any]] = []
+    for item in notes:
+        if not isinstance(item, dict):
+            enriched.append(item)
+            continue
+        patch: dict[str, Any] = {}
+        section = str(item.get("section") or "")
+        # 板块隐藏状态：note 里的 ``section`` 是资料侧键，而文档分区用简历侧键，
+        # 三个分区不同名（见 ``coverageGroups.PROFILE_SECTION_KEY_ALIASES`` 的另一半）。
+        patch["section_hidden"] = doc_key_by_section.get(section, section) in hidden
+        canonical_label = label_by_section.get(section)
+        if "granularity" not in item and canonical_label is not None:
+            is_field = str(item.get("section_label") or "") != canonical_label
+            patch["granularity"] = "field" if is_field else "entry"
+        # 字段级 note 没有"可整条补入"的条目身份（缺口是条目内的几句），不查映射。
+        if patch.get("granularity", item.get("granularity")) == "field":
+            identity_field = None
+        else:
+            identity_field = identity_by_section.get(section)
+        names = [str(name) for name in (item.get("names") or []) if str(name)]
+        if (
+            "entry_id_by_name" not in item
+            and identity_field
+            and names
+        ):
+            if consumed is None:
+                try:
+                    consumed = load_ai_consumed_profile(db)
+                except Exception:  # noqa: BLE001 - 资料读取失败不该让详情接口挂掉
+                    return notes
+            mapping = entry_id_map(consumed, section, identity_field, names)
+            if mapping:
+                patch["entry_id_by_name"] = mapping
+        if patch:
+            changed = True
+            enriched.append({**item, **patch})
+        else:
+            enriched.append(item)
+    return enriched if changed else notes
+
+
 def _to_resume_out(
     record: ResumeRecord,
     db: Session | None = None,
@@ -172,6 +274,13 @@ def _to_resume_out(
         conversion_summary = document_conversion
     else:
         conversion_summary = document_io.conversion_summary(conversion)
+    # 板块隐藏状态（"隐藏 = 数据保留、不上纸面"）：清单要据此明说"补进去也不显示"，
+    # 否则用户补完发现纸面没变，只会认为按钮坏了。
+    hidden_sections = {
+        str(section.get("key") or "")
+        for section in (content.get("sections") or [])
+        if isinstance(section, dict) and section.get("hidden")
+    }
     return ResumeOut(
         id=record.id,
         title=record.title,
@@ -205,7 +314,9 @@ def _to_resume_out(
         warnings=record.warnings or [],
         parse_error=record.parse_error,
         rationale=record.rationale or "",
-        coverage_notes=record.coverage_notes or [],
+        coverage_notes=_coverage_notes_with_entry_map(
+            record, db, hidden_sections=hidden_sections
+        ),
         # JSON 列里存的是 dict，逐条显式校验成 FactAnnotation（与 pydantic 构造时的
         # 隐式校验同语义，这里写明让类型检查器也看得到）。
         fact_annotations=[

@@ -165,8 +165,15 @@
   *::before,
   *::after {
     scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    /*
+     * ⚠️ 本地偏离上游：上游此处另有 animation-duration / animation-iteration-count /
+     * transition-duration 三条 `0.01ms !important` 压缩规则，已移除。
+     * 原因：rc-trigger 的浮层定位依赖 rc-motion 的动画结束回调；动画被压到 0.01ms
+     * 后回调不触发，浮层永远停在 `left:-1000vw; top:-1000vh`（视口外 1000 倍），
+     * 表现为所有下拉 / Popover / Tooltip 点开无反应。1.x 无此三行，故从未出现。
+     * 完整取证与回退方式见 docs/fork-2.0-blocked.md 的 V-5。
+     * 上游同步时：这一段保留本地版本即可（其余部分无需改动）。
+     */
   }
 }
+

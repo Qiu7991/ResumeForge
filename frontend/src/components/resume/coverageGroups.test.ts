@@ -239,15 +239,52 @@ describe("resolveCoverageAction decision table (3-A)", () => {
     expect(resolveCoverageAction({ ...appendable, entryIds: [] })).toBe("workbench");
   });
 
-  it("keeps the AI revise button for sections that already have writable fields", () => {
-    for (const section of ["skills", "languages", "summary"]) {
+  /*
+   * 2026-11-08 口径变更（**产品能力变了，不是放松断言**）：
+   *
+   * 技能从「只能整组 AI 改写」变成「可以逐条确定性补入」。用户原话：「我的目的是
+   * 能够有按键，我选择性的要补上哪些，而不是全让 ai 做决策」。后端 `skills` 现在是
+   * 可补入板块（`resume_profile_append_builtin.BUILTIN_SECTIONS` 增加了 skills，
+   * 资料侧每条技能 = 一条条目，简历侧每条也是独立 entry），所以有 entry_ids 就给
+   * 「从资料补上这段」，而不是整组交给模型。
+   *
+   * `languages` / `summary` 没有条目概念（是整段文本），仍然只能靠修订。
+   * 技能定位不到条目时（旧记录、资料改过名）仍会回落到 revise —— 见下面那条。
+   */
+  it("keeps the AI revise button for sections that are one whole text block", () => {
+    for (const section of ["languages", "summary"]) {
       expect(resolveCoverageAction({ section, rawSection: section, entryIds: ["e1"] })).toBe(
         "revise",
       );
     }
   });
 
-  it("sends every entry-level section to the workbench", () => {
+  it("offers per-entry append for skills once they can be located", () => {
+    expect(
+      resolveCoverageAction({ section: "skills", rawSection: "skills", entryIds: ["e1"] }),
+    ).toBe("append");
+  });
+
+  it("still falls back to AI revise for skills whose entries cannot be located", () => {
+    // 旧记录 / 生成后资料改过名：没有 entry_ids ⇒ 不能承诺"补哪一条"，但也不该送进
+    // 制作台那条死路（技能本来就靠在正文里改写就能补）。
+    expect(
+      resolveCoverageAction({ section: "skills", rawSection: "skills", entryIds: [] }),
+    ).toBe("revise");
+  });
+
+  /*
+   * 2026-11-08 口径变更（**产品能力变了，不是放松断言**）：
+   *
+   * 旧断言是「所有条目级板块一律去制作台」。实际用户路径是死路——后端
+   * `builtin_entry_ids` 明明定位到了资料条目的 id，清单上写着「项目经历 · 8 条」，
+   * 点「去制作台添加」后制作台里并没有「补这段」入口。
+   *
+   * 现在后端真的支持内置板块补入了（`resume_profile_append_builtin` 复用生成链
+   * 转换器把资料条目转成 v2 entry），所以有 entry_ids 就应当出「补进简历」。
+   * 新的不变量：**有 entry_ids + 板块在可补入名单里 → append**。
+   */
+  it("offers append for entry-level sections once the backend can insert them", () => {
     for (const section of [
       "projects",
       "experience",
@@ -260,6 +297,16 @@ describe("resolveCoverageAction decision table (3-A)", () => {
       "credentials",
     ]) {
       expect(resolveCoverageAction({ section, rawSection: section, entryIds: ["e1"] })).toBe(
+        "append",
+      );
+    }
+  });
+
+  it("still sends entry-level sections to the workbench when nothing can be located", () => {
+    // 没有 entry_ids = 定位不到资料条目（旧入口/旧记录）：不能承诺一次补入，
+    // 那可能替用户插错记录。这条是 append 的前置条件，不是历史遗留。
+    for (const section of ["projects", "experience", "education"]) {
+      expect(resolveCoverageAction({ section, rawSection: section, entryIds: [] })).toBe(
         "workbench",
       );
     }
@@ -267,6 +314,51 @@ describe("resolveCoverageAction decision table (3-A)", () => {
 
   it("downgrades append to the workbench when the host cannot save", () => {
     expect(resolveCoverageAction(appendable, false)).toBe("workbench");
+  });
+
+  // 2026-11-08：字段级缺口（条目在、缺几句亮点/技术栈）。
+  // 后端 `find_unwritten_field_details` 会显式标 `granularity: "field"`。
+  // 这类缺口 append 做不到（`resume_profile_append` 只补整条），AI 修订却能改写
+  // 已有项目的 highlights/tech_stack——所以必须给 revise，不能推去制作台。
+  it("routes field-level gaps to AI revise even for entry-level sections", () => {
+    for (const section of ["projects", "research_projects"]) {
+      expect(
+        resolveCoverageAction({
+          section,
+          rawSection: section,
+          // entry_ids 可能为空（字段级没有单一条目身份），也可能带着——
+          // 两种情况都必须走 revise，粒度标记说了算。
+          entryIds: [],
+          granularity: "field",
+        }),
+      ).toBe("revise");
+      expect(
+        resolveCoverageAction({
+          section,
+          rawSection: section,
+          entryIds: ["e1"],
+          granularity: "field",
+        }),
+      ).toBe("revise");
+    }
+  });
+
+  it("keeps append and revise strictly separated by granularity", () => {
+    // 整条没写（granularity 缺省 = entry）→ append。
+    expect(
+      resolveCoverageAction({ section: "projects", rawSection: "projects", entryIds: ["e1"] }),
+    ).toBe("append");
+    // 条目在、只缺几句（granularity = field）→ revise。
+    // 这两种必须在同一条测试里对拍：字段级若漏到 append，会把整条资料再插一遍，
+    // 正文出现两份同名项目——比漏几句严重得多。
+    expect(
+      resolveCoverageAction({
+        section: "projects",
+        rawSection: "projects",
+        entryIds: [],
+        granularity: "field",
+      }),
+    ).toBe("revise");
   });
 
   it("recognises the custom section prefix only", () => {

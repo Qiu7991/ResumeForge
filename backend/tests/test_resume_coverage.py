@@ -252,6 +252,35 @@ def test_truly_missing_field_value_is_still_reported():
     assert [detail["names"] for detail in details] == [["三"]]
 
 
+def test_field_level_gap_carries_field_granularity():
+    """字段级缺口必须显式标 ``granularity="field"``。
+
+    为什么需要这个契约：前端按粒度决定按钮——
+    - ``field`` → AI 修订（能改写已有项目的 highlights/tech_stack，可达）；
+    - 缺省/``entry`` → 整条没写，内置板块只能去制作台（``resume_profile_append``
+      只补整条自建条目）。
+
+    不标的话前端只能靠"有没有 entry_ids"推断，而 ``skills`` 也带 entry_ids，
+    推断会把技能错判成"必须去制作台"。
+    """
+    consumed = _project_consumed("- 一\n- 二\n- 三")
+    resume = ResumeContent(
+        projects=[
+            {
+                "name": "电商订单服务重构",
+                "tech_stack": ["Python", "Redis"],
+                "highlights": ["一", "二"],
+            }
+        ]
+    )
+
+    details = find_unwritten_field_details(resume, consumed)
+    assert details, "预期报出一条字段级缺口"
+    assert details[0]["granularity"] == "field"
+    # 字段级缺口不是"哪条资料没进简历"，所以不该带 entry_ids
+    assert "entry_ids" not in details[0]
+
+
 # ===== 技能的"模型省略"归因（2026-11 问题 2）=====
 #
 # 技能名额在 SECTION_LIMITS["skills"]（14）就压掉了：候选 14 条、实写 14 条时模型
