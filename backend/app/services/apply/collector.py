@@ -26,7 +26,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ...models.apply import FAILURE_CAPTCHA_REQUIRED, FAILURE_LOGIN_REQUIRED
+from ...models.apply import (
+    FAILURE_CAPTCHA_REQUIRED,
+    FAILURE_LOGIN_REQUIRED,
+    FAILURE_UNKNOWN,
+)
 from ...models.job import Job
 from ...models.profile import utcnow
 from ...schemas.apply import CollectConfigIn
@@ -72,6 +76,9 @@ class CollectReport:
     # （筛选组合下岗位总量就这么多，或站点对深层翻页重复推送），再翻只会原样重复到
     # 页数上限。0 表示没有触发（正常翻完或被上限/去重之外的路径终止）。
     pagination_stopped_at: int = 0
+    # 「感兴趣」来源（source=interest）里 jobValidStatus != 1 的条数。它解释了"页面显示
+    # 134 条、实际只采到 131 条"的差额；不报出来用户会以为丢了数据。
+    interest_invalid: int = 0
     unmapped_conditions: list[str] = field(default_factory=list)
 
 
@@ -96,19 +103,20 @@ class Collector:
     ) -> CollectReport:
         """一次采集。``backfill_job_ids`` 非空时改成**只给这些岗位补抓详情**。
 
-        两种模式共用同一套浏览器会话、详情抓取、限速与进度上报，区别只在"这一批岗位从哪儿来"：
+        三种模式共用同一套浏览器会话、详情抓取、限速与进度上报，区别只在"这一批岗位从哪儿来"：
         搜索模式从关键词翻页来，补详情模式由用户点名（用于修"当年采集时详情没抓到、JD 为空"的
-        历史数据）。这样暂停/停止、进度显示、失败语义全都不用重写一遍。
+        历史数据），interest 模式读 BOSS 的「感兴趣」个人列表（2026-11-09）。这样暂停/停止、
+        进度显示、失败语义全都不用重写一遍。
         """
         report = CollectReport()
-        limit = config.per_task_limit
         # 站点侧筛选：**整个批次只解析一次**——校验编码要读一次站点清单，逐页重复读没有意义。
         # 解析不出来（站点改版 / 清单读不到）时按"这次没筛"如实记账，绝不发未经校验的编码：
         # 旧编码在站点看来同样"合法"，发出去会静默筛错，比不筛更糟。
         site_filters = FilterResolution()
-        if not backfill_job_ids:
+        if not backfill_job_ids and config.source != "interest":
             # **补详情模式不解析站点筛选**：它是按用户点名的岗位逐个打开详情，不走搜索，
             # 筛选条件在这里没有任何作用；照解析一遍就可能为它白开一次搜索页。
+            # **interest 模式同理不解析**：它是个人固定列表（"我的感兴趣"），没有筛选维度。
             try:
                 site_filters = adapter.prepare_collect_filters(config.filters, client)
             except Exception:  # noqa: BLE001 - 读清单失败不该让整次采集失败
@@ -125,9 +133,6 @@ class Collector:
         )
         unmapped: set[str] = set()
         tally = FilterTally()
-        # 本地筛选只对**适配器声明过**的条件生效。这份声明是有约束力的：没声明就说明该站点的
-        # 接口不保证返回对应字段，硬筛会变成"凭缺失的字段做判断"——那正是要避免的误杀。
-        declared = set(adapter.post_filter_conditions)
 
         if backfill_job_ids:
             self._backfill(
@@ -142,11 +147,225 @@ class Collector:
                 job_ids=list(backfill_job_ids),
                 report=report,
             )
+        elif config.source == "interest":
+            self._collect_interest(
+                session=session,
+                task=task,
+                client=client,
+                adapter=adapter,
+                config=config,
+                checkpoint=checkpoint,
+                sleeper=sleeper,
+                clock=clock,
+                report=report,
+            )
+        else:
+            self._collect_search(
+                session=session,
+                task=task,
+                client=client,
+                adapter=adapter,
+                config=config,
+                checkpoint=checkpoint,
+                sleeper=sleeper,
+                clock=clock,
+                report=report,
+                query=query,
+                unmapped=unmapped,
+                tally=tally,
+            )
 
+        report.unmapped_conditions = sorted(unmapped)
+        # 筛选的账目写进 ``task.config``（不新增数据库列，与 ``unmapped_conditions`` 同一套做法）：
+        # 「筛掉几条、按哪条筛的、有几条因为岗位没给字段而没能判断」都要给用户看到——
+        # 只留一个"已暂存 N 个"会让人以为筛选生效了，而不知道实际筛掉了多少、漏了多少。
+        summary: dict[str, Any] = {}
+        if report.unmapped_conditions:
+            summary["unmapped_conditions"] = report.unmapped_conditions
+        if report.skipped_trashed:
+            summary["skipped_trashed"] = report.skipped_trashed
+        if report.backfilled or report.backfill_skipped:
+            # 补详情的账目：补到几条、跳过几条（跳过包括"已经有描述"和"仍然抓不到"）。
+            # 不给这两个数，用户看到"任务完成"却不知道到底补上没有。
+            summary["backfilled"] = report.backfilled
+            summary["backfill_skipped"] = report.backfill_skipped
+        if report.interest_invalid:
+            # 「感兴趣」来源里失效岗位的条数：它解释了"页面显示 134 条、实际只采到 131 条"
+            # 的差额，不报出来用户会以为丢了数据。
+            summary["interest_invalid"] = report.interest_invalid
+        if not backfill_job_ids:
+            # 只有**搜索采集**才写"详情缺失"这条账目：它是站点漂移的早期信号，站点健康度靠它
+            # 识别"能采到列表却抓不到 JD"。补详情模式不写这个键（它走 backfilled/backfill_skipped），
+            # 两套口径不混一起——否则用户一次"点名补详情"会把漂移计数搅乱。
+            summary["detail_missing"] = report.detail_missing
+        configured_filters = {
+            "薪资": query.salary_min is not None,
+            "经验": bool(query.experience),
+            "学历": bool(query.education),
+            "岗位类型": bool(query.job_type),
+        }
+        # 「采集后筛选」已下线（无适配器声明 post_filter_conditions），此账目分支当前不可达；
+        # 与 collect_filters 一并保留供未来站点复用。
+        applied_filters = [
+            condition
+            for condition in adapter.post_filter_conditions
+            if configured_filters.get(condition, False)
+        ]
+        if applied_filters:
+            # 保留适配器声明的顺序（与界面上的字段顺序一致），不排序——排序会把
+            # "薪资 / 经验 / 学历"变成按码位排的"学历 / 经验 / 薪资"，读起来别扭。
+            summary["filter_applied"] = applied_filters
+            summary["filtered_out"] = report.filtered
+            summary["filter_reasons"] = sorted(tally.reasons)
+            summary["filter_undecided"] = sorted(tally.undecided)
+            summary["filter_undecided_count"] = tally.undecided_count
+            summary["filter_unapplied"] = sorted(tally.unapplied)
+        if site_filters.applied or site_filters.unapplied:
+            # 站点侧筛选的账目：**生效了哪几条**（站点在接口侧就筛掉了，用户能少翻很多页）、
+            # **哪几条没能生效**。后者必须说出来——用户选了「公司规模：1000人以上」却拿到
+            # 各种规模的岗位，唯一能解释这件事的就是这句话。
+            summary["site_filter_applied"] = list(site_filters.applied)
+            summary["site_filter_unapplied"] = list(site_filters.unapplied)
+        if report.pagination_stopped_at:
+            summary["pagination_stopped_at"] = report.pagination_stopped_at
+        if summary:
+            task.config = {**(task.config or {}), **summary}
+        # 进度口径只能有一处实现（搜索算 collected、补详情算 backfilled）。此前收尾又按搜索口径
+        # 写了一遍 processed/succeeded/skipped，补详情模式下会把 _update_task_progress 刚写入的
+        # 值覆盖回 0——界面于是显示「已处理 0/N」。收尾统一走同一个方法（它自带 commit）。
+        self._update_task_progress(session, task, report)
+        return report
+
+    def _collect_interest(
+        self,
+        *,
+        session: Session,
+        task: Any,
+        client: Any,
+        adapter: SiteAdapter,
+        config: CollectConfigIn,
+        checkpoint: Callable[[], None],
+        sleeper: Callable[[float], None],
+        clock: Callable[[], float],
+        report: CollectReport,
+    ) -> None:
+        """把 BOSS「感兴趣」个人列表抓进暂存区（source=interest 的专属路径）。
+
+        与搜索路径的三处不同：
+        1. 列表来源是个人固定列表（``page`` 参数翻页），不是关键词搜索结果；
+        2. 不解析站点筛选（个人列表没有筛选维度，``run`` 里已跳过）；
+        3. 详情**全抓**：用户要的就是"把感兴趣列表连同完整 JD 存下来"，不过本地筛选。
+        其余（去重、限速、暂停、进度、暂存区写入）与搜索路径完全一致。
+        """
+        from ..sites.boss_interest import fetch_interest_page
+
+        open_interest = getattr(adapter, "open_interest_page", None)
+        if open_interest is None:
+            # 站点选错了（interest 列表只有 BOSS 有）：显式失败好过 AttributeError。
+            raise SiteFailure(
+                FAILURE_UNKNOWN,
+                f"当前站点（{adapter.display_name or adapter.key}）没有「感兴趣」列表，"
+                "请把采集来源切回关键词搜索",
+            )
+
+        # 1) 打开「感兴趣」页（一次）。列表请求必须在这个页面里发（BOSS 会关掉脚本新建的
+        #    标签页，见 boss_interest 模块说明），所以先导航到位。
+        task.current_step = "正在打开「我的感兴趣」"
+        session.commit()
+        open_interest(client)
+        checkpoint()
+
+        # 2) 逐页读列表，攒齐"新面孔"。与搜索路径的两阶段同一思路：先把列表读完再统一抓
+        #    详情——抓详情会把共享标签页导航走，页面内 fetch 的翻页上下文就没了。
+        pending: list[SearchResult] = []
+        limit = config.per_task_limit
+        seen: set[str] = set()
+        page = 1
+        while page <= config.interest_max_pages and len(pending) < limit:
+            checkpoint()
+            # 页级步骤先落库再读取：界面上的"正在读取第 N 页"与浏览器动作同帧可见。
+            task.current_step = f"正在读取「感兴趣」第 {page} 页（已就绪 {len(pending)} 个）"
+            session.commit()
+            page_result = fetch_interest_page(client, page)
+            report.pages += 1
+            report.interest_invalid += page_result.invalid
+            for item in page_result.results:
+                if len(pending) >= limit:
+                    break
+                key = item.url.strip()
+                if key in seen:
+                    report.skipped += 1
+                    continue
+                seen.add(key)
+                known = self._already_known(session, item)
+                if known:
+                    report.skipped += 1
+                    if known == "trashed":
+                        # 单独计数：这是"你之前删过它"，不是"早就在库里了"。
+                        report.skipped_trashed += 1
+                    continue
+                pending.append(item)
+            if not page_result.has_more:
+                break
+            page += 1
+            self._pace(
+                config.interval_seconds, config.interval_jitter_seconds, checkpoint, sleeper, clock
+            )
+
+        # 3) 统一抓详情并暂存（与搜索路径阶段二同一套）。
+        if pending:
+            task.current_step = f"正在读取岗位详情（共 {len(pending)} 个）"
+            session.commit()
+        for index, item in enumerate(pending):
+            checkpoint()
+            detail = self._fetch_detail(adapter, client, item.url)
+            if not str(detail.get("description") or "").strip():
+                report.detail_missing += 1
+            self._stage_candidate(
+                session, adapter, item, detail, getattr(task, "id", None),
+                job_type=config.job_type,
+            )
+            report.collected += 1
+            task.current_step = f"正在读取岗位详情 {index + 1}/{len(pending)}"
+            self._update_task_progress(session, task, report)
+            self._pace(
+                config.interval_seconds,
+                config.interval_jitter_seconds,
+                checkpoint,
+                sleeper,
+                clock,
+            )
+
+    def _collect_search(
+        self,
+        *,
+        session: Session,
+        task: Any,
+        client: Any,
+        adapter: SiteAdapter,
+        config: CollectConfigIn,
+        checkpoint: Callable[[], None],
+        sleeper: Callable[[float], None],
+        clock: Callable[[], float],
+        report: CollectReport,
+        query: CollectQuery,
+        unmapped: set[str],
+        tally: FilterTally,
+    ) -> None:
+        """关键词搜索路径（2026-11-09 从 ``run`` 整段**纯搬迁**成方法，逻辑零改动）：
+        循环 keywords × page 读列表 → 本地筛选 → 统一抓详情 → 写暂存区。
+
+        ``query`` / ``unmapped`` / ``tally`` 由 ``run`` 持有并传入：结尾的 summary 组装
+        （unmapped_conditions / filter_reasons 等）还要用它们，两段共享同一份状态。
+        """
+        limit = config.per_task_limit
+        # 本地筛选只对**适配器声明过**的条件生效。这份声明是有约束力的：没声明就说明该站点的
+        # 接口不保证返回对应字段，硬筛会变成"凭缺失的字段做判断"——那正是要避免的误杀。
+        declared = set(adapter.post_filter_conditions)
         keywords = list(config.keywords) or [""]
         seen_results: set[tuple[str, str, str]] = set()
         for keyword_index, keyword in enumerate(keywords):
-            if backfill_job_ids or report.collected >= limit:
+            if report.collected >= limit:
                 break
             page = 1
             # 连续两页"整页都是已见过的结果"即判定翻页饱和：站点开始重复推送（筛选组合下
@@ -266,63 +485,6 @@ class Collector:
                 self._pace(
                     config.interval_seconds, config.interval_jitter_seconds, checkpoint, sleeper, clock
                 )
-
-        report.unmapped_conditions = sorted(unmapped)
-        # 筛选的账目写进 ``task.config``（不新增数据库列，与 ``unmapped_conditions`` 同一套做法）：
-        # 「筛掉几条、按哪条筛的、有几条因为岗位没给字段而没能判断」都要给用户看到——
-        # 只留一个"已暂存 N 个"会让人以为筛选生效了，而不知道实际筛掉了多少、漏了多少。
-        summary: dict[str, Any] = {}
-        if report.unmapped_conditions:
-            summary["unmapped_conditions"] = report.unmapped_conditions
-        if report.skipped_trashed:
-            summary["skipped_trashed"] = report.skipped_trashed
-        if report.backfilled or report.backfill_skipped:
-            # 补详情的账目：补到几条、跳过几条（跳过包括"已经有描述"和"仍然抓不到"）。
-            # 不给这两个数，用户看到"任务完成"却不知道到底补上没有。
-            summary["backfilled"] = report.backfilled
-            summary["backfill_skipped"] = report.backfill_skipped
-        if not backfill_job_ids:
-            # 只有**搜索采集**才写"详情缺失"这条账目：它是站点漂移的早期信号，站点健康度靠它
-            # 识别"能采到列表却抓不到 JD"。补详情模式不写这个键（它走 backfilled/backfill_skipped），
-            # 两套口径不混一起——否则用户一次"点名补详情"会把漂移计数搅乱。
-            summary["detail_missing"] = report.detail_missing
-        configured_filters = {
-            "薪资": query.salary_min is not None,
-            "经验": bool(query.experience),
-            "学历": bool(query.education),
-            "岗位类型": bool(query.job_type),
-        }
-        # 「采集后筛选」已下线（无适配器声明 post_filter_conditions），此账目分支当前不可达；
-        # 与 collect_filters 一并保留供未来站点复用。
-        applied_filters = [
-            condition
-            for condition in adapter.post_filter_conditions
-            if configured_filters.get(condition, False)
-        ]
-        if applied_filters:
-            # 保留适配器声明的顺序（与界面上的字段顺序一致），不排序——排序会把
-            # "薪资 / 经验 / 学历"变成按码位排的"学历 / 经验 / 薪资"，读起来别扭。
-            summary["filter_applied"] = applied_filters
-            summary["filtered_out"] = report.filtered
-            summary["filter_reasons"] = sorted(tally.reasons)
-            summary["filter_undecided"] = sorted(tally.undecided)
-            summary["filter_undecided_count"] = tally.undecided_count
-            summary["filter_unapplied"] = sorted(tally.unapplied)
-        if site_filters.applied or site_filters.unapplied:
-            # 站点侧筛选的账目：**生效了哪几条**（站点在接口侧就筛掉了，用户能少翻很多页）、
-            # **哪几条没能生效**。后者必须说出来——用户选了「公司规模：1000人以上」却拿到
-            # 各种规模的岗位，唯一能解释这件事的就是这句话。
-            summary["site_filter_applied"] = list(site_filters.applied)
-            summary["site_filter_unapplied"] = list(site_filters.unapplied)
-        if report.pagination_stopped_at:
-            summary["pagination_stopped_at"] = report.pagination_stopped_at
-        if summary:
-            task.config = {**(task.config or {}), **summary}
-        # 进度口径只能有一处实现（搜索算 collected、补详情算 backfilled）。此前收尾又按搜索口径
-        # 写了一遍 processed/succeeded/skipped，补详情模式下会把 _update_task_progress 刚写入的
-        # 值覆盖回 0——界面于是显示「已处理 0/N」。收尾统一走同一个方法（它自带 commit）。
-        self._update_task_progress(session, task, report)
-        return report
 
     # ===== 内部步骤 =====
 

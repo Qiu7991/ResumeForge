@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """采集配置与采集请求 schema。"""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .base import (
@@ -25,6 +27,12 @@ class CollectConfigIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # 采集来源（2026-11-09）：search=关键词搜索（原有）、interest=BOSS「感兴趣」个人列表。
+    # 选 interest 时 keywords/city/filters 等**全部忽略**（个人列表没有这些维度），
+    # 只有 per_task_limit / 限速项仍然生效。
+    source: Literal["search", "interest"] = "search"
+    # interest 模式最多翻几页（每页固定 15 条）。10 页 = 150 条上限，覆盖当前 134 条。
+    interest_max_pages: int = Field(default=10, ge=1, le=20)
     keywords: list[str] = Field(default_factory=list, max_length=MAX_COLLECT_KEYWORDS)
     city: str = Field(default="", max_length=64)
     salary_min: int | None = Field(default=None, ge=0, le=1000)
