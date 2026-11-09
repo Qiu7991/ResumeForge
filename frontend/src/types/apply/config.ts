@@ -49,7 +49,17 @@ export interface ApplyConfigOut extends ApplyConfig {
   defaults: ApplyConfig;
 }
 
+/** 采集来源：search=关键词搜索（原有）、interest=BOSS「感兴趣」个人列表（2026-11-09）。 */
+export type CollectSource = "search" | "interest";
+
 export interface CollectConfig {
+  /**
+   * 采集来源。选 `interest` 时 keywords/city/filters **全部忽略**（个人列表没有这些
+   * 维度），只有 per_task_limit 与限速项仍然生效。
+   */
+  source: CollectSource;
+  /** interest 模式最多翻几页（每页固定 15 条）；10 页 ≈ 150 条上限。 */
+  interest_max_pages: number;
   keywords: string[];
   city: string;
   salary_min: number | null;

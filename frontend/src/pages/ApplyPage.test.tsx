@@ -105,6 +105,8 @@ function detail(overrides: Partial<ApplyTaskDetail> = {}): ApplyTaskDetail {
 }
 
 const COLLECT_CONFIG: CollectConfigOut = {
+  source: "search",
+  interest_max_pages: 10,
   keywords: ["后端"],
   city: "北京",
   salary_min: 20,
@@ -116,6 +118,8 @@ const COLLECT_CONFIG: CollectConfigOut = {
   interval_seconds: 6,
   interval_jitter_seconds: 3,
   defaults: {
+    source: "search",
+    interest_max_pages: 10,
     keywords: [],
     city: "",
     salary_min: null,

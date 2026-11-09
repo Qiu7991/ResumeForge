@@ -22,6 +22,8 @@ vi.mock("../../api/apply", () => ({
 }));
 
 const CONFIG: CollectConfigOut = {
+  source: "search",
+  interest_max_pages: 10,
   keywords: ["后端"],
   city: "北京",
   salary_min: null,
@@ -164,6 +166,51 @@ function renderWithCollectTask(config: Record<string, unknown>) {
     </AntdApp>,
   );
 }
+
+describe("CollectPanel 采集来源", () => {
+  it("切到「我的感兴趣」后关键词与城市输入框消失，出现翻页上限", async () => {
+    renderPanel();
+    await screen.findByPlaceholderText("例如：北京");
+
+    fireEvent.click(screen.getByText("我的感兴趣"));
+
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText("例如：北京")).not.toBeInTheDocument(),
+    );
+    // 个人列表没有这些维度：关键词也一并隐藏，并给出说明与翻页上限。
+    expect(screen.queryByText("关键词")).not.toBeInTheDocument();
+    expect(screen.getByText(/不需要关键词和城市条件/)).toBeInTheDocument();
+    expect(screen.getByText(/感兴趣翻页上限/)).toBeInTheDocument();
+  });
+
+  it("interest 模式点开始不触发「请填写关键词」警告，且提交 source=interest", async () => {
+    renderPanel();
+    await screen.findByPlaceholderText("例如：北京");
+    fireEvent.click(screen.getByText("我的感兴趣"));
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText("例如：北京")).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /开始采集/ }));
+
+    await waitFor(() => expect(apiMocks.createCollectTask).toHaveBeenCalled());
+    expect(apiMocks.updateCollectConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "interest" }),
+    );
+  });
+
+  it("默认（关键词搜索）提交 source=search——回归守门", async () => {
+    renderPanel();
+    await screen.findByPlaceholderText("例如：北京");
+
+    fireEvent.click(screen.getByRole("button", { name: /开始采集/ }));
+
+    await waitFor(() => expect(apiMocks.createCollectTask).toHaveBeenCalled());
+    expect(apiMocks.updateCollectConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "search" }),
+    );
+  });
+});
 
 describe("CollectPanel 站点筛选账目", () => {
   it("把生效的站点筛选如实列出来", async () => {

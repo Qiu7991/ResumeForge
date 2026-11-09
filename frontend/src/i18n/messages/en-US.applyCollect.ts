@@ -7,6 +7,13 @@
  * `components/apply/collect/`; "filter by job site conditions" stays in `collectFilters`.
  */
 const applyCollect = {
+  "applyCollect.field.source": "Source",
+  "applyCollect.source.search": "Keyword search",
+  "applyCollect.source.interest": "My interests",
+  "applyCollect.hint.interest":
+    "\"My interests\" is your personal Job list on BOSS; no keywords or city needed. Jobs are staged together with their full descriptions.",
+  "applyCollect.field.interestMaxPages": "Interest pages limit",
+  "applyCollect.hint.interestMaxPages": "15 Jobs per page; 10 pages ≈ 150 Jobs.",
   "applyCollect.field.keywords": "Keywords",
   "applyCollect.hint.keywords": "Up to 10; fill in at least one keyword or a city.",
   "applyCollect.placeholder.keywords": "e.g. marketing, finance and accounting",
@@ -25,6 +32,7 @@ const applyCollect = {
   "applyCollect.history.noKeywords": "No keywords",
   "applyCollect.history.noCity": "No city",
   "applyCollect.outcome.listSeparator": ", ",
+  "applyCollect.outcome.interest.invalid": "Skipped {count} expired Jobs",
   "applyCollect.outcome.pagination.title":
     "The later pages repeat earlier results exactly, so paging stopped early at page {page}",
   "applyCollect.outcome.pagination.description":

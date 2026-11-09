@@ -103,7 +103,9 @@ export default function CollectPanel({ disabled, onStarted, collectTask, progres
   const start = async () => {
     // 开始前先保存，避免"改了条件但用的是旧值"这种静默落差。
     const values = await form.validateFields();
-    if (!values.keywords?.length && !values.city?.trim()) {
+    // 「我的感兴趣」来源没有关键词/城市维度，必须跳过这条校验——否则选了它就永远开不了。
+    const source = values.source ?? "search";
+    if (source !== "interest" && !values.keywords?.length && !values.city?.trim()) {
       message.warning(t("applyUi.collect.needKeywords"));
       return;
     }
@@ -198,6 +200,11 @@ export default function CollectPanel({ disabled, onStarted, collectTask, progres
         paginationStoppedAt={
           typeof collectTask?.config?.pagination_stopped_at === "number"
             ? (collectTask.config.pagination_stopped_at as number)
+            : 0
+        }
+        interestInvalid={
+          typeof collectTask?.config?.interest_invalid === "number"
+            ? (collectTask.config.interest_invalid as number)
             : 0
         }
       />

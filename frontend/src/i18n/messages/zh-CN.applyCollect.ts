@@ -6,6 +6,13 @@
  * 与 `collectConfigHistory`；「按招聘网站的条件筛」那一块仍由 `collectFilters` 包负责。
  */
 const applyCollect = {
+  "applyCollect.field.source": "采集来源",
+  "applyCollect.source.search": "关键词搜索",
+  "applyCollect.source.interest": "我的感兴趣",
+  "applyCollect.hint.interest":
+    "BOSS「感兴趣」是你的个人岗位列表，不需要关键词和城市条件；岗位会连同完整 JD 存进暂存区。",
+  "applyCollect.field.interestMaxPages": "感兴趣翻页上限（页）",
+  "applyCollect.hint.interestMaxPages": "每页固定 15 条；10 页约 150 条。",
   "applyCollect.field.keywords": "关键词",
   "applyCollect.hint.keywords": "最多 10 个；与城市至少要填一个。",
   "applyCollect.placeholder.keywords": "例如：市场营销、财务会计",
@@ -23,6 +30,7 @@ const applyCollect = {
   "applyCollect.history.noKeywords": "无关键词",
   "applyCollect.history.noCity": "无城市",
   "applyCollect.outcome.listSeparator": "、",
+  "applyCollect.outcome.interest.invalid": "已跳过 {count} 条失效岗位",
   "applyCollect.outcome.pagination.title":
     "后面的页与前面的结果完全重复，已在第 {page} 页提前停止翻页",
   "applyCollect.outcome.pagination.description":
