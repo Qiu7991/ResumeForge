@@ -176,3 +176,66 @@ def test_prompt_marks_missing_jd():
     """没有 JD 时提示词要明确标注，避免模型凭空编造岗位要求。"""
     prompt = build_scoring_prompt(resume="x", title="t", company="c")
     assert "未提供 JD 正文" in prompt
+
+
+# ---------- 技能对比（skill_compare）----------
+
+
+def _with_skills(items) -> str:
+    payload = json.loads(_payload())
+    payload["skill_compare"] = items
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def test_skill_compare_parsed():
+    raw = _with_skills(
+        [
+            {"skill": "ComfyUI", "status": "matched", "resume_evidence": "用 ComfyUI 编排"},
+            {"skill": "剪映", "status": "missing", "resume_evidence": "未体现"},
+            {"skill": "即梦", "status": "partial", "resume_evidence": "用过同类工具"},
+        ]
+    )
+    score = parse_semantic_score(raw)
+    assert len(score.skill_compare) == 3
+    assert [s.status for s in score.skill_compare] == ["matched", "missing", "partial"]
+    assert score.skill_compare[0].resume_evidence == "用 ComfyUI 编排"
+
+
+def test_skill_compare_invalid_status_dropped():
+    """非法状态丢弃，不猜成 matched 或 missing。"""
+    raw = _with_skills(
+        [
+            {"skill": "A", "status": "maybe", "resume_evidence": ""},
+            {"skill": "B", "status": "matched", "resume_evidence": "有"},
+        ]
+    )
+    score = parse_semantic_score(raw)
+    assert len(score.skill_compare) == 1
+    assert score.skill_compare[0].skill == "B"
+
+
+def test_skill_compare_empty_skill_dropped():
+    raw = _with_skills([{"skill": "  ", "status": "matched", "resume_evidence": "x"}])
+    score = parse_semantic_score(raw)
+    assert score.skill_compare == []
+
+
+def test_skill_compare_capped_at_limit():
+    items = [{"skill": f"S{i}", "status": "matched", "resume_evidence": "x"} for i in range(30)]
+    score = parse_semantic_score(_with_skills(items))
+    assert len(score.skill_compare) == 12
+
+
+def test_skill_compare_absent_is_empty_not_error():
+    """没有技能对比不应让整份评分失败（老输出兼容）。"""
+    score = parse_semantic_score(_payload())
+    assert score.ok is True
+    assert score.skill_compare == []
+
+
+def test_skill_compare_not_a_list_ignored():
+    raw = json.loads(_payload())
+    raw["skill_compare"] = "不是列表"
+    score = parse_semantic_score(json.dumps(raw, ensure_ascii=False))
+    assert score.ok is True
+    assert score.skill_compare == []

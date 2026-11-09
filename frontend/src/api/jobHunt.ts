@@ -45,8 +45,16 @@ export function runJobHuntCollect(
 }
 
 /** 对单个岗位做语义评分（五维 + 封顶）。需要岗位已有 JD 正文。 */
-export function scoreJob(jobId: number, force = false): Promise<SemanticScore & { job_id: number; cached: boolean }> {
-  return request(`/job-hunt/jobs/${jobId}/score${force ? "?force=true" : ""}`, {
+export function scoreJob(
+  jobId: number,
+  force = false,
+  resumeId?: number | null,
+): Promise<SemanticScore & { job_id: number; cached: boolean }> {
+  const params = new URLSearchParams();
+  if (force) params.set("force", "true");
+  if (resumeId != null) params.set("resume_id", String(resumeId));
+  const query = params.toString();
+  return request(`/job-hunt/jobs/${jobId}/score${query ? `?${query}` : ""}`, {
     method: "POST",
     // 评分要调模型，用 analysis 档（180s）。
     budget: "analysis",

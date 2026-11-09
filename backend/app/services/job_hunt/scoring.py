@@ -70,6 +70,31 @@ class ScoredComponent:
     evidence: str = ""
 
 
+# 技能对比的三种状态（与提示词的取值域一致）。
+SKILL_STATUS_MATCHED = "matched"
+SKILL_STATUS_PARTIAL = "partial"
+SKILL_STATUS_MISSING = "missing"
+VALID_SKILL_STATUS = {SKILL_STATUS_MATCHED, SKILL_STATUS_PARTIAL, SKILL_STATUS_MISSING}
+
+SKILL_COMPARE_LIMIT = 12
+
+
+@dataclass
+class SkillMatch:
+    """JD 要求的一条技能与简历的比对结果。"""
+
+    skill: str
+    status: str
+    resume_evidence: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "skill": self.skill,
+            "status": self.status,
+            "resume_evidence": self.resume_evidence,
+        }
+
+
 @dataclass
 class SemanticScore:
     """一次语义评分的结论。"""
@@ -84,6 +109,11 @@ class SemanticScore:
     missing: str = ""
     ok: bool = False
     error: str = ""
+    # JD 要求 ↔ 简历证据的逐条比对（最多 12 条）。
+    skill_compare: list[SkillMatch] = field(default_factory=list)
+    # 评分时用的是哪份简历（便于「同一岗位对比不同简历」）。
+    resume_id: int | None = None
+    resume_title: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -106,6 +136,9 @@ class SemanticScore:
             "missing": self.missing,
             "ok": self.ok,
             "error": self.error,
+            "skill_compare": [item.as_dict() for item in self.skill_compare],
+            "resume_id": self.resume_id,
+            "resume_title": self.resume_title,
         }
 
 
@@ -185,6 +218,7 @@ def parse_semantic_score(raw: str) -> SemanticScore:
     if isinstance(gaps_raw, (list, tuple)):
         score.hard_gaps = [str(g).strip() for g in gaps_raw if str(g).strip()]
 
+    score.skill_compare = _parse_skill_compare(normalized.get("skill_compare"))
     score.role_summary = str(normalized.get("role_summary") or "").strip()
     score.reason = str(normalized.get("reason") or "").strip()
     score.missing = str(normalized.get("missing") or "").strip()
@@ -194,6 +228,36 @@ def parse_semantic_score(raw: str) -> SemanticScore:
     score.total = min(score.raw_total, ceiling)
     score.ok = True
     return score
+
+
+def _parse_skill_compare(raw: Any) -> list[SkillMatch]:
+    """解析技能对比列表。
+
+    纪律：
+    - 只接受三值状态，非法状态丢弃（不猜）
+    - 空技能名丢弃
+    - 最多 ``SKILL_COMPARE_LIMIT`` 条（模型偶尔会超出）
+    """
+    if not isinstance(raw, (list, tuple)):
+        return []
+    items: list[SkillMatch] = []
+    for node in raw[: SKILL_COMPARE_LIMIT * 2]:  # 先多取，过滤后再截断
+        if not isinstance(node, dict):
+            continue
+        skill = str(node.get("skill") or "").strip()
+        status = str(node.get("status") or "").strip().lower()
+        if not skill or status not in VALID_SKILL_STATUS:
+            continue
+        items.append(
+            SkillMatch(
+                skill=skill,
+                status=status,
+                resume_evidence=str(node.get("resume_evidence") or "").strip(),
+            )
+        )
+        if len(items) >= SKILL_COMPARE_LIMIT:
+            break
+    return items
 
 
 def build_scoring_prompt(
@@ -289,6 +353,12 @@ def salary_fit_summary(
 
 
 __all__ = [
+    "SKILL_STATUS_MATCHED",
+    "SKILL_STATUS_PARTIAL",
+    "SKILL_STATUS_MISSING",
+    "VALID_SKILL_STATUS",
+    "SKILL_COMPARE_LIMIT",
+    "SkillMatch",
     "COMPONENT_LIMITS",
     "COMPONENT_LABELS",
     "CAP_CEILINGS",

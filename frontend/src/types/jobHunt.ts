@@ -91,4 +91,17 @@ export interface SemanticScore {
   missing: string;
   ok: boolean;
   error: string;
+  /** JD 要求 ↔ 简历证据的逐条比对。 */
+  skill_compare: SkillMatch[];
+  /** 评分时用的简历（便于同一岗位对比不同简历）。 */
+  resume_id: number | null;
+  resume_title: string;
+}
+
+/** JD 要求的一条技能与简历的比对结果。 */
+export interface SkillMatch {
+  skill: string;
+  /** matched = 有直接证据；partial = 相邻/部分覆盖；missing = 未体现。 */
+  status: "matched" | "partial" | "missing";
+  resume_evidence: string;
 }

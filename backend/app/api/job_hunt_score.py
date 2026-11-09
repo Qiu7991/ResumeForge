@@ -35,6 +35,10 @@ def _job_has_jd(job: Job) -> bool:
 async def score_job(
     job_id: int,
     force: bool = Query(default=False, description="为真时忽略已有评分，强制重算"),
+    resume_id: int | None = Query(
+        default=None,
+        description="用哪份简历评分；不传时按「岗位专属 → 默认简历」回退",
+    ),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """对单个岗位做语义评分（五维 + 封顶）。
@@ -61,19 +65,32 @@ async def score_job(
         )
 
     # 简历与候选人设置：复用匹配分析同一条取源路径，避免两处口径不一致。
+    # 指定 resume_id 时用那份简历（用于「同一岗位对比不同简历」的场景）。
     from ..services.job.job_match_context import match_source_texts
 
     profile, profile_text, resume_text = match_source_texts(db, job)
+    chosen_resume_title = ""
+    if resume_id is not None:
+        from ..models.resume import ResumeRecord
+        from ..services.job.job_match_context import resume_prompt_text
+
+        record = db.get(ResumeRecord, resume_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="指定的简历不存在")
+        resume_text = resume_prompt_text(db, record)
+        chosen_resume_title = record.title or ""
     if not resume_text.strip() and not profile_text.strip():
         raise HTTPException(status_code=400, detail="个人资料为空，无法评分")
 
     prompt = build_scoring_prompt(
-        resume=(resume_text or profile_text)[:12000],
+        # 预算控制：简历 6000 + JD 5000 ≈ 3.5k token，加提示词约 5k，
+        # 是 deepseek 这类模型能在 60s 内完成的量级（实测 12000+8000 会触发网关 504）。
+        resume=(resume_text or profile_text)[:6000],
         title=job.title,
         company=job.company,
         city=job.location,
         salary=job.salary,
-        jd=(job.description or "")[:8000],
+        jd=(job.description or "")[:5000],
         # 字段名与 ProfileOut 对齐（实测：target_city / expected_salary / job_intent）。
         # 早期版本写成了 target_cities / salary_min / salary_max，永远取到空值。
         candidate_education=_profile_field(profile, "education"),
@@ -108,8 +125,11 @@ async def score_job(
     if not score.ok:
         raise HTTPException(status_code=502, detail=f"评分结果无法解析：{score.error}")
 
-    _persist_semantic(job_id, score.as_dict(), model=config.model)
-    return {"job_id": job_id, "cached": False, **score.as_dict()}
+    payload = score.as_dict()
+    payload["resume_id"] = resume_id
+    payload["resume_title"] = chosen_resume_title
+    _persist_semantic(job_id, payload, model=config.model)
+    return {"job_id": job_id, "cached": False, **payload}
 
 
 @router.get("/jobs/{job_id}/score")
