@@ -51,8 +51,15 @@ export interface JobHuntCollectResult {
   errors: string[];
   resumed_from_page: number;
   persisted: JobHuntPersistLedger;
+  /** 被黑名单挡掉的条数。 */
+  blocked: number;
   /** 有新增岗位且开启分析时的后台任务 id（hex 字符串）。 */
   analyze_task_id: string | null;
+}
+
+export interface JobHuntBlocklist {
+  companies: string[];
+  keywords: string[];
 }
 
 export interface JobHuntCollectRequest {

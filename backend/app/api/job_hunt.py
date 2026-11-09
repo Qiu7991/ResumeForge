@@ -8,6 +8,7 @@ config。
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import asdict
 from typing import Any
@@ -38,15 +39,15 @@ class JobHuntCollectIn(BaseModel):
     # 平台特有参数原样透传（如智联的城市编码 city_code）。
     city_code: str = ""
     resume: bool = False
-    # 采到的岗位是否写进岗位广场（默认写）。关闭时只返回卡片，不落库。
-    persist: bool = True
-    # 入库后是否对「本次新增」的岗位触发一次批量分析。
-    # 复用的批量任务传 ``force=False``：已分析过的岗位服务端自动跳过，
-    # 因此同一岗位不会重复评分（不需要新表/新字段）。
-    analyze: bool = True
-    # 入库后是否后台补抓 JD 正文（评分需要 JD 才能做语义匹配）。
-    # 逐个访问详情页、有限速，所以放后台线程，不阻塞本次采集响应。
-    backfill_jd: bool = True
+    # 采到的岗位是否**立即**写进岗位广场。
+    # 默认 False：先预览、由用户勾选后再走 /import 导入——采 15 个往往只要 3 个，
+    # 自动入库会把垃圾塞满岗位广场。
+    persist: bool = False
+    # 入库后是否对「本次新增」的岗位触发一次批量分析（预览模式下无新增，自然不触发）。
+    # 复用的批量任务传 ``force=False``：已分析过的岗位服务端自动跳过。
+    analyze: bool = False
+    # 入库后是否后台补抓 JD 正文（预览模式下无入库，自然不触发）。
+    backfill_jd: bool = False
 
 
 @router.get("/status")
@@ -102,10 +103,16 @@ def collect(req: JobHuntCollectIn, db: Session = Depends(get_db)) -> dict:
         else:
             save_cursor(db, report.next_cursor)
 
+    # 黑名单过滤：命中的卡片不返回、不入库（用户不想再看到这些公司/关键词）。
+    blocklist = read_blocklist(db)
+    kept = [stub for stub in report.stubs if not is_blocked(stub, blocklist)]
+    blocked_count = len(report.stubs) - len(kept)
+    report.stubs = kept
+
     persisted = {"inserted": 0, "skipped_duplicate": 0, "errors": []}
     new_job_ids: list[int] = []
     if req.persist and report.stubs:
-        persisted, new_job_ids = _persist_stubs(db, report.stubs)
+        persisted, new_job_ids = _persist_stubs(db, report.stubs, origin_source=adapter.name)
 
     # JD 补抓：列表页没有正文，后台线程逐个抓详情页（限速、不阻塞本次响应）。
     # 评分要靠 JD 才能做语义匹配，没有 JD 只能拿标题猜（实测全是中性分 50）。
@@ -121,6 +128,8 @@ def collect(req: JobHuntCollectIn, db: Session = Depends(get_db)) -> dict:
         "stopped_reason": report.stopped_reason,
         "errors": report.errors,
         "resumed_from_page": report.resumed_from_page,
+        # 被黑名单挡掉的条数（用户可在黑名单设置里调整）。
+        "blocked": blocked_count,
         # 入库账目：inserted + skipped_duplicate 应等于 stubs 总数（errors 除外）。
         "persisted": persisted,
         # 有新增岗位且开启分析时给出后台任务 id（前端可轮询进度）。
@@ -129,12 +138,15 @@ def collect(req: JobHuntCollectIn, db: Session = Depends(get_db)) -> dict:
 
 
 def _persist_stubs(
-    db: Session, stubs: list[Any]
+    db: Session, stubs: list[Any], *, origin_source: str = ""
 ) -> tuple[dict[str, Any], list[int]]:
     """把采集卡片写进岗位广场。
 
     去重复用 ``find_job_by_identity``（判据是「同一链接，或同一公司下同名岗位」）——
     与岗位广场手动录入、CSV 导入共用同一份判据，不另写一套。
+
+    ``origin_source`` 是平台显示名（如「BOSS直聘」）：写进岗位的「来源」列，
+    岗位广场能直接看到并筛选，用户不用猜这条是从哪采的。
 
     返回 ``(账目, 新增岗位 id 列表)``。单条失败不中断整批：记进 errors 后继续。
     """
@@ -169,6 +181,7 @@ def _persist_stubs(
                     requirements="",
                     source_url=stub.url,
                     posted_at=stub.posted_at,
+                    origin_source=origin_source,
                 ),
                 source="job_hunt",
             )
@@ -237,3 +250,139 @@ def _acquire_client(db: Session):
             503,
             "native 采集需要先启动专用浏览器（投递台 → 启动浏览器），稍后重试",
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# 预览 → 勾选导入
+# ---------------------------------------------------------------------------
+
+
+class JobHuntImportIn(BaseModel):
+    """把预览里勾选的卡片导入岗位广场。"""
+
+    site_key: str
+    # 前端回传的完整卡片（就是 collect 返回的 stubs 里勾中的那几条）。
+    stubs: list[dict[str, Any]]
+    # 导入后是否补抓 JD（详情节流，后台跑）。
+    backfill_jd: bool = True
+
+
+@router.post("/import")
+def import_selected(req: JobHuntImportIn, db: Session = Depends(get_db)) -> dict:
+    """导入勾选的岗位。
+
+    与 ``collect(persist=True)`` 的区别：这里**只导用户勾中的**，不是采到什么导什么。
+    采集 15 个往往只要 3 个，自动入库会把岗位广场塞满垃圾。
+    """
+    config = get_job_hunt_config(db)
+    if config.job_hunt_backend != "native":
+        raise HTTPException(409, "当前是 sidecar 模式，无需导入（岗位由引擎管理）")
+
+    adapter = get_registry().resolve(req.site_key)
+    if adapter is None:
+        raise HTTPException(404, f"未知平台 {req.site_key}")
+
+    stubs = [_stub_from_payload(item) for item in req.stubs]
+    stubs = [s for s in stubs if s.title]
+    if not stubs:
+        raise HTTPException(400, "没有可导入的岗位（标题为空）")
+
+    # 来源标注：用平台显示名，岗位广场「来源」列能直接看到。
+    ledger, new_ids = _persist_stubs(db, stubs, origin_source=adapter.name)
+
+    if req.backfill_jd and new_ids:
+        _start_jd_backfill(new_ids, adapter)
+
+    return {
+        "persisted": ledger,
+        "imported_ids": new_ids,
+        "origin_source": adapter.name,
+    }
+
+
+def _stub_from_payload(item: dict[str, Any]) -> Any:
+    """把前端回传的 dict 还原成 JobStub（只取需要的字段，忽略多余键）。"""
+    from ..services.job_hunt.base import JobStub
+
+    return JobStub(
+        title=str(item.get("title") or "").strip(),
+        company=str(item.get("company") or "").strip(),
+        location=str(item.get("location") or "").strip(),
+        salary_raw=str(item.get("salary_raw") or "").strip(),
+        salary_decoded=str(item.get("salary_decoded") or "").strip(),
+        salary_decoded_ok=bool(item.get("salary_decoded_ok")),
+        url=str(item.get("url") or "").strip(),
+        posted_at=str(item.get("posted_at") or "").strip(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 黑名单（屏蔽公司 / 关键词）
+# ---------------------------------------------------------------------------
+
+
+class BlocklistConfig(BaseModel):
+    """采集时自动跳过的公司名与关键词（大小写不敏感，子串匹配）。"""
+
+    companies: list[str] = Field(default_factory=list, max_length=200)
+    keywords: list[str] = Field(default_factory=list, max_length=200)
+
+
+_BLOCKLIST_KEY = "job_hunt_blocklist"
+
+
+@router.get("/blocklist")
+def read_blocklist(db: Session = Depends(get_db)) -> BlocklistConfig:
+    raw = db.execute(
+        _select_setting(), {"key": _BLOCKLIST_KEY}
+    ).scalar_one_or_none()
+    if not raw:
+        return BlocklistConfig()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return BlocklistConfig()
+    return BlocklistConfig(
+        companies=[str(x) for x in (data.get("companies") or [])][:200],
+        keywords=[str(x) for x in (data.get("keywords") or [])][:200],
+    )
+
+
+@router.put("/blocklist")
+def write_blocklist(config: BlocklistConfig, db: Session = Depends(get_db)) -> BlocklistConfig:
+    """写黑名单。空列表即清空（不做「只增不减」，用户要能撤销）。"""
+    payload = json.dumps(
+        {"companies": config.companies, "keywords": config.keywords}, ensure_ascii=False
+    )
+    from sqlalchemy import text
+
+    db.execute(
+        text(
+            "INSERT INTO app_setting (key, value) VALUES (:key, :value) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        ),
+        {"key": _BLOCKLIST_KEY, "value": payload},
+    )
+    db.commit()
+    return config
+
+
+def _select_setting():
+    from sqlalchemy import text
+
+    return text("SELECT value FROM app_setting WHERE key = :key")
+
+
+def is_blocked(stub: Any, config: BlocklistConfig) -> bool:
+    """这条卡片是否命中黑名单（公司名或标题里含任一关键词）。"""
+    company = (stub.company or "").lower()
+    title = (stub.title or "").lower()
+    for name in config.companies:
+        needle = name.strip().lower()
+        if needle and needle in company:
+            return True
+    for word in config.keywords:
+        needle = word.strip().lower()
+        if needle and (needle in title or needle in company):
+            return True
+    return False

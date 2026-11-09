@@ -209,5 +209,15 @@ const aiJobs = {
   "aiJobs.score.cap.weak_core_transfer": "Core duties lack direct or adjacent evidence (max 70)",
   "aiJobs.native.score": "Score",
   "aiJobs.native.scoreHintMulti": "{count} jobs selected. Select a single job to see its score, or analyze them one by one in the job library.",
+  "aiJobs.native.previewTitle": "Preview ({count} rows, not imported yet)",
+  "aiJobs.native.blockedCount": "{count} blocked by blocklist",
+  "aiJobs.native.importSelected": "Import selected ({count})",
+  "aiJobs.native.importDone": "Imported {inserted} jobs from {origin}, skipped {skipped} duplicates.",
+  "aiJobs.native.blocklistTitle": "Blocklist (skipped during collection)",
+  "aiJobs.native.blocklistCompanies": "Blocked companies",
+  "aiJobs.native.blocklistKeywords": "Blocked keywords",
+  "aiJobs.native.blocklistHint": "Press Enter to add; matches company or job title, case-insensitive.",
+  "aiJobs.native.blocklistSave": "Save blocklist",
+  "aiJobs.native.blocklistSaved": "Blocklist saved",
 } as const;
 export default aiJobs;

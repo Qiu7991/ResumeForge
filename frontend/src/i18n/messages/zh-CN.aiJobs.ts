@@ -209,5 +209,15 @@ const aiJobs = {
   "aiJobs.score.cap.weak_core_transfer": "核心职责缺直接或相邻证据（上限 70）",
   "aiJobs.native.score": "评分",
   "aiJobs.native.scoreHintMulti": "已选 {count} 个岗位。评分请只勾选一个查看，或到岗位广场逐条分析。",
+  "aiJobs.native.previewTitle": "采集结果预览（{count} 条，未入库）",
+  "aiJobs.native.blockedCount": "黑名单已挡 {count} 条",
+  "aiJobs.native.importSelected": "导入选中（{count}）",
+  "aiJobs.native.importDone": "已从 {origin} 导入 {inserted} 个岗位，跳过重复 {skipped} 个。",
+  "aiJobs.native.blocklistTitle": "黑名单（采集时自动跳过）",
+  "aiJobs.native.blocklistCompanies": "屏蔽的公司",
+  "aiJobs.native.blocklistKeywords": "屏蔽的关键词",
+  "aiJobs.native.blocklistHint": "输入后回车添加；匹配公司名或岗位标题（不区分大小写）。",
+  "aiJobs.native.blocklistSave": "保存黑名单",
+  "aiJobs.native.blocklistSaved": "黑名单已保存",
 } as const;
 export default aiJobs;

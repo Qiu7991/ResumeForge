@@ -23,10 +23,20 @@ import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
 import { useJobHuntNative } from "../../hooks/useJobHuntNative";
 import ScorePanel from "./ScorePanel";
+import BlocklistCard from "./BlocklistCard";
 import type { JobHuntStatus } from "../../types/jobHunt";
 import type { JobList } from "../../types/job";
 
 const { Text, Title } = Typography;
+
+/** One row of the preview table (index into the collect result). */
+interface PreviewRow {
+  key: number;
+  title: string;
+  company: string;
+  location: string;
+  salary: string;
+}
 
 interface Props {
   status: JobHuntStatus;
@@ -36,7 +46,7 @@ export default function NativeJobHuntView({ status }: Props) {
   const navigate = useNavigate();
   // Subscribe to locale changes: module-level t() does not re-render on its own.
   useLocale();
-  const { state, collect, enqueue, reload } = useJobHuntNative(status);
+  const { state, collect, enqueue, importRows, reload } = useJobHuntNative(status);
 
   const [siteKey, setSiteKey] = useState(status.platforms[0]?.key ?? "boss");
   const [keywords, setKeywords] = useState("AI");
@@ -44,6 +54,10 @@ export default function NativeJobHuntView({ status }: Props) {
   const [maxPages, setMaxPages] = useState(1);
   const [selected, setSelected] = useState<number[]>([]);
   const [queued, setQueued] = useState(0);
+  // Preview rows picked for import (indices into state.lastResult.stubs).
+  const result = state.lastResult;
+  const [picked, setPicked] = useState<number[]>([]);
+  const [importMsg, setImportMsg] = useState("");
 
   const onCollect = async () => {
     try {
@@ -54,11 +68,47 @@ export default function NativeJobHuntView({ status }: Props) {
         max_pages: maxPages,
       });
       setQueued(0);
-      // Results surface in collectSummary / the error alert below; no blocking alert.
+      setPicked([]);
+      setImportMsg("");
     } catch {
       // The error already lands in state.error and shows in the alert at the top.
     }
   };
+
+  const onImport = async () => {
+    const stubs = (result?.stubs ?? []).filter((_, index) => picked.includes(index));
+    if (!stubs.length) return;
+    try {
+      const { inserted, skipped, origin } = await importRows(siteKey, stubs);
+      setImportMsg(
+        t("aiJobs.native.importDone", { inserted, skipped, origin }),
+      );
+      setPicked([]);
+    } catch {
+      // Error already surfaced through state.error.
+    }
+  };
+
+  const previewRows: PreviewRow[] =
+    result?.stubs.map((stub, index) => ({
+      key: index,
+      title: stub.title,
+      company: stub.company,
+      location: stub.location,
+      salary: stub.salary_decoded || stub.salary_raw,
+    })) ?? [];
+
+  const previewColumns: ColumnsType<PreviewRow> = [
+    { title: t("aiJobs.native.col.title"), dataIndex: "title", ellipsis: true },
+    { title: t("aiJobs.native.col.company"), dataIndex: "company", width: 150, ellipsis: true },
+    { title: t("aiJobs.native.col.location"), dataIndex: "location", width: 150, ellipsis: true },
+    {
+      title: t("aiJobs.native.col.salary"),
+      dataIndex: "salary",
+      width: 110,
+      render: (value: string) => value || "—",
+    },
+  ];
 
   const onEnqueue = async () => {
     if (!selected.length) return;
@@ -89,7 +139,7 @@ export default function NativeJobHuntView({ status }: Props) {
     },
   ];
 
-  const result = state.lastResult;
+
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -165,17 +215,50 @@ export default function NativeJobHuntView({ status }: Props) {
                 description={result.persisted.errors.slice(0, 5).join(t("aiJobs.native.errorSeparator"))}
               />
             )}
-            {result.analyze_task_id && (
-              <Alert
-                style={{ marginTop: 8 }}
-                type="info"
-                showIcon
-                message={t("aiJobs.native.analyzeStarted")}
-              />
+          </div>
+        )}
+
+        {/* Preview: nothing is written until the user picks rows and imports. */}
+        {result && result.stubs.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <Space style={{ marginBottom: 8 }} wrap>
+              <Text strong>{t("aiJobs.native.previewTitle", { count: result.stubs.length })}</Text>
+              {result.blocked > 0 && (
+                <Tag color="default">
+                  {t("aiJobs.native.blockedCount", { count: result.blocked })}
+                </Tag>
+              )}
+              <Button
+                type="primary"
+                size="small"
+                disabled={!picked.length}
+                loading={state.enqueueing}
+                onClick={() => void onImport()}
+              >
+                {t("aiJobs.native.importSelected", { count: picked.length })}
+              </Button>
+            </Space>
+            <Table<PreviewRow>
+              rowKey="key"
+              size="small"
+              pagination={false}
+              scroll={{ y: 360 }}
+              dataSource={previewRows}
+              columns={previewColumns}
+              rowSelection={{
+                selectedRowKeys: picked,
+                onChange: (keys) => setPicked(keys as number[]),
+              }}
+              locale={{ emptyText: <Empty description={t("aiJobs.native.empty")} /> }}
+            />
+            {importMsg && (
+              <Alert style={{ marginTop: 8 }} type="success" showIcon message={importMsg} />
             )}
           </div>
         )}
       </Card>
+
+      <BlocklistCard />
 
       <Card
         title={

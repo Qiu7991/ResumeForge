@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { addToQueue } from "../api/apply";
-import { runJobHuntCollect } from "../api/jobHunt";
+import { importSelectedJobs, runJobHuntCollect } from "../api/jobHunt";
 import { listJobs } from "../api/jobs";
 import type { JobHuntCollectRequest, JobHuntCollectResult, JobHuntStub, JobHuntStatus } from "../types/jobHunt";
 import type { JobList } from "../types/job";
@@ -68,7 +68,8 @@ export function useJobHuntNative(status: JobHuntStatus | null) {
     async (payload: JobHuntCollectRequest): Promise<JobHuntCollectResult> => {
       setState((prev) => ({ ...prev, collecting: true, error: "" }));
       try {
-        const result = await runJobHuntCollect({ persist: true, analyze: true, ...payload });
+        // Preview mode: nothing is written until the user picks rows and hits Import.
+        const result = await runJobHuntCollect({ persist: false, analyze: false, ...payload });
         setState((prev) => ({ ...prev, collecting: false, lastResult: result }));
         // Refresh the pool after persisting: collected jobs must show up immediately.
         await loadJobs();
@@ -93,7 +94,28 @@ export function useJobHuntNative(status: JobHuntStatus | null) {
     }
   }, []);
 
-  return { state, collect, enqueue, reload: loadJobs, isNative };
+  /** Import the selected preview rows into the job library. */
+  const importRows = useCallback(
+    async (siteKey: string, stubs: JobHuntStub[]): Promise<{ inserted: number; skipped: number; origin: string }> => {
+      setState((prev) => ({ ...prev, enqueueing: true, error: "" }));
+      try {
+        const result = await importSelectedJobs({ site_key: siteKey, stubs, backfill_jd: true });
+        setState((prev) => ({ ...prev, enqueueing: false }));
+        await loadJobs();
+        return {
+          inserted: result.persisted.inserted,
+          skipped: result.persisted.skipped_duplicate,
+          origin: result.origin_source,
+        };
+      } catch (error) {
+        setState((prev) => ({ ...prev, enqueueing: false, error: toMessage(error) }));
+        throw error;
+      }
+    },
+    [loadJobs],
+  );
+
+  return { state, collect, enqueue, importRows, reload: loadJobs, isNative };
 }
 
 export type { JobHuntStub };

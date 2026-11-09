@@ -6,10 +6,13 @@
  * 未在自研侧实现的能力继续走旧路径（E19：新老并存，不删旧代码）。
  */
 import type {
+  JobHuntBlocklist,
   JobHuntCollectRequest,
   JobHuntCollectResult,
   JobHuntConfig,
+  JobHuntPersistLedger,
   JobHuntStatus,
+  JobHuntStub,
   SemanticScore,
 } from "../types/jobHunt";
 import { request } from "./client";
@@ -64,4 +67,28 @@ export function scoreJob(
 /** 读已落库的语义评分（未评分时 ok=false）。 */
 export function getJobScore(jobId: number): Promise<SemanticScore & { job_id: number }> {
   return request(`/job-hunt/jobs/${jobId}/score`);
+}
+
+/** 把预览里勾选的卡片导入岗位广场（只导勾中的）。 */
+export function importSelectedJobs(payload: {
+  site_key: string;
+  stubs: JobHuntStub[];
+  backfill_jd?: boolean;
+}): Promise<{ persisted: JobHuntPersistLedger; imported_ids: number[]; origin_source: string }> {
+  return request("/job-hunt/import", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    budget: "analysis",
+  });
+}
+
+export function getBlocklist(): Promise<JobHuntBlocklist> {
+  return request<JobHuntBlocklist>("/job-hunt/blocklist");
+}
+
+export function saveBlocklist(config: JobHuntBlocklist): Promise<JobHuntBlocklist> {
+  return request<JobHuntBlocklist>("/job-hunt/blocklist", {
+    method: "PUT",
+    body: JSON.stringify(config),
+  });
 }
