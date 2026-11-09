@@ -10,7 +10,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from app.models.apply import FAILURE_SELECTOR_INVALID, FAILURE_UNKNOWN
 from app.services.sites.base import SiteFailure
 from app.services.sites.boss_interest import (
