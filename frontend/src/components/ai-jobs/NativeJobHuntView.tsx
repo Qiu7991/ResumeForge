@@ -24,6 +24,8 @@ import { useLocale } from "../../i18n/i18nContext";
 import { useJobHuntNative } from "../../hooks/useJobHuntNative";
 import ScorePanel from "./ScorePanel";
 import BlocklistCard from "./BlocklistCard";
+import PipelineStrip, { buildSteps } from "./PipelineStrip";
+import { useCollectTask } from "../../hooks/useCollectTask";
 import type { JobHuntStatus } from "../../types/jobHunt";
 import type { JobList } from "../../types/job";
 
@@ -46,7 +48,13 @@ export default function NativeJobHuntView({ status }: Props) {
   const navigate = useNavigate();
   // Subscribe to locale changes: module-level t() does not re-render on its own.
   useLocale();
-  const { state, collect, enqueue, importRows, reload } = useJobHuntNative(status);
+  const { state, enqueue, importRows, reload } = useJobHuntNative(status);
+  const collectTask = useCollectTask();
+  const task = collectTask.state.task;
+  const collecting = task?.status === "running" || task?.status === "paused";
+  const result = state.lastResult;
+  // The task becomes the source of preview rows once it finishes.
+  const previewStubs = collectTask.state.stubs.length > 0 ? collectTask.state.stubs : (result?.stubs ?? []);
 
   const [siteKey, setSiteKey] = useState(status.platforms[0]?.key ?? "boss");
   const [keywords, setKeywords] = useState("AI");
@@ -54,35 +62,33 @@ export default function NativeJobHuntView({ status }: Props) {
   const [maxPages, setMaxPages] = useState(1);
   const [selected, setSelected] = useState<number[]>([]);
   const [queued, setQueued] = useState(0);
-  // Preview rows picked for import (indices into state.lastResult.stubs).
-  const result = state.lastResult;
+  // Preview rows picked for import (indices into the preview list).
   const [picked, setPicked] = useState<number[]>([]);
+  const [importedCount, setImportedCount] = useState(0);
   const [importMsg, setImportMsg] = useState("");
 
   const onCollect = async () => {
-    try {
-      await collect({
-        site_key: siteKey,
-        keywords,
-        city,
-        max_pages: maxPages,
-      });
-      setQueued(0);
-      setPicked([]);
-      setImportMsg("");
-    } catch {
-      // The error already lands in state.error and shows in the alert at the top.
-    }
+    setQueued(0);
+    setPicked([]);
+    setImportMsg("");
+    setImportedCount(0);
+    await collectTask.start({
+      site_key: siteKey,
+      keywords,
+      city,
+      max_pages: maxPages,
+    });
   };
 
   const onImport = async () => {
-    const stubs = (result?.stubs ?? []).filter((_, index) => picked.includes(index));
+    const stubs = previewStubs.filter((_, index) => picked.includes(index));
     if (!stubs.length) return;
     try {
       const { inserted, skipped, origin } = await importRows(siteKey, stubs);
       setImportMsg(
         t("aiJobs.native.importDone", { inserted, skipped, origin }),
       );
+      setImportedCount((prev) => prev + inserted);
       setPicked([]);
     } catch {
       // Error already surfaced through state.error.
@@ -90,7 +96,7 @@ export default function NativeJobHuntView({ status }: Props) {
   };
 
   const previewRows: PreviewRow[] =
-    result?.stubs.map((stub, index) => ({
+    previewStubs.map((stub, index) => ({
       key: index,
       title: stub.title,
       company: stub.company,
@@ -158,6 +164,19 @@ export default function NativeJobHuntView({ status }: Props) {
         />
       )}
 
+      <PipelineStrip
+        steps={buildSteps({
+          collecting,
+          collected: task?.collected ?? previewStubs.length,
+          currentPage: task?.current_page ?? 0,
+          maxPages: task?.max_pages ?? maxPages,
+          imported: importedCount,
+          scored: 0,
+          inQueue: queued,
+          paused: task?.status === "paused",
+        })}
+      />
+
       <Card title={t("aiJobs.native.collectTitle")} size="small">
         <Space wrap>
           <Select
@@ -187,13 +206,49 @@ export default function NativeJobHuntView({ status }: Props) {
               label: t("aiJobs.native.pages", { n }),
             }))}
           />
-          <Button type="primary" loading={state.collecting} onClick={() => void onCollect()}>
+          <Button
+            type="primary"
+            loading={collectTask.state.starting || collecting}
+            disabled={collecting}
+            onClick={() => void onCollect()}
+          >
             {t("aiJobs.native.collect")}
           </Button>
+          {collecting && (
+            <>
+              {task?.status === "paused" ? (
+                <Button onClick={() => void collectTask.control("resume")}>
+                  {t("aiJobs.pipeline.resume")}
+                </Button>
+              ) : (
+                <Button onClick={() => void collectTask.control("pause")}>
+                  {t("aiJobs.pipeline.pause")}
+                </Button>
+              )}
+              <Button danger onClick={() => void collectTask.control("stop")}>
+                {t("aiJobs.pipeline.stop")}
+              </Button>
+            </>
+          )}
           <Button onClick={() => void reload()} loading={state.loadingJobs}>
             {t("aiJobs.native.refresh")}
           </Button>
         </Space>
+
+        {task && (
+          <div style={{ marginTop: 12 }}>
+            <Space wrap>
+              <Tag color={task.status === "running" ? "processing" : task.status === "paused" ? "warning" : task.status === "failed" ? "error" : "success"}>
+                {t(`aiJobs.pipeline.status.${task.status}`)}
+              </Tag>
+              <Text type="secondary">{task.message}</Text>
+              {task.blocked > 0 && (
+                <Text type="secondary">{t("aiJobs.native.blockedCount", { count: task.blocked })}</Text>
+              )}
+            </Space>
+            {task.error && <Alert style={{ marginTop: 8 }} type="error" showIcon message={task.error} />}
+          </div>
+        )}
 
         {result && (
           <div style={{ marginTop: 12 }}>

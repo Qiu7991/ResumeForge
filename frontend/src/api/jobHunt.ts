@@ -6,6 +6,8 @@
  * 未在自研侧实现的能力继续走旧路径（E19：新老并存，不删旧代码）。
  */
 import type {
+  CollectTaskResult,
+  CollectTaskSnapshot,
   JobHuntBlocklist,
   JobHuntCollectRequest,
   JobHuntCollectResult,
@@ -90,5 +92,40 @@ export function saveBlocklist(config: JobHuntBlocklist): Promise<JobHuntBlocklis
   return request<JobHuntBlocklist>("/job-hunt/blocklist", {
     method: "PUT",
     body: JSON.stringify(config),
+  });
+}
+
+/** 启动后台采集任务（可暂停/停止/看进度）。 */
+export function startCollectTask(payload: {
+  site_key: string;
+  keywords?: string;
+  city?: string;
+  max_pages?: number;
+  city_code?: string;
+}): Promise<CollectTaskSnapshot> {
+  return request<CollectTaskSnapshot>("/job-hunt/collect/task", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    budget: "task",
+  });
+}
+
+export function getCollectTask(taskId: string): Promise<CollectTaskSnapshot> {
+  return request<CollectTaskSnapshot>(`/job-hunt/collect/task/${taskId}`, { budget: "default" });
+}
+
+export function getCollectTaskResult(taskId: string): Promise<CollectTaskResult> {
+  return request<CollectTaskResult>(`/job-hunt/collect/task/${taskId}/result`, {
+    budget: "default",
+  });
+}
+
+export function controlCollectTask(
+  taskId: string,
+  action: "pause" | "resume" | "stop",
+): Promise<CollectTaskSnapshot> {
+  return request<CollectTaskSnapshot>(`/job-hunt/collect/task/${taskId}/${action}`, {
+    method: "POST",
+    budget: "default",
   });
 }

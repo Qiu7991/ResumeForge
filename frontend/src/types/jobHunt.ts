@@ -112,3 +112,27 @@ export interface SkillMatch {
   status: "matched" | "partial" | "missing";
   resume_evidence: string;
 }
+
+/** 采集任务状态（与后端 collect_task.py 的取值一致）。 */
+export type CollectTaskStatus = "running" | "paused" | "completed" | "stopped" | "failed";
+
+export interface CollectTaskSnapshot {
+  task_id: string;
+  site_key: string;
+  keywords: string;
+  city: string;
+  max_pages: number;
+  status: CollectTaskStatus;
+  current_page: number;
+  collected: number;
+  message: string;
+  error: string;
+  blocked: number;
+  stopped_reason: string;
+  stub_count: number;
+  finished: boolean;
+}
+
+export interface CollectTaskResult extends CollectTaskSnapshot {
+  stubs: JobHuntStub[];
+}
