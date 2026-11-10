@@ -200,7 +200,7 @@ def test_manual_creation_strips_tech_stack_when_off(client):
         "/api/resumes/manual",
         json={
             "content": {
-                "name": "赵岚柯",
+                "name": "林致远",
                 "projects": [
                     {
                         "name": "AI 简历工作台",

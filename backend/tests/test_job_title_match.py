@@ -42,9 +42,9 @@ class TestNormalize:
         assert normalize_title("前端开发 13薪") == "前端开发"
 
     def test_company_normalization_only_collapses_case_and_punctuation(self):
-        assert normalize_company("广东超腾科技有限公司") == normalize_company("广东超腾科技有限公司")
+        assert normalize_company("示例科技有限公司") == normalize_company("示例科技有限公司")
         # 不做相似度：带"分公司"的是另一家公司，必须不相等。
-        assert normalize_company("广东超腾（深圳）分公司") != normalize_company("广东超腾科技有限公司")
+        assert normalize_company("示例科技（深圳）分公司") != normalize_company("示例科技有限公司")
 
 
 class TestSamePosting:
@@ -73,7 +73,7 @@ class TestSamePosting:
         """猎头/匿名雇主的公司名不能当"同公司"依据。"""
         assert is_placeholder_company(normalize_company("猎头代招（雇主未公开）"))
         assert is_placeholder_company(normalize_company("保密企业"))
-        assert not is_placeholder_company(normalize_company("广东超腾科技有限公司"))
+        assert not is_placeholder_company(normalize_company("示例科技有限公司"))
 
 
 class TestFindByIdentity:
@@ -98,14 +98,14 @@ class TestFindByIdentity:
         existing = self._job(
             db_session,
             "AI 应用运营（AI 提示词 / 智能对话方向）",
-            "广东超腾",
+            "示例科技",
             "https://x/old",
         )
 
         found = find_job_by_identity(
             db_session,
             title="AI应用运营（AI提示词/智能对话） 双休",
-            company="广东超腾",
+            company="示例科技",
             source_url="https://x/new",
         )
 

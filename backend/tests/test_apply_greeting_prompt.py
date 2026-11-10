@@ -9,9 +9,9 @@ from app.services.job.job_match import build_greeting_messages, parse_greeting
 def _resume_with_photo() -> str:
     return json.dumps(
         {
-            "title": "赵岚柯-AI应用赋能专员",
+            "title": "林致远-AI应用赋能专员",
             "content": {
-                "name": "赵岚柯",
+                "name": "林致远",
                 "photo": "data:image/jpeg;base64," + "A" * 5000,
                 "summary": "计算机本科在读，关注 AI 工具实际应用。",
                 "education": [

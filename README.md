@@ -42,6 +42,70 @@
 
 ---
 
+## ⚠️ 这是个人 Fork：请从 `feat/gongzuotong` 分支取用
+
+**这个仓库是上游 [magicapple123/ResumeForge](https://github.com/magicapple123/ResumeForge) 的个人二开 Fork，
+默认分支是上游原版。真正能用的版本在分支 [`feat/gongzuotong`](https://github.com/Qiu7991/ResumeForge/tree/feat/gongzuotong)。**
+
+```bash
+git clone -b feat/gongzuotong https://github.com/Qiu7991/ResumeForge.git 工作通
+cd 工作通
+start.cmd                                    # Windows：直接双击也行
+```
+
+macOS 用上游自带的脚本，但**必须显式指定 8012 端口**（默认 8005 会和旧版 1.x 撞）：
+
+```bash
+./scripts/macos/start.sh --backend-port 8012 --frontend-port 5176
+```
+
+Linux 没有一键脚本（这个 Fork 未在 Linux 上验证过），需要手动装依赖后跑
+`cd backend && python -m uvicorn app.main:app --port 8012` + `cd frontend && npm run build`。
+
+> 只在自己电脑上用一个版本的话，用默认端口也完全可以；上面的端口隔离是给
+> 「新旧两版并存」的场景准备的。
+
+### 这个 Fork 比上游多了什么
+
+| 功能 | 说明 |
+|---|---|
+| **BOSS「感兴趣」批量采集** | 一键抓取你收藏的岗位（含完整 JD），可按"只看最新 N 个"限量 |
+| **多平台求职采集** | 智联 / 51job / 猎聘 / BOSS，断点续采、回复监测（只读）|
+| **五维语义评分** | JD 要求 ↔ 简历证据逐条对比，可指定简历 |
+| **投递队列增强** | 批量生成招呼语、招呼语"您好"开关、投递失败状态回写 |
+| **岗位去重增强** | 同一职位被重新发布（换 ID/改标题）时不再算新岗位 |
+| **简历增强** | 板块显隐、未收录资料逐条补入、技术栈显示开关、生成去重 |
+
+### 关于「生成效果」
+
+**招呼语的写作基准、提示词、去重规则、评分口径都已经写在代码里**，所以你装完就是这个效果，
+不需要额外配置。具体：
+
+- **打招呼语基准**（`DEFAULT_GREETING_BASELINE`）：第 1 句跟岗位职责走、AI 工具定位放第 4 句、
+  项目按 JD 相关度挑 —— 出厂即生效，可在「投递设置」里整段覆盖。
+- **招呼语提示词**：五句话结构（能力、对 JD、一个项目、方法、落到公司），140–220 字，
+  禁用学历/学校/客套话。
+- **项目选材规则**：先提炼 JD 核心能力词，再逐个过项目问"它能证明这件事吗"。
+
+**你需要自己准备的只有两样**：① 你的个人资料（在「我的资料」里录入或导入）；
+② 一个可用的模型 API（设置里填 base_url + key）。
+
+### 我删掉了什么
+
+这个 Fork **不含**任何作者的个人数据——简历、资料、岗位库、API Key、采集到的真实岗位都不在仓库里
+（`backend/data/` 在 `.gitignore` 里，这是刻意的）。测试里出现的姓名/公司也已脱敏成示例值。
+
+### 与上游的关系
+
+```
+上游 main ──→ feat/resume-side（简历通 2.0 二开）──→ feat/gongzuotong（工作通 = 上面 + 求职采集）
+```
+
+上游更新后，作者会把改动合进 `feat/resume-side`，再合进 `feat/gongzuotong`。
+如果你想跟进上游，建议直接关注上游仓库，不要从这个 Fork 拉。
+
+---
+
 ## 简历通能干什么
 
 一条完整的链路，从看岗位到拿到 offer，每一步都有对应功能，每一步的产出都能回头修正上一步：
