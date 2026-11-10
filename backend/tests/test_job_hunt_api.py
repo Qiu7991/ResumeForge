@@ -20,15 +20,19 @@ def test_status_lists_platforms(api):
     resp = api.get("/api/job-hunt/status")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["backend"] == "sidecar"  # 默认 sidecar（旧路径不动）
+    # 2026-11-10 口径变更（产品默认值反转，不是放松断言）：默认由 sidecar 改为 native。
+    # 原因：sidecar 要用户另装 BossHunter 引擎（公开版拿不到），而「AI 投递」在工作通里
+    # 本该开箱可用；作者本地一直正常，就是因为他手动设成了 native。
+    assert body["backend"] == "native"
     keys = {p["key"] for p in body["platforms"]}
     assert {"zhilian", "job51", "liepin"} <= keys
 
 
-def test_config_default_sidecar(api):
+def test_config_default_native(api):
+    """出厂默认是 native（自研采集），不需要外部引擎。"""
     resp = _get_config(api)
     assert resp.status_code == 200
-    assert resp.json()["job_hunt_backend"] == "sidecar"
+    assert resp.json()["job_hunt_backend"] == "native"
 
 
 def test_config_switch_roundtrip(api):
@@ -49,7 +53,12 @@ def test_config_rejects_unknown_backend(api):
 
 
 def test_collect_rejected_in_sidecar_mode(api):
-    """红线：默认 sidecar 模式下 native 采集必须拒绝（409），旧路径不受影响。"""
+    """红线：`sidecar` 模式下 native 采集必须拒绝（409），旧路径不受影响。
+
+    **必须显式切到 sidecar**：默认值 2026-11-10 已改成 native，靠默认值来构造这个前提
+    会让用例名与行为脱节（名字说 sidecar，实际跑的是 native）。
+    """
+    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
     resp = api.post("/api/job-hunt/collect", json={"site_key": "zhilian", "keywords": "AI"})
     assert resp.status_code == 409
     assert "sidecar" in resp.json()["detail"]
