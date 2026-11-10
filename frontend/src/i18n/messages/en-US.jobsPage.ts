@@ -47,6 +47,7 @@ const jobsPage = {
   "jobsPage.filter.matchHistory": "Analysis history",
   "jobsPage.filter.candidates": "Job leads",
   "jobsPage.filter.backfill": "Fill in details",
+  "jobsPage.filter.selectMode": "Select multiple",
   "jobsPage.filter.importCsv": "Import CSV",
   "jobsPage.filter.addManual": "Add manually",
   "jobsPage.filter.sortResetHintDefault":

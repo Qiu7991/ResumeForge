@@ -49,6 +49,8 @@ const jobsPage = {
   "jobsPage.filter.matchHistory": "分析记录",
   "jobsPage.filter.candidates": "备选岗位",
   "jobsPage.filter.backfill": "补齐详情",
+  /** 多选入口：勾选岗位后批量动作（含"加入投递队列"）。 */
+  "jobsPage.filter.selectMode": "批量选择",
   "jobsPage.filter.importCsv": "导入 CSV",
   "jobsPage.filter.addManual": "手动添加",
   "jobsPage.filter.sortResetHintDefault": "当前已是默认排序：最近导入在前",

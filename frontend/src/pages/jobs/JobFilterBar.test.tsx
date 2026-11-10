@@ -22,9 +22,11 @@ function matchHistoryButton(): HTMLElement | null {
 function StatefulHarness({
   onKeywordChange,
   selectionMode,
+  onEnterSelection,
 }: {
   onKeywordChange?: (value: string) => void;
   selectionMode?: boolean;
+  onEnterSelection?: () => void;
 }) {
   const [keyword, setKeyword] = useState("");
   const updateKeyword = (value: string) => {
@@ -53,6 +55,7 @@ function StatefulHarness({
       sortState={DEFAULT_JOB_SORT_STATE}
       applySort={vi.fn()}
       selectionMode={selectionMode}
+      enterSelectionMode={onEnterSelection}
     />
   );
 }
@@ -141,5 +144,32 @@ describe("JobFilterBar · 分析记录入口随多选态收放", () => {
     expect(
       screen.getByRole("button", { name: looseButtonName(t("jobsPage.filter.analyzeMatch")) }),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * 2026-11-10 用户要求："做个复选框，这样我能多选添加进投递台，不然一个一个点太麻烦了"。
+ *
+ * 多选能力本来就有（表格 `rowSelection` + 批量菜单里的「加入投递队列」），但入口只藏在
+ * 行的右键菜单里，用户发现不了。这里钉住"工具栏上有显式入口"，且多选态下不再重复出现。
+ */
+describe("JobFilterBar · 批量选择入口", () => {
+  it("非多选态显示「批量选择」按钮，点它进入多选态", () => {
+    const onEnter = vi.fn();
+    render(<StatefulHarness onEnterSelection={onEnter} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: looseButtonName(t("jobsPage.filter.selectMode")) }),
+    );
+
+    expect(onEnter).toHaveBeenCalledTimes(1);
+  });
+
+  it("多选态下不再显示「批量选择」（已经在选了）", () => {
+    render(<StatefulHarness selectionMode onEnterSelection={vi.fn()} />);
+
+    expect(
+      screen.queryByRole("button", { name: looseButtonName(t("jobsPage.filter.selectMode")) }),
+    ).toBeNull();
   });
 });
