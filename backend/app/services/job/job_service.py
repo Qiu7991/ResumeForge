@@ -36,6 +36,10 @@ def refresh_job_keywords(job: Job) -> None:
 
 MAX_JOB_NOTE_CHARS = 2000
 
+#: 公司名归一化退路单次扫描的行数上限。只在"公司名精确匹配为空"时才用到，
+#: 目的是让超大库上的采集不至于退化成"逐行比对整张表"。
+_SIMILAR_SCAN_LIMIT = 500
+
 
 def find_by_job_identity(
     db: Session,
@@ -79,7 +83,48 @@ def find_by_job_identity(
         if existing is not None:
             return existing
     if name and employer:
-        return _query().filter(model.company == employer, model.title == name).first()
+        existing = _query().filter(model.company == employer, model.title == name).first()
+        if existing is not None:
+            return existing
+        # 精确匹配没命中时，再看**同公司下标题相似**的那些（2026-11-10）。
+        #
+        # 为什么需要：HR 把同一个职位重新发布时，BOSS 会生成新的 encryptJobId（链接变了），
+        # 标题也常带一点修饰差异（「…对话方向」vs「…对话）双休」）。精确匹配抓不到，
+        # 用户就会在岗位广场里看到两条其实是同一个职位的记录。
+        #
+        # **只比对同公司**：公司名归一化后必须完全相等，不做模糊——跨公司误判的代价
+        # （把真正想投的岗位当成重复悄悄跳过）比多一条重复大得多。
+        return _find_similar_title(_query(), model, employer, name)
+    return None
+
+
+def _find_similar_title(query, model: type, employer: str, name: str):
+    """在同公司内找标题相似的记录；找不到返回 None。
+
+    逐条比对而不是写进 SQL：标题相似是应用层逻辑（去括号、去招聘后缀、二元组 Dice），
+    SQL 表达不了。先按公司收窄再在内存里比——同一家公司在岗位广场里的岗位数是十几到
+    几十条量级，不会成为瓶颈。
+    """
+    from .job_title_match import is_placeholder_company, normalize_company, same_posting
+
+    target_company = normalize_company(employer)
+    # 占位符公司名（「猎头代招（雇主未公开）」之类）**不做**相似判重：
+    # 猎头用同一个公司名转发不同雇主的岗位，按它判重会把不同职位误判成一条。
+    if not target_company or is_placeholder_company(target_company):
+        return None
+    rows = query.filter(model.company == employer).all()
+    if not rows:
+        # 公司名写法不一致（全半角 / 空格差异）时，退一步在内存里按归一化名再试一遍。
+        # **限定单次扫描**：这条路径只在精确匹配已失败时进入，且加了条数上限，
+        # 避免在超大库上把采集变成全表逐行比对。
+        rows = [
+            row
+            for row in query.limit(_SIMILAR_SCAN_LIMIT).all()
+            if normalize_company(getattr(row, "company", "")) == target_company
+        ]
+    for row in rows:
+        if same_posting(getattr(row, "title", ""), name):
+            return row
     return None
 
 
