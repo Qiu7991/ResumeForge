@@ -159,3 +159,36 @@ def test_first_sentence_guidance_no_longer_recommends_ai_positioning():
 
     assert "不要放在第 1 句" in system
     assert "定位归这里" in system  # 第 4 句的小标题
+
+
+# ===== 2026-11-10：出厂默认就带一套写作基准（让用这个项目的人开箱效果一致）=====
+
+
+def test_default_greeting_baseline_ships_with_the_app():
+    """没配置过的用户也拿到一套可用基准——不是空字符串。
+
+    用户原话："我想用我这个项目的人，生成出来的效果能和我一样"。这套写法原本只在他本地
+    库里，别人装上项目拿到的是空基准，效果完全不同。
+    """
+    from app.schemas.apply.base import DEFAULT_GREETING_BASELINE
+    from app.schemas.apply.config import ApplyConfigIn
+
+    assert ApplyConfigIn().greeting_baseline == DEFAULT_GREETING_BASELINE
+    assert len(DEFAULT_GREETING_BASELINE) > 200
+    # 四条核心口径都在
+    assert "第 1 句按这份岗位的具体职责写" in DEFAULT_GREETING_BASELINE
+    assert "第 4 句" in DEFAULT_GREETING_BASELINE
+    assert "不写学校" in DEFAULT_GREETING_BASELINE
+
+
+def test_default_greeting_baseline_has_no_personal_project_names():
+    """出厂默认不能带作者本人的项目名。
+
+    作者本地版点名了 CreatorDistill / PixelBeads / ESP-SparkBot——那是"该挑哪类项目"的
+    例子，只对他自己的简历成立。别人装上后若照抄，模型会拿**不存在的项目**写招呼语，
+    等于批量事实错误。
+    """
+    from app.schemas.apply.base import DEFAULT_GREETING_BASELINE
+
+    for personal in ("CreatorDistill", "PixelBeads", "ESP-SparkBot", "AI 简历工作台"):
+        assert personal not in DEFAULT_GREETING_BASELINE

@@ -10,6 +10,7 @@ from .base import (
     DEFAULT_BROWSER_PORT,
     DEFAULT_DAILY_LIMIT,
     DEFAULT_GREETING,
+    DEFAULT_GREETING_BASELINE,
     DEFAULT_INTERVAL_JITTER_SECONDS,
     DEFAULT_INTERVAL_SECONDS,
     DEFAULT_PER_TASK_LIMIT,
@@ -33,7 +34,9 @@ class ApplyConfigIn(BaseModel):
     breaker_threshold: int = Field(default=DEFAULT_BREAKER_THRESHOLD, ge=1, le=20)
     default_greeting: str = Field(default=DEFAULT_GREETING, max_length=GREETING_INPUT_MAX_CHARS)
     # 用户自定义的打招呼语基准/模板：只作为风格与结构约束，不能覆盖事实与防虚构规则。
-    greeting_baseline: str = Field(default="", max_length=4_000)
+    greeting_baseline: str = Field(
+        default=DEFAULT_GREETING_BASELINE, max_length=4_000
+    )
     # 招呼语是否以「您好，」开头（2026-11-10）。
     #
     # 默认 **True**：这是用户自己规定的礼貌开场，不该替用户改。
