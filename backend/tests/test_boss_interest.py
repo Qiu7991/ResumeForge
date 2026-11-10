@@ -70,10 +70,12 @@ def test_parse_interest_response_maps_all_fields():
     assert first.company == "广州示例医疗科技"
     assert first.salary == "8-9K"
     assert first.location == "广州·黄埔区·东圃"
-    assert first.url == "https://www.zhipin.com/job_detail/0a54545b16a9f2d10nNy3967GVRY.html"
+    assert first.url == "https://www.zhipin.com/job_detail/FAKEencryptJobId0000000000000000000.html"
     assert first.source == "BOSS直聘"
-    assert first.extra["encrypt_job_id"] == "0a54545b16a9f2d10nNy3967GVRY"
-    assert first.extra["security_id"].startswith("MNT9yQzfv9CnF-")
+    assert first.extra["encrypt_job_id"] == "FAKEencryptJobId0000000000000000000"
+    # fixture 里的 securityId 是脱敏假值（真值是用户登录态令牌，绝不能进仓库）；
+    # 这里只验"卡片上的 securityId 被原样带进 extra"，不验具体值。
+    assert first.extra["security_id"].startswith("FAKEsecurityIdForFixtureOnly")
     assert first.extra["experience"] == "1年以内"
     assert first.extra["degree"] == "本科"
     assert first.extra["city"] == "广州"

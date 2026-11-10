@@ -4,8 +4,8 @@
   "zpData": {
     "cardList": [
       {
-        "encryptJobId": "0a54545b16a9f2d10nNy3967GVRY",
-        "securityId": "MNT9yQzfv9CnF-_1o9EX0VIm9QQl1Sr5dJcW3vPxHm7w~",
+        "encryptJobId": "FAKEencryptJobId0000000000000000000",
+        "securityId": "FAKEsecurityIdForFixtureOnly00000000000000000~",
         "jobName": "AI项目助理",
         "jobSalary": "8-9K",
         "salaryDesc": "8-9K",
@@ -27,8 +27,8 @@
         "actionDateDesc": "今天16:51"
       },
       {
-        "encryptJobId": "0b7c1d2e3f4a5b6c7d8e9f0aBCDEFG",
-        "securityId": "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd~",
+        "encryptJobId": "FAKEencryptJobId1000000000000000000",
+        "securityId": "FAKEsecurityIdForFixtureOnly00000000000000001~",
         "jobName": "AI应用架构师",
         "jobSalary": "25-35K·16薪",
         "salaryDesc": "25-35K·16薪",
@@ -50,8 +50,8 @@
         "actionDateDesc": "今天15:02"
       },
       {
-        "encryptJobId": "0c9f8e7d6c5b4a39281706f5ABCDE",
-        "securityId": "ZyXwVuTsRqPoNmLkJiHgFeDcBa9876543210fedc~",
+        "encryptJobId": "FAKEencryptJobId2000000000000000000",
+        "securityId": "FAKEsecurityIdForFixtureOnly00000000000000002~",
         "jobName": "AI用户研究",
         "jobSalary": "15-22K",
         "salaryDesc": "15-22K",
