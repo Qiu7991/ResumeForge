@@ -96,6 +96,35 @@ def test_parse_interest_skips_invalid_jobs():
     assert all(item.extra["encrypt_job_id"] != invalid_id for item in page.results)
 
 
+def test_parse_interest_skips_closed_jobs_status_two():
+    """``jobValidStatus == 2`` = 职位已关闭，必须跳过（2026-11-09 实测钉死的语义）。
+
+    为什么单独钉一条：状态 2 的岗位**详情接口仍会返回缓存的 JD**（实测 493 字），
+    所以"能抓到 JD"不能当成"这岗位还能投"。真实数据里 134 条「感兴趣」中有 45 条是
+    状态 2——把它们放进暂存区，用户会白花一次招呼语去投一个已关闭的岗位。
+    """
+    payload = _payload()
+    closed_id = payload["zpData"]["cardList"][0]["encryptJobId"]
+    payload["zpData"]["cardList"][0]["jobValidStatus"] = 2
+
+    page = parse_interest_response(payload)
+
+    assert page.invalid == 1
+    assert all(item.extra["encrypt_job_id"] != closed_id for item in page.results)
+
+
+def test_parse_interest_treats_missing_status_as_invalid():
+    """状态字段缺失按失效处理（安全侧）：宁可漏采一条，也不把可疑岗位塞进暂存区。"""
+    payload = _payload()
+    missing_id = payload["zpData"]["cardList"][2]["encryptJobId"]
+    payload["zpData"]["cardList"][2].pop("jobValidStatus", None)
+
+    page = parse_interest_response(payload)
+
+    assert page.invalid == 1
+    assert all(item.extra["encrypt_job_id"] != missing_id for item in page.results)
+
+
 def test_parse_interest_raises_on_business_error():
     """code=121（请求不合法）与其它非零码都要显式失败，绝不静默当空列表。"""
     with pytest.raises(SiteFailure) as excinfo:

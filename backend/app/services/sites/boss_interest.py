@@ -146,8 +146,14 @@ def parse_interest_card(card: dict[str, Any]) -> SearchResult | None:
     粘在一个字段里），URL 用 ``_job_url``（卡里带 jobUrl 就用，否则按 encryptJobId 拼）。
     """
     if str(card.get("jobValidStatus") or "") != "1":
-        # 实测：1 = 有效；0（或字段缺失）= 失效。失效岗位的详情页多半已下线，
-        # 抓回来只会给暂存区堆垃圾，如实计入 invalid 让用户看到差额。
+        # 实测取值（2026-11-09，语义用详情接口的 ``jobInfo.jobStatusDesc`` 钉死）：
+        #   1 = 有效（jobStatusDesc 返回「最新」）
+        #   2 = **职位已关闭**（jobStatusDesc 返回「职位已关闭」）
+        # 字段缺失 / 0 / 其它未知值一律按失效处理（安全侧：宁可漏采一条，也不把
+        # 已关闭的岗位塞进暂存区让用户白花一次招呼语）。
+        #
+        # 为什么必须跳过状态 2 —— 这类岗位的详情接口**仍会返回缓存的 JD**（实测 493 字），
+        # 所以"能拿到 JD"不能当成"这岗位还能投"。用户对账时看到的 45 条差额就是这个。
         return None
     job_id = _text(card.get("encryptJobId"), _MAX_ID_CHARS)
     title, title_salary = split_title_salary(card.get("jobName"))
