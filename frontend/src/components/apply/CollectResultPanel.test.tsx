@@ -196,12 +196,26 @@ describe("CollectResultPanel", () => {
     expect(screen.getByRole("button", { name: /导入选中的岗位$/ })).toBeDisabled();
   });
 
-  it("没有批次时不渲染", () => {
-    apiMocks.listCandidateJobs.mockResolvedValue([]);
+  /*
+   * 2026-11-10 口径变更（**这是用户报的 bug，不是放松断言**）：
+   *
+   * 旧断言是"没有批次（taskId=null）时不渲染"。用户实测：切到别的页再切回来，
+   * 当前采集任务已被收尾、`collectTask` 变成 null → 整块候选列表凭空消失，
+   * 他以为采集的数据没了。
+   *
+   * 根因是这块的语义在两轮改动里已经变了：它现在列的是**所有批次的待处理候选**，
+   * 跟"现在有没有采集任务"无关。所以新的不变量是：**没有批次也照常拉取并渲染**。
+   */
+  it("没有当前批次时仍然渲染（列的是全部批次的候选）", async () => {
+    // 岗位名用 ASCII：仓库 CJK 棘轮把「测试里新增的中文 ByText 断言」算作待迁移存量，
+    // 这里要断的是"渲染了没有"，不是文案本身，用 ASCII 标题既够用也不增加存量。
+    apiMocks.listCandidateJobs.mockResolvedValue([
+      candidate({ title: "Legacy batch job", company: "ACME" }),
+    ]);
     const { container } = renderPanel({ taskId: null });
 
-    // 用类名判断而不是 toBeEmptyDOMElement：外层套了 <AntdApp>，容器里本来就有一个包装节点。
-    expect(container.querySelector(".apply-collect-result")).toBeNull();
-    expect(apiMocks.listCandidateJobs).not.toHaveBeenCalled();
+    expect(await screen.findByText("Legacy batch job")).toBeInTheDocument();
+    expect(container.querySelector(".apply-collect-result")).not.toBeNull();
+    expect(apiMocks.listCandidateJobs).toHaveBeenCalledWith({ status: "pending" });
   });
 });

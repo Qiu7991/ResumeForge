@@ -26,7 +26,13 @@ import { t, type MessageKey } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
 
 interface Props {
-  /** 要展示的采集批次；为空表示还没采过，整块不渲染。 */
+  /**
+   * 当前采集批次 id；**为空也照常渲染**（这块列的是所有批次的候选）。
+   *
+   * 它现在只有两个用途：批次切换时清空勾选、以及让宿主在任务结束时通过 `refreshKey`
+   * 触发重拉。**不要**再拿它决定"要不要渲染"——那正是 2026-11-10 那个"切页回来看不见
+   * 候选"的成因。
+   */
   taskId: number | null;
   /** 采集/投递正在跑时禁用导入。 */
   disabled?: boolean;
@@ -79,12 +85,21 @@ export default function CollectResultPanel({
   //
   // `status: "pending"` 仍然只列**还没导入岗位广场**的：已导入的岗位在岗位广场里，
   // 在这里重复列出来只会让这一块越来越长。（"已在投递台"的标注另算，见列定义。）
+  //
+  // **不再依赖 `taskId`**（2026-11-10 第二次修）：这段列的是"所有批次的候选"，
+  // 跟"现在有没有正在跑/刚跑完的采集任务"无关。以前 `taskId` 为空就 `return null`，
+  // 于是用户切到别的页、再切回来（当前任务已被收尾、`collectTask` 变 null）时，
+  // 整块候选列表凭空消失——他以为数据没了。
   const { data, loading, error, reload } = useApi<CandidateJob[]>(
-    () => (taskId ? listCandidateJobs({ status: "pending" }) : Promise.resolve([])),
-    [taskId, refreshKey],
+    () => listCandidateJobs({ status: "pending" }),
+    [refreshKey],
+    // 切回本页时重新拉一次：候选可能在别处被导入/删掉了（用户实测"切页回来内容没了"，
+    // 反过来"切页回来显示的是旧列表"同样不该发生）。`minIntervalMs` 用默认 30s——
+    // 频繁切页不该把接口打满。
+    { refetchOnFocus: {} },
   );
 
-  // 切换批次时不能保留上一批的候选 id 或导入反馈，否则可能误导入旧批次条目。
+  // 采集批次切换时清空勾选与导入反馈：跨批次保留勾选会把上一批的 id 带进下一次导入。
   // Compiler 规范：随 taskId 变化的重置用渲染期守卫式调整（哨兵 null 覆盖挂载场景）。
   const [prevTaskId, setPrevTaskId] = useState(taskId);
   if (prevTaskId !== taskId) {
@@ -92,8 +107,6 @@ export default function CollectResultPanel({
     setSelectedIds([]);
     setLastResult(null);
   }
-
-  if (!taskId) return null;
 
   const candidates = data ?? [];
 
