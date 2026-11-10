@@ -4,7 +4,14 @@ export type TaskKind = "collect" | "apply";
 export type TaskStatus =
   "pending" | "running" | "paused" | "breaker_paused" | "completed" | "stopped" | "failed";
 export type TaskItemStatus = "pending" | "running" | "success" | "failed" | "skipped";
-export type QueueStatus = "pending" | "skipped" | "done";
+/**
+ * 队列条目状态。
+ *
+ * `failed`（2026-11-10）：投递**失败**。与 `skipped` 的区别是用户能不能不管——
+ * `skipped` 是"刻意没投"（岗位已关闭 / 招呼语缺失 / 同公司本批已投），不用管；
+ * `failed` 是"投了但没成"（页面结构变化等），值得重试。
+ */
+export type QueueStatus = "pending" | "skipped" | "done" | "failed";
 export type BrowserState = "stopped" | "starting" | "running" | "unknown";
 
 export const TASK_STATUS_META: Record<TaskStatus, { label: string; color: string }> = {
@@ -29,6 +36,8 @@ export const QUEUE_STATUS_META: Record<QueueStatus, { label: string; color: stri
   pending: { label: "待投递", color: "default" },
   skipped: { label: "已跳过", color: "default" },
   done: { label: "已投递", color: "success" },
+  // i18n-ok: label 字段是死代码（界面走 QUEUE_STATUS_LABEL_KEYS），保留只为与其它三项同形。
+  failed: { label: "", color: "error" },
 };
 
 export const BROWSER_STATE_META: Record<BrowserState, { label: string; color: string }> = {

@@ -387,6 +387,13 @@ def run_apply(
                 session.commit()
 
             if item.status == ITEM_STATUS_FAILED:
+                # 失败回写队列（2026-11-10）：以前失败**完全不动队列**，条目停在 `pending`，
+                # 于是 ① 队列显示「待投递」而投递记录显示「失败」，自相矛盾；② 下一批会把这些
+                # 岗位**再投一次**（`_tasks` 只挑 pending）。
+                #
+                # 用 `failed` 而不是 `skipped`：`skipped` 是"刻意没投"（岗位已关闭 / 招呼语缺失），
+                # 用户不用管；`failed` 是"投了但没成"（页面结构变化等），值得他去重试。
+                apply_service.mark_queue_failed(session, item.job_id)
                 if item.failure_category == FAILURE_CAPTCHA_REQUIRED:
                     runner._pause_with_message(
                         session,

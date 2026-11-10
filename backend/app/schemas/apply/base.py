@@ -81,7 +81,9 @@ MAX_BACKFILL_REQUEST_ITEMS = 1000
 BrowserState = Literal["stopped", "starting", "running", "unknown"]
 # 浏览器选择：auto=自动（优先 Chrome，未装回退 Edge）/ chrome / edge / custom=自定义路径。
 BrowserChoice = Literal["auto", "chrome", "edge", "ego", "custom"]
-QueueStatus = Literal["pending", "skipped", "done"]
+#: 队列条目状态。`failed` 与 `skipped` 语义不同：前者是"投了但没成"（值得重试），
+#: 后者是"刻意没投"（岗位已关闭 / 招呼语缺失 / 同公司本批已投）。
+QueueStatus = Literal["pending", "skipped", "done", "failed"]
 TaskStatus = Literal[
     "pending",
     "running",
