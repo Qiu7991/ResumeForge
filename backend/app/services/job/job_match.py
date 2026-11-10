@@ -428,6 +428,7 @@ def build_greeting_messages(
     *,
     greeting_baseline: str = "",
     focus_project: str = "",
+    greeting_with_salutation: bool = True,
 ) -> list[dict[str, str]]:
     """拼招呼语生成的消息：岗位与简历作为不可信数据注入，预算内截断。"""
     prefix = (
@@ -454,6 +455,20 @@ def build_greeting_messages(
     }
     user_message = _fit_payload(payload, prefix, suffix, MAX_MATCH_PROMPT_CHARS)
     system = _load_prompt("apply_greeting.md")
+    if not greeting_with_salutation:
+        # 提示词默认要求「必须以『您好，』开头」；用户关掉问候时那条硬性要求必须作废，
+        # 否则模型会继续写「您好」而代码又把开头的问候剥掉——白费一次模型调用。
+        #
+        # 为什么用户会关：BOSS 后台在**不点开会话**时只显示开头 10–18 个字，
+        # 「您好，」占 3 个（约预览区 1/5）。省下来直接上能力标签。
+        system += (
+            "\n\n## 覆盖：不要写问候语（本次由用户明确关闭）\n"
+            "上面「第 1 句必须以『您好，』开头」的规则**本次不适用**。第 1 句直接从能力标签开始，"
+            "不要写「您好」「你好」「尊敬的 HR」之类的问候，也不要加任何称呼。\n"
+            "开头 10–18 个字会被 HR 在消息列表里第一眼看到，必须就是这句能力标签——"
+            "把它写成这份岗位最想看到的那件事，不要浪费在客套上。\n"
+            "其余四句的结构、长度、防虚构要求全部不变。"
+        )
     baseline = str(greeting_baseline or "").strip()[:4_000]
     if baseline:
         system += (
@@ -481,15 +496,21 @@ def build_greeting_messages(
     ]
 
 
-def normalize_greeting_opening(text: str) -> str:
+def normalize_greeting_opening(text: str, *, with_salutation: bool = True) -> str:
     """保证招呼语以「您好，」开头（提示词之外的第二道保险）。
 
     模型偶尔会漏掉问候，或写成「你好」「尊敬的 HR 您好」；这里统一成「您好，」，
     不改变后面的正文。只处理开头最多 8 个字以内的问候，避免误伤正文里的「您好」。
+
+    ``with_salutation=False`` 时**反过来**：把开头的问候去掉，让第一句直接是能力标签。
+    这不是"模型偶尔漏了"的兜底，而是用户显式选择的一种写法——BOSS 后台不点开会话时
+    只显示开头 10–18 个字，「您好，」占掉 3 个。默认仍为 True（用户规定的礼貌开场）。
     """
     value = (text or "").strip()
     if not value:
         return value
+    if not with_salutation:
+        return _strip_leading_salutation(value)
     index = value.find("您好")
     if 0 <= index <= 8:
         value = value[index:]
@@ -502,7 +523,22 @@ def normalize_greeting_opening(text: str) -> str:
     return value
 
 
-def parse_greeting(raw: str) -> str:
+#: 开头问候的几种写法。长的在前，避免「尊敬的HR您好」被「您好」先匹配走半截。
+_LEADING_SALUTATION_RE = re.compile(
+    r"^\s*(?:尊敬的\s*(?:HR|hr|招聘官|面试官|老师)?\s*(?:您好|你好)[，,。.！!：:]?|您好[，,。.！!：:]?|你好[，,。.！!：:]?)\s*"
+)
+
+
+def _strip_leading_salutation(value: str) -> str:
+    """去掉开头的问候，并把首字母大写（若原句是英文开头）。
+
+    只在开头 1 处生效：正文里的「您好」不动——那可能是引用 JD 或客户场景的话。
+    """
+    stripped = _LEADING_SALUTATION_RE.sub("", value, count=1).lstrip()
+    return stripped or value
+
+
+def parse_greeting(raw: str, *, with_salutation: bool = True) -> str:
     """解析招呼语模型输出：剥掉可能的 Markdown 代码围栏，截断到落库上限。"""
     if not raw or len(raw) > MAX_GREETING_RESPONSE_CHARS:
         raise LLMError("模型返回的招呼语为空或过长，请重试")
@@ -512,7 +548,7 @@ def parse_greeting(raw: str) -> str:
         cleaned = fenced.group(1).strip()
     if not cleaned:
         raise LLMError("模型返回的招呼语为空，请重试")
-    cleaned = normalize_greeting_opening(cleaned)
+    cleaned = normalize_greeting_opening(cleaned, with_salutation=with_salutation)
     return cleaned[:GREETING_RECORD_MAX_CHARS]
 
 
@@ -523,6 +559,7 @@ async def generate_greeting(
     *,
     greeting_baseline: str = "",
     focus_project: str = "",
+    greeting_with_salutation: bool = True,
 ) -> str:
     """按岗位生成一版招呼语（可编辑，不落库）。"""
     messages = build_greeting_messages(
@@ -530,9 +567,10 @@ async def generate_greeting(
         resume_text,
         greeting_baseline=greeting_baseline,
         focus_project=focus_project,
+        greeting_with_salutation=greeting_with_salutation,
     )
     raw = await provider.chat(messages, thinking=False)
-    return parse_greeting(raw)
+    return parse_greeting(raw, with_salutation=greeting_with_salutation)
 
 
 __all__ = [

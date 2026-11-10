@@ -166,6 +166,9 @@ export function QueueFilterBar({
             <Button
               icon={<ThunderboltOutlined />}
               disabled={busy || selectedCount === 0}
+              // 显式 aria-label：antd 会把图标名（"thunderbolt"）并进无障碍名称，
+              // 纯文案查询会匹配不到（仓库里多个按钮踩过同一坑）。
+              aria-label={t("applyQueue.action.batchGreeting")}
               onClick={onStartGreetings}
             >
               {t("applyQueue.action.batchGreeting")}

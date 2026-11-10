@@ -70,6 +70,10 @@ const applySettings = {
   "applySettings.action.save": "保存设置",
   "applySettings.saved": "投递设置已保存",
   "applySettings.saveFailed": "保存投递设置失败",
+  "applySettings.greetingSalutation.label": "招呼语以「您好」开头",
+  "applySettings.greetingSalutation.extra":
+    "默认开。关掉后第 1 句直接写能力标签——BOSS 后台在不点开会话时只显示开头 10–18 个字，「您好，」会占掉 3 个。想测试效果可以关掉对比。",
+
 } as const;
 
 export default applySettings;

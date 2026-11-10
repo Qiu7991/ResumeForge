@@ -242,11 +242,20 @@ def test_greeting_preview_uses_the_explicitly_selected_resume(client, db_session
     captured: dict[str, str] = {}
 
     async def _fake_generate(
-        provider, payload_data, resume_text, *, greeting_baseline="", focus_project=""
+        provider,
+        payload_data,
+        resume_text,
+        *,
+        greeting_baseline="",
+        focus_project="",
+        greeting_with_salutation=True,
     ):
+        # 签名跟随 generate_greeting（2026-11-10 新增 greeting_with_salutation 开关）。
+        # 这里只是把参数接住并记录，不断言它的值——本用例守的是"按选中的简历生成"。
         captured["resume_text"] = resume_text
         captured["baseline"] = greeting_baseline
         captured["focus_project"] = focus_project
+        captured["with_salutation"] = greeting_with_salutation
         return "您好，按 B 版简历重新生成的招呼语。"
 
     monkeypatch.setattr("app.api.apply.generate_greeting", _fake_generate)
