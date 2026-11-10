@@ -96,3 +96,7 @@ mokahr_apply_controls.json
 desktop/payload/
 desktop/out/
 desktop/python-runtime.zip
+
+# 技能包解压目录：内置技能只保留 app/assets/skills/*.zip（代码读的那个）。
+# 根目录这份是导入时解压出来的工作副本，不该进仓库（2026-11-10）。
+/skills/
