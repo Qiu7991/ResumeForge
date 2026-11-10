@@ -389,6 +389,39 @@ class BossPageMixin:
             config=ready_wait,
         )
 
+    def open_interest_page(self, client: CdpClient) -> None:
+        """打开「感兴趣」列表页并确认就绪（source=interest 采集的第一步）。
+
+        用**当前标签页内导航**而不是新建标签页：BOSS 会关掉脚本新建导航的标签页
+        （实测落到 about:blank），而正常的站内跳转不会被关。就绪判据在 boss_interest
+        的探针里：URL 在 /web/geek/recommend 上、且页面文本出现「感兴趣」——刻意不认
+        卡片选择器，该页的卡片类名与搜索页不同，认类名会在站点改版时把"页面还在"
+        误判成"结构变化"。
+        """
+        from .boss_interest import INTEREST_PATH, interest_ready_script
+
+        target = BOSS_ENTRY_URL.rstrip("/") + INTEREST_PATH
+        client.navigate(target)
+
+        def _blocker(state: dict[str, Any]) -> SiteFailure | None:
+            kind = detect_blocker(state)
+            return blocker_failure(kind, state) if kind is not None else None
+
+        wait_for_page_state(
+            lambda: _as_payload(client.evaluate(interest_ready_script())),
+            is_ready=lambda state: bool(state.get("matched")),
+            blocker=_blocker,
+            on_timeout=lambda state: SiteFailure(
+                FAILURE_SELECTOR_INVALID,
+                "打开「感兴趣」列表页超时：页面一直没有出现列表内容"
+                "（可能网络较慢、未登录或站点改版）。"
+                f"当前地址：{state.get('url') or '未知'}；页面标题：{state.get('title') or '未知'}。",
+                url=str(state.get("url") or ""),
+                title=str(state.get("title") or ""),
+            ),
+            config=self._ready_wait,
+        )
+
 
 __all__ = [
     "BOSS_DISPLAY_NAME",

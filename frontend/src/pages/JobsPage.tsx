@@ -360,6 +360,7 @@ export default function JobsPage() {
         sortState={sortState}
         applySort={applySort}
         selectionMode={selectionMode}
+        enterSelectionMode={enterSelectionMode}
       />
 
       <BatchToolbar

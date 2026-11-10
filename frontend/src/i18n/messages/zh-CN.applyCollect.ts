@@ -6,6 +6,16 @@
  * 与 `collectConfigHistory`；「按招聘网站的条件筛」那一块仍由 `collectFilters` 包负责。
  */
 const applyCollect = {
+  "applyCollect.field.source": "采集来源",
+  "applyCollect.source.search": "关键词搜索",
+  "applyCollect.source.interest": "我的感兴趣",
+  "applyCollect.hint.interest":
+    "BOSS「感兴趣」是你的个人岗位列表，不需要关键词和城市条件；岗位会连同完整 JD 存进暂存区。",
+  "applyCollect.field.interestScanLimit": "只看最新 N 个收藏",
+  "applyCollect.hint.interestScanLimit":
+    "从最新收藏往下数这 N 个（跳过的那几个也占位置）；0 = 看全部。避免为了几条新岗位翻完几百个旧收藏。",
+  "applyCollect.field.interestMaxPages": "感兴趣翻页上限（页）",
+  "applyCollect.hint.interestMaxPages": "每页固定 15 条；10 页约 150 条。",
   "applyCollect.field.keywords": "关键词",
   "applyCollect.hint.keywords": "最多 10 个；与城市至少要填一个。",
   "applyCollect.placeholder.keywords": "例如：市场营销、财务会计",
@@ -23,6 +33,11 @@ const applyCollect = {
   "applyCollect.history.noKeywords": "无关键词",
   "applyCollect.history.noCity": "无城市",
   "applyCollect.outcome.listSeparator": "、",
+  "applyCollect.outcome.interest.invalid": "已跳过 {count} 条失效岗位",
+  "applyCollect.outcome.interest.scan":
+    "本轮查看了 {scanned} 个收藏岗位，其中 {known} 个之前已经采集过（不再重复入库）",
+  "applyCollect.outcome.interest.scanHint":
+    "「之前采集过」指更早的采集批次已经把它们放进暂存区了——去「采集记录」里勾选导入即可，不用重采。想少看一些就把「只看前 N 个收藏」调小。",
   "applyCollect.outcome.pagination.title":
     "后面的页与前面的结果完全重复，已在第 {page} 页提前停止翻页",
   "applyCollect.outcome.pagination.description":

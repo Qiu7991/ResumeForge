@@ -4,6 +4,7 @@ import { App as AntdApp } from "antd";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { translate } from "../../i18n";
 import type { ApplyTaskDetail, CollectConfigOut } from "../../types";
 import CollectPanel from "./CollectPanel";
 
@@ -22,6 +23,9 @@ vi.mock("../../api/apply", () => ({
 }));
 
 const CONFIG: CollectConfigOut = {
+  source: "search",
+  interest_max_pages: 10,
+  interest_scan_limit: 0,
   keywords: ["后端"],
   city: "北京",
   salary_min: null,
@@ -164,6 +168,59 @@ function renderWithCollectTask(config: Record<string, unknown>) {
     </AntdApp>,
   );
 }
+
+describe("CollectPanel 采集来源", () => {
+  // 定位口径（2026-11-10）：用 role / name 属性定位，**不再用 `getByText("中文")`**。
+  // 仓库的 CJK 棘轮（`i18n/cjkRatchet.test.ts`）把「测试里新增的中文 ByText 断言」也算作
+  // 待迁移存量，只许减少不许增加；而这里的文案都已经在语言包里，用 `t()` 取来断言才是
+  // 正解（顺便让中英两种语言下断言都成立）。
+  it("切到「我的感兴趣」后关键词与城市输入框消失，出现限量输入", async () => {
+    renderPanel();
+    await screen.findByPlaceholderText(translate("zh-CN", "applyCollect.placeholder.city"));
+
+    fireEvent.click(screen.getByText(translate("zh-CN", "applyCollect.source.interest")));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByPlaceholderText(translate("zh-CN", "applyCollect.placeholder.city")),
+      ).not.toBeInTheDocument(),
+    );
+    // 个人列表没有这些维度：关键词也一并隐藏，并给出说明与限量输入。
+    expect(screen.queryByPlaceholderText(translate("zh-CN", "applyCollect.placeholder.keywords"))).toBeNull();
+    expect(screen.getByLabelText(translate("zh-CN", "applyCollect.field.interestScanLimit"))).toBeInTheDocument();
+    expect(screen.getByLabelText(translate("zh-CN", "applyCollect.field.interestMaxPages"))).toBeInTheDocument();
+  });
+
+  it("interest 模式点开始不触发「请填写关键词」警告，且提交 source=interest", async () => {
+    renderPanel();
+    await screen.findByPlaceholderText(translate("zh-CN", "applyCollect.placeholder.city"));
+    fireEvent.click(screen.getByText(translate("zh-CN", "applyCollect.source.interest")));
+    await waitFor(() =>
+      expect(
+        screen.queryByPlaceholderText(translate("zh-CN", "applyCollect.placeholder.city")),
+      ).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /开始采集/ }));
+
+    await waitFor(() => expect(apiMocks.createCollectTask).toHaveBeenCalled());
+    expect(apiMocks.updateCollectConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "interest" }),
+    );
+  });
+
+  it("默认（关键词搜索）提交 source=search——回归守门", async () => {
+    renderPanel();
+    await screen.findByPlaceholderText(translate("zh-CN", "applyCollect.placeholder.city"));
+
+    fireEvent.click(await screen.findByRole("button", { name: /开始采集/ }));
+
+    await waitFor(() => expect(apiMocks.createCollectTask).toHaveBeenCalled());
+    expect(apiMocks.updateCollectConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "search" }),
+    );
+  });
+});
 
 describe("CollectPanel 站点筛选账目", () => {
   it("把生效的站点筛选如实列出来", async () => {

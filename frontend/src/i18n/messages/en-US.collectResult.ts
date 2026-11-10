@@ -8,15 +8,20 @@
  * follows them and i18n has no rich-text interpolation.
  */
 const collectResult = {
-  "collectResult.title": "Results of this collection",
+  "collectResult.title": "Collected jobs",
   "collectResult.hint":
-    "Select the jobs to add to your Job Pool. Anything you leave unselected stays in Candidate Jobs, so you can pick it later.",
+    "Every collected job not yet imported to your Job Pool, across all runs. Only selected jobs are imported; the rest stay here so you can pick them later.",
   "collectResult.empty":
-    "Nothing to import from this collection yet (everything may already be imported, or nothing was collected)",
+    "Nothing to import yet (everything may already be imported, or nothing was collected)",
 
   "collectResult.column.title": "Job",
   "collectResult.column.location": "City",
   "collectResult.column.salary": "Salary",
+  "collectResult.column.collectedAt": "Collected",
+  "collectResult.column.queue": "Apply queue",
+  "collectResult.cell.inQueue": "In queue",
+  "collectResult.cell.notInQueue": "Not queued",
+  "collectResult.cell.manual": "Added manually",
   "collectResult.column.source": "Source site",
   "collectResult.action.openSource": "View",
 

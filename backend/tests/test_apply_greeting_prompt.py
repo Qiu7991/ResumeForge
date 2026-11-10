@@ -105,3 +105,90 @@ def test_focus_project_is_pinned_to_the_third_sentence():
 def test_greeting_prompt_no_longer_requires_education_intro():
     system = build_greeting_messages({"title": "AI应用赋能专员"}, "{}")[0]["content"]
     assert "不要介绍学校、专业、年级、届别、学历、毕业时间" in system
+
+
+# ===== 2026-11-10：不要问候语的开关 + 第 1 句必须随岗位变 =====
+
+
+def test_salutation_toggle_off_overrides_the_prompt_rule():
+    """关掉问候时，提示词里那条「必须以『您好，』开头」必须被显式作废。
+
+    为什么必须在提示词层就作废：代码侧还会再把开头的问候剥掉（见
+    `normalize_greeting_opening`），但如果模型仍然写「您好」，那段字数就被白花了——
+    用户关它的目的正是"省下开头 3 个字给能力标签"。
+    """
+    messages = build_greeting_messages({"title": "测试岗"}, "{}", greeting_with_salutation=False)
+    system = messages[0]["content"]
+
+    assert "本次由用户明确关闭" in system
+    assert "本次不适用" in system
+    # 原规则仍在（不删），但被上面那段覆盖。
+    assert "必须以「您好，」开头" in system
+
+
+def test_salutation_toggle_on_keeps_default_behavior():
+    """默认（开）不追加覆盖段：用户规定的礼貌开场原样保留。"""
+    messages = build_greeting_messages({"title": "测试岗"}, "{}")
+    system = messages[0]["content"]
+
+    assert "本次由用户明确关闭" not in system
+    assert "必须以「您好，」开头" in system
+
+
+def test_parse_greeting_strips_salutation_when_disabled():
+    from app.services.job.job_match import parse_greeting
+
+    assert parse_greeting("您好，做过多模型应用的功能验证。", with_salutation=False) == (
+        "做过多模型应用的功能验证。"
+    )
+    assert parse_greeting("你好，做过数据管道。", with_salutation=False) == "做过数据管道。"
+    assert parse_greeting("尊敬的HR您好，做过数据管道。", with_salutation=False) == "做过数据管道。"
+    # 正文里的「您好」不动：那可能是引用 JD 或客户场景。
+    kept = parse_greeting("做过客户对接，常说您好。", with_salutation=False)
+    assert "常说您好" in kept
+
+
+def test_first_sentence_guidance_no_longer_recommends_ai_positioning():
+    """第 1 句的指引里，「用 AI 工具端到端交付」不能是推荐写法（它是第 4 句的事）。
+
+    用户实测：连续多条招呼语第 1 句都是「做过用 AI 工具端到端交付的 AI 应用」，
+    因为旧提示词把它写成了一条"可以单独说的定位"，模型就当成了固定开场。
+    """
+    messages = build_greeting_messages({"title": "测试岗"}, "{}")
+    system = messages[0]["content"]
+
+    assert "不要放在第 1 句" in system
+    assert "定位归这里" in system  # 第 4 句的小标题
+
+
+# ===== 2026-11-10：出厂默认就带一套写作基准（让用这个项目的人开箱效果一致）=====
+
+
+def test_default_greeting_baseline_ships_with_the_app():
+    """没配置过的用户也拿到一套可用基准——不是空字符串。
+
+    用户原话："我想用我这个项目的人，生成出来的效果能和我一样"。这套写法原本只在他本地
+    库里，别人装上项目拿到的是空基准，效果完全不同。
+    """
+    from app.schemas.apply.base import DEFAULT_GREETING_BASELINE
+    from app.schemas.apply.config import ApplyConfigIn
+
+    assert ApplyConfigIn().greeting_baseline == DEFAULT_GREETING_BASELINE
+    assert len(DEFAULT_GREETING_BASELINE) > 200
+    # 四条核心口径都在
+    assert "第 1 句按这份岗位的具体职责写" in DEFAULT_GREETING_BASELINE
+    assert "第 4 句" in DEFAULT_GREETING_BASELINE
+    assert "不写学校" in DEFAULT_GREETING_BASELINE
+
+
+def test_default_greeting_baseline_has_no_personal_project_names():
+    """出厂默认不能带作者本人的项目名。
+
+    作者本地版点名了 CreatorDistill / PixelBeads / ESP-SparkBot——那是"该挑哪类项目"的
+    例子，只对他自己的简历成立。别人装上后若照抄，模型会拿**不存在的项目**写招呼语，
+    等于批量事实错误。
+    """
+    from app.schemas.apply.base import DEFAULT_GREETING_BASELINE
+
+    for personal in ("CreatorDistill", "PixelBeads", "ESP-SparkBot", "AI 简历工作台"):
+        assert personal not in DEFAULT_GREETING_BASELINE

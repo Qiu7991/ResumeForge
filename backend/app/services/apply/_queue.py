@@ -354,3 +354,27 @@ def build_apply_data(db: Session, resume: ResumeRecord | None) -> dict[str, Any]
     if resume is not None and resume.title:
         data["job_intent"] = data.get("job_intent") or resume.job_title
     return {key: value for key, value in data.items() if value}
+
+
+def queued_job_ids(db: Session, job_ids: Sequence[int | None]) -> set[int]:
+    """这批岗位里**哪些已经在投递队列里**（2026-11-10）。
+
+    调用方是采集结果面板：它要标出"这条岗位是不是已经在投递台了"。
+
+    一次 `WHERE job_id IN (...)` 查完，不在 Python 里逐条查：采集结果一次可能列上百条，
+    逐条查询会让"打开采集结果"这个动作随条数线性变慢。
+
+    为什么不复用候选的 `imported_job_id` 判断：那只说明"导入过岗位广场"，而用户关心的是
+    "有没有进投递台"。导入之后被移出队列的岗位必须显示成"没进队列"，这个差别只有
+    队列表能答。
+
+    ``None`` 与假值一律忽略（手动粘贴的候选没有 ``imported_job_id``；队列条目的
+    ``job_id`` 也可空，表示岗位已被删除）。
+    """
+    wanted = {int(job_id) for job_id in job_ids if job_id}
+    if not wanted:
+        return set()
+    rows = (
+        db.query(ApplyQueueItem.job_id).filter(ApplyQueueItem.job_id.in_(wanted)).all()
+    )
+    return {int(row[0]) for row in rows if row[0] is not None}

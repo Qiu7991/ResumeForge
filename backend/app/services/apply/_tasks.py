@@ -217,7 +217,9 @@ def create_collect_task(db: Session, *, save_site_samples: bool = False) -> Appl
         raise ApplyConflict("已有任务正在进行中，请先停止或等待其完成")
 
     config = get_collect_config(db)
-    if not config.keywords and not config.city.strip():
+    if config.source != "interest" and not config.keywords and not config.city.strip():
+        # 「我的感兴趣」来源（2026-11-09）没有关键词/城市维度——个人固定列表，不适用这条
+        # 搜索路径的校验；其余来源仍要求至少填一项，否则搜索页无从打开。
         raise ApplyBadRequest("请先设置采集关键词或城市后再开始采集")
 
     task_config = config.model_dump()

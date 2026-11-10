@@ -128,6 +128,20 @@ const applyQueue = {
   "applyQueue.toast.updated": "队列条目已更新",
   "applyQueue.toast.savedConfirmed": "已保存并确认，可以投递",
   "applyQueue.toast.updateFailed": "更新失败",
+  // ── 批量生成招呼语（2026-11-10）──────────────────────────────
+  "applyQueue.greeting.batchProgress": "正在生成招呼语：{current}（{done}/{total}）",
+  "applyQueue.greeting.batchStop": "当前岗位完成后停止",
+  "applyQueue.greeting.batchDoneTitle": "招呼语生成完成：成功 {ok} 个，失败 {failed} 个",
+  "applyQueue.greeting.batchSkipped": "另有 {count} 个未处理（已停止）",
+  /** 按钮：对勾选的、还没生成招呼语的岗位逐个生成。 */
+  "applyQueue.action.batchGreeting": "批量生成招呼语",
+  "applyQueue.action.batchGreetingTooltip":
+    "对勾选的岗位逐个按「简历 + 岗位」生成招呼语（与编辑弹窗里那颗按钮同一套格式）。生成的是草稿，仍需你逐条确认后才会发出。",
+  "applyQueue.action.batchGreetingEmpty": "勾选的岗位都已有招呼语，无需生成",
+  "applyQueue.action.batchGreetingNone": "勾选的岗位没有可用的简历，无法生成",
+
+  "applyQueue.action.batchGreetingBusy": "上一批还在生成中，等它跑完再点",
+
 } as const;
 
 export default applyQueue;

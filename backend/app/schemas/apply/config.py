@@ -10,6 +10,7 @@ from .base import (
     DEFAULT_BROWSER_PORT,
     DEFAULT_DAILY_LIMIT,
     DEFAULT_GREETING,
+    DEFAULT_GREETING_BASELINE,
     DEFAULT_INTERVAL_JITTER_SECONDS,
     DEFAULT_INTERVAL_SECONDS,
     DEFAULT_PER_TASK_LIMIT,
@@ -33,7 +34,17 @@ class ApplyConfigIn(BaseModel):
     breaker_threshold: int = Field(default=DEFAULT_BREAKER_THRESHOLD, ge=1, le=20)
     default_greeting: str = Field(default=DEFAULT_GREETING, max_length=GREETING_INPUT_MAX_CHARS)
     # 用户自定义的打招呼语基准/模板：只作为风格与结构约束，不能覆盖事实与防虚构规则。
-    greeting_baseline: str = Field(default="", max_length=4_000)
+    greeting_baseline: str = Field(
+        default=DEFAULT_GREETING_BASELINE, max_length=4_000
+    )
+    # 招呼语是否以「您好，」开头（2026-11-10）。
+    #
+    # 默认 **True**：这是用户自己规定的礼貌开场，不该替用户改。
+    # 但调研显示 BOSS 后台在**不点开会话**时只显示开头 10–18 个字，而「您好，」占 3 个字
+    # （约占预览区的 1/5）。同一场景下 HR 也普遍反馈"别用系统默认招呼语、别浪费开头"。
+    # 所以给一个开关让用户按岗位类型自己试：面向 HR/客户的岗位保留礼貌，
+    # 纯技术岗可以省下这 3 个字直接上能力标签。
+    greeting_with_salutation: bool = True
     # 默认简历：岗位没有专属简历时用它。优先级低于「为该岗位生成的简历」，
     # 高于"没有简历"——队列条目不必逐条手选，运行时也按同一顺序解析。
     default_resume_id: int | None = Field(default=None, ge=1)

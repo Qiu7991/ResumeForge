@@ -12,6 +12,7 @@ import { getJob, listJobs } from "../api/jobs";
 import { getResume, listResumes } from "../api/resumes";
 import { getTrack, listTracksPage } from "../api/tracker";
 import { t } from "../i18n";
+import type { ResumeBrief } from "../types";
 import { useRemoteSearchSelect } from "./useRemoteSearchSelect";
 import type { RemoteSelectOption } from "./useRemoteSearchSelect";
 
@@ -62,20 +63,65 @@ export function useResumeSearchSelect() {
 }
 
 /**
- * 简历远程搜索（限定某岗位，P0-1）：投递队列条目的简历选择用——
- * 候选只给该岗位关联过的简历，不把全库简历混进来。
+ * 简历远程搜索（限定某岗位 + 收藏，P0-1）：投递队列条目的简历选择用。
+ *
+ * 候选 = **该岗位关联过的简历** + **收藏的简历**（2026-11-09 补回收藏这一半）。
+ *
+ * 为什么必须是两路并集：串行只查 `job_id` 时，用户收藏的通用母版根本不出现——
+ * 而"挑一份顺手的简历投这个岗位"正是收藏的意义。1.x 早有这条（`Promise.all` 两路
+ * 并集 + 去重 + 后缀标签），2.0 移植时只留了 `job_id` 一路，用户实测「和 1.0 不一样，
+ * 1.0 是把收藏的简历都显示」。
+ *
+ * 两路各自带 `page_size`，合并后按 id 去重、先本岗位后收藏（用户更容易在自己的岗位
+ * 简历里找到目标）；同一份既属本岗位又是收藏时只出现一次，且标「本岗位」。
  */
 export function useResumeSearchSelectForJob(jobId: number | null) {
   return useRemoteSearchSelect({
-    fetchOptions: (keyword) =>
-      listResumes({ job_id: jobId ?? undefined, keyword, page_size: SELECT_PAGE_SIZE }).then(
-        (page) => page.items.map(resumeOption),
-      ),
+    fetchOptions: async (keyword) => {
+      const [forJob, favorites] = await Promise.all([
+        jobId == null
+          ? Promise.resolve([] as ResumeBrief[])
+          : listResumes({ job_id: jobId, keyword, page_size: SELECT_PAGE_SIZE }).then(
+              (page) => page.items,
+            ),
+        listResumes({ favorite: true, keyword, page_size: SELECT_PAGE_SIZE }).then(
+          (page) => page.items,
+        ),
+      ]);
+      const options = forJob.map((resume) => queueResumeOption(resume, jobId));
+      const seen = new Set(options.map((option) => option.value));
+      for (const resume of favorites) {
+        if (seen.has(resume.id)) continue;
+        seen.add(resume.id);
+        options.push(queueResumeOption(resume, jobId));
+      }
+      return options;
+    },
     fetchById: (id) =>
       getResume(id)
-        .then(resumeOption)
+        .then((resume) => queueResumeOption(resume, jobId))
         .catch(() => null),
   });
+}
+
+/**
+ * 队列简历选项：本岗位的标「本岗位」，其余收藏项标「收藏」。
+ *
+ * 后缀只影响展示——`value` 仍是简历 id，所以不影响任何写库口径。
+ * 两份都命中的（本岗位 + 收藏）只标「本岗位」：那是更强的语义（这份简历就是为它写的）。
+ */
+function queueResumeOption(
+  resume: Pick<ResumeBrief, "id" | "title" | "job_id" | "favorite">,
+  jobId: number | null,
+): RemoteSelectOption {
+  const option = resumeOption(resume);
+  if (jobId != null && resume.job_id === jobId) {
+    return { ...option, label: `${option.label}${t("hooksUi.option.resumeForJob")}` };
+  }
+  if (resume.favorite) {
+    return { ...option, label: `${option.label}${t("hooksUi.option.resumeFavorite")}` };
+  }
+  return option;
 }
 
 /**

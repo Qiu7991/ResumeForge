@@ -10,7 +10,7 @@
 import { DeleteOutlined, EditOutlined, EyeOutlined } from "@ant-design/icons";
 import { App, Alert, Button, Empty, Space, Tag, Typography, Popconfirm } from "antd";
 import PageSkeleton from "../common/PageSkeleton";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createApplyTask, getBrowserStatus, listQueue, removeQueueItem } from "../../api/apply";
 import { useApi } from "../../hooks/useApi";
 import {
@@ -28,6 +28,11 @@ import { QueueFilterBar } from "./queue/QueueFilterBar";
 import { UNANALYZED_FILTER, type AdmissionFilterValue } from "./queue/filterOptions";
 import { QueueItemEditor } from "./queue/QueueItemEditor";
 import { QueueTable } from "./queue/QueueTable";
+import {
+  startGreetingBatch,
+  stopGreetingBatch,
+  useGreetingBatchState,
+} from "../../features/apply/greetingBatchRunner";
 import { t } from "../../i18n";
 import { QUEUE_STATUS_LABEL_KEYS } from "../../i18n/enum/apply";
 import { useLocale } from "../../i18n/i18nContext";
@@ -44,6 +49,8 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
   const { message } = App.useApp();
   // 本面板用模块级 t()：必须订阅语言变化。
   useLocale();
+  // 批量生成招呼语的运行态放在模块级（见 greetingBatchRunner）：切页回来进度还在。
+  const greetingBatch = useGreetingBatchState();
   const [reloadKey, setReloadKey] = useState(0);
   // 列表响应是 { items, total, truncated }（P2-2）：队列封顶 500 条，total 是真实条数。
   const { data, loading, error, reload } = useApi<ApplyQueueList>(() => listQueue(), [reloadKey]);
@@ -60,6 +67,20 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
   useEffect(() => {
     if (error) message.error(error);
   }, [error, message]);
+
+  /*
+   * 批量生成结束时刷新一次列表（2026-11-10）：runner 把每条生成的草稿写进了队列，
+   * 但它在模块作用域里跑，不会让本组件重渲染——不刷的话用户看到的还是"招呼语未生成"，
+   * 以为一键生成没生效。
+   *
+   * 只在 `running` 由真变假时刷（跑的期间不刷）：中途刷新会让正在编辑的那行闪一下。
+   */
+  const greetingWasRunning = useRef(greetingBatch.running);
+  useEffect(() => {
+    if (greetingWasRunning.current && !greetingBatch.running) refresh();
+    greetingWasRunning.current = greetingBatch.running;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [greetingBatch.running]);
 
   const items = useMemo(() => data?.items ?? [], [data]);
   const queueTotal = data?.total ?? 0;
@@ -148,6 +169,31 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
       message.error(err instanceof Error ? err.message : t("applyQueue.toast.removeFailed"));
     } finally {
       setBusy(false);
+    }
+  };
+
+  /**
+   * 批量生成招呼语（2026-11-10 用户要求："选中没生成打招呼语的岗位之后，按现在生成
+   * 打招呼语的格式一键生成"）。
+   *
+   * 只挑**还没有招呼语**的选中条目：已经有草稿的不覆盖（用户可能已经手改过），
+   * 也不重复花一次模型调用。这个筛选放在这里而不是 component 里，是因为"有没有招呼语"
+   * 是队列数据的属性，工具栏只负责画按钮。
+   *
+   * 生成结果一律是**未确认**草稿（`confirm_greeting: false`，见 runner）：一键生成不等于
+   * 一键发送，用户仍要逐条过目——这与投递前的招呼语闸门是同一条纪律。
+   */
+  const startSelectedGreetings = () => {
+    const targets = filteredItems.filter(
+      (item) => selectedIds.includes(item.id) && !item.greeting.trim(),
+    );
+    if (targets.length === 0) {
+      message.info(t("applyQueue.action.batchGreetingEmpty"));
+      return;
+    }
+    if (!startGreetingBatch(targets)) {
+      // 已经有一批在跑：不排队（排队会让"点了几次"和"跑了多少"对不上）。
+      message.info(t("applyQueue.action.batchGreetingBusy"));
     }
   };
 
@@ -275,6 +321,9 @@ export default function ApplyQueuePanel({ disabled, onStarted, onChanged }: Prop
         onReload={() => void reload()}
         startDisabled={disabled || pendingItems.length === 0}
         onStart={() => void start()}
+        greetingBatch={greetingBatch}
+        onStartGreetings={startSelectedGreetings}
+        onStopGreetings={stopGreetingBatch}
       />
 
       {items.length === 0 ? (

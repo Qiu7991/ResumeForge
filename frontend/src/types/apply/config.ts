@@ -30,6 +30,11 @@ export interface ApplyConfig {
   default_greeting: string;
   /** 用户自定义的打招呼语基准/模板；只约束结构语气，不覆盖事实。 */
   greeting_baseline?: string;
+  /**
+   * 招呼语是否以「您好，」开头（默认 true = 用户规定的礼貌开场）。
+   * 关掉后第 1 句直接上能力标签——BOSS 后台不点开会话时只显示开头 10–18 个字。
+   */
+  greeting_with_salutation?: boolean;
   /** 默认简历：岗位没有专属简历时用它（优先级低于岗位版、高于没有简历）。 */
   default_resume_id?: number | null;
   /** 发送前必须确认招呼语：开启时没有已确认招呼语的岗位会被跳过。 */
@@ -49,7 +54,26 @@ export interface ApplyConfigOut extends ApplyConfig {
   defaults: ApplyConfig;
 }
 
+/** 采集来源：search=关键词搜索（原有）、interest=BOSS「感兴趣」个人列表（2026-11-09）。 */
+export type CollectSource = "search" | "interest";
+
 export interface CollectConfig {
+  /**
+   * 采集来源。选 `interest` 时 keywords/city/filters **全部忽略**（个人列表没有这些
+   * 维度），只有 per_task_limit 与限速项仍然生效。
+   */
+  source: CollectSource;
+  /** interest 模式最多翻几页（每页固定 15 条）；10 页 ≈ 150 条上限。 */
+  interest_max_pages: number;
+  /**
+   * interest 模式**只看列表前 N 个收藏**（按列表位置计数，已收藏过的也算一个位置）；
+   * `0` = 不限。
+   *
+   * 与 `per_task_limit` 单位不同、互相独立：这一项控制"往下看多远"，
+   * `per_task_limit` 控制"最多新增几条"。已收藏过的因为被跳过而不占后者名额，
+   * 所以只有一个上限时用户无法表达"我只要最近收藏的这一批"。
+   */
+  interest_scan_limit: number;
   keywords: string[];
   city: string;
   salary_min: number | null;

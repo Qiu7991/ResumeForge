@@ -61,6 +61,10 @@ const applySettings = {
   "applySettings.action.save": "Save settings",
   "applySettings.saved": "Apply settings saved",
   "applySettings.saveFailed": "Could not save the apply settings",
+  "applySettings.greetingSalutation.label": "Start the greeting with a salutation",
+  "applySettings.greetingSalutation.extra":
+    "On by default. Turn it off and sentence 1 starts directly with the capability label — BOSS shows only the first 10–18 characters in the message list, and \"Hello,\" uses up 3 of them. Flip it to compare.",
+
 } as const;
 
 export default applySettings;

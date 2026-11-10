@@ -267,6 +267,7 @@ async def greeting_preview(
                 resume_text,
                 greeting_baseline=config.greeting_baseline,
                 focus_project=payload.focus_project or "",
+                greeting_with_salutation=config.greeting_with_salutation,
             ),
             what="招呼语生成",
         )

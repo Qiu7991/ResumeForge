@@ -5,6 +5,7 @@
  * openMatchBatch/backfillDetails 等经 prop 直通页面 handler，零 api 导入。）
  */
 import {
+  CheckSquareOutlined,
   HistoryOutlined,
   InboxOutlined,
   PlusOutlined,
@@ -43,6 +44,7 @@ export function JobFilterBar({
   sortState,
   applySort,
   selectionMode = false,
+  enterSelectionMode,
 }: {
   keyword: string;
   setKeyword: (value: string) => void;
@@ -73,6 +75,15 @@ export function JobFilterBar({
    * 非多选态下这颗按钮照旧出现。
    */
   selectionMode?: boolean;
+  /**
+   * 进入多选态（2026-11-10 用户要求："做个复选框，这样我能多选添加进投递台，
+   * 不然一个一个点太麻烦了"）。
+   *
+   * 这个入口以前**只藏在行的右键菜单里**（注释原文"进入选择模式的入口在行右键菜单"），
+   * 用户根本发现不了，只能一个一个点。现在工具栏上给一颗显式按钮。
+   * 不传时按钮不渲染（既有调用方与单测不用改）。
+   */
+  enterSelectionMode?: () => void;
 }) {
   useLocale();
   // 搜索框受控：本地镜像同步外部 keyword（URL 带参等外部变化能回填输入框），
@@ -160,8 +171,18 @@ export function JobFilterBar({
             label: t(option.labelKey),
           }))}
         />
-        {/* 进入选择模式的入口在行右键菜单的「批量选择」（R8）；退出选择已挪到
-            BatchToolbar 的「全选全部岗位」右侧（用户要求，两行各归其位）。 */}
+        {/* 多选入口（2026-11-10）：以前只藏在右键菜单里，用户发现不了，只能一个一个点。
+            多选态下不渲染它——已经在选了，再显示"批量选择"只会让人以为还有另一种模式。
+            退出选择在 BatchToolbar（用户要求，两行各归其位）。 */}
+        {selectionMode || !enterSelectionMode ? null : (
+          <Button
+            icon={<CheckSquareOutlined />}
+            disabled={batchAction !== null}
+            onClick={enterSelectionMode}
+          >
+            {t("jobsPage.filter.selectMode")}
+          </Button>
+        )}
         {/* 开始分析在面板里确认（设置视图有「开始分析」按钮）；分析一律走后台任务，
             关掉面板/切页都不会中断，无需单独的"后台运行"入口。 */}
         <Button

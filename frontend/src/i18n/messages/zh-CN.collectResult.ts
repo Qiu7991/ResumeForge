@@ -20,13 +20,19 @@
  * `bulkEnqueue.*` 语言包里（2026-10-27 已迁移）。这里当参数接收，不重复存一份。
  */
 const collectResult = {
-  "collectResult.title": "本次采集结果",
-  "collectResult.hint": "勾选要收进岗位广场的岗位，没勾的会留在备选岗位里，之后还能再来挑。",
-  "collectResult.empty": "这次采集还没有待导入的岗位（可能都已导入，或一条都没采到）",
+  "collectResult.title": "采集到的岗位",
+  "collectResult.hint":
+    "这里是**所有批次**采集到、还没导入岗位广场的岗位（含之前几轮的）。勾选后才进岗位广场，没勾的会留在这里，之后还能再来挑。",
+  "collectResult.empty": "还没有待导入的岗位（可能都已导入，或一条都没采到）",
 
   "collectResult.column.title": "岗位",
   "collectResult.column.location": "城市",
   "collectResult.column.salary": "薪资",
+  "collectResult.column.collectedAt": "采集时间",
+  "collectResult.column.queue": "投递台",
+  "collectResult.cell.inQueue": "已在投递台",
+  "collectResult.cell.notInQueue": "未入队",
+  "collectResult.cell.manual": "手动添加",
   "collectResult.column.source": "原站",
   "collectResult.action.openSource": "查看",
 

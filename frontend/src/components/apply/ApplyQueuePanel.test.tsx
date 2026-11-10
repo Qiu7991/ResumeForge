@@ -9,6 +9,7 @@
 import { App as AntdApp } from "antd";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { translate } from "../../i18n";
 import type { ApplyQueueItem } from "../../types";
 import { ContextMenuHost } from "../../features/context-menu/ContextMenuHost";
 import ApplyQueuePanel from "./ApplyQueuePanel";
@@ -429,5 +430,79 @@ describe("ApplyQueuePanel 分页与刷新", () => {
 
     resolveQueue(queueList([{ ...BASE_ITEM }]));
     await waitFor(() => expect(refresh).not.toHaveClass("ant-btn-loading"));
+  });
+});
+
+/**
+ * 批量生成招呼语（2026-11-10 用户要求："选中没生成打招呼语的岗位之后，按现在生成
+ * 打招呼语的格式一键生成"）。
+ *
+ * 三条不变量：
+ * 1. 只对**没有招呼语**的选中条目发请求（已有草稿不覆盖，也不白花一次模型调用）；
+ * 2. 生成结果落库为**未确认**草稿（`confirm_greeting: false`）——一键生成 ≠ 一键发送；
+ * 3. 后端退回默认招呼语（`source: "default"`）不算成功：那正是用户要避免的群发话术。
+ */
+describe("ApplyQueuePanel 批量生成招呼语", () => {
+  function renderPanel() {
+    return render(
+      <AntdApp>
+        <ContextMenuHost>
+          <ApplyQueuePanel disabled={false} onStarted={vi.fn()} />
+        </ContextMenuHost>
+      </AntdApp>,
+    );
+  }
+
+  function checkAllRows() {
+    // 第一列是行选择复选框（表头那个是全选，这里用「全选队列」按钮更直白）。
+    fireEvent.click(screen.getByRole("button", { name: translate("zh-CN", "applyQueue.filter.selectAll") }));
+  }
+
+  it("只给「没有招呼语」的选中条目生成，且落库为未确认草稿", async () => {
+    apiMocks.listQueue.mockResolvedValue(
+      queueList([
+        { ...BASE_ITEM, id: 1, job_id: 11, job_title: "Job A", greeting: "" },
+        { ...BASE_ITEM, id: 2, job_id: 12, job_title: "Job B", greeting: "existing draft" },
+      ]),
+    );
+    apiMocks.previewGreeting.mockResolvedValue({ greeting: "freshly generated greeting", source: "generated" });
+    apiMocks.updateQueueItem.mockResolvedValue({ ...BASE_ITEM, id: 1 });
+
+    renderPanel();
+    await screen.findByText("Job A");
+    checkAllRows();
+
+    fireEvent.click(screen.getByRole("button", { name: translate("zh-CN", "applyQueue.action.batchGreeting") }));
+
+    await waitFor(() => expect(apiMocks.updateQueueItem).toHaveBeenCalled());
+    // 只有 A 岗位（没有招呼语）发了生成请求。
+    expect(apiMocks.previewGreeting).toHaveBeenCalledTimes(1);
+    expect(apiMocks.previewGreeting).toHaveBeenCalledWith(
+      expect.objectContaining({ job_id: 11, item_id: 1 }),
+    );
+    expect(apiMocks.updateQueueItem).toHaveBeenCalledWith(1, {
+      greeting: "freshly generated greeting",
+      confirm_greeting: false,
+    });
+  });
+
+  it("后端退回默认招呼语时不算成功，不写库", async () => {
+    apiMocks.listQueue.mockResolvedValue(
+      queueList([{ ...BASE_ITEM, id: 1, job_id: 11, job_title: "Job A", greeting: "" }]),
+    );
+    apiMocks.previewGreeting.mockResolvedValue({
+      greeting: "您好，我对该岗位很感兴趣",
+      source: "default",
+    });
+
+    renderPanel();
+    await screen.findByText("Job A");
+    checkAllRows();
+
+    fireEvent.click(screen.getByRole("button", { name: translate("zh-CN", "applyQueue.action.batchGreeting") }));
+
+    await waitFor(() => expect(apiMocks.previewGreeting).toHaveBeenCalled());
+    // 默认话术群发正是用户要避免的：不落库。
+    expect(apiMocks.updateQueueItem).not.toHaveBeenCalled();
   });
 });

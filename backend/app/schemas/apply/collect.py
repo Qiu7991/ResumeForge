@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """采集配置与采集请求 schema。"""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .base import (
@@ -25,6 +27,23 @@ class CollectConfigIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # 采集来源（2026-11-09）：search=关键词搜索（原有）、interest=BOSS「感兴趣」个人列表。
+    # 选 interest 时 keywords/city/filters 等**全部忽略**（个人列表没有这些维度），
+    # 只有 per_task_limit / 限速项仍然生效。
+    source: Literal["search", "interest"] = "search"
+    # interest 模式最多翻几页（每页固定 15 条）。10 页 = 150 条上限，覆盖当前 134 条。
+    interest_max_pages: int = Field(default=10, ge=1, le=20)
+    # interest 模式**只看列表前 N 个收藏**（2026-11-10 用户要求）。
+    #
+    # 与 ``per_task_limit`` 的区别是**计数单位不同**，两者互相独立、同时生效：
+    # - ``interest_scan_limit``：从最新收藏往下数**前 N 个位置**，已收藏过的也算在 N 里。
+    #   用来控制"这轮只碰最新的 20 个收藏"，不会一直往后翻到很旧的收藏。
+    # - ``per_task_limit``：最多**新增**几条（进暂存区的）。已收藏过的、已关闭的都不占名额。
+    #
+    # 为什么要两个：用户的原话是"需要可选抓取多少条收藏的职位，因为有些已经收藏过了"——
+    # 只有 per_task_limit 时，已收藏的会被跳过而不计数，于是一路往后翻到很旧的收藏，
+    # 用户无法表达"我只要最近收藏的这一批"。``0`` = 不限（走旧的"翻到上限/翻完"语义）。
+    interest_scan_limit: int = Field(default=0, ge=0, le=500)
     keywords: list[str] = Field(default_factory=list, max_length=MAX_COLLECT_KEYWORDS)
     city: str = Field(default="", max_length=64)
     salary_min: int | None = Field(default=None, ge=0, le=1000)

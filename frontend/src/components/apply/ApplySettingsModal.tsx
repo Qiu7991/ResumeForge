@@ -196,6 +196,23 @@ function ApplySettingsForm({ onClose, onSaved }: Omit<Props, "open">) {
         <HintedTextArea rows={5} maxLength={4000} />
       </Form.Item>
 
+      {/* 招呼语是否以「您好，」开头（2026-11-10）：默认开（用户自己规定的礼貌开场）。
+          关掉后第 1 句直接上能力标签——BOSS 后台不点开会话时只显示开头 10–18 个字，
+          「您好，」占 3 个。给个开关让用户按岗位类型自己试。 */}
+      <Form.Item
+        name="greeting_with_salutation"
+        label={t("applySettings.greetingSalutation.label")}
+        valuePropName="checked"
+        extra={
+          <>
+            {t("applySettings.greetingSalutation.extra")}
+            {defaults && <div>{defaultsHint(defaults.greeting_with_salutation ?? true)}</div>}
+          </>
+        }
+      >
+        <Switch />
+      </Form.Item>
+
       <Form.Item
         name="require_greeting_review"
         label={t("applySettings.greetingReview.label")}
