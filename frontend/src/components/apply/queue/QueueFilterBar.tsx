@@ -7,10 +7,11 @@
  * 两个下拉的选项在渲染期由 filterOptions.ts 构建（展示名走语言包，`value` 仍是协议值），
  * 本组件只迁工具栏自己的文案；移出确认与详情抽屉共用同一条后果正文，避免两处措辞分叉。
  */
-import { PlayCircleOutlined, ReloadOutlined } from "@ant-design/icons";
-import { Button, Popconfirm, Select, Space, Tooltip, Typography } from "antd";
+import { PlayCircleOutlined, ReloadOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { Button, Popconfirm, Progress, Select, Space, Tooltip, Typography } from "antd";
 import { t } from "../../../i18n";
 import { useLocale } from "../../../i18n/i18nContext";
+import type { GreetingBatchState } from "../../../features/apply/greetingBatchRunner";
 import type { QueueStatus } from "../../../types";
 import {
   admissionFilterOptions,
@@ -37,6 +38,9 @@ export function QueueFilterBar({
   onReload,
   startDisabled,
   onStart,
+  greetingBatch,
+  onStartGreetings,
+  onStopGreetings,
 }: {
   statusFilter: QueueStatus | undefined;
   onStatusChange: (value: QueueStatus | undefined) => void;
@@ -59,6 +63,14 @@ export function QueueFilterBar({
   /** 有任务在跑：禁止重复开始。 */
   startDisabled: boolean;
   onStart: () => void;
+  /**
+   * 「批量生成招呼语」的运行状态（2026-11-10 用户要求：勾选后一键生成，
+   * 别一条条点）。跑起来时工具栏换成进度条 + 停止。
+   */
+  greetingBatch: GreetingBatchState;
+  /** 对勾选的岗位逐个生成；宿主负责挑出"还没有招呼语"的那些。 */
+  onStartGreetings: () => void;
+  onStopGreetings: () => void;
 }) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后工具栏停在旧文案。
   useLocale();
@@ -120,6 +132,46 @@ export function QueueFilterBar({
         <Button icon={<ReloadOutlined />} loading={loading} onClick={onReload}>
           {t("common.action.refresh")}
         </Button>
+        {/* 批量生成招呼语（2026-11-10 用户要求）：勾选后一键生成，不用一条条打开编辑弹窗。
+            跑起来时这一颗换成进度 + 停止——同一位置表达"这件事正在进行及其进度"，
+            不要把进度条塞到别处让人两头看。 */}
+        {greetingBatch.running ? (
+          <>
+            <Progress
+              percent={
+                greetingBatch.total > 0
+                  ? Math.round((greetingBatch.done / greetingBatch.total) * 100)
+                  : 0
+              }
+              size="small"
+              style={{ width: 160 }}
+            />
+            <Typography.Text type="secondary">
+              {t("applyQueue.greeting.batchProgress", {
+                done: greetingBatch.done,
+                total: greetingBatch.total,
+                current: greetingBatch.currentTitle,
+              })}
+            </Typography.Text>
+            <Button
+              size="small"
+              disabled={greetingBatch.stopRequested}
+              onClick={onStopGreetings}
+            >
+              {t("applyQueue.greeting.batchStop")}
+            </Button>
+          </>
+        ) : (
+          <Tooltip title={t("applyQueue.action.batchGreetingTooltip")}>
+            <Button
+              icon={<ThunderboltOutlined />}
+              disabled={busy || selectedCount === 0}
+              onClick={onStartGreetings}
+            >
+              {t("applyQueue.action.batchGreeting")}
+            </Button>
+          </Tooltip>
+        )}
       </Space>
       <Button
         type="primary"

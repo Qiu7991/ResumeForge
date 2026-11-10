@@ -122,6 +122,19 @@ const applyQueue = {
   "applyQueue.toast.updated": "Queue item updated",
   "applyQueue.toast.savedConfirmed": "Saved and confirmed — ready to send",
   "applyQueue.toast.updateFailed": "Could not update the queue item",
+  "applyQueue.greeting.batchProgress": "Generating greetings: {current} ({done}/{total})",
+  "applyQueue.greeting.batchStop": "Stop after the current Job",
+  "applyQueue.greeting.batchDoneTitle": "Greetings generated: {ok} succeeded, {failed} failed",
+  "applyQueue.greeting.batchSkipped": "{count} more were not processed (stopped)",
+  "applyQueue.action.batchGreeting": "Generate greetings",
+  "applyQueue.action.batchGreetingTooltip":
+    "Generates a greeting for each selected Job from its Resume and the Job itself (same format as the button in the editor). These are drafts — you still confirm each one before anything is sent.",
+  "applyQueue.action.batchGreetingEmpty": "All selected Jobs already have greetings",
+  "applyQueue.action.batchGreetingNone":
+    "Selected Jobs have no usable Resume, so nothing could be generated",
+
+  "applyQueue.action.batchGreetingBusy": "A batch is still running — wait for it to finish",
+
 } as const;
 
 export default applyQueue;
