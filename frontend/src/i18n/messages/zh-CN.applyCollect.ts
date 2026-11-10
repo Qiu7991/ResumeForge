@@ -11,6 +11,9 @@ const applyCollect = {
   "applyCollect.source.interest": "我的感兴趣",
   "applyCollect.hint.interest":
     "BOSS「感兴趣」是你的个人岗位列表，不需要关键词和城市条件；岗位会连同完整 JD 存进暂存区。",
+  "applyCollect.field.interestScanLimit": "只看前 N 个收藏",
+  "applyCollect.hint.interestScanLimit":
+    "从最新收藏往下数这 N 个（已收藏过的也算一个位置）；0 = 不限。用来避免一路翻到很久以前的收藏。",
   "applyCollect.field.interestMaxPages": "感兴趣翻页上限（页）",
   "applyCollect.hint.interestMaxPages": "每页固定 15 条；10 页约 150 条。",
   "applyCollect.field.keywords": "关键词",
@@ -31,6 +34,9 @@ const applyCollect = {
   "applyCollect.history.noCity": "无城市",
   "applyCollect.outcome.listSeparator": "、",
   "applyCollect.outcome.interest.invalid": "已跳过 {count} 条失效岗位",
+  "applyCollect.outcome.interest.scan": "本轮查看了 {scanned} 个收藏位置，其中 {known} 个你已经收藏过（自动跳过）",
+  "applyCollect.outcome.interest.scanHint":
+    "想少看一些就把「只看前 N 个收藏」调小；已收藏过的不占「单批上限」名额。",
   "applyCollect.outcome.pagination.title":
     "后面的页与前面的结果完全重复，已在第 {page} 页提前停止翻页",
   "applyCollect.outcome.pagination.description":

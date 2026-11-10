@@ -60,6 +60,15 @@ export interface CollectConfig {
   source: CollectSource;
   /** interest 模式最多翻几页（每页固定 15 条）；10 页 ≈ 150 条上限。 */
   interest_max_pages: number;
+  /**
+   * interest 模式**只看列表前 N 个收藏**（按列表位置计数，已收藏过的也算一个位置）；
+   * `0` = 不限。
+   *
+   * 与 `per_task_limit` 单位不同、互相独立：这一项控制"往下看多远"，
+   * `per_task_limit` 控制"最多新增几条"。已收藏过的因为被跳过而不占后者名额，
+   * 所以只有一个上限时用户无法表达"我只要最近收藏的这一批"。
+   */
+  interest_scan_limit: number;
   keywords: string[];
   city: string;
   salary_min: number | null;

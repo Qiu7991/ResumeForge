@@ -63,12 +63,27 @@ def collect_interest(
     #    详情——抓详情会把共享标签页导航走，页面内 fetch 的翻页上下文就没了。
     pending: list[SearchResult] = []
     limit = config.per_task_limit
+    # 「只看前 N 个收藏」（2026-11-10 用户要求）：按**列表位置**计数，已收藏过的也算一个位置。
+    # 0 = 不限（旧语义）。两个上限互相独立：
+    #   scan_limit 管"这轮往下翻多远"，limit 管"最多新增几条"。
+    # 没有 scan_limit 时，已收藏的因为被跳过而**不占** limit 名额，于是一路翻到很旧的收藏，
+    # 用户无法表达"我只要最近收藏的这一批"——这正是这条配置存在的理由。
+    scan_limit = config.interest_scan_limit
+    scanned = 0          # 已"看过"的收藏位置数（含已跳过、已失效之外的每一条有效卡）
     seen: set[str] = set()
     page = 1
     while page <= config.interest_max_pages and len(pending) < limit:
+        if scan_limit and scanned >= scan_limit:
+            break
         checkpoint()
         # 页级步骤先落库再读取：界面上的"正在读取第 N 页"与浏览器动作同帧可见。
-        task.current_step = f"正在读取「感兴趣」第 {page} 页（已就绪 {len(pending)} 个）"
+        # 文案带上扫描进度，用户才知道"限量"生效到哪一步。
+        task.current_step = (
+            f"正在读取「感兴趣」第 {page} 页"
+            f"（已就绪 {len(pending)} 个"
+            + (f"，已查看 {scanned}/{scan_limit} 个收藏" if scan_limit else "")
+            + "）"
+        )
         session.commit()
         page_result = fetch_interest_page(client, page)
         report.pages += 1
@@ -76,11 +91,15 @@ def collect_interest(
         for item in page_result.results:
             if len(pending) >= limit:
                 break
+            if scan_limit and scanned >= scan_limit:
+                break
             key = item.url.strip()
             if key in seen:
                 report.skipped += 1
                 continue
             seen.add(key)
+            # 这一条占掉一个"收藏位置"——不管它后面是被跳过还是被采走。
+            scanned += 1
             known = collector._already_known(session, item)
             if known:
                 report.skipped += 1
@@ -95,6 +114,8 @@ def collect_interest(
         collector._pace(
             config.interval_seconds, config.interval_jitter_seconds, checkpoint, sleeper, clock
         )
+    # 记账：这轮实际看了多少个收藏位置。用户下次想调 scan_limit 时靠它判断该给多大。
+    report.interest_scanned = scanned
 
     # 3) 统一抓详情并暂存（与搜索路径阶段二同一套）。
     if pending:

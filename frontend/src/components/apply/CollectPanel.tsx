@@ -207,6 +207,16 @@ export default function CollectPanel({ disabled, onStarted, collectTask, progres
             ? (collectTask.config.interest_invalid as number)
             : 0
         }
+        interestAlreadyKnown={
+          typeof collectTask?.config?.interest_already_known === "number"
+            ? (collectTask.config.interest_already_known as number)
+            : 0
+        }
+        interestScanned={
+          typeof collectTask?.config?.interest_scanned === "number"
+            ? (collectTask.config.interest_scanned as number)
+            : 0
+        }
       />
 
       {/* 采集结果只陈列、不入库：勾选后才进岗位广场。 */}

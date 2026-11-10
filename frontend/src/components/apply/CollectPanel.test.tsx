@@ -24,6 +24,7 @@ vi.mock("../../api/apply", () => ({
 const CONFIG: CollectConfigOut = {
   source: "search",
   interest_max_pages: 10,
+  interest_scan_limit: 0,
   keywords: ["后端"],
   city: "北京",
   salary_min: null,

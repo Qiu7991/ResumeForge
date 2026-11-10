@@ -91,6 +91,16 @@ export default function CollectConfigForm({
         )}
         {interestMode && (
           <Form.Item
+            name="interest_scan_limit"
+            initialValue={0}
+            label={t("applyCollect.field.interestScanLimit")}
+            extra={t("applyCollect.hint.interestScanLimit")}
+          >
+            <InputNumber min={0} max={500} style={{ width: 170 }} />
+          </Form.Item>
+        )}
+        {interestMode && (
+          <Form.Item
             name="interest_max_pages"
             initialValue={10}
             label={t("applyCollect.field.interestMaxPages")}

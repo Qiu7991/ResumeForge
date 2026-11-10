@@ -267,6 +267,104 @@ def test_interest_mode_respects_per_task_limit(db_session):
     assert client.requested_pages == [1, 2]
 
 
+def test_interest_mode_scan_limit_counts_list_positions(db_session):
+    """``interest_scan_limit`` 按**列表位置**限量：已收藏过的那几条也占名额（2026-11-10）。
+
+    用户原话："需要可选抓取多少条收藏的职位，因为有些已经收藏过了"。
+    只有 ``per_task_limit`` 时，已收藏的因为被跳过而**不占**名额，于是一路往后翻到很旧的
+    收藏——用户无法表达"我只要最近收藏的这一批"。这条用例钉住新语义：
+    列表前 3 个位置里有 2 个已经在库里，scan_limit=3 时只看到第 3 个就不再往下翻。
+    """
+    # 先把前两条做成"库里已有"：按 _card 生成的真实 URL 建 Job（去重判据就是这个 URL）。
+    for index in (1, 2):
+        db_session.add(
+            Job(
+                title=f"感兴趣岗位{index}",
+                company=f"公司{index}",
+                source_url=(
+                    f"https://www.zhipin.com/job_detail/{_card(index)['encryptJobId']}.html"
+                ),
+                source="BOSS直聘",
+            )
+        )
+    db_session.commit()
+
+    client = _ScriptedClient(
+        {
+            1: _interest_payload(
+                1, [_card(1), _card(2), _card(3)], has_more=True, total=6
+            ),
+            2: _interest_payload(
+                2, [_card(4), _card(5), _card(6)], has_more=False, total=6
+            ),
+        }
+    )
+    adapter = _InterestAdapter()
+    task = _task(db_session)
+
+    report = _run(
+        db_session,
+        task,
+        client,
+        adapter,
+        _config(source="interest", per_task_limit=50, interest_scan_limit=3),
+    )
+
+    # 前两个位置已存在被跳过，第三个是新面孔 → 采到 1 条；第 2 页根本没去请求。
+    assert report.collected == 1
+    assert report.skipped == 2
+    assert client.requested_pages == [1]
+    assert report.interest_scanned == 3
+    assert task.config["interest_scanned"] == 3
+    # "已收藏过"单独记账（用户要求"保持跳过，但多显示数字"）。
+    assert task.config["interest_already_known"] == 2
+
+
+def test_interest_mode_scan_limit_zero_means_unlimited(db_session):
+    """``interest_scan_limit=0`` 保持旧语义：翻到 has_more 为假或 per_task_limit 为止。"""
+    client = _ScriptedClient(
+        {
+            1: _interest_payload(1, [_card(1), _card(2)], has_more=True, total=4),
+            2: _interest_payload(2, [_card(3), _card(4)], has_more=False, total=4),
+        }
+    )
+    adapter = _InterestAdapter()
+    task = _task(db_session)
+
+    report = _run(db_session, task, client, adapter, _config(source="interest"))
+
+    assert report.collected == 4
+    assert client.requested_pages == [1, 2]
+    assert report.interest_scanned == 4
+
+
+def test_interest_mode_reports_already_known_separately_from_trashed(db_session):
+    """「库里已有」与「在回收站里」分开记账：两者对用户的含义完全不同。"""
+    db_session.add(
+        Job(
+            title="感兴趣岗位1",
+            company="公司1",
+            source_url=(
+                f"https://www.zhipin.com/job_detail/{_card(1)['encryptJobId']}.html"
+            ),
+            source="BOSS直聘",
+        )
+    )
+    db_session.commit()
+
+    client = _ScriptedClient(
+        {1: _interest_payload(1, [_card(1), _card(2)], has_more=False, total=2)}
+    )
+    adapter = _InterestAdapter()
+    task = _task(db_session)
+
+    _run(db_session, task, client, adapter, _config(source="interest"))
+
+    assert task.config["interest_already_known"] == 1
+    # 没有回收站条目，这条不该被算进去。
+    assert "skipped_trashed" not in task.config
+
+
 def test_interest_mode_counts_invalid_cards(db_session):
     client = _ScriptedClient(
         {

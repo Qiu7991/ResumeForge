@@ -80,6 +80,10 @@ class CollectReport:
     # 「感兴趣」来源（source=interest）里 jobValidStatus != 1 的条数。它解释了"页面显示
     # 134 条、实际只采到 131 条"的差额；不报出来用户会以为丢了数据。
     interest_invalid: int = 0
+    # 「感兴趣」来源里，本轮**看过**多少个收藏位置（2026-11-10）。它是 ``interest_scan_limit``
+    # 的执行结果：给了上限时它等于上限（或收藏总数，取小者），没给时等于实际翻到的条数。
+    # 用户下次要调"只看前 N 个"时靠这个数判断该给多大——没有它，用户只能凭感觉试。
+    interest_scanned: int = 0
     unmapped_conditions: list[str] = field(default_factory=list)
 
 
@@ -196,6 +200,17 @@ class Collector:
             # 「感兴趣」来源里失效岗位的条数：它解释了"页面显示 134 条、实际只采到 131 条"
             # 的差额，不报出来用户会以为丢了数据。
             summary["interest_invalid"] = report.interest_invalid
+        if config.source == "interest":
+            # 本轮看过几个收藏位置（2026-11-10）：用户"只看前 N 个"的配置到底生效到哪，
+            # 以及该给多大才合适，只能靠这个数判断。
+            summary["interest_scanned"] = report.interest_scanned
+            # 「已收藏过、所以跳过」的条数单列（用户要求"保持跳过，但多显示数字"）。
+            # `skipped` 里还混着"本页内重复"与"回收站里已有"，这里只报"库里已有"那一类，
+            # 因为它才是用户看着列表会疑惑的那部分："这些我明明收藏过了"。回收站那条
+            # 另有 skipped_trashed 单独说明（含义完全不同：那是用户自己删过的）。
+            summary["interest_already_known"] = max(
+                0, report.skipped - report.skipped_trashed
+            )
         if not backfill_job_ids:
             # 只有**搜索采集**才写"详情缺失"这条账目：它是站点漂移的早期信号，站点健康度靠它
             # 识别"能采到列表却抓不到 JD"。补详情模式不写这个键（它走 backfilled/backfill_skipped），

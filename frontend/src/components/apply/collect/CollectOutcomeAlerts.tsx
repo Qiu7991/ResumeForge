@@ -17,6 +17,10 @@ interface Props {
   paginationStoppedAt?: number;
   /** 「感兴趣」来源里失效岗位的条数（0/缺省 = 没有失效卡）。 */
   interestInvalid?: number;
+  /** 「感兴趣」来源里**库里已经有的**、因此跳过的条数（0/缺省 = 没跳过）。 */
+  interestAlreadyKnown?: number;
+  /** 「感兴趣」来源本轮实际查看了多少个收藏位置（0/缺省 = 没记录）。 */
+  interestScanned?: number;
 }
 
 export default function CollectOutcomeAlerts({
@@ -24,6 +28,8 @@ export default function CollectOutcomeAlerts({
   siteFiltered,
   paginationStoppedAt = 0,
   interestInvalid = 0,
+  interestAlreadyKnown = 0,
+  interestScanned = 0,
 }: Props) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后账目停在旧文案。
   useLocale();
@@ -36,6 +42,18 @@ export default function CollectOutcomeAlerts({
           type="info"
           showIcon
           title={t("applyCollect.outcome.interest.invalid", { count: interestInvalid })}
+        />
+      )}
+      {(interestScanned > 0 || interestAlreadyKnown > 0) && (
+        <Alert
+          className="apply-collect-interest-scan"
+          type="info"
+          showIcon
+          title={t("applyCollect.outcome.interest.scan", {
+            scanned: interestScanned,
+            known: interestAlreadyKnown,
+          })}
+          description={t("applyCollect.outcome.interest.scanHint")}
         />
       )}
       {paginationStoppedAt > 0 && (

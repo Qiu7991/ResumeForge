@@ -12,6 +12,9 @@ const applyCollect = {
   "applyCollect.source.interest": "My interests",
   "applyCollect.hint.interest":
     "\"My interests\" is your personal Job list on BOSS; no keywords or city needed. Jobs are staged together with their full descriptions.",
+  "applyCollect.field.interestScanLimit": "Only the first N favorites",
+  "applyCollect.hint.interestScanLimit":
+    "Counts list positions from the newest favorite down (already-saved ones count too); 0 = no limit. Stops the run from reaching far-back favorites.",
   "applyCollect.field.interestMaxPages": "Interest pages limit",
   "applyCollect.hint.interestMaxPages": "15 Jobs per page; 10 pages ≈ 150 Jobs.",
   "applyCollect.field.keywords": "Keywords",
@@ -33,6 +36,10 @@ const applyCollect = {
   "applyCollect.history.noCity": "No city",
   "applyCollect.outcome.listSeparator": ", ",
   "applyCollect.outcome.interest.invalid": "Skipped {count} expired Jobs",
+  "applyCollect.outcome.interest.scan":
+    "Checked {scanned} favorites this run, {known} of them were already saved (skipped)",
+  "applyCollect.outcome.interest.scanHint":
+    "Lower \"Only the first N favorites\" to check fewer; already-saved Jobs do not count against the batch limit.",
   "applyCollect.outcome.pagination.title":
     "The later pages repeat earlier results exactly, so paging stopped early at page {page}",
   "applyCollect.outcome.pagination.description":
