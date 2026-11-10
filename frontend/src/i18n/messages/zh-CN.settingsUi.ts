@@ -197,6 +197,8 @@ const settingsUi = {
   "settingsUi.generationPrefs.hint":
     "关闭后技术栈数据不会丢：它只是不上纸面，在简历编辑器里仍能看到并拖回来。" +
     "已生成的旧简历不受影响。",
+  "settingsUi.skills.tagRecommended": "推荐",
+
 } as const;
 
 export default settingsUi;

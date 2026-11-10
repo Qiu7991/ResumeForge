@@ -80,6 +80,11 @@ export default function SkillsCard({ skills, loading, onOpen }: Props) {
                       <Button type="link" className="table-text-link" onClick={() => onOpen(skill)}>
                         {skill.name}
                       </Button>
+                      {skill.builtin ? (
+                        // 内置技能标「推荐」：它默认是关的（提示词整段进系统提示，
+                        // 约 2426 token），用户不打开就等于不知道有这个能力。
+                        <Tag color="gold">{t("settingsUi.skills.tagRecommended")}</Tag>
+                      ) : null}
                       <Tag color={skill.enabled ? "blue" : "default"}>
                         {skill.enabled
                           ? t("settingsUi.skills.tagEnabled")
