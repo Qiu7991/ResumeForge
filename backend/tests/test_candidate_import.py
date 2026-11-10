@@ -317,7 +317,7 @@ def test_queued_job_ids_reports_only_jobs_actually_in_the_apply_queue(db_session
     又从投递队列里移出来，界面上必须显示成「未入队」，否则他会以为它还在队里等投递。
     """
     from app.models.apply import ApplyQueueItem
-    from app.services.candidate_jobs import queued_job_ids
+    from app.services.apply._queue import queued_job_ids
 
     queued_job = Job(title="在队里", company="A公司", source_url="https://example.com/q1")
     removed_job = Job(title="被移出队列", company="B公司", source_url="https://example.com/q2")
@@ -334,7 +334,7 @@ def test_queued_job_ids_reports_only_jobs_actually_in_the_apply_queue(db_session
 
 def test_queued_job_ids_returns_empty_for_blank_input(db_session):
     """空输入不发查询：采集结果里手动粘贴的候选没有 ``imported_job_id``。"""
-    from app.services.candidate_jobs import queued_job_ids
+    from app.services.apply._queue import queued_job_ids
 
     assert queued_job_ids(db_session, []) == set()
     assert queued_job_ids(db_session, [None, None]) == set()

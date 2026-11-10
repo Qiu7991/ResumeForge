@@ -40,11 +40,11 @@ from ..services.candidate_jobs import (
     import_candidates,
     list_candidate_job_ids,
     list_candidate_jobs,
-    queued_job_ids,
     list_candidate_jobs_page,
     mark_candidate_imported,
     update_candidate_job,
 )
+from ..services.apply._queue import queued_job_ids
 from ..services.csv_io import MAX_IMPORT_FILE_CHARS
 from ..services.user_files import save_from_data_url
 
