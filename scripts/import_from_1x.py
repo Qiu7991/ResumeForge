@@ -43,6 +43,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "backend" / "data" / "resume_forge.db"
+
+# 让 `app.*` 可导入：脚本常以 `-I`（隔离模式）运行，那种模式下 sys.path 不含脚本目录，
+# 更不含 backend/。不加这行，`_api_key_decrypts` 里的导入会静默失败 → 误报"Key 解不开"。
+sys.path.insert(0, str(ROOT / "backend"))
 DEFAULT_SOURCE = Path(r"D:/飞牛文件同步/工作/简历通/backend/data/resume_forge.db")
 REPORT = ROOT / "runtime" / "import-from-1x-report.json"
 
@@ -292,9 +296,40 @@ def apply_table(
     return out
 
 
-def plan_settings(src: sqlite3.Connection, dst: sqlite3.Connection) -> dict:
-    """设置只迁白名单键，且拒绝任何疑似凭据。"""
-    out = {"migrate": [], "skip": [], "errors": []}
+def _api_key_decrypts(src: sqlite3.Connection) -> bool:
+    """检查 1.x 归档里的 API Key 能否在**本机本用户**解开。
+
+    DPAPI 密文的解不开**不抛异常**、返回空串（见 ``api_key_crypto.decrypt_key`` 的说明），
+    所以这里按"解出来非空"判定。判定失败只警告、不阻断迁移。
+    """
+    try:
+        row = src.execute("SELECT value FROM app_setting WHERE key = 'llm_config'").fetchone()
+        if not row or not row[0]:
+            return False
+        encrypted = str(json.loads(row[0]).get("api_key") or "")
+        if not encrypted:
+            return False
+
+        from app.services.api_key_crypto import decrypt_key
+
+        return bool(str(decrypt_key(encrypted) or "").strip())
+    except Exception:  # noqa: BLE001 - 校验本身失败不该阻断导入
+        return False
+
+
+def plan_settings(
+    src: sqlite3.Connection, dst: sqlite3.Connection, *, include_llm: bool = False
+) -> dict:
+    """设置只迁白名单键，且默认拒绝任何疑似凭据。
+
+    ``include_llm=True`` 时额外迁移 ``llm_config``（含 API Key）。**默认关闭**是因为
+    这个脚本会随公开仓库分发，别人机器上带着作者的 Key 是隐私事故。
+
+    但**同一台机器、同一个 Windows 账户**下迁移时应该打开它：1.x 的 Key 存的是
+    ``dpapi:v1:`` 密文，DPAPI 绑定当前用户，所以 2.0 直接就能解开——用户不必重填。
+    （实测：1.x 的 ``sk_tr_...`` 用 2.0 的 ``decrypt_key`` 能正常解出。）
+    """
+    out = {"migrate": [], "skip": [], "errors": [], "warn": []}
     if not table_exists(src, "app_setting") or not table_exists(dst, "app_setting"):
         out["errors"].append("app_setting 表缺失")
         return out
@@ -306,8 +341,20 @@ def plan_settings(src: sqlite3.Connection, dst: sqlite3.Connection) -> dict:
     for row in src.execute("SELECT * FROM app_setting"):
         k = str(row[key_col])
         low = k.lower()
-        if any(h in low for h in SETTING_DENY_HINT):
-            out["skip"].append(f"{k}（疑似凭据，拒绝迁移）")
+        if k == "llm_config" and include_llm:
+            # 显式要求迁移模型配置：密文原样搬过去，不在这里解密、不落明文。
+            #
+            # **必须当场验一次能不能解开**：DPAPI 密文绑定"这台机器的这个用户"，
+            # 搬到别的电脑上解开会**静默返回空串**（不是抛异常），界面显示"已配置"
+            # 而每次调用都失败——那种故障极难排查。这里提前炸掉，让用户知道该重填 Key。
+            out["migrate"].append(k)
+            if not _api_key_decrypts(src):
+                out["warn"].append(
+                    "llm_config 里的 API Key 在本机解不开（DPAPI 绑定原机器的用户账户）："
+                    "会照常迁移其余配置，但 Key 需要到「设置 → AI 模型」里重填一次"
+                )
+        elif any(h in low for h in SETTING_DENY_HINT):
+            out["skip"].append(f"{k}（疑似凭据，拒绝迁移；同机迁移可加 --include-llm）")
         elif k in SETTING_ALLOW:
             out["migrate"].append(k)
         else:
@@ -320,6 +367,12 @@ def main() -> int:
     ap.add_argument("--source", default=str(DEFAULT_SOURCE), help="1.x 数据库路径")
     ap.add_argument("--apply", action="store_true", help="真正写入（默认 dry-run）")
     ap.add_argument("--force", action="store_true", help="目标库非空时仍然继续")
+    ap.add_argument(
+        "--include-llm",
+        action="store_true",
+        help="连模型配置（含 API Key 密文）一起迁移。只在同一台机器、同一 Windows 账户下用："
+        "1.x 的 Key 是 DPAPI 密文，绑当前用户，搬到别处解不开。",
+    )
     args = ap.parse_args()
 
     src_path = Path(args.source)
@@ -400,8 +453,11 @@ def main() -> int:
         report["tables"].append(plan)
 
     # 设置
-    sp = plan_settings(src, dst)
+    sp = plan_settings(src, dst, include_llm=args.include_llm)
     print(f"{'app_setting':24} 迁移 {sp['migrate']}  跳过 {len(sp['skip'])} 项")
+    # Key 解不开这件事必须**打在屏幕上**，不能只写进报告文件——用户看不到就白搭。
+    for warning in sp.get("warn") or []:
+        print(f"  警告：{warning}")
     report["settings"] = sp
     if args.apply and sp["migrate"]:
         s_cols = table_cols(src, "app_setting")
