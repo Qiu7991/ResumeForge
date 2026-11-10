@@ -1,13 +1,7 @@
 @echo off
-title ResumeForge
+title 工作通（2.0 二开 + 求职采集，端口 8012）
 setlocal
-rem %* forwards -BackendPort / -FrontendPort / -FrontendMode / -NoBrowser to the
-rem launcher. -FrontendMode is auto (use the bundled frontend\dist via the backend
-rem when present) | dev (force Vite) | production (require dist).
-rem Use the space-separated form: -BackendPort=8010 does not bind with -File.
-rem First-launch convenience: silently create the branded desktop shortcut
-rem when it is missing (-IfMissing no-ops if it already exists; output and
-rem failures are suppressed so this never blocks or disturbs the launch).
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Create-DesktopShortcut.ps1" -IfMissing >nul 2>&1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Start-ResumeForge.ps1" %*
-if errorlevel 1 pause
+rem 这个文件名是从上游继承的（上游 start.cmd 默认 8005）。在这里它**指向工作通自己的端口**，
+rem 避免和正在使用的简历通 1.0（8005）/ 简历通 2.0（8010）撞车。
+rem 2026-11-10：顺手删掉了从 2.0 复制来的 start-2.0.cmd（它用 8010，与工作通端口冲突）。
+call "%~dp0start-gzt.cmd" %*
