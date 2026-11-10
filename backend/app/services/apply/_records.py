@@ -16,6 +16,8 @@ from ...models.apply import (
     FAILURE_CATEGORY_LABELS,
     ITEM_STATUS_FAILED,
     QUEUE_STATUS_DONE,
+    QUEUE_STATUS_FAILED,
+    QUEUE_STATUS_PENDING,
     TASK_KIND_APPLY,
     ApplyQueueItem,
     ApplyTask,
@@ -71,6 +73,25 @@ def mark_queue_done(db: Session, job_id: int | None) -> None:
     item = db.query(ApplyQueueItem).filter(ApplyQueueItem.job_id == job_id).one_or_none()
     if item is not None:
         item.status = QUEUE_STATUS_DONE
+        item.updated_at = utcnow()
+
+
+def mark_queue_failed(db: Session, job_id: int | None) -> None:
+    """投递失败后把队列条目标为「投递失败」（2026-11-10）。
+
+    与 :func:`mark_queue_done` 对称：一条投递尝试结束，队列就该反映它的结果。
+
+    **只覆盖仍是「待投递」的条目**：用户可能在这期间手动改过状态（比如他自己明白了这条
+    岗位投不了、主动标成跳过），那不该被后台动作推翻。
+
+    为什么不标成 `skipped`：那个状态的语义是"刻意没投"（岗位已关闭 / 招呼语缺失 /
+    同公司本批已投），用户看到不用管；`failed` 是"投了但没成"，他看到才知道值得重试。
+    """
+    if job_id is None:
+        return
+    item = db.query(ApplyQueueItem).filter(ApplyQueueItem.job_id == job_id).one_or_none()
+    if item is not None and item.status == QUEUE_STATUS_PENDING:
+        item.status = QUEUE_STATUS_FAILED
         item.updated_at = utcnow()
 
 

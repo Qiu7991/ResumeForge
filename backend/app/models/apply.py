@@ -83,7 +83,22 @@ def requires_confirmation(status: str) -> bool:
 QUEUE_STATUS_PENDING = "pending"
 QUEUE_STATUS_SKIPPED = "skipped"
 QUEUE_STATUS_DONE = "done"
-QUEUE_STATUSES = (QUEUE_STATUS_PENDING, QUEUE_STATUS_SKIPPED, QUEUE_STATUS_DONE)
+#: 投递**失败**（2026-11-10 新增）。
+#:
+#: 为什么必须有这个状态：以前失败根本不回写队列，条目停在 `pending`。用户实测的后果有两个——
+#: ① 队列里看着还是"待投递"，与「投递记录」里的「失败」自相矛盾，他不知道自己该不该重试；
+#: ② 这些条目会被**下一批重投一次**（`_tasks` 只挑 pending），对已经尝试过的岗位再发一次招呼语。
+#:
+#: 语义与 `skipped` 的区别：`skipped` 是"刻意没投"（岗位已关闭 / 招呼语缺失 / 同公司已投），
+#: `failed` 是"投了但没成"（页面结构变化、网络超时等），两者对用户的意义完全不同：
+#: 前者不用管，后者值得重试。
+QUEUE_STATUS_FAILED = "failed"
+QUEUE_STATUSES = (
+    QUEUE_STATUS_PENDING,
+    QUEUE_STATUS_SKIPPED,
+    QUEUE_STATUS_DONE,
+    QUEUE_STATUS_FAILED,
+)
 
 # ===== ④ 批次种类 =====
 TASK_KIND_COLLECT = "collect"

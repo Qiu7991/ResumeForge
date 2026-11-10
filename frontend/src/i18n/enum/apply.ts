@@ -33,6 +33,7 @@ export const QUEUE_STATUS_LABEL_KEYS: Record<QueueStatus, MessageKey> = {
   pending: "enumsApply.queueStatus.pending",
   skipped: "enumsApply.queueStatus.skipped",
   done: "enumsApply.queueStatus.done",
+  failed: "enumsApply.queueStatus.failed",
 };
 
 /** `TASK_STATUS_META`：投递 / 采集批次的七态。 */

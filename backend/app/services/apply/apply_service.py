@@ -55,6 +55,7 @@ from ._records import (
     list_record_batches,
     list_records,
     mark_queue_done,
+    mark_queue_failed,
     select_retryable_items,
     write_back_job_status,
 )
@@ -126,6 +127,7 @@ __all__ = [
     "list_records",
     "list_sites",
     "mark_queue_done",
+    "mark_queue_failed",
     "open_browser_at",
     "open_browser_url",
     "refresh_browser",
