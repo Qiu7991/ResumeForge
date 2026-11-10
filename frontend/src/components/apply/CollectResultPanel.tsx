@@ -19,6 +19,7 @@ import { useNavigate } from "react-router-dom";
 import { importCandidateJobs, listCandidateJobs } from "../../api/candidateJob";
 import { useApi } from "../../hooks/useApi";
 import { bulkEnqueueJobs, bulkEnqueueSummary } from "./queue/bulkEnqueue";
+import { formatDateTime } from "../../utils/format";
 import PageSkeleton from "../common/PageSkeleton";
 import type { CandidateJob, CandidateJobImportResult } from "../../types";
 import { t, type MessageKey } from "../../i18n";
@@ -72,11 +73,14 @@ export default function CollectResultPanel({
   const [importing, setImporting] = useState(false);
   const [lastResult, setLastResult] = useState<CandidateJobImportResult | null>(null);
 
+  // 拉**全部批次**的待处理候选（2026-11-10 用户要求）：
+  // 以前只列「本次采集结果」，于是昨天采的 46 条躺在暂存区里、界面上看不见，用户以为丢了。
+  // 现在一次列完"我采集过的所有岗位"，省得再去「采集记录」翻。
+  //
+  // `status: "pending"` 仍然只列**还没导入岗位广场**的：已导入的岗位在岗位广场里，
+  // 在这里重复列出来只会让这一块越来越长。（"已在投递台"的标注另算，见列定义。）
   const { data, loading, error, reload } = useApi<CandidateJob[]>(
-    () =>
-      taskId
-        ? listCandidateJobs({ collectTaskId: taskId, status: "pending" })
-        : Promise.resolve([]),
+    () => (taskId ? listCandidateJobs({ status: "pending" }) : Promise.resolve([])),
     [taskId, refreshKey],
   );
 
@@ -215,6 +219,29 @@ export default function CollectResultPanel({
       dataIndex: "salary",
       width: 130,
       render: (value: string) => value || "—",
+    },
+    {
+      // 采集时间（2026-11-10）：用户要看的是"这条是什么时候采的"，靠它区分今天新采的
+      // 与之前几轮留下的。手动粘贴的候选没有采集时间，如实显示「手动添加」。
+      title: t("collectResult.column.collectedAt"),
+      dataIndex: "collected_at",
+      width: 130,
+      render: (value: string | null | undefined) =>
+        value ? formatDateTime(value) : t("collectResult.cell.manual"),
+    },
+    {
+      // 已在投递台（2026-11-10）：服务端算好下发（`in_apply_queue`）。
+      // **不拿 `imported_job_id` 代替**：那只说明"导入过岗位广场"，导入后又被移出队列的
+      // 岗位必须显示成「未入队」，否则用户以为它还在队里。
+      title: t("collectResult.column.queue"),
+      dataIndex: "in_apply_queue",
+      width: 110,
+      render: (value: boolean | undefined) =>
+        value ? (
+          <Tag color="green">{t("collectResult.cell.inQueue")}</Tag>
+        ) : (
+          <Typography.Text type="secondary">{t("collectResult.cell.notInQueue")}</Typography.Text>
+        ),
     },
     {
       title: t("collectResult.column.source"),

@@ -184,6 +184,20 @@ export interface CandidateJob {
   collect_task_id: number | null;
   status: CandidateJobStatus;
   imported_job_id: number | null;
+  /**
+   * 这个岗位**是否已经在投递队列里**（2026-11-10，服务端算好下发）。
+   *
+   * 与 `imported_job_id` 不是一回事：那只说明"导入过岗位广场"，导入后又被移出队列的
+   * 岗位在这里是 `false`。界面据此标「已在投递台」。
+   */
+  in_apply_queue?: boolean;
+  /**
+   * 采集到这条的时间；手动粘贴的候选为 `null`。
+   *
+   * 与 `created_at` 同一个值，但语义不同：`created_at` 读起来像"创建记录的时间"，
+   * 而用户要看的是"这条岗位是什么时候采的"。
+   */
+  collected_at?: string | null;
   created_at: string;
   updated_at: string;
 }

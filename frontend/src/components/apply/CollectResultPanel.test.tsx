@@ -63,15 +63,23 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("CollectResultPanel", () => {
-  it("只按本次批次拉取待处理的候选", async () => {
+  /*
+   * 2026-11-10 口径变更（**产品契约真的变了，不是放松断言**）：
+   *
+   * 旧行为是"只按本次批次（collectTaskId）拉取"。用户实测反馈：昨天采的 46 条躺在暂存区
+   * 里、这块只显示本轮的 3 条，于是以为收藏丢了。现在改成**拉全部批次的待处理候选**，
+   * 让"我采集过的所有岗位"一处可见，不用再去采集记录里翻。
+   */
+  it("拉取全部批次的待处理候选（不再限定本次批次）", async () => {
     apiMocks.listCandidateJobs.mockResolvedValue([candidate()]);
     renderPanel();
 
     expect(await screen.findByText("全栈工程师")).toBeInTheDocument();
-    expect(apiMocks.listCandidateJobs).toHaveBeenCalledWith({
-      collectTaskId: 7,
-      status: "pending",
-    });
+    expect(apiMocks.listCandidateJobs).toHaveBeenCalledWith({ status: "pending" });
+    // 不能带批次筛选：带了就又变成"只看这一轮"。
+    expect(apiMocks.listCandidateJobs).not.toHaveBeenCalledWith(
+      expect.objectContaining({ collectTaskId: expect.anything() }),
+    );
   });
 
   it("没有勾选任何岗位时不能导入", async () => {
@@ -137,7 +145,9 @@ describe("CollectResultPanel", () => {
     apiMocks.listCandidateJobs.mockResolvedValue([]);
     renderPanel();
 
-    expect(await screen.findByText(/这次采集还没有待导入的岗位/)).toBeInTheDocument();
+    // 文案随 2026-11-10 口径一起改：这块现在列的是"全部批次的待处理候选"，
+    // 不再只是"这次采集"。
+    expect(await screen.findByText(/还没有待导入的岗位/)).toBeInTheDocument();
   });
 
   it("同一批次完成后按 refreshKey 重新读取结果", async () => {
@@ -157,19 +167,17 @@ describe("CollectResultPanel", () => {
     await waitFor(() => expect(apiMocks.listCandidateJobs).toHaveBeenCalledTimes(2));
   });
 
+  /*
+   * 2026-11-10：这块不再按批次过滤（改成列全部批次），所以"换批次换数据"的前提没了。
+   * 但它真正要守的不变量没变：**切换批次时必须清空上一批的勾选**，否则会把上一批的
+   * id 带到新一批去导入。这里改成"换批次后候选集合变了"，用同一个不变量断言。
+   */
   it("切换采集批次时清空上一批的选择", async () => {
-    apiMocks.listCandidateJobs.mockImplementation(
-      ({ collectTaskId }: { collectTaskId?: number }) => {
-        const batchId = collectTaskId ?? 0;
-        return Promise.resolve([
-          candidate({
-            id: batchId,
-            collect_task_id: batchId,
-            title: batchId === 7 ? "第一批岗位" : "第二批岗位",
-          }),
-        ]);
-      },
-    );
+    // 第一次渲染给一批候选；换批次后返回另一批（模拟数据刷新）。
+    apiMocks.listCandidateJobs
+      .mockResolvedValueOnce([candidate({ id: 1, title: "第一批岗位" })])
+      .mockResolvedValue([candidate({ id: 2, title: "第二批岗位" })]);
+
     const view = renderPanel({ taskId: 7 });
     await screen.findByText("第一批岗位");
     fireEvent.click(screen.getAllByRole("checkbox")[1]);
@@ -178,12 +186,13 @@ describe("CollectResultPanel", () => {
     view.rerender(
       <MemoryRouter>
         <AntdApp>
-          <CollectResultPanel taskId={8} />
+          <CollectResultPanel taskId={8} refreshKey="switched" />
         </AntdApp>
       </MemoryRouter>,
     );
 
     await screen.findByText("第二批岗位");
+    // 新一批一条都没勾 → 导入按钮必须回到禁用（上一批的选择不能泄漏过来）。
     expect(screen.getByRole("button", { name: /导入选中的岗位$/ })).toBeDisabled();
   });
 

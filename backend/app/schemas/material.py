@@ -242,6 +242,15 @@ class CandidateJobOut(BaseModel):
     collect_task_id: int | None = None
     status: Literal["pending", "imported"]
     imported_job_id: int | None = None
+    # 这条候选对应的岗位**是否已经在投递队列里**（2026-11-10）。
+    #
+    # 为什么不在前端拿 imported_job_id 去比对：队列里存的是 job_id，候选存的是
+    # imported_job_id，前端要为每条候选再查一次队列；而且"导入后又被移出队列"的情况
+    # 只有服务端这一处能算准。这里如实给出，界面据此标注「已在投递台」。
+    in_apply_queue: bool = False
+    # 采集到这条的时间（`created_at` 的语义就是"进库时间"，对采集来的候选即采集时间）。
+    # 单独起名是为了让界面读得懂：直接显示 created_at 会被当成"创建记录的时间"。
+    collected_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
