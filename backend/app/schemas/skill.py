@@ -55,6 +55,10 @@ class AssistantSkillOut(BaseModel):
     source_name: str
     prompt_chars: int
     files: list[str]
+    #: 是否是**随包内置**的技能（`app/assets/skills/*.zip` 自动注册的那些，2026-11-10）。
+    #: 界面据此标「推荐」并提示"默认没打开，要用请启用"——内置技能默认 `enabled=False`，
+    #: 因为它整段进系统提示（实测约 2426 token），不该让每个用户都默认付这笔成本。
+    builtin: bool = False
     updated_at: datetime
 
 

@@ -101,3 +101,7 @@ docs/job-hunt-fixtures/*.woff
 docs/job-hunt-fixtures/*.woff2
 docs/job-hunt-fixtures/*.ttf
 docs/job-hunt-fixtures/*.otf
+
+# 技能包解压目录：内置技能只保留 app/assets/skills/*.zip（代码读的那个）。
+# 根目录这份是导入时解压出来的工作副本，不该进仓库（2026-11-10）。
+/skills/

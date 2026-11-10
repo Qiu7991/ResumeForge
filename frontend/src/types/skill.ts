@@ -19,6 +19,14 @@ export interface AssistantSkill {
   prompt_chars: number;
   /** 附带的知识文件名清单（正文由助手按需读取）。 */
   files: string[];
+  /**
+   * 是否是**随包内置**的技能（2026-11-10）。
+   *
+   * 内置技能默认 `enabled=false`——它的提示词整段进系统提示（实测约 2426 token），
+   * 不该让每个用户都默认付这笔成本。界面据此标「推荐」并提示"要用请打开"。
+   * 老后端不发这个键，缺省按 `false`。
+   */
+  builtin?: boolean;
   updated_at: string;
 }
 

@@ -22,7 +22,7 @@ from .bullet_dot import dot_circle_geometry
 from .fonts import FONT_FAMILY
 from .layout import _PX_TO_MM, _PX_TO_PT
 from .rich_text import drawn_text
-from .text_fit import entry_head_columns, truncate_to_width
+from .text_fit import entry_head_columns, truncate_to_width, wrap_mode_for
 
 if TYPE_CHECKING:  # pragma: no cover - 只为类型检查，运行期不能导入 canvas（会循环导入）
     from ..resume.resume_style import RoleStyle
@@ -101,11 +101,22 @@ def _letter_spacing_mm(base: float, style: RoleStyle | None) -> float:
 
 
 def _wrapmode_args(pdf: _ResumePDF, text: str, width: float, size_pt: float) -> dict:
-    """超长不可断词（长 URL / 长英文词）时启用 CHAR 断行；普通文本保持默认断行。
+    """决定 multi_cell 的断行模式：中文按字断行，纯英文仍按词断行。
 
-    fpdf2 默认只按空格断行，一个比栏宽还长的 token 会**越过右边距**（W08 契约要求长链接
-    断行）。只在确实存在超宽 token 时切换 wrapmode，避免改变普通文本的既有折行。
+    两条规则，先判中文再判超宽 token：
+
+    1. **文本含 CJK → CHAR**。fpdf2 默认 ``WORD`` 只在空格处断行，而中文段落整段没有
+       空格，会被当成一个超长 token：前面几个词填不满就提前换行，纸面上出现
+       「…Windows 与 Linux / 均能上手。」这种半行空白（2026-11-10 用户实测截图）。
+       这是 ``text_fit.wrap_mode_for`` 早就算好的判据，只是一直没接上这条绘制路径。
+    2. 纯 ASCII 里存在比栏宽还长的 token（长 URL / 长英文词）→ CHAR，避免越过右边距
+       （W08 契约要求长链接断行）。普通英文文本保持默认，既有产物折行逐行不变。
+
+    为什么 CHAR 不会把英文单词劈开：含 CJK 的段落里英文词通常远短于栏宽，
+    fpdf2 的 CHAR 模式仍会优先在空格与标点处找断点，只在这行实在放不下时才拆词。
     """
+    if wrap_mode_for(text) == "CHAR":
+        return {"wrapmode": "CHAR"}
     saved = (pdf.font_family, pdf.font_style, pdf.font_size_pt)
     pdf.set_font(FONT_FAMILY, "", size_pt)
     try:

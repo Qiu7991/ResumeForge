@@ -160,6 +160,8 @@ const settingsUi = {
   "settingsUi.generationPrefs.hint":
     "Nothing is deleted when this is off - the tech stack items simply stay off the page and remain visible (and draggable back) in the resume editor. " +
     "Resumes generated earlier are not affected.",
+  "settingsUi.skills.tagRecommended": "Recommended",
+
 } as const;
 
 export default settingsUi;

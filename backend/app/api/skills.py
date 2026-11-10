@@ -70,6 +70,18 @@ def _source_name(request: Request) -> str | None:
     return name[:MAX_SOURCE_NAME_CHARS] or None
 
 
+def _is_builtin(skill) -> bool:
+    """这条技能是不是随包内置的。
+
+    判据是"同名包是否存在"而不是额外加一列：内置技能由 `seed_builtin_skills` 按包名
+    注册，用户即使改过它的提示词，名字仍是包里的那个——界面上依旧该标「推荐」
+    （它确实来自产品自带）。**不落库**是为了不给 assistant_skill 加迁移。
+    """
+    from ..services.assistant.builtin_skills import builtin_skill_names
+
+    return skill.name in builtin_skill_names()
+
+
 def _to_out(skill) -> AssistantSkillOut:
     return AssistantSkillOut(
         id=skill.id,
@@ -79,6 +91,7 @@ def _to_out(skill) -> AssistantSkillOut:
         source_name=skill.source_name,
         prompt_chars=len(skill.prompt),
         files=[item.path for item in skill.files],
+        builtin=_is_builtin(skill),
         updated_at=skill.updated_at,
     )
 

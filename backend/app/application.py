@@ -213,6 +213,17 @@ async def lifespan(_app: FastAPI):
             fail_orphaned_generate_tasks(session)
         except Exception:  # noqa: BLE001 - 清理失败不应阻断启动
             startup_logger.warning("清理中断的简历生成任务失败", exc_info=True)
+        # 内置技能（2026-11-10）：随包发布的技能包首次启动自动注册。
+        # 只补不盖（同名已存在就跳过），坏包只记日志——技能是增强功能，不该让应用起不来。
+        # 必须放在迁移之后：它写 assistant_skill 表。
+        try:
+            from .services.assistant.builtin_skills import seed_builtin_skills
+
+            added = seed_builtin_skills(session)
+            if added:
+                startup_logger.info("已注册内置技能：%s", "、".join(added))
+        except Exception:  # noqa: BLE001 - 技能注册失败不应阻断启动
+            startup_logger.warning("注册内置技能失败（不阻断启动）", exc_info=True)
         try:
             # 通用 AI 任务（0068）：进程中断后它们永远不会再被推进，前端会一直
             # 看到 running —— 必须在开始接收请求前收尾。

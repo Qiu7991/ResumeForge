@@ -7,6 +7,9 @@ from urllib.parse import quote
 from app import database
 from app.api import skills as skills_api
 from app.services.data_backup import restore_directory
+from app.services.assistant.builtin_skills import SKILLS_DIR
+
+import pytest
 
 FRONTMATTER = """---
 name: 面试模拟官
@@ -39,6 +42,25 @@ def _import(
     if filename is not None:
         headers["X-Skill-Filename"] = quote(filename, safe="")
     return client.post("/api/assistant/skills/import", content=payload, headers=headers)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_builtin_skills():
+    """把内置技能包目录临时指到空目录，让每个用例从"零技能"开始。
+
+    **为什么需要**（2026-11-10）：本文件测的是"导入 / 启用 / 删除"这些**动作**，
+    前提是技能库为空。而应用现在会随包注册内置技能（`assets/skills/*.zip`），
+    这些用例就会看到多出来的「岗位简历包装」而失败——那是新功能让旧前提失效，
+    不是导入逻辑坏了。内置技能本身的注册行为由 `test_builtin_skills.py` 专门守着。
+    """
+    import app.services.assistant.builtin_skills as builtin
+
+    original = builtin.SKILLS_DIR
+    builtin.SKILLS_DIR = original.parent / "__no_such_dir__"
+    try:
+        yield
+    finally:
+        builtin.SKILLS_DIR = original
 
 
 def _list(client) -> list[dict]:
