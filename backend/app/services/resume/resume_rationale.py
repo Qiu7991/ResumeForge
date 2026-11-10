@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...schemas.job import JobOut
+from ..profile.profile_relevance_constants import DOMAIN_LABELS
 
 
 def build_generation_rationale(
@@ -68,7 +69,10 @@ def build_generation_rationale(
                 if total > selected:
                     omitted_counts[key] = total - selected
         skills_text = "、".join(list(focus_skills)[:8]) or "未识别到明确技能"
-        domains_text = "、".join(list(focus_domains)[:4]) or "通用方向"
+        domains_text = (
+            "、".join(DOMAIN_LABELS.get(domain, domain) for domain in list(focus_domains)[:4])
+            or "通用方向"
+        )
         lines.append(
             f"目标岗位「{job.title}」：系统从 JD 里提取到的核心技能信号是 {skills_text}，"
             f"岗位方向判断为「{domains_text}」。"
