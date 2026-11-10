@@ -212,3 +212,80 @@ def test_only_title_terms_without_skills_still_keeps_candidates():
     assert selection.fallback_sections, "未识别领域应触发最小候选兜底"
     assert selection.data["experiences"]
     assert selection.data["skills"]
+
+
+# ===== IT 运维 / 技术支持方向（2026-11-10）=====
+#
+# 实测缺陷：「信息技术员」这类 JD 的硬信号是「维护 Windows / 排查局域网 / 修计算机硬件」，
+# 而资料里的证据写成「搭旁路由 / 部署自托管服务 / 打板调硬件」——两边不同字。此前
+# DOMAIN_SIGNALS 没有这个方向，全部项目打 0 分，候选被整体筛空，生成的简历只剩教育背景。
+IT_SUPPORT_PROFILE = ProfileOut.model_validate(
+    {
+        "id": 1,
+        "name": "示例用户",
+        "job_intent": "计算机相关",
+        "summary": "",
+        "educations": [{"id": 1, "school": "示例学院", "major": "计算机科学与技术", "degree": "本科"}],
+        "experiences": [],
+        "projects": [
+            {
+                "id": 1,
+                "name": "家庭网络与自托管",
+                "role": "个人自托管",
+                "tech_stack": "Armbian, Docker, Caddy",
+                "description": (
+                    "搭建 Armbian + Docker + LXC-OpenWrt 旁路由 + Samba，实现家庭终端互联。\n"
+                    "VPS 侧配置 Caddy/nginx 反向代理 + UFW/fail2ban，完成安全加固。"
+                ),
+            },
+            {
+                "id": 2,
+                "name": "AIGC 短视频生产体系",
+                "role": "独立搭建",
+                "description": "基于 ComfyUI 搭建关键帧生成与图生视频管线，产出成片。",
+            },
+        ],
+        "skills": [
+            {"id": 1, "name": "Docker / Docker Compose", "level": "熟练"},
+            {"id": 2, "name": "nginx / Caddy", "level": "熟练"},
+            {"id": 3, "name": "ComfyUI 工作流编排", "level": "掌握"},
+        ],
+    }
+)
+
+
+def test_it_support_job_recognized_and_network_project_prioritized():
+    """IT 支持岗要能识别出方向，并把「网络自托管」这类项目排到前面。"""
+    job = _job(
+        "信息技术员",
+        "负责计算机硬件、网络设备及办公终端的日常维护与故障排除；"
+        "熟悉 Windows 及主流操作系统；了解局域网组建原理。",
+    )
+
+    selection = build_targeted_profile_context(IT_SUPPORT_PROFILE, job)
+
+    assert selection.focus.domains == ("it_support",)
+    assert selection.data["projects"], "IT 支持岗不应把项目全部筛空"
+    # 命中证据的项目排第一；与岗位无关的 AIGC 项目不进候选。
+    assert selection.data["projects"][0]["name"] == "家庭网络与自托管"
+    assert all(item["name"] != "AIGC 短视频生产体系" for item in selection.data["projects"])
+
+
+def test_it_support_domain_label_is_human_readable_in_rationale():
+    """生成说明里显示中文方向名，不能把内部键 ``it_support`` 抛给用户。"""
+    job = _job("信息技术员", "负责办公终端与网络设备的维护；熟悉局域网组建。")
+
+    selection = build_targeted_profile_context(IT_SUPPORT_PROFILE, job)
+    rationale = build_generation_rationale(
+        job=job,
+        selection_counts=selection.selected_counts,
+        omitted_counts=selection.omitted_counts,
+        focus_skills=selection.focus.skills,
+        focus_domains=selection.focus.domains,
+        coverage_details=[],
+        baseline_confirmed=[],
+        fallback_sections=selection.fallback_sections,
+    )
+
+    assert "IT 运维 / 技术支持" in rationale
+    assert "it_support" not in rationale

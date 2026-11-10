@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+from difflib import SequenceMatcher
 from typing import Any
 
 from ...schemas.profile_projection import ConsumedProfile
@@ -63,8 +64,24 @@ def strip_markdown_prefix(value: Any) -> str:
     return text.strip()
 
 
+#: 近似重复要点的判定阈值（difflib 相似度）。
+#: 只对**长要点**生效：实测资料里"同一句话被录了两遍"的相似度在 0.96 以上
+#: （「我定契约与验收」/「本人定契约与验收」这类改写），而两条真正不同的要点
+#: 即使同主题也只在 0.6–0.7（如「10,429 行固件、9 类异常…」与「7 类传感器、3 类执行器…」）。
+#: 0.9 留足了间隔，不会把"两个相关但不相同的成果"误合成一条。
+_NEAR_DUPLICATE_RATIO = 0.9
+#: 短于这个长度的要点不参与近似比对：两句话都短时相似度噪音极大。
+_NEAR_DUPLICATE_MIN_CHARS = 24
+
+
 def _dedupe_lines(values: list[Any]) -> list[str]:
-    """保序去重（normalize_for_match 归一化后比较，保留首次出现的原文）。"""
+    """保序去重（normalize_for_match 归一化后比较，保留首次出现的原文）。
+
+    除完全重复外，还压掉**近似重复**（2026-11-10 补）：资料里同一段内容常有两种
+    写法（「我定契约」/「本人定契约」），逐字比对判不出，纸面上就是同一个项目把
+    同一件事写了两行。判据见 ``_NEAR_DUPLICATE_RATIO``——只对长要点生效，
+    且两条要点必须几乎逐字相同才算，避免把"两个相关但不相同的成果"合并掉。
+    """
     deduped: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -76,6 +93,12 @@ def _dedupe_lines(values: list[Any]) -> list[str]:
             continue
         if key:
             seen.add(key)
+        if len(text) >= _NEAR_DUPLICATE_MIN_CHARS and any(
+            SequenceMatcher(None, text, kept, autojunk=False).ratio() >= _NEAR_DUPLICATE_RATIO
+            for kept in deduped
+            if len(kept) >= _NEAR_DUPLICATE_MIN_CHARS
+        ):
+            continue
         deduped.append(text)
     return deduped
 
@@ -90,6 +113,54 @@ def _skill_key(name: str) -> str:
     return "".join(str(name or "").split()).casefold()
 
 
+#: 技能名里常见的"并列多技能"分隔符。资料录入时同一项技能会被两种写法各存一份，
+#: 例如「立创 EDA / PCB / 嘉立创打板 / 手工焊接」与「立创 EDA / 嘉立创打板 / 手工焊接」——
+#: 后者是前者的子集，但中间插了 PCB，字符串包含判定就会漏判。
+_SKILL_PART_RE = re.compile(r"\s*[/、,，|+＋]\s*")
+
+
+def _skill_parts(name: str) -> frozenset[str]:
+    """技能名拆成词集合（归一后）。"Java" 与 "Java/golang" 会被判成同一技能。"""
+    parts = {_skill_key(part) for part in _SKILL_PART_RE.split(str(name or ""))}
+    return frozenset(part for part in parts if part)
+
+
+def _skill_same(left: str, right: str) -> bool:
+    """两条技能名是不是同一项。
+
+    **不能直接用 ``_similar_skill``（双向包含）**：那是给 grounding 找来源用的，宽容
+    是对的；拿来做去重会把「Java」并进「JavaScript/Node」——纸面上少了一项真技能。
+    这里的判据分三种情况：
+
+    1. 归一后完全相等 → 同一项；
+    2. 两边都是**单个**技能名 → 短的是长的前缀且边界不在字母中间
+       （「Python」/「Python 3」合并；「Java」/「JavaScript」不合并）；
+    3. 至少一边是「A / B / C」这种并列写法 → 词集合有子集关系才算同一项
+       （「立创 EDA / PCB / 手工焊接」与「立创 EDA / 手工焊接」合并，
+       「MQTT / HTTP」与「MQTT / OneNET / NVS」不合并）。
+
+    短名（<3 字）只走第 1 条：「C」不该把「C++」「C#」吞掉。
+    """
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    if len(left) < 3 or len(right) < 3:
+        return False
+    left_parts, right_parts = _skill_parts(left), _skill_parts(right)
+    if len(left_parts) == 1 and len(right_parts) == 1:
+        short, long = sorted((left, right), key=len)
+        if not long.startswith(short):
+            return False
+        # 剩余部分以 ASCII 字母开头 ⇒ 是另一个词（Java / JavaScript），不合并；
+        # 以数字或中文开头 ⇒ 是同一技能的规格或补充说明（Python / Python 3），合并。
+        rest = long[len(short) :]
+        return not rest or not rest[0].isascii() or rest[0].isdigit()
+    if not left_parts or not right_parts:
+        return False
+    return left_parts <= right_parts or right_parts <= left_parts
+
+
 def _skill_level_rank(level: str) -> int:
     text = str(level or "").strip()
     return _SKILL_LEVEL_RANK.get(text, 1 if text else 0)
@@ -101,6 +172,14 @@ def dedupe_skills(skills: list[Any]) -> list[Any]:
     技能有两条来源——模型自己写的，与 `merge_missing_consumed_fields` 从资料补回的；
     合并阶段各补一次就会出现「MySQL、Spring Boot、MySQL、Redis」。去重只放在这里
     （落库前唯一的最终清洗），不在每个合并函数里各打一次补丁。
+
+    **近似同名也合并**（2026-11-10 补）：资料里同一项技能常被录成两个名字——
+    「立创 EDA / PCB / 嘉立创打板 / 手工焊接」与「立创 EDA / 嘉立创打板 / 手工焊接」。
+    精归一（去空白 + casefold）判不出是同一条，纸面上就会出现两行几乎一样的技能。
+    判据见 :func:`_skill_same`：完全相等；或两边都是单个技能名且短的是长的前缀
+    （「Python」/「Python 3」）；或至少一边是「A / B / C」并列写法且词集合有子集关系。
+    短名（<3 字）只认完全相等，避免「C」把「C++」吞掉。合并时保留**信息更多**的那条
+    （名字更长），等级取两者较高者——用户看到的是合并结果，不该因为他录了两遍而丢内容。
     """
     positions: dict[str, int] = {}
     result: list[Any] = []
@@ -112,13 +191,30 @@ def dedupe_skills(skills: list[Any]) -> list[Any]:
             continue
         index = positions.get(key)
         if index is None:
-            positions[key] = len(result)
-            result.append(skill)
-            continue
-        if _skill_level_rank(getattr(skill, "level", "")) > _skill_level_rank(
-            getattr(result[index], "level", "")
+            # 近似同名：与已收下的某条是同一技能就并进去，不新增位置。
+            near = next(
+                (
+                    position
+                    for existing_key, position in positions.items()
+                    if _skill_same(existing_key, key)
+                ),
+                None,
+            )
+            if near is not None:
+                index = near
+            else:
+                positions[key] = len(result)
+                result.append(skill)
+                continue
+        kept = result[index]
+        if len(_skill_key(getattr(skill, "name", ""))) > len(
+            _skill_key(getattr(kept, "name", ""))
+        ) or _skill_level_rank(getattr(skill, "level", "")) > _skill_level_rank(
+            getattr(kept, "level", "")
         ):
             result[index] = skill
+            # 并进来的那条也要登记键：后续重复项靠它直接命中，不必再走近似比对。
+            positions.setdefault(key, index)
     return result
 
 

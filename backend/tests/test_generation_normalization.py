@@ -144,3 +144,53 @@ def test_custom_section_multi_line_field_converts_to_field_item_with_source():
     assert item["label"] == "作品说明"
     assert item["placement"] == "body"
     assert item["source"] == {"section_key": section_key, "field_id": "fld0000000000001"}
+
+
+def test_near_duplicate_bullets_are_merged_but_distinct_ones_are_kept():
+    """同一句话被录了两遍（「我定…」/「本人定…」）要并成一条，但两份真成果不能合。
+
+    2026-11-10 实测：资料里同一个项目存了两版写法，亮点被并进来后纸面上同一个项目
+    把同一件事写了两行；另一边「10,429 行固件、9 类异常…」与「7 类传感器、3 类执行器…」
+    是两条不同的成果，相似度只有 0.67，必须都留下。
+    """
+    long_a = (
+        "主体代码由 Codex / ZCode 生成、我定契约与验收：把需求拆成可验收的小步"
+        "（先 schema 再实现再测试），AI 产出后逐段 review，用测试兜底。"
+    )
+    long_b = (
+        "主体代码由 Codex / ZCode 生成、本人定契约与验收：需求拆成可验收的小步"
+        "（先 schema 再实现再测试），AI 产出后逐段 review，用测试兜底。"
+    )
+    fact_a = "10,429 行固件、9 类异常判定、7 类传感器、3 类执行器、1 个微信小程序（3 页）"
+    fact_b = "7 类传感器、3 类执行器、9 类异常判定、1 个微信小程序（3 页）"
+
+    resume = ResumeContent(
+        projects=[
+            {
+                "name": "示例项目",
+                "role": "个人项目",
+                "description": [long_a, long_b, fact_a, fact_b],
+            }
+        ]
+    )
+
+    cleaned = normalize_generated_content(resume).projects[0].description
+
+    assert cleaned == [long_a, fact_a, fact_b]
+
+
+def test_near_duplicate_merge_keeps_short_distinct_bullets():
+    """短要点不参与近似比对：两句话都短时相似度噪音大，宁可都留着。"""
+    resume = ResumeContent(
+        experience=[
+            {
+                "company": "示例公司",
+                "role": "实习",
+                "description": ["负责设备维护", "负责设备巡检"],
+            }
+        ]
+    )
+
+    cleaned = normalize_generated_content(resume).experience[0].description
+
+    assert cleaned == ["负责设备维护", "负责设备巡检"]
