@@ -201,14 +201,19 @@ class Collector:
             # 的差额，不报出来用户会以为丢了数据。
             summary["interest_invalid"] = report.interest_invalid
         if config.source == "interest":
-            # 本轮看过几个收藏位置（2026-11-10）：用户"只看前 N 个"的配置到底生效到哪，
+            # 本轮看过几个收藏岗位（2026-11-10）：用户"只看前 N 个"的配置到底生效到哪，
             # 以及该给多大才合适，只能靠这个数判断。
             summary["interest_scanned"] = report.interest_scanned
-            # 「已收藏过、所以跳过」的条数单列（用户要求"保持跳过，但多显示数字"）。
-            # `skipped` 里还混着"本页内重复"与"回收站里已有"，这里只报"库里已有"那一类，
-            # 因为它才是用户看着列表会疑惑的那部分："这些我明明收藏过了"。回收站那条
-            # 另有 skipped_trashed 单独说明（含义完全不同：那是用户自己删过的）。
-            summary["interest_already_known"] = max(
+            # 「之前采集过、所以跳过」的条数单列（用户要求"保持跳过，但多显示数字"）。
+            #
+            # **字段名 2026-11-10 改过**：原来叫 `interest_already_known`，配合前端文案
+            # "你已经收藏过"——用户看到 88 条时以为自己的收藏丢了。它跟 BOSS 的"收藏"
+            # 毫无关系，指的是**更早的采集批次已经把这条放进暂存区了**。
+            #
+            # `skipped` 里还混着"本页内重复"与"回收站里已有"，这里报"暂存区/岗位广场
+            # 里已有"那一类；回收站那条另有 skipped_trashed 单独说明（含义完全不同：
+            # 那是用户自己删过的）。
+            summary["interest_previously_collected"] = max(
                 0, report.skipped - report.skipped_trashed
             )
         if not backfill_job_ids:

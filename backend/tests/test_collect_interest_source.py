@@ -268,12 +268,13 @@ def test_interest_mode_respects_per_task_limit(db_session):
 
 
 def test_interest_mode_scan_limit_counts_list_positions(db_session):
-    """``interest_scan_limit`` 按**列表位置**限量：已收藏过的那几条也占名额（2026-11-10）。
+    """``interest_scan_limit`` 按**收藏列表位置**限量：被跳过的那几条也占名额（2026-11-10）。
 
-    用户原话："需要可选抓取多少条收藏的职位，因为有些已经收藏过了"。
-    只有 ``per_task_limit`` 时，已收藏的因为被跳过而**不占**名额，于是一路往后翻到很旧的
+    用户原话："需要可选抓取多少条收藏的职位，因为有些已经收藏过了"——这里的"已经收藏过"
+    在用户嘴里指的是**之前采集过**（BOSS 的收藏列表里当然全是收藏的，不存在"没收藏"）。
+    只有 ``per_task_limit`` 时，之前采集过的因为被跳过而**不占**名额，于是一路往后翻到很旧的
     收藏——用户无法表达"我只要最近收藏的这一批"。这条用例钉住新语义：
-    列表前 3 个位置里有 2 个已经在库里，scan_limit=3 时只看到第 3 个就不再往下翻。
+    列表前 3 个位置里有 2 个之前采集过，scan_limit=3 时只看到第 3 个就不再往下翻。
     """
     # 先把前两条做成"库里已有"：按 _card 生成的真实 URL 建 Job（去重判据就是这个 URL）。
     for index in (1, 2):
@@ -316,8 +317,8 @@ def test_interest_mode_scan_limit_counts_list_positions(db_session):
     assert client.requested_pages == [1]
     assert report.interest_scanned == 3
     assert task.config["interest_scanned"] == 3
-    # "已收藏过"单独记账（用户要求"保持跳过，但多显示数字"）。
-    assert task.config["interest_already_known"] == 2
+    # "之前采集过"单独记账（用户要求"保持跳过，但多显示数字"）。
+    assert task.config["interest_previously_collected"] == 2
 
 
 def test_interest_mode_scan_limit_zero_means_unlimited(db_session):
@@ -360,7 +361,7 @@ def test_interest_mode_reports_already_known_separately_from_trashed(db_session)
 
     _run(db_session, task, client, adapter, _config(source="interest"))
 
-    assert task.config["interest_already_known"] == 1
+    assert task.config["interest_previously_collected"] == 1
     # 没有回收站条目，这条不该被算进去。
     assert "skipped_trashed" not in task.config
 

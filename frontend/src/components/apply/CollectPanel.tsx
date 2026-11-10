@@ -207,9 +207,9 @@ export default function CollectPanel({ disabled, onStarted, collectTask, progres
             ? (collectTask.config.interest_invalid as number)
             : 0
         }
-        interestAlreadyKnown={
-          typeof collectTask?.config?.interest_already_known === "number"
-            ? (collectTask.config.interest_already_known as number)
+        interestPreviouslyCollected={
+          typeof collectTask?.config?.interest_previously_collected === "number"
+            ? (collectTask.config.interest_previously_collected as number)
             : 0
         }
         interestScanned={
