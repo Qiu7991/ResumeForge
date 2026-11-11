@@ -40,7 +40,8 @@ from ...models.material import CandidateJob
 from ...models.profile import utcnow
 from ...models.setting import AppSetting
 from .candidate_scoring import candidate_has_jd, candidate_jd
-from .scoring_service import ScoringFailed, ScoringUnavailable, score_texts
+from .scoring import SemanticScore
+from .scoring_service import ScoringUnavailable, score_texts
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,16 @@ _TASK_KEY = "candidate_score_task"
 _CANCEL_POLL_SECONDS = 0.2
 # 错误清单只留前 20 条：任务可能几千条，全留会让快照 JSON 无限膨胀。
 _MAX_ERRORS = 20
+
+# 并发评分路数。
+#
+# 原来是 1（串行）。改 3 的理由是实测：串行 13 条要跑十分钟，用户直接问"怎么这么慢"。
+# 3 路既能把等待压掉三分之二，又不会像"全并发"那样把模型网关打满（单条输出已经
+# 从 9000 token 降到 1600 左右，三条同时在飞仍然是安全的量级）。
+#
+# 为什么不设成可配：这个值的取舍依赖"每次采集多少条"（15-18）与"单条多快"，
+# 两者都是本项目的固定量级；做成配置项只会让默认值没人调。
+_SCORE_CONCURRENCY = 3
 
 
 class CandidateScoreTask(BaseModel):
@@ -167,80 +178,135 @@ class CandidateScoreRunner:
         )
 
     def _run(self, task_id: str, candidate_ids: list[int], resume_id: int | None) -> None:
+        """并发评分：``_SCORE_CONCURRENCY`` 条同时在飞。
+
+        **线程安全的做法**：SQLAlchemy 的 Session 不是线程安全的，所以这里只让
+        **主线程**碰 ``session``——工作线程只负责「拿到文本 → 调模型 → 回传结果」，
+        写库统一回到主线程做。这样既并发又不共享 Session。
+
+        结果收集用 ``as_completed``：谁先回来就先落库，进度是真实的（不是"开头
+        几条很快、最后卡在一条上"）。
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         stop = self._stop
         session = self._session_factory()
         completed = 0
         failed = 0
         errors: list[str] = []
         cancelled = False
+
+        def score_in_thread(
+            candidate_id: int, title: str, jd_text: str, city: str, salary: str, company: str
+        ) -> tuple[int, SemanticScore | None, str, str]:
+            """工作线程：只调模型，不碰数据库。返回 (id, score, model, 错误)。"""
+            if not jd_text:
+                return candidate_id, None, "", "jd_missing: 缺 JD 正文"
+            scoring_session = self._session_factory()
+            try:
+                score, model = asyncio.run(
+                    score_texts(
+                        scoring_session,
+                        title=title,
+                        company=company,
+                        city=city,
+                        salary=salary,
+                        jd=jd_text,
+                        resume_id=resume_id,
+                        # 候选阶段只要一个能排序的分数：完整格式要求模型输出上万 token
+                        # 的 evidence 与技能逐条比对，单条 45 秒；精简格式降到 10 秒级。
+                        compact=True,
+                    )
+                )
+                return candidate_id, score, model, ""
+            except ScoringUnavailable as exc:
+                return candidate_id, None, "", str(exc) or type(exc).__name__
+            except Exception as exc:  # noqa: BLE001 — 单条失败不中断整批
+                return candidate_id, None, "", str(exc) or type(exc).__name__
+            finally:
+                scoring_session.close()
+
         try:
+            # 先把要评的候选一次性读出来（主线程），后面工作线程只用值不用 Session。
+            plan: list[tuple[int, str, str, str, str, str]] = []
             for candidate_id in candidate_ids:
-                if stop.is_set():
-                    cancelled = True
-                    break
-                candidate = session.get(CandidateJob, candidate_id)
-                if candidate is None:
+                row = session.get(CandidateJob, candidate_id)
+                if row is None:
                     failed += 1
                     continue
-
-                self._update(
-                    session,
-                    task_id,
-                    current_candidate_id=candidate_id,
-                    current_title=candidate.title or "",
-                    completed=completed,
-                    failed=failed,
-                    errors=errors,
-                    message=f"正在评分：{candidate.title or '(未命名)'}",
+                plan.append(
+                    (
+                        row.id,
+                        row.title or "",
+                        candidate_jd(row),
+                        row.location or "",
+                        row.salary or "",
+                        row.company or "",
+                    )
                 )
 
-                try:
-                    self._score_one(session, candidate, resume_id=resume_id)
-                    completed += 1
-                except ScoringUnavailable as exc:
-                    detail = str(exc) or type(exc).__name__
-                    errors.append(f"{candidate.title}: {detail}")
-                    if detail.startswith("jd_missing"):
-                        # **单条问题**：这一条没有 JD 正文，其余候选照样能评。
-                        # 以前这里一律当"环境不可用"整批退出——实测第一条缺 JD 就
-                        # 让 11 条候选全部作废（requested=11 / failed=1 / 其余没跑）。
-                        failed += 1
-                        self._mark_error(session, candidate, detail)
-                        session.commit()
-                        continue
-                    # 真正环境问题（没配模型 / 个人资料为空）：后面每一条都会同样失败，
-                    # 直接收尾，不用把剩下的都跑一遍刷同样的错。
-                    failed += 1
-                    session.commit()
-                    self._finish(
+            fatal_error = ""
+            with ThreadPoolExecutor(max_workers=_SCORE_CONCURRENCY) as pool:
+                futures = [
+                    pool.submit(score_in_thread, cid, title, jd, city, salary, company)
+                    for cid, title, jd, city, salary, company in plan
+                ]
+                self._update(
+                    session, task_id, message=f"正在评分（{len(futures)} 条）…", requested=len(futures)
+                )
+                for future in as_completed(futures):
+                    if stop.is_set():
+                        cancelled = True
+                    candidate_id, score, model, detail = future.result()
+
+                    if score is not None:
+                        row = session.get(CandidateJob, candidate_id)
+                        if row is not None:
+                            payload = score.as_dict()
+                            row.score_total = int(payload.get("total") or 0)
+                            row.score_payload = payload
+                            row.score_model = model
+                            row.scored_at = utcnow()
+                            row.score_error = ""
+                            completed += 1
+                            session.commit()
+                    else:
+                        row = session.get(CandidateJob, candidate_id)
+                        title = row.title if row is not None else str(candidate_id)
+                        errors.append(f"{title}: {detail}")
+                        if detail.startswith("jd_missing"):
+                            # 单条问题：跳过，其余候选照常。
+                            failed += 1
+                            if row is not None:
+                                self._mark_error(session, row, detail)
+                            session.commit()
+                        elif detail and not fatal_error:
+                            # 真正环境问题（没配模型/资料为空）：记下第一条就够，
+                            # 但仍让已提交的任务跑完——它们的结果都是有效的。
+                            fatal_error = detail
+                            failed += 1
+                            if row is not None:
+                                self._mark_error(session, row, detail)
+                            session.commit()
+
+                    self._update(
                         session,
                         task_id,
-                        status="failed",
-                        error=detail,
                         completed=completed,
                         failed=failed,
                         errors=errors,
+                        message=f"已评 {completed}/{len(futures)}",
                     )
-                    return
-                except (ScoringFailed, Exception) as exc:  # noqa: BLE001 — 单条失败不中断
-                    failed += 1
-                    detail = str(exc) or type(exc).__name__
-                    errors.append(f"{candidate.title}: {detail}")
-                    self._mark_error(session, candidate, detail)
-                session.commit()
-
-                if stop.is_set():
-                    cancelled = True
-                    break
 
             self._finish(
                 session,
                 task_id,
-                status="cancelled" if cancelled else "completed",
+                status="failed" if (fatal_error and completed == 0) else ("cancelled" if cancelled else "completed"),
+                error=fatal_error,
                 message=(
-                    f"已取消（完成 {completed} 条）"
-                    if cancelled
-                    else f"评分完成：{completed} 条成功，{failed} 条失败"
+                    f"评分完成：{completed} 条成功，{failed} 条失败"
+                    if not cancelled
+                    else f"已取消（完成 {completed} 条）"
                 ),
                 completed=completed,
                 failed=failed,
@@ -284,6 +350,10 @@ class CandidateScoreRunner:
                     salary=candidate.salary,
                     jd=candidate_jd(candidate),
                     resume_id=resume_id,
+                    # 候选阶段只要一个能排序的分数：完整格式要求模型输出上万 token 的
+                    # evidence 与技能逐条比对，单条 45 秒；精简格式降到 10 秒级。
+                    # 用户点开某条岗位要看完整证据时，走岗位侧的完整评分。
+                    compact=True,
                 )
             )
         finally:

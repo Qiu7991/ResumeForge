@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,6 +25,8 @@ from ..services.job_hunt.candidate_score_task import (
 )
 from ..services.job_hunt.candidate_scoring import candidate_has_jd
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/candidate-jobs", tags=["candidate-jobs"])
 
 
@@ -36,6 +39,9 @@ class CandidateScoreIn(BaseModel):
     force: bool = False
     # 用哪份简历评分；不传走设置里的默认简历。
     resume_id: int | None = None
+    # 缺 JD 时先补抓一次再评（默认开）。存量候选就是这样补上的：它们在采集链路修好
+    # 之前入的库，正文是空的，没有补抓就等于永远评不了。
+    fill_jd: bool = True
 
 
 @router.post("/score")
@@ -69,18 +75,28 @@ def start_score(req: CandidateScoreIn, db: Session = Depends(get_db)) -> dict[st
         if not ids:
             raise HTTPException(400, "这些备选岗位都已经评过分（要重评请传 force=true）")
 
-    # 缺 JD 的直接标错误，不占用模型调用：先按「有没有正文」筛一遍，
-    # 剩下的才进任务队列。判定与拼 JD 同源（candidate_has_jd）。
+    candidates = db.query(CandidateJob).filter(CandidateJob.id.in_(ids)).all()
+    missing = [row for row in candidates if not candidate_has_jd(row)]
+
+    # 缺 JD 的**先补抓一次**再评（2026-11-11）：
+    # 采集链路修好之前入库的候选正文是空的，没有这一步它们永远停在「缺 JD」，
+    # 用户只能一条条手点、而手点也拿不到正文。补不到的再如实标 jd_missing。
+    if missing and req.fill_jd:
+        _fill_missing_jd(db, missing, req.resume_id)
+
+    db.expire_all()
     scorable: list[int] = []
-    for candidate in db.query(CandidateJob).filter(CandidateJob.id.in_(ids)).all():
-        if candidate_has_jd(candidate):
-            scorable.append(candidate.id)
+    for row in db.query(CandidateJob).filter(CandidateJob.id.in_(ids)).all():
+        if candidate_has_jd(row):
+            scorable.append(row.id)
         else:
-            candidate.score_error = "jd_missing: 缺 JD 正文"
-            candidate.score_total = None
+            row.score_error = "jd_missing: 缺 JD 正文"
+            row.score_total = None
     db.commit()
     if not scorable:
-        raise HTTPException(400, "这些备选岗位都没有 JD 正文，无法评分（先补抓详情）")
+        raise HTTPException(
+            400, "这些备选岗位都没有 JD 正文，无法评分（来源链接打不开或详情页没有正文）"
+        )
 
     try:
         task = get_candidate_score_runner().start(scorable, resume_id=req.resume_id)
@@ -108,6 +124,50 @@ def cancel_score_task(db: Session = Depends(get_db)) -> dict[str, Any]:
     except CandidateScoreBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"ok": True, "task_id": task.task_id}
+
+
+def _fill_missing_jd(db: Session, candidates: list[CandidateJob], resume_id: int | None) -> None:
+    """给缺 JD 的候选补抓一次正文（按平台分组，串行）。
+
+    **尽力而为**：补不到就保持空正文，由调用方标成 ``jd_missing``。
+    这里不抛异常——「补不到」是一个正常结果（岗位已下线、详情页改版），
+    不该让整个评分请求变成 500。
+
+    串行不并发：补抓是限速的活，多个线程同时驱动同一个浏览器会互相导航
+    （实测过：三个平台并发时一批 13 条只成功 1 条）。
+    """
+    from ..services.job_hunt.candidate_jd_backfill import backfill_candidate_jd
+    from ..services.job_hunt.registry import get_registry
+    from ..services.job_hunt.runner import cdp_fetcher
+    from .job_hunt_shared import acquire_client
+
+    registry = get_registry()
+    by_site: dict[str, list[int]] = {}
+    for row in candidates:
+        url = (row.source_url or "").strip()
+        adapter = next((a for a in registry.all() if a.supports(url)), None)
+        if adapter is None:
+            continue
+        by_site.setdefault(adapter.key, []).append(row.id)
+
+    if not by_site:
+        return
+
+    try:
+        client = acquire_client(db)
+    except Exception as exc:  # noqa: BLE001 — 浏览器没启动：补不了，但评分请求继续
+        logger.info("补 JD 跳过（浏览器不可用）：%s: %s", type(exc).__name__, exc)
+        return
+
+    for site_key, ids in by_site.items():
+        adapter = registry.resolve(site_key)
+        if adapter is None:
+            continue
+        try:
+            fetch = cdp_fetcher(client, adapter, page_kind="detail")
+            backfill_candidate_jd(db, ids, fetch=fetch, adapter=adapter)
+        except Exception as exc:  # noqa: BLE001 — 单个平台失败不影响其它平台
+            logger.info("补 JD 失败（%s）：%s: %s", site_key, type(exc).__name__, exc)
 
 
 __all__ = ["router"]

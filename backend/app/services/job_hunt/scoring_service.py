@@ -100,6 +100,7 @@ def build_prompt_for_texts(
     salary: str = "",
     jd: str = "",
     profile: Any = None,
+    compact: bool = False,
 ) -> str:
     """按统一口径拼评分提示词。
 
@@ -120,6 +121,7 @@ def build_prompt_for_texts(
         target_cities=profile_field(profile, "target_city") or profile_field(profile, "city"),
         salary_min=0,
         salary_max=expected_salary_k(profile),
+        compact=compact,
     )
 
 
@@ -161,6 +163,7 @@ async def score_texts(
     salary: str = "",
     jd: str = "",
     resume_id: int | None = None,
+    compact: bool = False,
 ) -> tuple[SemanticScore, str]:
     """对「标题 + 公司 + JD 文本」评分，**不需要 Job 行**。
 
@@ -178,6 +181,7 @@ async def score_texts(
         salary=salary,
         jd=jd,
         profile=profile,
+        compact=compact,
     )
     # 调用模型期间不占着连接池：长连接会让并发请求排队。
     db.close()

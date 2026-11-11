@@ -27,7 +27,9 @@ def _stub_scoring(monkeypatch, behaviours: dict[str, object]) -> list[str]:
     """按标题脚本化 score_texts 的行为，返回被评过的标题（按顺序）。"""
     called: list[str] = []
 
-    async def fake_score_texts(db, *, title, company, city="", salary="", jd="", resume_id=None):
+    async def fake_score_texts(
+        db, *, title, company, city="", salary="", jd="", resume_id=None, compact=False
+    ):
         called.append(title)
         outcome = behaviours.get(title)
         if isinstance(outcome, Exception):
@@ -57,27 +59,49 @@ def test_missing_jd_does_not_abort_the_batch(db_session, monkeypatch):
     )
 
     # 「没 JD 的岗位」不会进模型调用（直接判缺 JD），另外两条都评了。
-    assert called == ["有 JD 的岗位一", "有 JD 的岗位二"]
+    # **不比顺序**：并发评分下完成顺序不保证，比顺序的断言会随机红。
+    assert sorted(called) == sorted(["有 JD 的岗位一", "有 JD 的岗位二"])
     db_session.expire_all()
     assert db_session.get(CandidateJob, blank.id).score_error.startswith("jd_missing")
     assert db_session.get(CandidateJob, good1.id).score_total == 70
     assert db_session.get(CandidateJob, good2.id).score_total == 70
 
 
-def test_environment_error_stops_the_batch(db_session, monkeypatch):
-    """真正环境问题（没配模型）要立即收尾，不把剩下的都跑一遍刷同样的错。"""
+def test_environment_error_marks_failed_when_nothing_scored(db_session, monkeypatch):
+    """整批都没评成（例如没配模型）时任务标失败，且原因写进 task.error。
+
+    并发评分（``_SCORE_CONCURRENCY``）之后不再"第一条失败就收尾"——多条同时在飞，
+    已经在跑的那几条没必要中途掐掉。关键是**一条都没成功时要如实标失败**，
+    不能让用户看到"完成"却没有任何分数。
+    """
     first = _candidate(db_session, title="第一条", jd="职责 A。")
     second = _candidate(db_session, title="第二条", jd="职责 B。")
 
     from app.services.job_hunt.scoring_service import ScoringUnavailable
 
-    called = _stub_scoring(monkeypatch, {"第一条": ScoringUnavailable("还没有配置大模型")})
+    _stub_scoring(
+        monkeypatch,
+        {
+            "第一条": ScoringUnavailable("还没有配置大模型"),
+            "第二条": ScoringUnavailable("还没有配置大模型"),
+        },
+    )
+    # ``_run`` 的收尾依赖 task 快照存在（``_finish`` 按 task_id 找），
+    # 直接调 _run 时要先把快照写进去——正常路径由 ``start()`` 负责这一步。
+    task_mod._write_task(
+        db_session,
+        task_mod.CandidateScoreTask(task_id="task-2", status="running", requested=2),
+    )
     runner = CandidateScoreRunner()
     runner._run("task-2", [first.id, second.id], None)
 
-    assert called == ["第一条"], "环境错误后不该继续调模型"
     db_session.expire_all()
+    assert db_session.get(CandidateJob, first.id).score_total is None
     assert db_session.get(CandidateJob, second.id).score_total is None
+    task = task_mod.get_candidate_score_task(db_session)
+    assert task is not None
+    assert task.status == "failed", "一条都没评成时不能标完成"
+    assert "还没有配置大模型" in (task.error or "")
 
 
 def test_single_failure_continues(db_session, monkeypatch):
@@ -91,7 +115,7 @@ def test_single_failure_continues(db_session, monkeypatch):
     runner = CandidateScoreRunner()
     runner._run("task-3", [broken.id, fine.id], None)
 
-    assert called == ["会失败的", "正常的"]
+    assert sorted(called) == sorted(["会失败的", "正常的"])
     db_session.expire_all()
     broken_row = db_session.get(CandidateJob, broken.id)
     assert broken_row.score_total is None

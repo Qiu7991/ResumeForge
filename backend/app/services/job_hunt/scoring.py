@@ -277,13 +277,25 @@ def build_scoring_prompt(
     salary_min: float = 0,
     salary_max: float = 0,
     salary_ceil_ratio: float = 1.5,
+    compact: bool = False,
 ) -> str:
-    """拼装评分提示词（模板在 ``prompts/job_hunt_scoring.md``）。"""
+    """拼装评分提示词（模板在 ``prompts/job_hunt_scoring.md``）。
+
+    ``compact=True`` 时把「输出格式」那段换成精简版：只要五维分数 + 一句话理由，
+    不要逐条 evidence 摘录、不要 skill_compare。
+
+    为什么要这个开关（2026-11-11 实测）：完整格式要求模型输出 7000-14000 token 的
+    evidence 与技能逐条比对（输入才 5000），而生成输出是逐 token 的——一轮 13 条
+    候选要跑十分钟。候选阶段只需要**一个能排序的分数**，完整证据链是用户点开某条
+    岗位时才需要的。省掉输出让单条从 ~45 秒降到 10 秒级。
+    """
     from pathlib import Path
 
     template = (Path(__file__).resolve().parents[2] / "prompts" / "job_hunt_scoring.md").read_text(
         encoding="utf-8"
     )
+    if compact:
+        template = _apply_compact_output_spec(template)
     salary_ceil = salary_max * max(salary_ceil_ratio, 1.0) if salary_max > 0 else 0
     return template.format(
         resume=resume,
@@ -326,6 +338,50 @@ def _parse_salary_range(text: str) -> tuple[float, float] | None:
         # 日薪折月（按 22 天）：130-250 元/天 ≈ 2.9-5.5K
         low, high = low * 22 / 1000, high * 22 / 1000
     return (low, high)
+
+
+def _apply_compact_output_spec(template: str) -> str:
+    """把模板里的输出格式段换成精简版（只要分 + 一句话理由）。
+
+    实现方式是从「请严格输出一个 JSON 对象」切到模板末尾，整段替换——比在模板里塞
+    两个 `{compact_*}` 占位符更省：那样两个版本会各自漂移，而这里只有一份维度定义
+    （评分口径必须一致，否则精简模式和完整模式给出的分不可比）。
+    """
+    marker = "请严格输出一个 JSON 对象"
+    cut = template.find(marker)
+    if cut < 0:  # 模板改版后找不到标记：宁可给完整模板，也不要静默输出错格式
+        return template
+    return template[:cut] + COMPACT_OUTPUT_SPEC
+
+
+# 精简输出格式：只要分数与理由。**five 个 score 的键名与完整版一致**，
+# 这样 ``parse_semantic_score`` 不用分叉——它按同一套键解析。
+COMPACT_OUTPUT_SPEC = """**这次只做快速排序评分，请务必简短。**
+
+只输出一个 JSON 对象，不要 Markdown，不要额外说明。硬性约束：
+
+1. 五个 `score` 必须是整数，各自不超过上限（核心职责 0-40、可迁移 0-25、
+   硬性要求 0-15、工具行业 0-10、实际条件 0-10）。
+2. `evidence` **每条最多 15 个字**，只写结论（如「本科满足」「无相关项目」），
+   **不要**摘录 JD 原文、**不要**引用简历原句。
+3. **不要输出** `skill_compare`、不要逐条列 JD 要求、不要解释评分过程。
+4. 整份输出控制在 300 字以内。
+
+{{
+  "role_summary": "岗位核心工作（10 字内）",
+  "hard_requirements": {{"evidence": "结论（15 字内）", "score": 0}},
+  "core_duties": {{"evidence": "结论（15 字内）", "score": 0}},
+  "transferable_evidence": {{"evidence": "结论（15 字内）", "score": 0}},
+  "tools_industry": {{"evidence": "结论（15 字内）", "score": 0}},
+  "practical_fit": {{"evidence": "结论（15 字内）", "score": 0}},
+  "caps": [],
+  "hard_gaps": [],
+  "reason": "关键判断（20 字内）",
+  "missing": "关键缺失（10 字内）"
+}}
+
+再强调一次：直接给 JSON，evidence 每条不超过 15 个字，不要摘录原文，不要 skill_compare。
+"""
 
 
 def salary_fit_summary(
