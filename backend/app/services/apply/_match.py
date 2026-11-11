@@ -93,7 +93,19 @@ def persist_match(
     else:
         row.job_title = job.title
         row.company = job.company
-        row.result = payload
+        # **保留 semantic_score 子键**（2026-11-11）：这一行的 result 里可能同时存着
+        # 语义评分（0-100 总分，排序用）与准入结论（五类判定，闸门用）——同岗位同行、
+        # 不同用途，本模块开头的设计就是如此。直接 ``row.result = payload`` 会把语义
+        # 评分整条抹掉：用户按分数挑完岗位、再跑一次匹配分析，分数就凭空消失了。
+        #
+        # 只保留这一个已知的兄弟键，不做通用的"合并旧 result"——那会让早已废弃的历史键
+        # 永远传下去，而 result 是 ``extra="forbid"`` 校验的对象。
+        previous_semantic = (row.result or {}).get("semantic_score")
+        row.result = (
+            {**payload, "semantic_score": previous_semantic}
+            if previous_semantic
+            else payload
+        )
         row.hard_gate = result.hard_gate
         row.requires_confirm = requires_confirm
         row.model = model

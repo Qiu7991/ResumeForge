@@ -251,6 +251,14 @@ class CandidateJobOut(BaseModel):
     # 采集到这条的时间（`created_at` 的语义就是"进库时间"，对采集来的候选即采集时间）。
     # 单独起名是为了让界面读得懂：直接显示 created_at 会被当成"创建记录的时间"。
     collected_at: datetime | None = None
+    # 语义评分摘要（迁移 0003）。**完整 payload 不进列表**：候选一次采 15-18 条、
+    # 每条的 payload 含五维明细与技能逐条比对，塞进列表会让这个接口随采集量线性变慢；
+    # 要看明细走单条详情。这与「JD 三段不进列表」是同一条取舍。
+    score_total: int | None = None
+    score_model: str = ""
+    scored_at: datetime | None = None
+    # 评分失败原因（"缺 JD" / "还没有配置大模型" / 解析失败…）；空串 = 无错。
+    score_error: str = ""
     created_at: datetime
     updated_at: datetime
 
@@ -270,6 +278,8 @@ class CandidateJobDetailOut(CandidateJobOut):
     requirements: str = ""
     job_type: str = ""
     additional_info: str = ""
+    # 完整语义评分（五维/封顶/理由/技能逐条比对）。只在详情里给——列表只要总分。
+    score_payload: dict | None = None
 
 
 class CandidateJobImportRequest(BaseModel):

@@ -83,8 +83,13 @@ def list_candidate_jobs(
     collect_task_id: int | None = None,
     collect_task_ids: list[int] | None = None,
     limit: int = MAX_CANDIDATE_LIST,
+    sort: str = "created_desc",
 ) -> list[CandidateJob]:
-    """按状态/采集批次/关键词分页列出备选岗位。"""
+    """按状态/采集批次/关键词列出备选岗位。
+
+    ``sort`` 与 :func:`list_candidate_jobs_page` 共用 :func:`_stage_order_by`：
+    两处各写一遍排序，前端翻页时顺序就会跳。
+    """
     return (
         _filtered_query(
             db,
@@ -93,7 +98,7 @@ def list_candidate_jobs(
             collect_task_id=collect_task_id,
             collect_task_ids=collect_task_ids,
         )
-        .order_by(CandidateJob.created_at.desc(), CandidateJob.id.desc())
+        .order_by(*_stage_order_by(sort))
         .limit(max(1, limit))
         .all()
     )
@@ -108,11 +113,16 @@ def list_candidate_jobs_page(
     collect_task_ids: list[int] | None = None,
     page: int = 1,
     page_size: int = 20,
+    sort: str = "created_desc",
 ) -> tuple[list[CandidateJob], int]:
     """分页列出备选岗位（RF-08）：过滤与排序与 :func:`list_candidate_jobs` 完全一致。
 
     与旧列表的分工：旧端点给 MAX_CANDIDATE_LIST 兜底上限（待处理清单不翻页），本函数
     服务 ``GET /api/candidate-jobs/page``——历史候选超过 300 条之后仍然全部可达。
+
+    ``sort``：``created_desc``（默认，最近采集在前）/ ``score_desc`` / ``score_asc``。
+    按分数排时把未评分的（``score_total IS NULL``）**固定排在最后**，两个方向都一样——
+    否则升序会把"还没评"（NULL）当成最小值挤到最前面，看着像全都是 0 分。
     """
     query = _filtered_query(
         db,
@@ -122,13 +132,32 @@ def list_candidate_jobs_page(
         collect_task_ids=collect_task_ids,
     )
     total = query.count()
+    order_by = _stage_order_by(sort)
     rows = (
-        query.order_by(CandidateJob.created_at.desc(), CandidateJob.id.desc())
+        query.order_by(*order_by)
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )
     return rows, total
+
+
+def _stage_order_by(sort: str) -> tuple:
+    """备选岗位列表的排序键（列表与分页共用，避免两处顺序不一致）。"""
+    if sort == "score_desc":
+        # NULL 排最后：`score_total IS NULL` 升序 → 有分的(0) 在前、无分的(1) 在后。
+        return (
+            CandidateJob.score_total.is_(None).asc(),
+            CandidateJob.score_total.desc(),
+            CandidateJob.id.desc(),
+        )
+    if sort == "score_asc":
+        return (
+            CandidateJob.score_total.is_(None).asc(),
+            CandidateJob.score_total.asc(),
+            CandidateJob.id.desc(),
+        )
+    return (CandidateJob.created_at.desc(), CandidateJob.id.desc())
 
 
 def candidate_or_none(db: Session, candidate_id: int) -> CandidateJob | None:
@@ -357,6 +386,9 @@ def import_candidates(db: Session, candidate_ids: list[int]) -> dict:
         )
         candidate.status = CANDIDATE_JOB_IMPORTED
         candidate.imported_job_id = job.id
+        # 分数跟着导入（方案 3）：候选阶段评的分不迁过去，用户导入后看到的就是「未评分」，
+        # 等于白评一遍——而重评要再花一次 LLM 调用。
+        _migrate_candidate_score(db, candidate, job.id)
         imported += 1
         results.append(
             {
@@ -384,6 +416,35 @@ def import_candidates(db: Session, candidate_ids: list[int]) -> dict:
         "missing": missing,
         "results": results,
     }
+
+
+def _migrate_candidate_score(db: Session, candidate: CandidateJob, job_id: int) -> None:
+    """把候选阶段评出来的分数搬到新岗位的语义评分里。
+
+    不迁移的后果：用户按分数挑完导入，回到岗位广场看到的却是「未评分」，等于白评——
+    而重评要再花一次 LLM 调用。
+
+    **失败不阻断导入**：分数是辅助信息，一条评分写不进去不该让"岗位没建成"。
+    写不进去只记日志，导入照常完成。
+
+    用 service 层的 ``persist_semantic_for_job``（与单岗评分端点同一份实现），
+    而不是自己拼 SQL：那样「不覆盖五类结论」这条语义会有两份容易分叉的代码。
+    """
+    payload = candidate.score_payload
+    if not payload or candidate.score_total is None:
+        return
+    try:
+        from .job_hunt.scoring_service import persist_semantic_for_job
+
+        persist_semantic_for_job(db, job_id, payload, model=candidate.score_model or "")
+    except Exception as exc:  # noqa: BLE001 — 分数是增强项，不该连累导入
+        logger.warning(
+            "候选 %s 的评分迁移到岗位 %s 失败（导入照常完成）：%s: %s",
+            candidate.id,
+            job_id,
+            type(exc).__name__,
+            exc,
+        )
 
 
 def candidate_brief(candidate: CandidateJob) -> dict:

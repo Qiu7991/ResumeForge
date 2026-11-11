@@ -12,7 +12,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, String, Text
+from sqlalchemy import JSON, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
@@ -90,6 +90,28 @@ class CandidateJob(Base):
     status: Mapped[str] = mapped_column(String(16), default=CANDIDATE_JOB_PENDING, index=True)
     # 导入成功后指向正式岗位；岗位被删除时置空，备选记录仍保留。
     imported_job_id: Mapped[int | None] = mapped_column(nullable=True)
+
+    # ---- 语义评分（迁移 0003）----
+    #
+    # 为什么评在**备选**阶段而不是导入之后（2026-11-11）：用户要「采集评分后，我再决定
+    # 导入」，而原先的评分端点第一行是 ``db.get(Job, job_id)``——必须先导入才评得了，
+    # 顺序正好反了。评分落到这一层，用户才能按分数挑。
+    #
+    # 不复用 ``job_match_analysis`` 表：那张表的 ``job_id`` 是 unique + 外键到 ``job``，
+    # 备选在导入前没有 job 行，多条备选也没处并存放。
+    #
+    # 总分 0-100；**NULL = 还没评过**（用它当判据，不新增 status 取值——那个被接口的
+    # Literal 白名单校验，加值要连带改三处）。
+    score_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 完整 SemanticScore（五维/封顶/理由/技能比对）。**列表接口不下发**，只在单条详情给：
+    # 与 JD 三段「不进列表」同一条体积取舍。
+    score_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # 评分用的模型名：换模型后能看出这个分数是谁给的。
+    score_model: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    scored_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 评分失败原因（缺 JD / 模型未配置 / 解析失败）。空串 = 无错。
+    score_error: Mapped[str] = mapped_column(String(255), default="", server_default="")
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

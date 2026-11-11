@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from typing import Any
 
@@ -29,6 +30,8 @@ from ..services.job_hunt.registry import get_registry
 from ..services.job_hunt.settings import get_job_hunt_config
 from .job_hunt_shared import acquire_client, is_blocked, read_blocklist_config
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/job-hunt", tags=["job-hunt"])
 
 
@@ -40,6 +43,16 @@ class JobHuntTaskStartIn(BaseModel):
     city: str = ""
     max_pages: int = Field(default=1, ge=1, le=10)
     city_code: str = ""
+    # 采集结果是否写进备选岗位暂存区。
+    #
+    # **默认 True** 是刻意的（2026-11-11）：用户反馈的痛点就是「采完就停」——原来
+    # 结果只活在内存里，刷新即丢，也没有后续动作。保留 False 只用于调试，或用户明确
+    # 只想看一轮列表、不想留痕的场景。
+    persist: bool = True
+    # 落库后是否自动补 JD + 评分。关掉它 = 只入库不评分（分数显示为「未评分」）。
+    auto_score: bool = True
+    # 用哪份简历评分；不传走设置里的默认简历。
+    resume_id: int | None = None
 
 
 @router.post("/collect/task")
@@ -93,12 +106,29 @@ def start_collect_task(
             task.stubs = [asdict(s) for s in kept]
             task.collected = len(kept)
             task.stopped_reason = report.stopped_reason
+            task.stage = "collected"
             # runner 在用户主动停止时给出 "stopped"（见 runner.run 的 on_progress 分支）。
             task.status = TASK_STOPPED if report.stopped_reason == "stopped" else TASK_COMPLETED
             task.message = (
                 f"完成：{len(kept)} 条"
                 + (f"（黑名单挡掉 {task.blocked} 条）" if task.blocked else "")
             )
+
+            # ---- 落暂存区（方案 3 的核心：采集结果不再只活在内存里）----
+            if req.persist and kept:
+                try:
+                    candidate_ids = _stage_results(session, task, kept, adapter)
+                    task.candidate_ids = candidate_ids
+                    task.stage = "staged"
+                    task.message = f"已入库 {len(candidate_ids)} 条备选岗位"
+                except Exception as exc:  # noqa: BLE001 — 落库失败不该吞掉已采到的结果
+                    logger.warning("采集结果落暂存区失败：%s: %s", type(exc).__name__, exc)
+                    task.error = f"落库失败：{exc}"
+                    return
+
+                # ---- 自动补 JD + 评分 ----
+                if req.auto_score and candidate_ids:
+                    _auto_score(session, task, candidate_ids, adapter, client, req.resume_id)
         except Exception as exc:  # noqa: BLE001
             # 用户已点停止时，抓取层抛的异常是"停止的副作用"，不是真失败：
             # 此时应如实标 stopped（并保留已采到的部分），不要吓用户。
@@ -165,3 +195,113 @@ def stop_collect_task(task_id: str) -> dict:
     if task is None:
         raise HTTPException(404, "任务不存在")
     return task.snapshot()
+
+
+# ---------------------------------------------------------------------------
+# 采集结果的后续两步：落暂存区 → 补 JD → 评分
+# ---------------------------------------------------------------------------
+
+
+def _stage_results(session: Any, task: Any, stubs: list[Any], adapter: Any) -> list[int]:
+    """把采集结果写进备选岗位暂存区，返回新建的候选 id。
+
+    **为什么要落库**（2026-11-11 用户反馈）：之前任务式采集只把结果放在
+    ``task.stubs`` 内存里，采完刷新页面就没了，也没有任何后续动作——用户看到的就是
+    「采完就停」。落库后才有东西可评分、可勾选。
+
+    去重口径与投递台采集保持一致：先查正式岗位（同链接/同公司同标题），再查暂存区。
+    命中就跳过——重复采集同一个岗位不该在备选里堆第二份。
+    """
+    from ..models.material import CANDIDATE_JOB_PENDING
+    from ..services.candidate_jobs import find_staged_candidate, stage_candidate_job
+    from ..services.job.job_service import find_job_by_identity
+
+    created: list[int] = []
+    duplicates = 0
+    for stub in stubs:
+        title = (getattr(stub, "title", "") or "").strip()
+        if not title:
+            continue
+        company = (getattr(stub, "company", "") or "").strip()
+        url = (getattr(stub, "url", "") or "").strip()
+
+        if find_job_by_identity(session, title=title, company=company, source_url=url):
+            duplicates += 1
+            continue
+        if find_staged_candidate(session, title=title, company=company, source_url=url):
+            duplicates += 1
+            continue
+
+        candidate = stage_candidate_job(
+            session,
+            title=title,
+            company=company,
+            location=(getattr(stub, "location", "") or "").strip(),
+            salary=(getattr(stub, "salary_decoded", "") or getattr(stub, "salary_raw", "") or "").strip(),
+            source_url=url,
+            source=adapter.name,
+            task_id=None,
+            job_type=(getattr(stub, "job_type", "") or "").strip(),
+        )
+        candidate.status = CANDIDATE_JOB_PENDING
+        created.append(candidate.id)
+
+    session.commit()
+    task.duplicates = duplicates
+    logger.info("采集落暂存区：新建 %s 条，重复跳过 %s 条", len(created), duplicates)
+    return created
+
+
+def _auto_score(
+    session: Any,
+    task: Any,
+    candidate_ids: list[int],
+    adapter: Any,
+    client: Any,
+    resume_id: int | None,
+) -> None:
+    """补 JD → 起评分任务。两步都是**尽力而为**：任一步失败都不该让采集任务变成失败。
+
+    为什么先补 JD：评分是拿 JD 正文去比简历。列表页只给标题/公司/地区/薪资，没有
+    正文时评分只能拿标题猜，分数没有参考价值。补不到的那些会在发起评分时被标成
+    「缺 JD」（见 ``api/candidate_job_score.start_score``），不会硬评。
+    """
+    from ..services.job_hunt.candidate_score_task import (
+        CandidateScoreBusy,
+        get_candidate_score_runner,
+    )
+    from ..services.job_hunt.detail_backfill import backfill_details
+    from ..services.job_hunt.runner import cdp_fetcher
+
+    # ---- 1. 补 JD ----
+    task.stage = "filling_jd"
+    task.message = "正在补抓 JD 正文…"
+    try:
+        fetch = cdp_fetcher(client, adapter, page_kind="detail")
+        report = backfill_details(
+            session,
+            candidate_ids,
+            fetch=fetch,
+            adapter=adapter,
+            overwrite=False,
+            limit=len(candidate_ids),
+        )
+        task.jd_filled = report.filled
+        logger.info("采集后补 JD：尝试 %s / 成功 %s", report.attempted, report.filled)
+    except Exception as exc:  # noqa: BLE001 — 补不到就按「缺 JD」处理，不阻断评分
+        logger.info("采集后补 JD 跳过：%s: %s", type(exc).__name__, exc)
+
+    # ---- 2. 起评分任务 ----
+    task.stage = "scoring"
+    task.message = "正在评分…"
+    try:
+        runner = get_candidate_score_runner()
+        runner.start(candidate_ids, resume_id=resume_id)
+        task.score_started = True
+    except CandidateScoreBusy:
+        # 已有别的评分任务在跑：只用日志记一笔，让本次采集照常成功结束。
+        task.message = "已有评分任务在跑，本次结果待你手动评分"
+        logger.info("采集后评分跳过：已有评分任务在运行")
+    except Exception as exc:  # noqa: BLE001
+        logger.info("采集后评分启动失败：%s: %s", type(exc).__name__, exc)
+        task.message = f"评分启动失败：{exc}"

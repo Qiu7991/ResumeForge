@@ -338,3 +338,44 @@ def test_queued_job_ids_returns_empty_for_blank_input(db_session):
 
     assert queued_job_ids(db_session, []) == set()
     assert queued_job_ids(db_session, [None, None]) == set()
+
+
+# ---------------------------------------------------------------------------
+# 分数跟着导入（方案 3）
+# ---------------------------------------------------------------------------
+
+
+def test_import_migrates_candidate_score_to_job(db_session):
+    """候选阶段的评分要迁到新岗位，否则用户按分挑完导入后看到的是「未评分」。"""
+    candidate = _stage(db_session)
+    payload = {"total": 78, "components": [{"key": "skill", "score": 30}], "caps": []}
+    candidate.score_total = 78
+    candidate.score_payload = payload
+    candidate.score_model = "deepseek"
+    candidate.scored_at = candidate.created_at
+    db_session.commit()
+
+    result = import_candidates(db_session, [candidate.id])
+
+    assert result["imported"] == 1
+    job_id = result["results"][0]["job_id"]
+    from app.models.apply import JobMatchAnalysis
+
+    row = db_session.query(JobMatchAnalysis).filter(JobMatchAnalysis.job_id == job_id).one()
+    assert row.result["semantic_score"]["total"] == 78
+    assert row.model == "deepseek"
+
+
+def test_import_without_score_creates_no_analysis_row(db_session):
+    """没评过分的候选照常导入，但**不该**凭空造一条空的评分记录。"""
+    candidate = _stage(db_session)
+    result = import_candidates(db_session, [candidate.id])
+
+    assert result["imported"] == 1
+    job_id = result["results"][0]["job_id"]
+    from app.models.apply import JobMatchAnalysis
+
+    assert (
+        db_session.query(JobMatchAnalysis).filter(JobMatchAnalysis.job_id == job_id).first()
+        is None
+    )

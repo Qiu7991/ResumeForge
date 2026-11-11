@@ -140,3 +140,53 @@ def test_non_retryable_failure_is_not_retried(client, db_session, monkeypatch):
 
     assert response.status_code == 502, response.text
     assert provider.calls == 1, "不可重试的失败不应再发第二次请求"
+
+
+# ---------------------------------------------------------------------------
+# 回归：result 里只有 semantic_score 时不能 500
+# ---------------------------------------------------------------------------
+
+
+def test_semantic_only_result_does_not_500(client, db_session, monkeypatch):
+    """``result`` 只有 ``semantic_score`` 时，点「匹配度分析」必须重新分析而不是 500。
+
+    背景（2026-11-11）：语义评分与准入结论**同表同行不同键**，而 ``JobMatchResult``
+    是 ``extra="forbid"`` —— 旧代码拿只有 semantic_score 的 result 直接
+    ``model_validate`` 会抛 ValidationError 变成 500。批量路径早有兜底，单岗路径没有。
+    迁移备选岗位的分数会让这类行明显变多，所以这次必须修。
+    """
+    job = _seed(db_session)
+    from app.models.apply import JobMatchAnalysis
+
+    db_session.add(
+        JobMatchAnalysis(
+            job_id=job.id,
+            job_title=job.title,
+            company=job.company,
+            # 只有语义评分，没有五类结论。
+            result={"semantic_score": {"total": 78, "components": [], "caps": []}},
+            hard_gate="unknown",
+            requires_confirm=False,
+            model="deepseek",
+        )
+    )
+    db_session.commit()
+
+    provider = _ScriptedProvider([VALID_RESULT])
+    _patch_provider(monkeypatch, provider)
+
+    response = client.post(f"/api/jobs/{job.id}/match-analysis")
+
+    assert response.status_code == 200, response.text
+    # 真的走了重新分析（而不是把那份解析不了的结果当缓存返回）。
+    assert provider.calls == 1
+    # POST 直接返回 JobMatchResult（不套 result 层）。
+    body = response.json()
+    assert body["hard_conditions"][0]["status"] == "matched"
+    # 语义评分不能被这次分析覆盖掉：两个结论同一行不同键、互不干扰。
+    from app.models.apply import JobMatchAnalysis
+
+    db_session.expire_all()
+    row = db_session.query(JobMatchAnalysis).filter(JobMatchAnalysis.job_id == job.id).one()
+    assert row.result["semantic_score"]["total"] == 78, "准入结论覆盖掉了语义评分"
+    assert row.result["hard_conditions"][0]["status"] == "matched"

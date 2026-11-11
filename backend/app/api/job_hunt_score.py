@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
 from ..models.job import Job
-from ..services.job_hunt.scoring import build_scoring_prompt, parse_semantic_score
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,13 @@ async def score_job(
     与其返回一个中性分误导用户，不如明确告诉用户「先补 JD」。
     """
     from ..services.apply import apply_service
-    from ..services.settings_service import get_llm_config
+    from ..services.job_hunt.scoring_service import (
+        ScoringFailed,
+        ScoringUnavailable,
+        build_prompt_for_texts,
+        call_scoring_model,
+        resolve_resume_text,
+    )
 
     job = db.get(Job, job_id)
     if job is None:
@@ -64,71 +69,45 @@ async def score_job(
             detail="该岗位还没有 JD 正文，无法做语义评分。请先让采集补抓详情（或手动补全 JD）。",
         )
 
-    # 简历与候选人设置：复用匹配分析同一条取源路径，避免两处口径不一致。
-    # 指定 resume_id 时用那份简历（用于「同一岗位对比不同简历」的场景）。
-    from ..services.job.job_match_context import match_source_texts
-
-    profile, profile_text, resume_text = match_source_texts(db, job)
+    # 简历与资料：与备选评分走**同一条**取源路径（scoring_service），避免两处口径分叉。
+    # 岗位专属简历优先（job 行存在），再落设置里的默认简历。
     chosen_resume_title = ""
+    try:
+        profile, profile_text, resume_text = resolve_resume_text(db, resume_id=resume_id)
+    except ScoringUnavailable as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     if resume_id is not None:
-        from ..models.resume import ResumeRecord
-        from ..services.job.job_match_context import resume_prompt_text
+        from ..models.resume import ResumeRecord  # noqa: PLC0415 — 局部导入避免循环
 
         record = db.get(ResumeRecord, resume_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail="指定的简历不存在")
-        resume_text = resume_prompt_text(db, record)
-        chosen_resume_title = record.title or ""
+        chosen_resume_title = (record.title if record is not None else "") or ""
     if not resume_text.strip() and not profile_text.strip():
         raise HTTPException(status_code=400, detail="个人资料为空，无法评分")
 
-    prompt = build_scoring_prompt(
-        # 预算控制：简历 6000 + JD 5000 ≈ 3.5k token，加提示词约 5k，
-        # 是 deepseek 这类模型能在 60s 内完成的量级（实测 12000+8000 会触发网关 504）。
-        resume=(resume_text or profile_text)[:6000],
+    prompt = build_prompt_for_texts(
+        resume=resume_text or profile_text,
         title=job.title,
         company=job.company,
         city=job.location,
         salary=job.salary,
-        jd=(job.description or "")[:5000],
-        # 字段名与 ProfileOut 对齐（实测：target_city / expected_salary / job_intent）。
-        # 早期版本写成了 target_cities / salary_min / salary_max，永远取到空值。
-        candidate_education=_profile_field(profile, "education"),
-        candidate_recruitment_type=_profile_field(profile, "job_intent"),
-        target_cities=_profile_field(profile, "target_city") or _profile_field(profile, "city"),
-        salary_min=0,
-        salary_max=_expected_salary_k(profile),
+        jd=(job.description or ""),
+        profile=profile,
     )
 
     db.close()  # await 期间不占着连接池
 
-    from ..services.llm import create_provider
-    from ..services.llm.base import LLMError
-
-    config = get_llm_config(SessionLocal())
-    if not (config.base_url.strip() and config.model.strip()):
-        raise HTTPException(status_code=409, detail="还没有配置大模型，无法评分")
-
-    provider = create_provider(config)
     try:
-        raw = await provider.chat(
-            [{"role": "user", "content": prompt}], thinking=False
-        )
-    except LLMError as exc:
+        score, model = await call_scoring_model(prompt)
+    except ScoringUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ScoringFailed as exc:
         logger.warning("语义评分失败 job=%s：%s", job_id, exc)
-        raise HTTPException(status_code=502, detail=f"评分失败：{exc}") from exc
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("语义评分内部错误 job=%s：%s", job_id, exc)
-        raise HTTPException(status_code=502, detail="评分失败") from exc
-
-    score = parse_semantic_score(raw)
-    if not score.ok:
-        raise HTTPException(status_code=502, detail=f"评分结果无法解析：{score.error}")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     payload = score.as_dict()
     payload["resume_id"] = resume_id
     payload["resume_title"] = chosen_resume_title
-    _persist_semantic(job_id, payload, model=config.model)
+    _persist_semantic(job_id, payload, model=model)
     return {"job_id": job_id, "cached": False, **payload}
 
 
@@ -147,71 +126,18 @@ def get_score(job_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
 def _persist_semantic(job_id: int, payload: dict[str, Any], *, model: str) -> None:
     """把语义评分写进 job_match_analysis.result 的 semantic_score 子键。
 
-    不覆盖同一行的五类结论（result 里其它键原样保留）：两个结论同一行不同用途。
+    实际写入在 ``scoring_service.persist_semantic_for_job``——导入备选岗位时也要
+    迁移分数，两处必须用同一份实现（尤其是「不覆盖五类结论」这条）。
+    这里只负责给它一个独立的 Session：调用点在 await 之后，请求的 Session 已关闭。
     """
-    from ..services.apply._match import latest_match
+    from ..services.job_hunt.scoring_service import persist_semantic_for_job
 
     session = SessionLocal()
     try:
-        job = session.get(Job, job_id)
-        if job is None:
-            return
-        row = latest_match(session, job_id)
-        if row is None:
-            from ..models.apply import JobMatchAnalysis
-
-            row = JobMatchAnalysis(
-                job_id=job.id,
-                job_title=job.title,
-                company=job.company,
-                result={"semantic_score": payload},
-                hard_gate="unknown",
-                requires_confirm=False,
-                model=model,
-            )
-            session.add(row)
-        else:
-            merged = dict(row.result or {})
-            merged["semantic_score"] = payload
-            row.result = merged
-            row.model = model
+        persist_semantic_for_job(session, job_id, payload, model=model)
         session.commit()
     finally:
         session.close()
-
-
-def _profile_field(profile: Any, name: str) -> str:
-    value = getattr(profile, name, None)
-    if value is None:
-        return ""
-    if isinstance(value, (list, tuple)):
-        return "、".join(str(v) for v in value)
-    return str(value).strip()
-
-
-def _profile_number(profile: Any, name: str) -> float:
-    try:
-        return float(getattr(profile, name, 0) or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _expected_salary_k(profile: Any) -> float:
-    """从 expected_salary 文本（"15-25K" / "20K"）里取上限（单位 K）。
-
-    资料里的期望薪资是自由文本，不是数值列；取不到就返回 0（= 未设置），
-    让提示词明确说「未填写」，而不是把一个猜的数字喂给模型。
-    """
-    import re
-
-    text = _profile_field(profile, "expected_salary")
-    numbers = re.findall(r"(\d+(?:\.\d+)?)", text)
-    if not numbers:
-        return 0.0
-    high = float(numbers[-1])
-    if "万" in text:
-        high *= 10
-    return high
 
 
 __all__ = ["router"]

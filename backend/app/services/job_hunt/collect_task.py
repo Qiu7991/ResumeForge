@@ -24,8 +24,9 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,22 @@ class CollectTask:
     stubs: list[dict[str, Any]] = field(default_factory=list)
     blocked: int = 0
     stopped_reason: str = ""
+    # ---- 采集之后的两个阶段（2026-11-11 方案 3）----
+    #
+    # ``stage`` 让前端画出一条真实的进度链：collecting → collected → staged →
+    # filling_jd → scoring → done。之前只有「采集/完成」两态，用户看到的就是
+    # 「采完就停了」——中间做了什么完全不可见。
+    #
+    # 取值是**协议值**（英文），中文文案在语言包里按这些值映射。
+    stage: str = ""
+    # 落进备选岗位暂存区的候选 id；评分与导入都以它为准（stubs 只用于预览）。
+    candidate_ids: list[int] = field(default_factory=list)
+    # 与正式岗位/暂存区重复而跳过的条数。
+    duplicates: int = 0
+    # 补 JD 成功的条数。
+    jd_filled: int = 0
+    # 是否已把评分任务交给后台。
+    score_started: bool = False
     # 控制信号：置位=运行，清除=暂停。
     _resume: threading.Event = field(default_factory=threading.Event, repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -82,6 +99,12 @@ class CollectTask:
             # 只给条数，不把整批 stubs 塞进轮询响应（15 条 × 每次轮询会很吵）。
             "stub_count": len(self.stubs),
             "finished": self.status in TERMINAL,
+            # 采集之后的阶段进度（见字段注释）。
+            "stage": self.stage,
+            "candidate_count": len(self.candidate_ids),
+            "duplicates": self.duplicates,
+            "jd_filled": self.jd_filled,
+            "score_started": self.score_started,
         }
 
     def full_result(self) -> dict[str, Any]:

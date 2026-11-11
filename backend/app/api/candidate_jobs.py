@@ -26,6 +26,7 @@ from ..schemas.material import (
     CandidateJobUpdate,
 )
 from ..services import trash
+from ..services.apply._queue import queued_job_ids
 from ..services.candidate_csv import (
     candidates_to_csv_text,
     decode_csv_bytes,
@@ -44,7 +45,6 @@ from ..services.candidate_jobs import (
     mark_candidate_imported,
     update_candidate_job,
 )
-from ..services.apply._queue import queued_job_ids
 from ..services.csv_io import MAX_IMPORT_FILE_CHARS
 from ..services.user_files import save_from_data_url
 
@@ -121,6 +121,7 @@ def read_candidate_jobs(
     collect_task_id: int | None = Query(default=None, ge=1),
     collect_task_ids: str = Query(default=""),
     limit: int = Query(default=MAX_CANDIDATE_LIST, ge=1, le=MAX_CANDIDATE_LIST),
+    sort: str = Query(default="created_desc", pattern="^(created_desc|score_desc|score_asc)$"),
     db: Session = Depends(get_db),
 ):
     """列出备选岗位；``status`` 可选 pending / imported。
@@ -138,6 +139,7 @@ def read_candidate_jobs(
         collect_task_id=collect_task_id,
         collect_task_ids=_parse_collect_task_ids(collect_task_ids),
         limit=limit,
+        sort=sort,
     )
     return _with_queue_flags(db, rows)
 
@@ -150,6 +152,7 @@ def read_candidate_jobs_page(
     collect_task_ids: str = Query(default=""),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    sort: str = Query(default="created_desc", pattern="^(created_desc|score_desc|score_asc)$"),
     db: Session = Depends(get_db),
 ):
     """分页列出备选岗位（RF-08）：过滤与排序与旧列表端点完全一致。
@@ -169,6 +172,7 @@ def read_candidate_jobs_page(
         collect_task_ids=_parse_collect_task_ids(collect_task_ids),
         page=page,
         page_size=page_size,
+        sort=sort,
     )
     return Page(items=items, total=total)
 

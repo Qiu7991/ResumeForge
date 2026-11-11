@@ -25,6 +25,7 @@ from .api import (
     ats,
     attachments,
     candidate_jobs,
+    candidate_job_score,
     career_scenarios,
     claims,
     datasets,
@@ -136,6 +137,9 @@ ROUTERS = (
     materials.router,
     knowledge.router,
     candidate_jobs.router,
+    # 备选岗位语义评分（后台任务）：同前缀 /api/candidate-jobs/score*，拆开是为了让
+    # candidate_jobs.py 守住 500 行预算。
+    candidate_job_score.router,
     claims.router,
     drill.router,
     # 历史路由必须排在 interview.router 之前：它用 /question-banks、/reviews 字面量段，

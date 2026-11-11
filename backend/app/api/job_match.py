@@ -10,6 +10,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
@@ -207,7 +208,15 @@ async def create_match_analysis(
     if not force:
         existing = apply_service.latest_match(db, job_id)
         if existing is not None and isinstance(existing.result, dict) and existing.result:
-            return JobMatchResult.model_validate(existing.result)
+            # ``result`` 里可能只存了 semantic_score 子键（语义评分与准入结论同表不同
+            # 用途），而 ``JobMatchResult`` 是 ``extra="forbid"`` —— 直接 validate 会抛
+            # ValidationError 变成 500。批量路径早就有这层兜底（job_match_batch.py:88-93），
+            # 单岗路径一直没有；迁移备选岗位的分数会让这类行变多，所以补上同一份取舍：
+            # 解析不了就当作"没有可复用的结论"，重新分析一次。
+            try:
+                return JobMatchResult.model_validate(existing.result)
+            except ValidationError:
+                pass
 
     profile, profile_text, resume_text = match_source_texts(db, job)
     if profile_is_empty(profile) and not resume_text.strip():
