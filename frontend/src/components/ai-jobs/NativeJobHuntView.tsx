@@ -43,6 +43,8 @@ import type { JobHuntStatus } from "../../types/jobHunt";
 import type { JobList } from "../../types/job";
 import { useCandidates } from "../../hooks/useCandidates";
 import CollectResultPanel from "../apply/CollectResultPanel";
+import { startBrowser } from "../../api/apply";
+import CollectProgressPanel from "./CollectProgressPanel";
 
 const { Text, Title } = Typography;
 
@@ -75,7 +77,9 @@ export default function NativeJobHuntView({ status }: Props) {
     data: candidates,
     refresh: refreshCandidates,
     watchScoreTask,
+    scoreTask,
   } = useCandidates();
+  const scoreRunning = Boolean(scoreTask?.running);
 
   // 采集链路的「落库 → 补 JD → 评分」都在后台线程里跑完；任务快照里
   // `score_started` 为真时评分任务才真的起来了，这时开始轮询分数。
@@ -90,6 +94,22 @@ export default function NativeJobHuntView({ status }: Props) {
   const scoredCandidates = candidates.filter(
     (row) => row.score_total !== null && row.score_total !== undefined,
   ).length;
+
+  // 采集失败最常见的原因是「投递专用浏览器没启动」（后端 503）。按钮直接给出
+  // 补救动作，比让用户自己去投递台找入口强。
+  const [startingBrowser, setStartingBrowser] = useState(false);
+  const onStartBrowser = async () => {
+    setStartingBrowser(true);
+    try {
+      await startBrowser(true);
+      // 浏览器起来后再自动重试一次采集：用户点这个按钮的意图就是"我要采集"。
+      await onCollect();
+    } catch {
+      // 失败由 collectTask.state.error 与浏览器状态共同反映，这里不重复弹。
+    } finally {
+      setStartingBrowser(false);
+    }
+  };
 
   const onCollect = async () => {
     setQueued(0);
@@ -138,7 +158,24 @@ export default function NativeJobHuntView({ status }: Props) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* 两个 error 是不同来源，必须都显示：
+          - state.error 来自 useJobHuntNative（入队/导入等）
+          - collectTask.state.error 来自采集任务启动本身（浏览器没启动之类的 503）
+          以前只显示前者，于是"点开始采集 → 转一下 → 什么都没发生"——错误被吞了。 */}
       {state.error && <Alert type="error" showIcon message={state.error} />}
+      {collectTask.state.error && (
+        <Alert
+          type="error"
+          showIcon
+          message={t("aiJobs.native.collectFailed")}
+          description={collectTask.state.error}
+          action={
+            <Button size="small" onClick={() => void onStartBrowser()} loading={startingBrowser}>
+              {t("aiJobs.native.startBrowser")}
+            </Button>
+          }
+        />
+      )}
 
       {queued > 0 && (
         <Alert
@@ -231,19 +268,14 @@ export default function NativeJobHuntView({ status }: Props) {
           </Button>
         </Space>
 
-        {task && (
-          <div style={{ marginTop: 12 }}>
-            <Space wrap>
-              <Tag color={task.status === "running" ? "processing" : task.status === "paused" ? "warning" : task.status === "failed" ? "error" : "success"}>
-                {t(`aiJobs.pipeline.status.${task.status}`)}
-              </Tag>
-              <Text type="secondary">{task.message}</Text>
-              {task.blocked > 0 && (
-                <Text type="secondary">{t("aiJobs.native.blockedCount", { count: task.blocked })}</Text>
-              )}
-            </Space>
-            {task.error && <Alert style={{ marginTop: 8 }} type="error" showIcon message={task.error} />}
-          </div>
+        {(task || scoreRunning) && (
+          <CollectProgressPanel
+            task={task}
+            scoreTask={scoreTask}
+            collecting={collecting}
+            onStartBrowser={() => void onStartBrowser()}
+            startingBrowser={startingBrowser}
+          />
         )}
 
         {result && (

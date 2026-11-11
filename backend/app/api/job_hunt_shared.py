@@ -82,7 +82,9 @@ def acquire_client(db: Session):
         logger.info("native 采集取浏览器客户端失败：%s: %s", type(exc).__name__, exc)
         raise HTTPException(
             503,
-            "native 采集需要先启动专用浏览器（投递台 → 启动浏览器），稍后重试",
+            # 前缀 ``browser_required`` 是**协议值**：前端据它决定要不要给「启动浏览器」
+            # 按钮。不要靠中文文案匹配——后端改一次措辞，那个按钮就静默消失了。
+            "browser_required: native 采集需要先启动专用浏览器（投递台 → 启动浏览器），稍后重试",
         ) from exc
 
 
