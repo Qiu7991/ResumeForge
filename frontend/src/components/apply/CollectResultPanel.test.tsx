@@ -11,6 +11,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CandidateJob } from "../../types";
 import CollectResultPanel from "./CollectResultPanel";
+import { t } from "../../i18n";
 
 const apiMocks = vi.hoisted(() => ({
   listCandidateJobs: vi.fn(),
@@ -225,5 +226,59 @@ describe("CollectResultPanel", () => {
       status: "pending",
       sort: "created_desc",
     });
+  });
+});
+
+describe("分数分水岭（scoreThreshold）", () => {
+  const above = (value: number) => t("aiJobs.hunt.above", { score: value });
+  const below = (value: number) => t("aiJobs.hunt.below", { score: value });
+
+  it("按分数线切成两段：够格的展开在上，其余折叠在下", async () => {
+    apiMocks.listCandidateJobs.mockResolvedValue([
+      candidate({ id: 1, title: "高分岗位", score_total: 88 }),
+      candidate({ id: 2, title: "低分岗位", score_total: 42 }),
+    ]);
+
+    renderPanel({ scoreThreshold: 70 });
+
+    expect(await screen.findByText(above(70))).toBeInTheDocument();
+    // 高分那条在展开的那一段里直接可见。
+    expect(await screen.findByText("高分岗位")).toBeInTheDocument();
+    // 低分那条被折进 Collapse：标题上有计数，但行内容默认不渲染。
+    expect(screen.getByText(below(70))).toBeInTheDocument();
+    expect(screen.queryByText("低分岗位")).not.toBeInTheDocument();
+
+    // 展开后才看得到。
+    fireEvent.click(screen.getByText(below(70)));
+    expect(await screen.findByText("低分岗位")).toBeInTheDocument();
+  });
+
+  it("未评分的归到下面，不能顶掉真正的高分岗位", async () => {
+    // 没有分数就没有依据说它够格 —— 放进"优先处理"会让一条还没评的岗位排在
+    // 85 分的上面，正好和"分数高的优先"这个目的相反。
+    apiMocks.listCandidateJobs.mockResolvedValue([
+      candidate({ id: 1, title: "未评分岗位", score_total: null }),
+      candidate({ id: 2, title: "高分岗位", score_total: 85 }),
+    ]);
+
+    renderPanel({ scoreThreshold: 70 });
+
+    expect(await screen.findByText("高分岗位")).toBeInTheDocument();
+    expect(screen.queryByText("未评分岗位")).not.toBeInTheDocument();
+    expect(screen.getByText(below(70))).toBeInTheDocument();
+  });
+
+  it("不传分数线时保持单表（投递台的采集面板仍走老行为）", async () => {
+    apiMocks.listCandidateJobs.mockResolvedValue([
+      candidate({ id: 1, title: "高分岗位", score_total: 88 }),
+      candidate({ id: 2, title: "低分岗位", score_total: 42 }),
+    ]);
+
+    renderPanel();
+
+    // 两条都在同一张表里，没有分成两段。
+    expect(await screen.findByText("高分岗位")).toBeInTheDocument();
+    expect(await screen.findByText("低分岗位")).toBeInTheDocument();
+    expect(screen.queryByText(above(70))).not.toBeInTheDocument();
   });
 });

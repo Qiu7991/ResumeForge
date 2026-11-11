@@ -21,12 +21,11 @@ from ..models.material import (
 from ..schemas.job import RECOGNITION_SOURCE_OFFICIAL, JobCreate
 from ..schemas.material import CandidateJobCreate, CandidateJobUpdate
 from .job.job_service import create_job_record, find_by_job_identity, find_job_by_identity
+from .job_hunt.candidate_scoring import migrate_candidate_score
 from .job_parser.metadata import job_type_from_title
 from .trash import get_live, is_deleted, live_only, soft_delete
 
 logger = logging.getLogger(__name__)
-
-MAX_CANDIDATE_TOOL_CHARS = 6_000
 
 # 列表默认返回多少条。候选是一份**待处理清单**，页面不会翻页；给一个上限是为了让
 # 长期累积的历史候选不会把每次列表请求都拖成一个大响应。
@@ -388,7 +387,7 @@ def import_candidates(db: Session, candidate_ids: list[int]) -> dict:
         candidate.imported_job_id = job.id
         # 分数跟着导入（方案 3）：候选阶段评的分不迁过去，用户导入后看到的就是「未评分」，
         # 等于白评一遍——而重评要再花一次 LLM 调用。
-        _migrate_candidate_score(db, candidate, job.id)
+        migrate_candidate_score(db, candidate, job.id)
         imported += 1
         results.append(
             {
@@ -418,35 +417,6 @@ def import_candidates(db: Session, candidate_ids: list[int]) -> dict:
     }
 
 
-def _migrate_candidate_score(db: Session, candidate: CandidateJob, job_id: int) -> None:
-    """把候选阶段评出来的分数搬到新岗位的语义评分里。
-
-    不迁移的后果：用户按分数挑完导入，回到岗位广场看到的却是「未评分」，等于白评——
-    而重评要再花一次 LLM 调用。
-
-    **失败不阻断导入**：分数是辅助信息，一条评分写不进去不该让"岗位没建成"。
-    写不进去只记日志，导入照常完成。
-
-    用 service 层的 ``persist_semantic_for_job``（与单岗评分端点同一份实现），
-    而不是自己拼 SQL：那样「不覆盖五类结论」这条语义会有两份容易分叉的代码。
-    """
-    payload = candidate.score_payload
-    if not payload or candidate.score_total is None:
-        return
-    try:
-        from .job_hunt.scoring_service import persist_semantic_for_job
-
-        persist_semantic_for_job(db, job_id, payload, model=candidate.score_model or "")
-    except Exception as exc:  # noqa: BLE001 — 分数是增强项，不该连累导入
-        logger.warning(
-            "候选 %s 的评分迁移到岗位 %s 失败（导入照常完成）：%s: %s",
-            candidate.id,
-            job_id,
-            type(exc).__name__,
-            exc,
-        )
-
-
 def candidate_brief(candidate: CandidateJob) -> dict:
     """备选岗位的列表摘要视图。"""
     return {
@@ -465,44 +435,12 @@ def candidate_brief(candidate: CandidateJob) -> dict:
     }
 
 
-def candidate_detail_text(
-    candidate: CandidateJob, max_chars: int = MAX_CANDIDATE_TOOL_CHARS
-) -> str:
-    """备选岗位的详情文本（供助手读取）：采集来的 JD 两段与粘贴来的原文都要带上。"""
-    parts = [
-        f"岗位：{candidate.title or '（未填写）'}",
-        f"公司：{candidate.company or '（未填写）'}",
-        f"状态：{'已导入' if candidate.status == CANDIDATE_JOB_IMPORTED else '待处理'}",
-    ]
-    if candidate.location:
-        parts.append(f"城市：{candidate.location}")
-    if candidate.salary:
-        parts.append(f"薪资：{candidate.salary}")
-    if candidate.note:
-        parts.append(f"备注：{candidate.note}")
-    # 采集回来的候选把 JD 存在 description / requirements 两段里，粘贴来的候选存在 raw_text。
-    # 两者都要读——只读 raw_text 会让助手对采集来的岗位"什么都看不到"。
-    if candidate.description:
-        parts.append(f"岗位描述：\n{candidate.description}")
-    if candidate.requirements:
-        parts.append(f"任职要求：\n{candidate.requirements}")
-    if candidate.raw_text:
-        parts.append(f"招聘原文：\n{candidate.raw_text}")
-    if candidate.images:
-        parts.append(f"附有 {len(candidate.images)} 张招聘截图（图片内容未提取）")
-    text = "\n\n".join(parts)
-    if len(text) > max_chars:
-        text = f"{text[:max_chars].rstrip()}…"
-    return text
-
-
 __all__ = [
     "MAX_CANDIDATE_LIST",
     "MAX_CANDIDATE_TOOL_CHARS",
     "RECOGNITION_SOURCE_COLLECT",
     "RECOGNITION_SOURCE_MANUAL",
     "candidate_brief",
-    "candidate_detail_text",
     "candidate_or_none",
     "create_candidate_job",
     "delete_candidate_job",
@@ -542,3 +480,11 @@ def list_candidate_job_ids(
         .with_entities(CandidateJob.id)
         .all()
     ]
+
+
+# 从 candidate_detail_text 模块 re-export：它是纯展示逻辑，为了守住 500 行预算
+# 拆出去了，但调用方（助手工具 / 文本导出）一直从本模块 import，不该被迫改。
+from .candidate_detail_text import (  # noqa: E402,F401
+    MAX_CANDIDATE_TOOL_CHARS,
+    candidate_detail_text,
+)

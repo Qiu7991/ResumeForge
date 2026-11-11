@@ -361,6 +361,9 @@ def test_import_migrates_candidate_score_to_job(db_session):
     job_id = result["results"][0]["job_id"]
     from app.models.apply import JobMatchAnalysis
 
+    # **必须真的写出去了**，不能只看"导入成功"：迁移失败会被 try/except 吞成一条
+    # WARNING，导入照常返回 imported=1。实测踩过——相对导入层级写错时，接口一切正常，
+    # 分数静默丢了。所以这里断言到行数据本身。
     row = db_session.query(JobMatchAnalysis).filter(JobMatchAnalysis.job_id == job_id).one()
     assert row.result["semantic_score"]["total"] == 78
     assert row.model == "deepseek"

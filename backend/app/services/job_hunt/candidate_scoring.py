@@ -12,7 +12,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+from sqlalchemy.orm import Session
+
+from ...models.material import CandidateJob
+
+logger = logging.getLogger(__name__)
 
 # 拼接顺序即重要性：职责 → 要求 → 其他信息。``raw_text`` 放最后当兜底，
 # 只在前面三段全空时用（手动粘贴的候选走这条）。
@@ -38,4 +45,33 @@ def candidate_has_jd(candidate: Any) -> bool:
     return bool(candidate_jd(candidate))
 
 
-__all__ = ["candidate_has_jd", "candidate_jd"]
+def migrate_candidate_score(db: Session, candidate: CandidateJob, job_id: int) -> None:
+    """把候选阶段评出来的分数搬到新岗位的语义评分里。
+
+    不迁移的后果：用户按分数挑完导入，回到岗位广场看到的却是「未评分」，等于白评——
+    而重评要再花一次 LLM 调用。
+
+    **失败不阻断导入**：分数是辅助信息，一条评分写不进去不该让"岗位没建成"。
+    写不进去只记日志，导入照常完成。
+
+    用 service 层的 ``persist_semantic_for_job``（与单岗评分端点同一份实现），
+    而不是自己拼 SQL：那样「不覆盖五类结论」这条语义会有两份容易分叉的代码。
+    """
+    payload = candidate.score_payload
+    if not payload or candidate.score_total is None:
+        return
+    try:
+        from .scoring_service import persist_semantic_for_job
+
+        persist_semantic_for_job(db, job_id, payload, model=candidate.score_model or "")
+    except Exception as exc:  # noqa: BLE001 — 分数是增强项，不该连累导入
+        logger.warning(
+            "候选 %s 的评分迁移到岗位 %s 失败（导入照常完成）：%s: %s",
+            candidate.id,
+            job_id,
+            type(exc).__name__,
+            exc,
+        )
+
+
+__all__ = ["candidate_has_jd", "candidate_jd", "migrate_candidate_score"]

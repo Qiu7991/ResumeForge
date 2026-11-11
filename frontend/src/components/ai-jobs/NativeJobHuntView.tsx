@@ -21,6 +21,7 @@ import {
   Checkbox,
   Empty,
   Input,
+  InputNumber,
   Select,
   Space,
   Table,
@@ -42,6 +43,7 @@ import { useCollectTask } from "../../hooks/useCollectTask";
 import type { JobHuntStatus } from "../../types/jobHunt";
 import type { JobList } from "../../types/job";
 import { useCandidates } from "../../hooks/useCandidates";
+import { usePersistentNumber } from "../../hooks/usePersistentNumber";
 import CollectResultPanel from "../apply/CollectResultPanel";
 import { startBrowser } from "../../api/apply";
 import CollectProgressPanel from "./CollectProgressPanel";
@@ -70,6 +72,11 @@ export default function NativeJobHuntView({ status }: Props) {
   const [queued, setQueued] = useState(0);
   // 采集即评分（默认开）。关掉 = 只落备选区不评分，分数列显示「未评分」。
   const [autoScore, setAutoScore] = useState(true);
+  // 分数线（分水岭）：不低于它的排上面。**持久化**——这是用户的筛选偏好，
+  // 刷新一次就回到 70 会让人以为设置没生效。
+  const [threshold, setThreshold] = usePersistentNumber("aiJobs.scoreThreshold", 70);
+  // 黑名单折叠起来：它是一年改两次的长效配置，不该占着首屏。
+  const [blocklistOpen, setBlocklistOpen] = useState(false);
 
   // 备选岗位列表：既是「导入/已评分」两个计数的来源，也是下面候选面板的数据源。
   // 采集任务进入终态时自动重拉一次（`task?.status`），评分任务结束也重拉一次。
@@ -190,23 +197,21 @@ export default function NativeJobHuntView({ status }: Props) {
         />
       )}
 
-      <PipelineStrip
-        steps={buildSteps({
-          collecting,
-          collected: task?.collected ?? candidates.length,
-          currentPage: task?.current_page ?? 0,
-          maxPages: task?.max_pages ?? maxPages,
-          // 这三个数都来自候选列表本身（服务端下发），不再是 useState(0) 那种
-          // 「刷新就归零」的临时值，也不再是写死的 scored: 0。
-          imported: importedCandidates,
-          scored: scoredCandidates,
-          inQueue: queued,
-          paused: task?.status === "paused",
-        })}
-      />
-
-      <Card title={t("aiJobs.native.collectTitle")} size="small">
-        <Space wrap>
+      {/* ---------- 第一栏：筛选与采集（先定条件，再采集）----------
+          用户的原话是「把所有筛选条件放在前面」。这里是同一条逻辑：平台/关键词/城市/
+          页数/黑名单/分数线都在采集之前定好，采完不需要再回头翻设置。 */}
+      <Card
+        size="small"
+        title={
+          <Space size={8}>
+            <Title level={5} style={{ margin: 0 }}>
+              {t("aiJobs.hunt.filtersTitle")}
+            </Title>
+            <Text type="secondary">{t("aiJobs.hunt.filtersHint")}</Text>
+          </Space>
+        }
+      >
+        <Space wrap size={8}>
           <Select
             value={siteKey}
             onChange={setSiteKey}
@@ -234,6 +239,20 @@ export default function NativeJobHuntView({ status }: Props) {
               label: t("aiJobs.native.pages", { n }),
             }))}
           />
+          <Tooltip title={t("aiJobs.hunt.thresholdHint")}>
+            <Space size={6}>
+              <Text>{t("aiJobs.hunt.threshold")}</Text>
+              <InputNumber
+                value={threshold}
+                onChange={(value) => setThreshold(typeof value === "number" ? value : 70)}
+                min={0}
+                max={100}
+                step={5}
+                style={{ width: 72 }}
+                aria-label={t("aiJobs.hunt.threshold")}
+              />
+            </Space>
+          </Tooltip>
           <Tooltip title={t("aiJobs.native.autoScoreHint")}>
             <Checkbox checked={autoScore} onChange={(e) => setAutoScore(e.target.checked)}>
               {t("aiJobs.native.autoScore")}
@@ -263,10 +282,20 @@ export default function NativeJobHuntView({ status }: Props) {
               </Button>
             </>
           )}
-          <Button onClick={() => void reload()} loading={state.loadingJobs}>
-            {t("aiJobs.native.refresh")}
-          </Button>
         </Space>
+
+        {/* 黑名单折叠：长效配置，不该占首屏。展开后才渲染（省一次接口调用）。 */}
+        <div style={{ marginTop: 12 }}>
+          <Button type="link" size="small" style={{ padding: 0 }} onClick={() => setBlocklistOpen((v) => !v)}>
+            {blocklistOpen ? "− " : "+ "}
+            {t("aiJobs.hunt.blocklistToggle")}
+          </Button>
+          {blocklistOpen && (
+            <div style={{ marginTop: 8 }}>
+              <BlocklistCard />
+            </div>
+          )}
+        </div>
 
         {(task || scoreRunning) && (
           <CollectProgressPanel
@@ -300,12 +329,24 @@ export default function NativeJobHuntView({ status }: Props) {
             )}
           </div>
         )}
-
       </Card>
 
-      {/* 备选岗位（采集结果）——采集 → 评分 → 我决定导入的全部动作都在这一块。
-          taskId 传 null：这里列的是**所有批次**的候选，不只最后一轮（与投递台
-          采集面板同一取舍，省得用户再去采集记录里翻）。 */}
+      <PipelineStrip
+        steps={buildSteps({
+          collecting,
+          collected: task?.collected ?? candidates.length,
+          currentPage: task?.current_page ?? 0,
+          maxPages: task?.max_pages ?? maxPages,
+          imported: importedCandidates,
+          scored: scoredCandidates,
+          inQueue: queued,
+          paused: task?.status === "paused",
+        })}
+      />
+
+      {/* ---------- 第二栏：采到的岗位（按分数线分水岭）----------
+          用户要的是「分数高的在上面，优先级最高；低的在下面」。
+          这条界线由用户自己设（第一栏的分数线输入框），不是写死的 70。 */}
       <Card
         size="small"
         title={
@@ -325,6 +366,7 @@ export default function NativeJobHuntView({ status }: Props) {
         <CollectResultPanel
           taskId={null}
           disabled={collecting}
+          scoreThreshold={threshold}
           refreshKey={`${candidates.length}-${scoredCandidates}-${importedCandidates}`}
           onImported={() => {
             void refreshCandidates();
@@ -332,8 +374,6 @@ export default function NativeJobHuntView({ status }: Props) {
           }}
         />
       </Card>
-
-      <BlocklistCard />
 
       <Card
         title={

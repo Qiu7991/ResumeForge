@@ -11,7 +11,7 @@
  * 然后去岗位广场里数不出来。
  */
 import { LinkOutlined, SendOutlined, UploadOutlined } from "@ant-design/icons";
-import { Alert, App, Button, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { Alert, App, Button, Collapse, Space, Table, Tag, Tooltip, Typography } from "antd";
 import EmptyState from "../common/EmptyState";
 import type { TableColumnsType } from "antd";
 import { useState } from "react";
@@ -42,6 +42,14 @@ interface Props {
   refreshKey?: string | number;
   /** 导入完成后通知外层（例如让采集记录里的计数跟着更新）。 */
   onImported?: (result: CandidateJobImportResult) => void;
+  /**
+   * 分数线（0-100）。给定时表格按分数切成两段：不低于线的一律排在上面，
+   * 其余的折叠在下面——「先处理够格的，剩下的留底」。
+   *
+   * **不传则保持原样**（单表、不分组）：投递台的采集面板用的是这条老行为，
+   * 那里没有"按分挑"的场景，多一段折叠只会让人多点一次。
+   */
+  scoreThreshold?: number;
 }
 
 /**
@@ -72,6 +80,7 @@ export default function CollectResultPanel({
   disabled = false,
   refreshKey = 0,
   onImported,
+  scoreThreshold,
 }: Props) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后这一块不重渲染。
   useLocale();
@@ -289,7 +298,52 @@ export default function CollectResultPanel({
     },
   ];
 
+  /**
+   * 渲染一张候选表。
+   *
+   * 抽成函数是为了"分水岭"能把同一套列/勾选/排序复用在两段上——两段各写一遍
+   * 列定义，加一列就要改两处（而且很容易漏掉模板列）。
+   */
+  const renderTable = (rows: CandidateJob[]) => (
+    <Table
+      className="apply-collect-table"
+      rowKey="id"
+      size="small"
+      columns={columns}
+      dataSource={rows}
+      // 单批采集上限 200 条，不加翻页会把整个页签塞满（其余主列表的分页排查见
+      // deliverables/pagination-audit-2026-10-09.md）。
+      pagination={{ pageSize: 20, hideOnSinglePage: true, showSizeChanger: false }}
+      rowSelection={{
+        selectedRowKeys: selectedIds,
+        onChange: (keys) => setSelectedIds(keys as number[]),
+      }}
+      onChange={(_pagination, _filters, sorter, extra) => {
+        if (extra.action !== "sort") return;
+        const field = Array.isArray(sorter) ? sorter[0]?.field : sorter.field;
+        const order = Array.isArray(sorter) ? sorter[0]?.order : sorter.order;
+        if (field !== "score_total") return;
+        // 升序/降序都按服务端键排；取消排序（order 为空）回到默认的最近采集在前。
+        setSort(order === "ascend" ? "score_asc" : order === "descend" ? "score_desc" : "created_desc");
+      }}
+    />
+  );
+
   const problemResults = (lastResult?.results ?? []).filter(isProblemOutcome);
+
+  // 按分数线切成两段。**未评分的归到下面**：没有分数就没有依据说它够格，
+  // 放进"优先处理"会让一条还没评的岗位顶掉真正的高分岗位。
+  const splitByThreshold = (rows: CandidateJob[]) => {
+    if (scoreThreshold === undefined) return null;
+    const above = rows.filter(
+      (row) => typeof row.score_total === "number" && row.score_total >= scoreThreshold,
+    );
+    const below = rows.filter(
+      (row) => typeof row.score_total !== "number" || row.score_total < scoreThreshold,
+    );
+    return { above, below };
+  };
+  const segments = splitByThreshold(candidates);
 
   return (
     <div className="apply-collect-result">
@@ -334,28 +388,46 @@ export default function CollectResultPanel({
           <EmptyState description={t("collectResult.empty")} />
         ) : (
           <>
-            <Table
-              className="apply-collect-table"
-              rowKey="id"
-              size="small"
-              columns={columns}
-              dataSource={candidates}
-              // 单批采集上限 200 条，不加翻页会把整个页签塞满（其余主列表的分页排查见
-              // deliverables/pagination-audit-2026-10-09.md）。
-              pagination={{ pageSize: 20, hideOnSinglePage: true, showSizeChanger: false }}
-              rowSelection={{
-                selectedRowKeys: selectedIds,
-                onChange: (keys) => setSelectedIds(keys as number[]),
-              }}
-              onChange={(_pagination, _filters, sorter, extra) => {
-                if (extra.action !== "sort") return;
-                const field = Array.isArray(sorter) ? sorter[0]?.field : sorter.field;
-                const order = Array.isArray(sorter) ? sorter[0]?.order : sorter.order;
-                if (field !== "score_total") return;
-                // 升序/降序都按服务端键排；取消排序（order 为空）回到默认的最近采集在前。
-                setSort(order === "ascend" ? "score_asc" : order === "descend" ? "score_desc" : "created_desc");
-              }}
-            />
+            {segments && scoreThreshold !== undefined ? (
+              // 分水岭：够格的一律展开在上的，其余折叠在下的。
+              // 两段各自独立渲染表格，勾选状态与"全选"共用同一份 selectedIds —— 用户
+              // 可以先在上面勾几条、再展开下面补两条，一次导入。
+              <>
+                <Typography.Text strong>
+                  {t("aiJobs.hunt.above", { score: scoreThreshold })}
+                  <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
+                    {segments.above.length}
+                  </Typography.Text>
+                </Typography.Text>
+                {segments.above.length === 0 ? (
+                  <EmptyState description={t("aiJobs.hunt.emptyAbove", { score: scoreThreshold })} />
+                ) : (
+                  renderTable(segments.above)
+                )}
+
+                {segments.below.length > 0 && (
+                  <Collapse
+                    size="small"
+                    items={[
+                      {
+                        key: "below",
+                        label: (
+                          <Space size={8}>
+                            <Typography.Text type="secondary">
+                              {t("aiJobs.hunt.below", { score: scoreThreshold })}
+                            </Typography.Text>
+                            <Tag>{segments.below.length}</Tag>
+                          </Space>
+                        ),
+                        children: renderTable(segments.below),
+                      },
+                    ]}
+                  />
+                )}
+              </>
+            ) : (
+              renderTable(candidates)
+            )}
             <Space size={8} wrap>
               <Button
                 type="primary"
