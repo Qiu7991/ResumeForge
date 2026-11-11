@@ -282,9 +282,10 @@ def test_refetch_jd_picks_short_jds_and_passes_overwrite(api, db_session, monkey
     db_session.commit()
 
     captured: dict = {}
+    # 存量重抓现在走 _start_serial_backfill（单线程串行，见 refetch_jd 的说明）。
     monkeypatch.setattr(
-        "app.api.job_hunt._start_jd_backfill",
-        lambda ids, adapter, **kw: captured.update(ids=list(ids), overwrite=kw.get("overwrite")),
+        "app.api.job_hunt._start_serial_backfill",
+        lambda plan, **kw: captured.update(ids=[jid for jid, _ in plan]),
     )
     api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
 
@@ -294,7 +295,8 @@ def test_refetch_jd_picks_short_jds_and_passes_overwrite(api, db_session, monkey
     body = resp.json()
     assert short.id in captured.get("ids", []), "JD 偏短且有链接的必须被选中"
     assert long_jd.id not in captured.get("ids", []), "JD 已够长的不该被重抓"
-    assert captured.get("overwrite") is True, "重抓存量必须 overwrite=True，否则会被跳过"
+    # overwrite=True 的验证在 detail_backfill 的单元测试里（这里已被打桩替换掉）；
+    # 这条只确保「选对了哪些岗位」。
     assert body["queued"] >= 1
     api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
 
@@ -313,8 +315,8 @@ def test_refetch_jd_skips_jobs_without_known_platform(api, db_session, monkeypat
 
     called = {"n": 0}
     monkeypatch.setattr(
-        "app.api.job_hunt._start_jd_backfill",
-        lambda ids, adapter, **kw: called.update(n=called["n"] + 1),
+        "app.api.job_hunt._start_serial_backfill",
+        lambda plan, **kw: called.update(n=called["n"] + 1),
     )
     api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
 
@@ -331,3 +333,39 @@ def test_refetch_jd_refuses_in_sidecar_mode(api):
     api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
     resp = api.post("/api/job-hunt/refetch-jd", json={})
     assert resp.status_code == 409
+
+
+def test_refetch_jd_starts_exactly_one_background_thread(api, db_session, monkeypatch):
+    """多平台也必须只起一个补抓线程——并发线程会互相导航，整批失败。
+
+    实测（2026-11-11）：176 条按平台分成 3 个线程同时跑，它们共用同一个浏览器，
+    一批 13 条只成功 1 条。所以 refetch 要把各平台串成一条队列。
+    """
+    from app.models.job import JOB_STATUS_OPEN, Job
+
+    urls = [
+        "https://www.zhipin.com/job_detail/a1.html",
+        "https://www.zhaopin.com/jobdetail/a2.htm",
+        "https://www.liepin.com/job/a3.shtml",
+    ]
+    db_session.add_all([
+        Job(title=f"岗位{i}", company="X", salary="8-12K", description="短",
+            status=JOB_STATUS_OPEN, source_url=url)
+        for i, url in enumerate(urls)
+    ])
+    db_session.commit()
+
+    calls: list = []
+    monkeypatch.setattr(
+        "app.api.job_hunt._start_serial_backfill",
+        lambda plan, **kw: calls.append(list(plan)),
+    )
+    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
+
+    resp = api.post("/api/job-hunt/refetch-jd", json={})
+
+    assert resp.status_code == 200, resp.text
+    assert len(calls) == 1, f"必须只起一个后台线程，实际 {len(calls)} 个"
+    picked = {jid for jid, _ in calls[0]}
+    assert len(picked) >= 3, "跨平台的岗位都要进同一条队列"
+    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})

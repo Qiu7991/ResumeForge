@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 from urllib.parse import quote
 
+from ...sites.boss_text import normalize_text
 from ..base import HuntCriteria, JobDetail, JobParseError, JobSiteAdapter, JobStub
 from . import boss_font
 
@@ -63,7 +64,6 @@ _D_SECTION_OPEN_RE = re.compile(r'<div[^>]*class="job-sec-text"[^>]*>', re.S)
 _DIV_TAG_RE = re.compile(r"<div\b[^>]*>|</div\s*>", re.I)
 _BR_RE = re.compile(r"<br\s*/?>", re.I)
 _TAG_STRIP_RE = re.compile(r"<[^>]+>")
-_WS_RE = re.compile(r"[ \t\u00a0]+")
 
 
 def _extract_div_inner(html: str, open_end: int) -> str:
@@ -87,12 +87,38 @@ def _extract_div_inner(html: str, open_end: int) -> str:
 
 
 def _clean(fragment: str) -> str:
-    """把 HTML 片段折成纯文本：<br> 变换行，去标签，压空白。"""
+    """把 HTML 片段折成纯文本：<br> 变换行、去标签，再做文本还原。
+
+    文本还原交给 ``services.sites.boss_text.normalize_text``——**不要在这里自己写一份**。
+    它已经处理了 BOSS 反爬的三件事，而且三者是同时出现在同一段正文里的（2026-11-11 实测）：
+
+    1. **康熙部首**（U+2F00–U+2FDF）：正文里是 ⽤/⼈/⼯/⼒/⾔ 而不是 用/人/工/力/言，
+       字形几乎一样但码位不同，关键词匹配与评分会全部漏掉（「能⼒」搜「能力」搜不到）。
+    2. **私用区数字**（U+E030–E039）：薪资里的数字被换成 PUA 字符。
+    3. **水印**：「岗kanzhun位职责」「来自BOSS直聘实现基于LLM…」——水印被**插进词中间**，
+       不处理会把正文读成断句。实测 177 条采集中 24 条带水印。
+
+    它只对反爬用到的几个区做 NFKC，**不做全量**——全量会把全角标点（：（））折成半角，
+    而中文 JD 的标点本来就该是全角。这个取舍在那边已经写清楚了，这里直接复用。
+    """
     text = _BR_RE.sub("\n", fragment)
     text = _TAG_STRIP_RE.sub("", text)
-    text = _WS_RE.sub(" ", text)
-    lines = [ln.strip() for ln in text.split("\n")]
-    return "\n".join(ln for ln in lines if ln).strip()
+    return normalize_text(text)
+
+
+def _clean_salary(fragment: str) -> str:
+    """薪资单元格的清理：只去标签、压空白，**保留私用区数字原文**。
+
+    薪资不能走 ``_clean``：``normalize_text`` 会把 PUA 数字（U+E030–U+E039）折成
+    普通数字，而列表页的 ``salary_raw`` 必须保持编码原文——字体解密要靠它比对，
+    折掉之后 ``encoded_chars_in()`` 就认不出这是密文，也就无从解密了
+    （实测：折过之后列表薪资直接变成 "9-23K"，父子对照建不出映射）。
+
+    水印不在这里处理：水印规则要求 token 紧贴汉字，薪资是数字串，天然不命中。
+    """
+    text = _BR_RE.sub(" ", fragment)
+    text = _TAG_STRIP_RE.sub("", text)
+    return text.replace("\u00a0", " ").strip()
 
 
 def _abs(url: str) -> str:
@@ -157,7 +183,7 @@ class BossAdapter(JobSiteAdapter):
             if not location and tags:
                 # 标签里有时混着地区/经验，地区优先取含「·」的那条
                 location = next((t for t in tags if "·" in t), "")
-            salary_raw = _clean(salary_m.group(1)) if salary_m else ""
+            salary_raw = _clean_salary(salary_m.group(1)) if salary_m else ""
             # 列表页直接给出解码结果：字体映射已实证收敛（见 boss_font.BOSS_TTF_MAP），
             # 不必等详情页的明文对照。解不完整时 decode_salary 会保持 ok=False。
             decoded = boss_font.decode_salary(salary_raw, boss_font.default_mapping())
@@ -191,7 +217,7 @@ class BossAdapter(JobSiteAdapter):
         )
 
         salary_m = _D_SALARY_RE.search(html)
-        salary_text = _clean(salary_m.group(1)) if salary_m else ""
+        salary_text = _clean_salary(salary_m.group(1)) if salary_m else ""
 
         company_m = _D_COMPANY_RE.search(html) or _D_COMPANY_FALLBACK_RE.search(html)
         company = _clean(company_m.group(1)) if company_m else ""

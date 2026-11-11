@@ -233,3 +233,62 @@ def test_default_mapping_ranges_are_sane():
         assert lo < hi, f"{s.title} 薪资区间倒挂：{s.salary_decoded}"
         checked += 1
     assert checked >= 10, f"应至少校验 10 条区间薪资，实际 {checked}"
+
+
+def test_parse_detail_normalizes_kangxi_radicals(adapter):
+    """康熙部首要折回普通汉字。
+
+    回归（2026-11-11）：BOSS 正文里混着 U+2F00–U+2FDF 的部首字形（⽤/⼈/⼯/⼒），
+    与普通汉字（用/人/工/力）码位不同、字形几乎一致。不清掉的话关键词匹配与
+    岗位评分会漏掉这些字——「有良好的能⼒」搜「能力」搜不到。
+    """
+    html = (
+        '<div class="job-sec-text">'
+        "1.具备良好的沟通能⼒与协作能⼒；"
+        "2.⽤户⼈群分析，⼯作主动；"
+        "</div>"
+    )
+    d = adapter.parse_detail(html)
+
+    assert "能力" in d.description, "能⼒ 必须折成 能力"
+    assert "用户" in d.description
+    assert "人群" in d.description
+    assert "工作" in d.description
+    # 部首本身不该再出现
+    for radical in ("⽤", "⼈", "⼯", "⼒"):
+        assert radical not in d.description
+
+
+def test_parse_detail_strips_watermarks(adapter):
+    """BOSS 的水印会被插进词中间，必须清掉。
+
+    实测（2026-11-11）：177 条采集里有 24 条 JD 带水印，形态是插在词中间的
+    「岗kanzhun位职责」「来自BOSS直聘实现基于LLM…」「岗BOSS直聘位职责」。
+    不清掉的话正文读起来就是断句，检索与评分都会受影响。
+    """
+    html = (
+        '<div class="job-sec-text">'
+        "岗kanzhun位职责:\n"
+        "1、来自BOSS直聘实现基于LLM的智能体架构;\n"
+        "2、岗BOSS直聘位相关的维护工作。"
+        "</div>"
+    )
+    d = adapter.parse_detail(html)
+
+    for token in ("kanzhun", "BOSS直聘", "boss"):
+        assert token not in d.description, f"水印 {token} 没被清掉"
+    assert "岗位职责" in d.description, "去掉水印后词要能接上"
+    assert "实现基于LLM" in d.description
+
+
+def test_list_salary_keeps_private_use_digits(adapter):
+    """列表薪资必须保留 PUA 原文——否则字体解密失去输入。
+
+    这条是回归：正文清理统一改用 normalize_text 后，它会把 PUA 数字折成普通数字，
+    列表薪资就变成 "9-23K"，`encoded_chars_in()` 认不出密文，父子对照建不出映射。
+    所以薪资走单独的 _clean_salary。
+    """
+    stubs = adapter.parse_list(load("boss_list.html"))
+    assert boss_font.encoded_chars_in(stubs[0].salary_raw), (
+        "列表 salary_raw 必须是 PUA 密文原文，不能已被折算"
+    )

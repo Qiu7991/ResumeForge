@@ -202,11 +202,21 @@ def _persist_stubs(
     return ledger, new_ids
 
 
-def _start_jd_backfill(job_ids: list[int], adapter: Any, *, overwrite: bool = False) -> None:
+def _start_jd_backfill(
+    job_ids: list[int], adapter: Any, *, overwrite: bool = False, limit: int | None = None
+) -> None:
     """后台补抓 JD 正文（限速；``overwrite`` 时连已有 JD 的重抓）。
 
     不阻塞采集响应：15 条详情页按 1.5s 间隔要 20+ 秒，挂在请求上会超时。
     浏览器不可用时整批跳过，不影响已经入库的卡片。
+
+    ``limit``：本次最多处理多少条，默认沿用 ``DETAIL_BATCH_LIMIT``（与列表页一页
+    条数一致）。存量重抓要传更大的值，否则 176 条只会跑前 15 条——实测就是这么
+    发现「排了 176 条却只尝试了 44 条」的。
+
+    **同一时刻只能有一个补抓线程**：它们共用同一个浏览器，两条并发的补抓会给
+    同一页面互相导航（实测三平台同时跑时，一批 13 条只有 1 条成功）。所以这里的
+    调用方必须保证串行——见 ``refetch_jd`` 里把多个平台合成一串。
     """
     try:
         from ..database import SessionLocal
@@ -221,7 +231,7 @@ def _start_jd_backfill(job_ids: list[int], adapter: Any, *, overwrite: bool = Fa
 
         start_backfill_in_background(
             SessionLocal, job_ids, fetch_factory=_fetch_factory, adapter=adapter,
-            overwrite=overwrite,
+            overwrite=overwrite, limit=limit,
         )
     except Exception as exc:  # noqa: BLE001 — 补抓是增强项，失败不该连累采集
         logger.info("JD 补抓启动失败（不影响入库）：%s: %s", type(exc).__name__, exc)
@@ -390,14 +400,24 @@ def refetch_jd(req: JobHuntRefetchIn, db: Session = Depends(get_db)) -> dict:
             continue
         by_site.setdefault(adapter.key, []).append(job.id)
 
-    queued = 0
+    # 把各平台的 id 串成**一条**队列，只起一个后台线程。
+    #
+    # 不能每个平台各起一个线程：它们共用同一浏览器，两个线程会互相导航
+    # （实测三平台并发时，一批 13 条只成功 1 条）。补抓本来就是限速串行的活，
+    # 一次一条反而更快——省掉互相踩导致的整批失败和重试。
+    #
+    # 队列里每条都带着自己的适配器，所以跨平台串行不会解析错。
+    plan: list[tuple[int, Any]] = []
     for site_key, ids in by_site.items():
         adapter = registry.resolve(site_key)
         if adapter is None:  # 理论上不会发生：上面就是按 registry 的 key 分的组
             skipped.extend(ids)
             continue
-        _start_jd_backfill(ids, adapter, overwrite=True)
-        queued += len(ids)
+        plan.extend((job_id, adapter) for job_id in ids)
+
+    queued = len(plan)
+    if plan:
+        _start_serial_backfill(plan, job_ids_total=queued)
 
     return {
         "queued": queued,
@@ -405,5 +425,44 @@ def refetch_jd(req: JobHuntRefetchIn, db: Session = Depends(get_db)) -> dict:
         "skipped_ids": skipped[:50],
         "by_site": {key: len(ids) for key, ids in by_site.items()},
     }
+
+
+def _start_serial_backfill(plan: list[tuple[int, Any]], *, job_ids_total: int) -> None:
+    """按 ``plan`` 顺序逐条重抓，跨平台也串行（见 ``refetch_jd`` 里的说明）。
+
+    用单个线程 + 单个 Session：补抓是低并发、限速的活，串行最稳。
+    ``detail_backfill.backfill_details`` 只接受「一个适配器 + 一批 id」，所以这里
+    自己按平台切段调用它，段与段之间同样串行。
+    """
+    import threading
+
+    from ..database import SessionLocal
+    from ..services.job_hunt.detail_backfill import backfill_details
+    from ..services.job_hunt.runner import cdp_fetcher
+
+    grouped: list[tuple[Any, list[int]]] = []
+    for job_id, adapter in plan:
+        if grouped and grouped[-1][0] is adapter:
+            grouped[-1][1].append(job_id)
+        else:
+            grouped.append((adapter, [job_id]))
+
+    def _run() -> None:
+        db = SessionLocal()
+        try:
+            for adapter, ids in grouped:
+                client = acquire_client(db)
+                fetch = cdp_fetcher(client, adapter, page_kind="detail")
+                backfill_details(
+                    db, ids, fetch=fetch, adapter=adapter,
+                    overwrite=True, limit=len(ids),
+                )
+        except Exception as exc:  # noqa: BLE001 — 浏览器不可用等：整批放弃并记录
+            logger.info("存量 JD 重抓中断：%s: %s", type(exc).__name__, exc)
+        finally:
+            db.close()
+
+    threading.Thread(target=_run, daemon=True).start()
+    logger.info("存量 JD 重抓已排队：%s 条（串行执行）", job_ids_total)
 
 

@@ -313,3 +313,43 @@ def test_description_and_requirements_are_not_mixed():
 
     assert "任职要求" not in description
     assert "岗位职责" not in requirements
+
+
+# ===== 水印：大写连写 BOSS直聘（2026-11-11 真实库样本） =====
+#
+# 静态夹具里 BOSS直聘 只出现在 title/logo/法律声明，正文里一次都没有——它是运行时
+# 被 JS 注入的，所以只能靠真实库里的样本做回归。以下每条都照搬库里的原文。
+
+
+@pytest.mark.parametrize(
+    ("src", "expected"),
+    [
+        # 紧贴汉字插入：水印把词劈成两半
+        ("岗BOSS直聘位职责:", "岗位职责:"),
+        ("【岗BOSS直聘位职责】", "【岗位职责】"),
+        # 「来自」是注水的一部分，要一起吃掉，否则留下孤立的「来自」
+        ("1、来自BOSS直聘实现基于LLM的智能体架构", "1、实现基于LLM的智能体架构"),
+        ("训练过来自BOSS直聘程，支持算法优化", "训练过程，支持算法优化"),
+        ("来自BOSS直聘为ERP用户提供现场实施", "为ERP用户提供现场实施"),
+        # 顶在行首 / 编号后（同样是从真实库里读到的形态）
+        ("BOSS直聘岗位职责", "岗位职责"),
+        ("**BOSS直聘岗位职责**", "**岗位职责**"),
+        ("来自BOSS直聘岗位职责：", "岗位职责："),
+        ("1.BOSS直聘负责AI Agent的方案设计", "1.负责AI Agent的方案设计"),
+        ("1. BOSS直聘本科及以上学历", "1. 本科及以上学历"),
+    ],
+)
+def test_strips_inline_boss_zhipin_watermark(src, expected):
+    assert normalize_text(src) == expected
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        # 品牌名的正常用法：一侧不是汉字，不能被当成水印删掉
+        "BOSS直聘严禁用人单位和招聘者用户做出任何损害求职者合法权益的行为",
+        "该岗位来自BOSS直聘",
+    ],
+)
+def test_keeps_brand_name_outside_inline_position(src):
+    assert normalize_text(src) == src

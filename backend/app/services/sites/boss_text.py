@@ -39,10 +39,57 @@ _FOLD_RANGES = (
 )
 
 # 水印候选。**必须小写**——品牌名写作 BOSS/Boss，只有小写才是注入的水印。
+#
+# 例外是 ``BOSS直聘`` 这个**大写连写**形态（2026-11-11 实测）：它在运行时被 JS 注入
+# JD 正文，紧贴汉字插入——「岗BOSS直聘位职责」「训练过来自BOSS直聘程」「来自BOSS直聘实现」。
+# 静态夹具里一次都没有（只在 title/logo/法律声明里作为品牌名出现，两侧都是标点或标签
+# 边界），所以只靠夹具永远测不出来；而真实采集 177 条里有 24 条带它。
+#
+# 三类 token 的判别各不相同，因为能用来区分「注水」和「品牌名」的信号不一样：
+#
+# 1. **小写 token**（``boss`` / ``kanzhun``）：小写本身就说明是注入的，品牌名永远大写。
+#    只要求**后面跟汉字**（注水必然把词劈开）。前面不设限——实测
+#    「1、来自BOSS直聘为ERP用户…」清掉品牌名后，残留的 ``boss`` 前面是「1、」，
+#    按「前必须是汉字」判它会漏掉（真实库 163 号就是这样）。
+# 2. **``直聘``**：两侧都是汉字才算，避免误伤正常中文里单独出现的「直聘」。
+# 3. **``BOSS直聘``**：两种位置都算水印，见下面两段正则的说明。
+#
+# 「来自」一并吃掉：注水时它是整个「来自X」一起插进去的，只删品牌名会留下孤立的
+# 「来自」（→ "1、来自实现基于LLM"），读起来更像坏数据。
 _WATERMARK_TOKENS = ("boss", "kanzhun", "直聘")
-# 夹在汉字之间、或位于文本开头且后接汉字时才算水印。
+
+# 小写 token：后接汉字即命中（前面什么都可以，见上面第 1 条）。
+_LOWERCASE_WATERMARK_PATTERN = re.compile(
+    r"(?:来自)?(?:" + "|".join(_WATERMARK_TOKENS[:2]) + r")(?=[\u4e00-\u9fff])"
+)
+
+# ``直聘``：两侧都是汉字，或位于文本/行开头且后接汉字（既有用例「直聘岗位职责」→
+# 「岗位职责」要求开头也删）。单独一个「直聘」在正常中文里不成词，误删风险低。
 _WATERMARK_PATTERN = re.compile(
-    r"(?:(?<=[\u4e00-\u9fff])|^)(?:" + "|".join(_WATERMARK_TOKENS) + r")(?=[\u4e00-\u9fff])"
+    r"(?:(?<=[\u4e00-\u9fff])|^)直聘(?=[\u4e00-\u9fff])", re.M
+)
+
+# ``BOSS直聘`` 的判别分两种形态，都要覆盖（实测真实库里两种都有）：
+#
+# A. 夹在词中间：「岗BOSS直聘位职责」「训练过来自BOSS直聘程」「来自BOSS直聘实现」。
+#    判据：前有汉字、后接汉字。
+# B. 顶在行首或编号后：「BOSS直聘岗位职责」「1.BOSS直聘负责…」「来自BOSS直聘岗位职责：」
+#    「**BOSS直聘岗位职责**」。判据：后面紧跟的是**岗位/职责类词或普通汉字**。
+#
+# 「来自」是可选的左邻：注水时它和品牌名是连在一起插进去的，单删品牌名会留残字。
+#
+# 两段不能合并成一个 lookbehind：Python 的 re 不支持变长 lookbehind
+# （`(?<=^|[\s...])` 会直接编译报错）。所以 B 形态用「吃掉一个前缀字符再放回」的
+# 捕获组写法，替换时把前缀原样拼回去。
+_BOSS_ZHIPIN_MID_PATTERN = re.compile(
+    r"(?:来自)?(?<=[\u4e00-\u9fff])BOSS直聘(?=[\u4e00-\u9fff])"
+)
+_BOSS_ZHIPIN_LEAD_PATTERN = re.compile(
+    # 前缀：空白、markdown 强调符、编号（1. / 1、/ 1．）、列表符、中英文标点与括号。
+    # 前缀一律原样放回，只删水印。
+    r"^([\s\*\-#0-9\.、,，:：;；)）(（【\[\]】]*)"
+    r"(?:来自)?BOSS直聘(?!严禁)(?=[\u4e00-\u9fff])",
+    re.M,
 )
 
 # 零宽与格式化字符：NFKC 不会去掉 ZWSP，但它们会污染文本与去重比较。
@@ -123,6 +170,11 @@ def normalize_text(value: object) -> str:
         return ""
     text = "".join(_fold_radical(char) for char in text)
     text = text.translate(str.maketrans(_PRIVATE_USE_DIGITS))
+    # 大写连写形态先处理：它的判别比通用水印更严（要求前有汉字），不能被通用规则先吃掉。
+    text = _BOSS_ZHIPIN_MID_PATTERN.sub("", text)
+    # 行首形态：捕获组把前缀（`**`、`1.`、`-` 等）原样放回，只删水印本身。
+    text = _BOSS_ZHIPIN_LEAD_PATTERN.sub(r"\1", text)
+    text = _LOWERCASE_WATERMARK_PATTERN.sub("", text)
     text = _WATERMARK_PATTERN.sub("", text)
     text = _INVISIBLE_CHARS.sub("", text)
     text = text.replace("\r\n", "\n").replace("\r", "\n")

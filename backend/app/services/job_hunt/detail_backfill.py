@@ -139,6 +139,7 @@ def start_backfill_in_background(
     fetch_factory: Any,
     adapter: Any,
     overwrite: bool = False,
+    limit: int | None = None,
 ) -> threading.Thread:
     """后台线程跑补抓。
 
@@ -151,7 +152,7 @@ def start_backfill_in_background(
     """
     thread = threading.Thread(
         target=_run_backfill,
-        args=(db_factory, job_ids, fetch_factory, adapter, overwrite),
+        args=(db_factory, job_ids, fetch_factory, adapter, overwrite, limit),
         daemon=True,
     )
     thread.start()
@@ -164,6 +165,7 @@ def _run_backfill(
     fetch_factory: Any,
     adapter: Any,
     overwrite: bool = False,
+    limit: int | None = None,
 ) -> None:
     db = db_factory()
     try:
@@ -172,7 +174,10 @@ def _run_backfill(
         logger.info("JD 补抓跳过（抓取器不可用）：%s: %s", type(exc).__name__, exc)
         return
     try:
-        backfill_details(db, job_ids, fetch=fetch, adapter=adapter, overwrite=overwrite)
+        kwargs = {"overwrite": overwrite}
+        if limit is not None:
+            kwargs["limit"] = limit
+        backfill_details(db, job_ids, fetch=fetch, adapter=adapter, **kwargs)
     except Exception as exc:  # noqa: BLE001
         logger.warning("JD 补抓异常：%s: %s", type(exc).__name__, exc)
     finally:
