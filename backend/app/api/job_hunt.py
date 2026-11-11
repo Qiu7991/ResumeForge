@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """自研求职采集路由（``/api/job-hunt/*``）：开关、平台清单、native 采集入口。
 
-与 ``/api/ai-jobs/*``（sidecar 旧路径）**并存**：``job_hunt_backend`` = sidecar（默认）
-时本路由的采集入口拒绝执行（409），旧路径照常工作；= native 时走 ``services/job_hunt``
-的自研采集（registry 适配器 + runner + CDP 抓取）。设置页的切换项读写的就是这里的
-config。
+与 ``/api/ai-jobs/*``（sidecar 旧路径）**并存**：``job_hunt_backend`` = sidecar
+（非默认，需外部 BossHunter 引擎）时本路由的采集入口拒绝执行（409），旧路径照常工作；
+= native（**默认**）时走 ``services/job_hunt`` 的自研采集（registry 适配器 + runner +
+CDP 抓取）。设置页的切换项读写的就是这里的 config。
 """
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def read_config(db: Session = Depends(get_db)) -> JobHuntConfig:
 
 @router.put("/config")
 def write_config(config: JobHuntConfig, db: Session = Depends(get_db)) -> JobHuntConfig:
-    """写开关（非法值由 pydantic Literal 直接 422；默认 sidecar，删除键即回默认）。"""
+    """写开关（非法值由 pydantic Literal 直接 422；默认 native，删除键即回默认）。"""
     return save_job_hunt_config(db, config)
 
 

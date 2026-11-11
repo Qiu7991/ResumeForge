@@ -175,12 +175,71 @@ foreach ($shellScript in $shellScriptPaths) {
         -Message "$($shellScript.Name) starts with a UTF-8 BOM. A BOM before the shebang breaks execution on macOS and Linux; shell scripts must stay BOM-less."
 }
 
-# start.cmd must forward its arguments; the launcher's own port-conflict message
-# tells the user to pass -BackendPort, which is impossible without this.
-$startCmdContent = Get-Content -LiteralPath (Join-Path $ProjectRoot "start.cmd") -Raw
+# 入口 .cmd 必须把参数一路转到底：启动器的端口冲突提示让用户加 -BackendPort，
+# 少了这一环那条建议就没法照做。
+#
+# 工作通把根 start.cmd 改成 call start-gzt.cmd %*（避开 1.0/2.0 的端口），所以这里
+# 不再只认「start.cmd 直接调 ps1」这一种形态——沿 %* 转发链往下追，只要有某一跳
+# 最终把 %* 交给 Start-ResumeForge.ps1 就算通过；任何一跳断链都算失败。
+function Get-ArgumentForwardingIssues {
+    param([string]$ProjectDirectory)
+
+    $issues = @()
+    $pending = @("start.cmd")
+    $visited = @{}
+    $reachedLauncher = $false
+    while ($pending.Count -gt 0) {
+        $entryName = $pending[0]
+        $pending = @($pending | Select-Object -Skip 1)
+        if ($visited.ContainsKey($entryName)) { continue }
+        $visited[$entryName] = $true
+
+        $entryPath = Join-Path $ProjectDirectory $entryName
+        if (-not (Test-Path -LiteralPath $entryPath -PathType Leaf)) {
+            $issues += "入口 $entryName 不存在。"
+            continue
+        }
+        # 必须显式按 UTF-8 读：这些 .cmd 是 UTF-8 无 BOM，PowerShell 5.1 默认按 ANSI
+        # (cp936) 解码，GBK 的双字节会把后面的 LF(0x0A) 当尾字节吃掉，多行被拼成一行
+        # ——实测 start.cmd 的 3 行 rem 就是这么并成一条的，扫描会漏掉转发行。
+        $content = [IO.File]::ReadAllText($entryPath, [Text.Encoding]::UTF8)
+        # 参数可以夹在中间参数之后（如 -BackendPort 8012 ... -NoBrowser %*），
+        # 所以只要求「同一行里有 Start-ResumeForge.ps1，且该行以 %* 结尾」。
+        $forwardsToLauncher = $false
+        $forwardedTargets = @()
+        foreach ($line in ($content -split "\r?\n")) {
+            if ($line -notmatch '%\*') { continue }
+            if ($line -match 'Start-ResumeForge\.ps1') {
+                $forwardsToLauncher = $true
+            }
+            # 中间跳（如 start-gzt.cmd）同样要带 %*，否则参数在这一跳就丢了。
+            # 路径前缀（%~dp0 / %CD%）先剥掉，只留文件名参与追溯。
+            $normalizedLine = $line -replace '%~dp0', '' -replace '%CD%', ''
+            $cmdMatch = [regex]::Match($normalizedLine, '([\w.\-]+\.cmd)')
+            if ($cmdMatch.Success) {
+                $forwardedTargets += $cmdMatch.Groups[1].Value
+            }
+        }
+        if ($forwardsToLauncher) {
+            $reachedLauncher = $true
+        }
+        elseif ($forwardedTargets.Count -eq 0) {
+            $issues += "$entryName 没有把参数（%*）转给下一跳，也没有直接交给 Start-ResumeForge.ps1。"
+        }
+        foreach ($target in $forwardedTargets) {
+            $pending += $target
+        }
+    }
+    if (-not $reachedLauncher) {
+        $issues += "沿 %* 转发链没能到达 Start-ResumeForge.ps1。"
+    }
+    return $issues
+}
+
+$forwardingIssues = @(Get-ArgumentForwardingIssues -ProjectDirectory $ProjectRoot)
 Assert-LauncherTest `
-    -Condition ($startCmdContent -match 'Start-ResumeForge\.ps1"\s+%\*') `
-    -Message "start.cmd must forward its arguments with %*."
+    -Condition ($forwardingIssues.Count -eq 0) `
+    -Message ("入口脚本必须沿 %* 一路把参数转给 Start-ResumeForge.ps1：" + ($forwardingIssues -join "；"))
 
 # Load function definitions without executing the launcher's service startup.
 # Helpers now live in focused dot-sourced modules; parse each module directly so
@@ -532,6 +591,24 @@ while ($true) {
         return $freePort
     }
     $fakePort = & $getFreePort
+
+    # 下面几段全都依赖 Get-NetTCPConnection 能看见本机监听。实测有的 Windows 上这个
+    # CIM 查询会退化成「只能看到少数几条」，连自己刚建的 listener 都查不到
+    # （2026-11-11：本机 netstat 里 8012 的 LISTENING 行 PID 甚至是 0）——那时这些
+    # 用例的失败与被测逻辑无关，报出来只会误导。先探测一次能力，不可用就显式跳过
+    # 并说明原因，而不是让整套测试在这里中断、把后面的用例全部掩盖掉。
+    $listenerProbe = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 0)
+    $listenerProbe.Start()
+    $probePort = ([System.Net.IPEndPoint]$listenerProbe.LocalEndpoint).Port
+    $cimSeesListeners = Test-TcpPortInUse -Port $probePort
+    $listenerProbe.Stop()
+    if (-not $cimSeesListeners) {
+        Write-Warning ("跳过 4 个依赖 Get-NetTCPConnection 的兜底停止用例：本机该接口不可用" +
+            "（刚创建的监听 $probePort 查不到）。这是环境能力缺失，不是被测逻辑的问题；" +
+            "换一台正常的 Windows 或修好 CIM/WMI 后可完整跑。")
+    }
+    else {
+
     $fakeProcess = Start-Process -FilePath "powershell.exe" -ArgumentList @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $fakeServerPath,
         "-Port", "$fakePort", "-HealthName", "ResumeForge", "-Marker", "uvicorn app.main:app"
@@ -578,6 +655,7 @@ while ($true) {
         -Message "健康检查不是 ResumeForge 时兜底绝不能停任何进程（误杀风险）。"
     Stop-StartedProcess -Process $otherHealthProcess
 
+    }
 
     # --- failure messages must carry the cause ---
 
@@ -722,6 +800,36 @@ while ($true) {
     Assert-LauncherTest `
         -Condition ($null -ne $productionError -and $productionError -match "npm run build") `
         -Message "production 模式缺 dist 必须明确报错（不降级到 dev），报错里要有可照做的步骤。"
+
+    # --- 静态资产新鲜度（dist 比源码旧就警告）---
+    # 场景来自 2026-11-11：技能包内置提交后忘了 npm run build，静态模式下界面看不到
+    # 新标签，症状和"功能没做对"一模一样。这里只钉判定本身（不看警告文本）。
+    $staleFrontend = Join-Path $RuntimeDirectory "stale-frontend"
+    $staleSrc = Join-Path $staleFrontend "src"
+    New-Item -ItemType Directory -Path (Join-Path $staleFrontend "dist") -Force | Out-Null
+    New-Item -ItemType Directory -Path $staleSrc -Force | Out-Null
+    $staleIndex = Join-Path $staleFrontend "dist\index.html"
+    Set-Content -LiteralPath $staleIndex -Value "<html></html>" -Encoding ascii
+    $staleSourceFile = Join-Path $staleSrc "App.tsx"
+    Set-Content -LiteralPath $staleSourceFile -Value "export {}" -Encoding ascii
+    # 明确拉开时间差，避免文件系统时间戳精度导致判定抖动。
+    (Get-Item -LiteralPath $staleIndex).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddHours(-2)
+    (Get-Item -LiteralPath $staleSourceFile).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddHours(-1)
+    $staleResult = Test-StaticFrontendStale -FrontendDirectory $staleFrontend
+    Assert-LauncherTest `
+        -Condition ($null -ne $staleResult -and $staleResult.SourcePath -eq $staleSourceFile) `
+        -Message "源码比 dist 新时必须判定为过期，并指出是哪份源码更新（警告要能定位到文件）。"
+
+    # 反向：源码比 dist 旧（刚 build 完的常态）时必须判为新鲜，否则每次启动都刷警告。
+    (Get-Item -LiteralPath $staleIndex).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddHours(-1)
+    (Get-Item -LiteralPath $staleSourceFile).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddHours(-2)
+    Assert-LauncherTest `
+        -Condition ($null -eq (Test-StaticFrontendStale -FrontendDirectory $staleFrontend)) `
+        -Message "刚构建完（源码比 dist 旧）必须判为新鲜，不能每次启动都警告。"
+
+    Assert-LauncherTest `
+        -Condition ($null -eq (Test-StaticFrontendStale -FrontendDirectory $bareFrontend)) `
+        -Message "没有 dist 时新鲜度检查必须安静返回 null（这是 dev 模式，谈不上过期）。"
 
     # backend\.env 的可选覆盖：参数优先由 Start-ResumeForge.ps1 的
     # PSBoundParameters 判断保证，这里钉 .env 的读取与校验本身。

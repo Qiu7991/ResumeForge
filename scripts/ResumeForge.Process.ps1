@@ -92,6 +92,66 @@ function Test-WarmStart {
 }
 
 <#
+静态前端的"新鲜度"检查：dist 比前端源码旧时给出警告。
+
+存在的意义是「改了前端源码、忘了 npm run build、重启后一看界面没变」这个坑——静态
+模式下后端直接回 dist 里的老资产，源码改动根本不会生效，而症状和"功能没做对"长得
+一模一样（2026-11-11 实测：技能包内置那次提交后 dist 落后两小时，界面看不到新标签）。
+
+只警告、不阻断：dist 落后是**开发态**的常态，硬拦会让正常启停变烦人；而且用户可能
+就是特意用旧产物做对比。判定只覆盖确定性信号（源码目录与入口 HTML 的 mtime），
+不猜构建产物的内容是否等价。
+#>
+function Test-StaticFrontendStale {
+    param(
+        [Parameter(Mandatory = $true)][string]$FrontendDirectory
+    )
+
+    $distIndex = Join-Path $FrontendDirectory "dist\index.html"
+    if (-not (Test-Path -LiteralPath $distIndex -PathType Leaf)) {
+        return $null
+    }
+    $distTime = (Get-Item -LiteralPath $distIndex).LastWriteTimeUtc
+
+    # 源码目录 + 入口 HTML + 构建配置：任何一处比 dist 新，说明产物可能对不上源码。
+    $watchPaths = @(
+        (Join-Path $FrontendDirectory "src"),
+        (Join-Path $FrontendDirectory "index.html"),
+        (Join-Path $FrontendDirectory "vite.config.ts"),
+        (Join-Path $FrontendDirectory "package.json")
+    )
+    $newestPath = $null
+    $newestTime = [datetime]::MinValue
+    foreach ($watchPath in $watchPaths) {
+        if (-not (Test-Path -LiteralPath $watchPath)) {
+            continue
+        }
+        $item = Get-Item -LiteralPath $watchPath
+        $candidates = if ($item.PSIsContainer) {
+            Get-ChildItem -LiteralPath $watchPath -Recurse -File -ErrorAction SilentlyContinue
+        }
+        else {
+            @($item)
+        }
+        foreach ($candidate in $candidates) {
+            if ($candidate.LastWriteTimeUtc -gt $newestTime) {
+                $newestTime = $candidate.LastWriteTimeUtc
+                $newestPath = $candidate.FullName
+            }
+        }
+    }
+
+    if ($null -eq $newestPath -or $newestTime -le $distTime) {
+        return $null
+    }
+    return [pscustomobject]@{
+        DistTime   = $distTime
+        SourceTime = $newestTime
+        SourcePath = $newestPath
+    }
+}
+
+<#
 RF-09 方案 A：发布包携带 frontend\dist，由后端同源提供页面。frontend-mode 决定
 这次启动起不起 Vite：
   auto（默认）= dist 在 → 不起 Node（浏览器开的是后端地址）；dist 不在 → 退回 dev。
@@ -308,6 +368,15 @@ function Start-ResumeForge {
             # RF-09 方案 A：dist 由后端同源提供（create_app 里的 mount_static_spa）。
             # 运行期不需要 Node：不起 Vite、不装 node_modules、不做前端端口的占用
             # 检查，也不需要热身（后端直接回 index.html，没有 Vite 的依赖预打包）。
+            $staleStatic = Test-StaticFrontendStale -FrontendDirectory $FrontendDirectory
+            if ($null -ne $staleStatic) {
+                Write-Warning ("前端静态资产比源码旧，界面可能看不到最新改动：`n" +
+                    "  dist 构建于：$($staleStatic.DistTime.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))`n" +
+                    "  最新源码：  $($staleStatic.SourcePath)`n" +
+                    "  修改于：    $($staleStatic.SourceTime.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))`n" +
+                    "要让改动生效：在 frontend 目录执行 npm run build 后重启。`n" +
+                    "（如果你就是要在旧产物上做对比，忽略这条即可，启动不受影响。）")
+            }
             Write-Host "前端页面由后端同源提供：$BackendUrl"
         }
         else {
