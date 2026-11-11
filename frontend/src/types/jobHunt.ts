@@ -131,7 +131,25 @@ export interface CollectTaskSnapshot {
   stopped_reason: string;
   stub_count: number;
   finished: boolean;
+  /**
+   * 采集之后的阶段（2026-11-11 方案 3）："" → collected → staged → filling_jd → scoring。
+   *
+   * 用来让用户看见"采完之后还在干什么"。之前只有 running/finished 两态，
+   * 采完那一瞬间看起来就像停了。
+   */
+  stage?: CollectTaskStage;
+  /** 落进备选岗位暂存区的条数（评分与导入都以这些候选为准）。 */
+  candidate_count?: number;
+  /** 与正式岗位/暂存区重复而跳过的条数。 */
+  duplicates?: number;
+  /** 补 JD 成功的条数。 */
+  jd_filled?: number;
+  /** 是否已把评分任务交给后台（为真时前端才开始轮询分数）。 */
+  score_started?: boolean;
 }
+
+/** 采集任务在采完之后的阶段（协议值，中文文案在语言包里）。 */
+export type CollectTaskStage = "" | "collected" | "staged" | "filling_jd" | "scoring";
 
 export interface CollectTaskResult extends CollectTaskSnapshot {
   stubs: JobHuntStub[];

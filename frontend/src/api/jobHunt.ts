@@ -102,6 +102,15 @@ export function startCollectTask(payload: {
   city?: string;
   max_pages?: number;
   city_code?: string;
+  /**
+   * 采集结果是否落进备选岗位暂存区。**服务端默认 true**（方案 3：采完自动入库、
+   * 补 JD、评分，用户按分数决定导入哪些）。传 false 只用于"只要一轮列表、不留痕"。
+   */
+  persist?: boolean;
+  /** 落库后是否自动补 JD + 评分。关掉 = 只入库不评分。 */
+  auto_score?: boolean;
+  /** 用哪份简历评分；不传走设置里的默认简历。 */
+  resume_id?: number | null;
 }): Promise<CollectTaskSnapshot> {
   return request<CollectTaskSnapshot>("/job-hunt/collect/task", {
     method: "POST",

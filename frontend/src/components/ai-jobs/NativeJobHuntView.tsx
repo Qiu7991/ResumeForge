@@ -14,9 +14,22 @@
  * - no delivery execution (the apply desk owns batches, breakers, failure classes);
  * - no scoring UI (the job library's match analysis is the same result set).
  */
-import { Alert, Button, Card, Empty, Input, Select, Space, Table, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Empty,
+  Input,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { t } from "../../i18n";
@@ -28,17 +41,10 @@ import PipelineStrip, { buildSteps } from "./PipelineStrip";
 import { useCollectTask } from "../../hooks/useCollectTask";
 import type { JobHuntStatus } from "../../types/jobHunt";
 import type { JobList } from "../../types/job";
+import { useCandidates } from "../../hooks/useCandidates";
+import CollectResultPanel from "../apply/CollectResultPanel";
 
 const { Text, Title } = Typography;
-
-/** One row of the preview table (index into the collect result). */
-interface PreviewRow {
-  key: number;
-  title: string;
-  company: string;
-  location: string;
-  salary: string;
-}
 
 interface Props {
   status: JobHuntStatus;
@@ -48,13 +54,11 @@ export default function NativeJobHuntView({ status }: Props) {
   const navigate = useNavigate();
   // Subscribe to locale changes: module-level t() does not re-render on its own.
   useLocale();
-  const { state, enqueue, importRows, reload } = useJobHuntNative(status);
+  const { state, enqueue, reload } = useJobHuntNative(status);
   const collectTask = useCollectTask();
   const task = collectTask.state.task;
   const collecting = task?.status === "running" || task?.status === "paused";
   const result = state.lastResult;
-  // The task becomes the source of preview rows once it finishes.
-  const previewStubs = collectTask.state.stubs.length > 0 ? collectTask.state.stubs : (result?.stubs ?? []);
 
   const [siteKey, setSiteKey] = useState(status.platforms[0]?.key ?? "boss");
   const [keywords, setKeywords] = useState("AI");
@@ -62,59 +66,44 @@ export default function NativeJobHuntView({ status }: Props) {
   const [maxPages, setMaxPages] = useState(1);
   const [selected, setSelected] = useState<number[]>([]);
   const [queued, setQueued] = useState(0);
-  // Preview rows picked for import (indices into the preview list).
-  const [picked, setPicked] = useState<number[]>([]);
-  const [importedCount, setImportedCount] = useState(0);
-  const [importMsg, setImportMsg] = useState("");
+  // 采集即评分（默认开）。关掉 = 只落备选区不评分，分数列显示「未评分」。
+  const [autoScore, setAutoScore] = useState(true);
+
+  // 备选岗位列表：既是「导入/已评分」两个计数的来源，也是下面候选面板的数据源。
+  // 采集任务进入终态时自动重拉一次（`task?.status`），评分任务结束也重拉一次。
+  const {
+    data: candidates,
+    refresh: refreshCandidates,
+    watchScoreTask,
+  } = useCandidates();
+
+  // 采集链路的「落库 → 补 JD → 评分」都在后台线程里跑完；任务快照里
+  // `score_started` 为真时评分任务才真的起来了，这时开始轮询分数。
+  useEffect(() => {
+    if (task?.score_started) watchScoreTask();
+  }, [task?.score_started, watchScoreTask]);
+
+  // 流程条要的是「这一批里」的进度，不是全库累计：
+  // - imported：已导入岗位广场的条数
+  // - scored：已评出分数的条数
+  const importedCandidates = candidates.filter((row) => row.status === "imported").length;
+  const scoredCandidates = candidates.filter(
+    (row) => row.score_total !== null && row.score_total !== undefined,
+  ).length;
 
   const onCollect = async () => {
     setQueued(0);
-    setPicked([]);
-    setImportMsg("");
-    setImportedCount(0);
     await collectTask.start({
       site_key: siteKey,
       keywords,
       city,
       max_pages: maxPages,
+      // 默认都开：采完自动落备选区 + 补 JD + 评分，用户按分数挑——这正是
+      // 「采集评分后再决定导入」那条链路。关掉 auto_score 就是只入库不评分。
+      persist: true,
+      auto_score: autoScore,
     });
   };
-
-  const onImport = async () => {
-    const stubs = previewStubs.filter((_, index) => picked.includes(index));
-    if (!stubs.length) return;
-    try {
-      const { inserted, skipped, origin } = await importRows(siteKey, stubs);
-      setImportMsg(
-        t("aiJobs.native.importDone", { inserted, skipped, origin }),
-      );
-      setImportedCount((prev) => prev + inserted);
-      setPicked([]);
-    } catch {
-      // Error already surfaced through state.error.
-    }
-  };
-
-  const previewRows: PreviewRow[] =
-    previewStubs.map((stub, index) => ({
-      key: index,
-      title: stub.title,
-      company: stub.company,
-      location: stub.location,
-      salary: stub.salary_decoded || stub.salary_raw,
-    })) ?? [];
-
-  const previewColumns: ColumnsType<PreviewRow> = [
-    { title: t("aiJobs.native.col.title"), dataIndex: "title", ellipsis: true },
-    { title: t("aiJobs.native.col.company"), dataIndex: "company", width: 150, ellipsis: true },
-    { title: t("aiJobs.native.col.location"), dataIndex: "location", width: 150, ellipsis: true },
-    {
-      title: t("aiJobs.native.col.salary"),
-      dataIndex: "salary",
-      width: 110,
-      render: (value: string) => value || "—",
-    },
-  ];
 
   const onEnqueue = async () => {
     if (!selected.length) return;
@@ -167,11 +156,13 @@ export default function NativeJobHuntView({ status }: Props) {
       <PipelineStrip
         steps={buildSteps({
           collecting,
-          collected: task?.collected ?? previewStubs.length,
+          collected: task?.collected ?? candidates.length,
           currentPage: task?.current_page ?? 0,
           maxPages: task?.max_pages ?? maxPages,
-          imported: importedCount,
-          scored: 0,
+          // 这三个数都来自候选列表本身（服务端下发），不再是 useState(0) 那种
+          // 「刷新就归零」的临时值，也不再是写死的 scored: 0。
+          imported: importedCandidates,
+          scored: scoredCandidates,
           inQueue: queued,
           paused: task?.status === "paused",
         })}
@@ -206,6 +197,11 @@ export default function NativeJobHuntView({ status }: Props) {
               label: t("aiJobs.native.pages", { n }),
             }))}
           />
+          <Tooltip title={t("aiJobs.native.autoScoreHint")}>
+            <Checkbox checked={autoScore} onChange={(e) => setAutoScore(e.target.checked)}>
+              {t("aiJobs.native.autoScore")}
+            </Checkbox>
+          </Tooltip>
           <Button
             type="primary"
             loading={collectTask.state.starting || collecting}
@@ -273,44 +269,36 @@ export default function NativeJobHuntView({ status }: Props) {
           </div>
         )}
 
-        {/* Preview: nothing is written until the user picks rows and imports. */}
-        {result && result.stubs.length > 0 && (
-          <div style={{ marginTop: 16 }}>
-            <Space style={{ marginBottom: 8 }} wrap>
-              <Text strong>{t("aiJobs.native.previewTitle", { count: result.stubs.length })}</Text>
-              {result.blocked > 0 && (
-                <Tag color="default">
-                  {t("aiJobs.native.blockedCount", { count: result.blocked })}
-                </Tag>
-              )}
-              <Button
-                type="primary"
-                size="small"
-                disabled={!picked.length}
-                loading={state.enqueueing}
-                onClick={() => void onImport()}
-              >
-                {t("aiJobs.native.importSelected", { count: picked.length })}
-              </Button>
-            </Space>
-            <Table<PreviewRow>
-              rowKey="key"
-              size="small"
-              pagination={false}
-              scroll={{ y: 360 }}
-              dataSource={previewRows}
-              columns={previewColumns}
-              rowSelection={{
-                selectedRowKeys: picked,
-                onChange: (keys) => setPicked(keys as number[]),
-              }}
-              locale={{ emptyText: <Empty description={t("aiJobs.native.empty")} /> }}
-            />
-            {importMsg && (
-              <Alert style={{ marginTop: 8 }} type="success" showIcon message={importMsg} />
-            )}
-          </div>
-        )}
+      </Card>
+
+      {/* 备选岗位（采集结果）——采集 → 评分 → 我决定导入的全部动作都在这一块。
+          taskId 传 null：这里列的是**所有批次**的候选，不只最后一轮（与投递台
+          采集面板同一取舍，省得用户再去采集记录里翻）。 */}
+      <Card
+        size="small"
+        title={
+          <Space>
+            <Title level={5} style={{ margin: 0 }}>
+              {t("aiJobs.native.candidateTitle")}
+            </Title>
+            <Text type="secondary">{candidates.length}</Text>
+          </Space>
+        }
+        extra={
+          <Button size="small" onClick={() => void refreshCandidates()} loading={state.loadingJobs}>
+            {t("aiJobs.native.refresh")}
+          </Button>
+        }
+      >
+        <CollectResultPanel
+          taskId={null}
+          disabled={collecting}
+          refreshKey={`${candidates.length}-${scoredCandidates}-${importedCandidates}`}
+          onImported={() => {
+            void refreshCandidates();
+            void reload();
+          }}
+        />
       </Card>
 
       <BlocklistCard />

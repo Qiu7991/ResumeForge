@@ -76,7 +76,7 @@ def start_score(req: CandidateScoreIn, db: Session = Depends(get_db)) -> dict[st
         if candidate_has_jd(candidate):
             scorable.append(candidate.id)
         else:
-            candidate.score_error = "缺 JD"
+            candidate.score_error = "jd_missing: 缺 JD 正文"
             candidate.score_total = None
     db.commit()
     if not scorable:

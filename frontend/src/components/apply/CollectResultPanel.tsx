@@ -17,6 +17,8 @@ import type { TableColumnsType } from "antd";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { importCandidateJobs, listCandidateJobs } from "../../api/candidateJob";
+import type { CandidateJobSort } from "../../api/candidateJob";
+import CandidateScoreCell from "../jobs/candidate/CandidateScoreCell";
 import { useApi } from "../../hooks/useApi";
 import { bulkEnqueueJobs, bulkEnqueueSummary } from "./queue/bulkEnqueue";
 import { formatDateTime } from "../../utils/format";
@@ -90,9 +92,13 @@ export default function CollectResultPanel({
   // 跟"现在有没有正在跑/刚跑完的采集任务"无关。以前 `taskId` 为空就 `return null`，
   // 于是用户切到别的页、再切回来（当前任务已被收尾、`collectTask` 变 null）时，
   // 整块候选列表凭空消失——他以为数据没了。
+  //
+  // 排序走**服务端**（`sort` 参数）：本表是客户端分页，本地排序只能排当前页，
+  // 用户按分数挑的时候看到的是"这一页里最高的"，不是"所有候选里最高的"。
+  const [sort, setSort] = useState<CandidateJobSort>("created_desc");
   const { data, loading, error, reload } = useApi<CandidateJob[]>(
-    () => listCandidateJobs({ status: "pending" }),
-    [refreshKey],
+    () => listCandidateJobs({ status: "pending", sort }),
+    [refreshKey, sort],
     // 切回本页时重新拉一次：候选可能在别处被导入/删掉了（用户实测"切页回来内容没了"，
     // 反过来"切页回来显示的是旧列表"同样不该发生）。`minIntervalMs` 用默认 30s——
     // 频繁切页不该把接口打满。
@@ -257,6 +263,18 @@ export default function CollectResultPanel({
         ),
     },
     {
+      // 匹配分（2026-11-11 方案 3）：采集后后台自动评分，用户按分数挑要导入哪些。
+      // 分数由列表接口一起下发（`score_total`/`score_error`），**不逐行请求**。
+      // 排序走服务端（`sort=score_desc`）——本页分页，本地排序必错。
+      title: t("aiJobs.candidate.score"),
+      dataIndex: "score_total",
+      width: 100,
+      sorter: true,
+      render: (_value: number | null | undefined, row) => (
+        <CandidateScoreCell score={row.score_total} error={row.score_error} />
+      ),
+    },
+    {
       title: t("collectResult.column.source"),
       dataIndex: "source_url",
       width: 90,
@@ -328,6 +346,14 @@ export default function CollectResultPanel({
               rowSelection={{
                 selectedRowKeys: selectedIds,
                 onChange: (keys) => setSelectedIds(keys as number[]),
+              }}
+              onChange={(_pagination, _filters, sorter, extra) => {
+                if (extra.action !== "sort") return;
+                const field = Array.isArray(sorter) ? sorter[0]?.field : sorter.field;
+                const order = Array.isArray(sorter) ? sorter[0]?.order : sorter.order;
+                if (field !== "score_total") return;
+                // 升序/降序都按服务端键排；取消排序（order 为空）回到默认的最近采集在前。
+                setSort(order === "ascend" ? "score_asc" : order === "descend" ? "score_desc" : "created_desc");
               }}
             />
             <Space size={8} wrap>

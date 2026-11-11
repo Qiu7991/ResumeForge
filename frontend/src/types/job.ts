@@ -198,6 +198,20 @@ export interface CandidateJob {
    * 而用户要看的是"这条岗位是什么时候采的"。
    */
   collected_at?: string | null;
+  /**
+   * 语义评分摘要（迁移 0003，2026-11-11）。采集后后台自动评，用户按分数挑要导入哪些。
+   *
+   * `null` = **还没评过**（不是 0 分）；要区分"没评"与"评了 0 分"，只能看这个字段
+   * 而不是 `score_total ?? 0`。
+   *
+   * 完整的五维明细不在列表里（与 JD 同样的体积取舍）：只有 `CandidateJobDetail`
+   * 的 `score_payload` 才带。
+   */
+  score_total?: number | null;
+  score_model?: string;
+  scored_at?: string | null;
+  /** 评分失败原因（"缺 JD" / "还没有配置大模型"…）；空串 = 无错。 */
+  score_error?: string;
   created_at: string;
   updated_at: string;
 }
@@ -208,6 +222,13 @@ export interface CandidateJobDetail extends CandidateJob {
   requirements: string;
   job_type: string;
   additional_info: string;
+  /**
+   * 完整语义评分（五维/封顶/理由/技能逐条比对）。
+   *
+   * 结构直接透传后端 `SemanticScore.as_dict()`，前端只读展示，所以用宽松类型而不是
+   * 逐字段建模——后端加一个维度不该让这里连带编译失败。
+   */
+  score_payload?: Record<string, unknown> | null;
 }
 
 export type CandidateJobImportOutcomeKind =

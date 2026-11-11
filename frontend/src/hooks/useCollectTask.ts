@@ -60,7 +60,9 @@ export function useCollectTask() {
   );
 
   const start = useCallback(
-    async (payload: { site_key: string; keywords?: string; city?: string; max_pages?: number }) => {
+    // 参数类型直接取自 API 层：这里再列一遍字段，新增一个（如 persist/auto_score）
+    // 就会出现"页面传了、hook 类型不认"的编译错误——本来是一处改动的活变成两处。
+    async (payload: Parameters<typeof startCollectTask>[0]) => {
       stopPolling();
       setState({ ...INITIAL, starting: true });
       try {

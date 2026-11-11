@@ -75,7 +75,11 @@ describe("CollectResultPanel", () => {
     renderPanel();
 
     expect(await screen.findByText("全栈工程师")).toBeInTheDocument();
-    expect(apiMocks.listCandidateJobs).toHaveBeenCalledWith({ status: "pending" });
+    // 排序键也在这里：默认按「最近采集」倒序（服务端排，客户端分页排不准）。
+    expect(apiMocks.listCandidateJobs).toHaveBeenCalledWith({
+      status: "pending",
+      sort: "created_desc",
+    });
     // 不能带批次筛选：带了就又变成"只看这一轮"。
     expect(apiMocks.listCandidateJobs).not.toHaveBeenCalledWith(
       expect.objectContaining({ collectTaskId: expect.anything() }),
@@ -216,6 +220,10 @@ describe("CollectResultPanel", () => {
 
     expect(await screen.findByText("Legacy batch job")).toBeInTheDocument();
     expect(container.querySelector(".apply-collect-result")).not.toBeNull();
-    expect(apiMocks.listCandidateJobs).toHaveBeenCalledWith({ status: "pending" });
+    // 排序键也在这里：默认按「最近采集」倒序（服务端排，客户端分页排不准）。
+    expect(apiMocks.listCandidateJobs).toHaveBeenCalledWith({
+      status: "pending",
+      sort: "created_desc",
+    });
   });
 });

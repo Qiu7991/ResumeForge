@@ -266,11 +266,11 @@ def _auto_score(
     正文时评分只能拿标题猜，分数没有参考价值。补不到的那些会在发起评分时被标成
     「缺 JD」（见 ``api/candidate_job_score.start_score``），不会硬评。
     """
+    from ..services.job_hunt.candidate_jd_backfill import backfill_candidate_jd
     from ..services.job_hunt.candidate_score_task import (
         CandidateScoreBusy,
         get_candidate_score_runner,
     )
-    from ..services.job_hunt.detail_backfill import backfill_details
     from ..services.job_hunt.runner import cdp_fetcher
 
     # ---- 1. 补 JD ----
@@ -278,16 +278,21 @@ def _auto_score(
     task.message = "正在补抓 JD 正文…"
     try:
         fetch = cdp_fetcher(client, adapter, page_kind="detail")
-        report = backfill_details(
-            session,
-            candidate_ids,
-            fetch=fetch,
-            adapter=adapter,
-            overwrite=False,
-            limit=len(candidate_ids),
+        # **必须用候选专用的补抓**：detail_backfill 是按 Job 模型读写的，
+        # 拿候选 id 传进去会全部被判成"已有 JD"静默跳过（实测 尝试 0/跳过 11）。
+        report = backfill_candidate_jd(
+            session, candidate_ids, fetch=fetch, adapter=adapter, limit=len(candidate_ids)
         )
         task.jd_filled = report.filled
-        logger.info("采集后补 JD：尝试 %s / 成功 %s", report.attempted, report.filled)
+        # 把失败原因也打出来：只记数量时"尝试 3 / 成功 0"完全查不出为什么。
+        logger.info(
+            "采集后补 JD：尝试 %s / 成功 %s / 跳过 %s / 无链接 %s%s",
+            report.attempted,
+            report.filled,
+            report.skipped_has_jd,
+            report.no_url,
+            ("；失败：" + " | ".join(report.errors[:5])) if report.errors else "",
+        )
     except Exception as exc:  # noqa: BLE001 — 补不到就按「缺 JD」处理，不阻断评分
         logger.info("采集后补 JD 跳过：%s: %s", type(exc).__name__, exc)
 

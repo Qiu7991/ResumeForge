@@ -13,6 +13,9 @@ import type {
 import type { Page } from "../types/common";
 import { buildQuery, request, requestRaw } from "./client";
 
+/** 备选岗位列表的排序键（与后端 `sort` 参数一一对应）。 */
+export type CandidateJobSort = "created_desc" | "score_desc" | "score_asc";
+
 export function listCandidateJobs(
   params: {
     status?: string;
@@ -22,6 +25,8 @@ export function listCandidateJobs(
     /** 查看多条采集记录合并后的候选岗位。 */
     collectTaskIds?: number[];
     limit?: number;
+    /** 排序：created_desc（默认）/ score_desc / score_asc（未评分的固定排最后）。 */
+    sort?: CandidateJobSort;
   } = {},
 ): Promise<CandidateJob[]> {
   const { collectTaskId, collectTaskIds, ...rest } = params;
@@ -50,6 +55,7 @@ export function listCandidateJobsPage(
     collectTaskId?: number;
     /** 查看多条采集记录合并后的候选岗位。 */
     collectTaskIds?: number[];
+    sort?: CandidateJobSort;
   } = {},
   page: number,
   pageSize: number,
@@ -147,4 +153,49 @@ export function previewCandidateImport(file: File): Promise<CandidateCsvPreview>
 /** 候选 CSV 第二步：确认提交，逐行建候选并返回账目。 */
 export function importCandidatesCsv(rows: CandidateCsvRow[]): Promise<CandidateCsvImportResult> {
   return request("/candidate-jobs/csv/import", { method: "POST", body: JSON.stringify({ rows }) });
+}
+
+/**
+ * 备选岗位的语义评分任务快照（`/candidate-jobs/score/task`）。
+ *
+ * 与岗位评分不同：备选岗位在导入前没有 `job_id`，所以分数落在候选表上，任务快照也
+ * 是独立的一套（存 AppSetting 单键），不与 `job_match_background_task` 共用。
+ */
+export interface CandidateScoreTask {
+  /** 服务端没有任务时只返回 `{running: false}`，所以它可能缺其他字段。 */
+  running: boolean;
+  task_id?: string;
+  status?: "running" | "completed" | "failed" | "cancelled";
+  requested?: number;
+  completed?: number;
+  failed?: number;
+  current_candidate_id?: number | null;
+  current_title?: string;
+  message?: string;
+  error?: string;
+  errors?: string[];
+}
+
+/** 发起一次后台评分（立刻返回任务快照，前端轮询 `getCandidateScoreTask`）。 */
+export function startCandidateScore(payload: {
+  candidateIds?: number[];
+  force?: boolean;
+  resumeId?: number;
+}): Promise<CandidateScoreTask> {
+  return request("/candidate-jobs/score", {
+    method: "POST",
+    body: JSON.stringify({
+      candidate_ids: payload.candidateIds ?? [],
+      force: payload.force ?? false,
+      resume_id: payload.resumeId ?? null,
+    }),
+  });
+}
+
+export function getCandidateScoreTask(): Promise<CandidateScoreTask> {
+  return request("/candidate-jobs/score/task");
+}
+
+export function cancelCandidateScoreTask(): Promise<{ ok: boolean }> {
+  return request("/candidate-jobs/score/task/cancel", { method: "POST" });
 }

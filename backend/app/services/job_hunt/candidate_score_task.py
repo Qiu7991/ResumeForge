@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from ...database import SessionLocal
 from ...models.material import CandidateJob
+from ...models.profile import utcnow
 from ...models.setting import AppSetting
 from .candidate_scoring import candidate_has_jd, candidate_jd
 from .scoring_service import ScoringFailed, ScoringUnavailable, score_texts
@@ -124,7 +125,7 @@ class CandidateScoreRunner:
                     status="running",
                     requested=len(candidate_ids),
                     message="准备评分…",
-                    started_at=datetime.utcnow(),
+                    started_at=utcnow(),
                 )
                 _write_task(session, task)
             finally:
@@ -160,7 +161,7 @@ class CandidateScoreRunner:
                     "message": "任务已中断",
                     "current_candidate_id": None,
                     "current_title": "",
-                    "finished_at": datetime.utcnow(),
+                    "finished_at": utcnow(),
                 }
             ),
         )
@@ -197,15 +198,25 @@ class CandidateScoreRunner:
                     self._score_one(session, candidate, resume_id=resume_id)
                     completed += 1
                 except ScoringUnavailable as exc:
-                    # 环境问题（没配模型/资料为空）：后面每一条都会同样失败，直接收尾。
+                    detail = str(exc) or type(exc).__name__
+                    errors.append(f"{candidate.title}: {detail}")
+                    if detail.startswith("jd_missing"):
+                        # **单条问题**：这一条没有 JD 正文，其余候选照样能评。
+                        # 以前这里一律当"环境不可用"整批退出——实测第一条缺 JD 就
+                        # 让 11 条候选全部作废（requested=11 / failed=1 / 其余没跑）。
+                        failed += 1
+                        self._mark_error(session, candidate, detail)
+                        session.commit()
+                        continue
+                    # 真正环境问题（没配模型 / 个人资料为空）：后面每一条都会同样失败，
+                    # 直接收尾，不用把剩下的都跑一遍刷同样的错。
                     failed += 1
-                    errors.append(f"{candidate.title}: {exc}")
                     session.commit()
                     self._finish(
                         session,
                         task_id,
                         status="failed",
-                        error=str(exc),
+                        error=detail,
                         completed=completed,
                         failed=failed,
                         errors=errors,
@@ -256,7 +267,9 @@ class CandidateScoreRunner:
     def _score_one(self, session: Session, candidate: CandidateJob, *, resume_id: int | None) -> None:
         """对一条候选评分并写回五列。缺 JD 时抛 ScoringUnavailable（不调模型）。"""
         if not candidate_has_jd(candidate):
-            raise ScoringUnavailable("缺 JD")
+            # 协议值前缀 ``jd_missing``：前端据此决定显示「缺 JD」还是「失败」。
+            # 不用中文串匹配——后端改一次文案，前端的判断就静默失效。
+            raise ScoringUnavailable("jd_missing: 缺 JD 正文")
 
         # score_texts 内部会 close 传入的 session（调用期间不占连接池），
         # 所以这里传的是**新开**的 session，评完再回到本循环的 session 写回结果。
@@ -280,7 +293,7 @@ class CandidateScoreRunner:
         candidate.score_total = int(payload.get("total") or 0)
         candidate.score_payload = payload
         candidate.score_model = model
-        candidate.scored_at = datetime.utcnow()
+        candidate.scored_at = utcnow()
         candidate.score_error = ""
 
     def _mark_error(self, session: Session, candidate: CandidateJob, detail: str) -> None:
@@ -322,7 +335,7 @@ class CandidateScoreRunner:
                     # 终态必须清空「正在评分：X」，否则界面会挂着一条早已结束的岗位。
                     "current_candidate_id": None,
                     "current_title": "",
-                    "finished_at": datetime.utcnow(),
+                    "finished_at": utcnow(),
                 }
             ),
         )
