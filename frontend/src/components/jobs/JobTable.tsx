@@ -223,6 +223,20 @@ export default function JobTable({
       },
     },
     {
+      title: t("jobTable.column.importedAt"),
+      dataIndex: "created_at",
+      // 「导入时间」是这条记录进库的时间，一定存在、且是真实时间戳——采集来的岗位
+      // 往往没有 posted_at（招聘页不写、或只写"3 天前"解析不出日期），那一列只能显示
+      // "-"。所以把导入时间单独成列，用户至少能知道"这条是什么时候进来的"。
+      //
+      // 不排序：默认排序（created_desc）已经是按它倒序，用户要看新导入的直接看列表
+      // 头部即可；再给一个排序键会让这个字段在两处口径上各说一套。
+      // 岗位名那格的悬停提示保留，习惯悬停的用户不受影响。
+      key: "created_at",
+      width: 150,
+      render: (value: string) => formatDateTime(value),
+    },
+    {
       title: t("jobTable.column.postedAt"),
       dataIndex: "posted_at",
       // 列里展示招聘信息自己写的 posted_at；排序键 `posted_desc` 也按它排——
@@ -299,7 +313,7 @@ export default function JobTable({
       // 空表（无当前页行）时不启用横向滚动：否则 `.ant-table-content` 会变成
       // "可横滚、区域内却没有任何可聚焦元素"的容器，命中 axe 的
       // `scrollable-region-focusable`（serious）。有数据时照旧按列宽固定横滚。
-      scroll={jobs?.items?.length ? { x: 1330 } : undefined}
+      scroll={jobs?.items?.length ? { x: 1480 } : undefined}
       components={{
         body: {
           // 整行右键即可编辑/删除；批量模式下不拦截右键，避免和选择操作打架。

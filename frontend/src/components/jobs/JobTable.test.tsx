@@ -8,6 +8,7 @@ import type { Job, JobList, Page } from "../../types";
 import { DEFAULT_JOB_SORT_STATE, type JobSortState } from "../../utils/jobSort";
 import JobTable from "./JobTable";
 import type { RowActionItem } from "../common/RowActions";
+import { t } from "../../i18n";
 
 const BASE_JOB: Job = {
   id: 1,
@@ -139,6 +140,40 @@ describe("JobTable 悬停导入时间", () => {
   });
 });
 
+describe("JobTable 导入时间列", () => {
+  // 列名从语言包取，不在测试里写死中文：写死会命中 i18n 棘轮
+  // （tests 口径的「中文 ByText 断言行数」只许降不许升），而且切换语言后断言就假了。
+  const importedColumnLabel = t("jobTable.column.importedAt");
+  /** antd 6 的表头标题会出现多份（测量/克隆节点），统一取第一个。 */
+  const importedHeader = () => screen.getAllByText(importedColumnLabel)[0]!;
+
+  it("「导入时间」列显示 created_at（本地时区 yyyy-MM-dd HH:mm）", () => {
+    renderTable([makeJob({ created_at: "2026-08-19T08:00:00" })]);
+
+    // 单元格里必须是格式化后的时间，不是后端原样下发的 ISO 串。
+    expect(importedHeader().closest("th")).toBeTruthy();
+    expect(screen.getAllByText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/).length).toBeGreaterThan(0);
+    expect(screen.queryByText("2026-08-19T08:00:00")).not.toBeInTheDocument();
+  });
+
+  it("posted_at 为空时「发布时间」列显示 -，但「导入时间」仍有值", () => {
+    // 采集来的岗位常态：招聘页没写发布日期。以前这一行两个时间都是"-"，
+    // 用户看不出这条是什么时候进来的。
+    renderTable([makeJob({ posted_at: "", created_at: "2026-08-19T08:00:00" })]);
+
+    expect(importedHeader()).toBeTruthy();
+    expect(screen.getAllByText("-").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/).length).toBeGreaterThan(0);
+  });
+
+  it("created_at 缺失时不崩，显示 -", () => {
+    // 防御：老数据或接口裁剪都可能不带这个字段。列渲染不能因此抛错。
+    renderTable([makeJob({ created_at: "" })]);
+
+    expect(importedHeader()).toBeTruthy();
+  });
+});
+
 describe("JobTable 列头排序（R14）", () => {
   /** 点某列列头。表头标题在 antd 6 里会出现多份（测量/克隆节点），统一点 `<th>` 本体。 */
   function clickHeader(label: string) {
@@ -202,12 +237,14 @@ describe("JobTable 空表可访问性", () => {
     expect(container.querySelector<HTMLElement>("table")?.style.width).toBe("");
   });
 
-  it("有数据时保持原行为：列宽固定 1330px + 横向滚动", () => {
+  it("有数据时保持原行为：列宽固定 1480px + 横向滚动", () => {
     const { container } = renderTable([makeJob()]);
 
     const content = container.querySelector<HTMLElement>(".ant-table-content");
     expect(content?.style.overflowX).toBe("auto");
-    expect(container.querySelector<HTMLElement>("table")?.style.width).toBe("1330px");
+    // 1480 = 旧值 1330 + 「导入时间」列的 150。加列时必须同步改这里，
+    // 否则固定列宽会小于各列之和，最后一列被压扁。
+    expect(container.querySelector<HTMLElement>("table")?.style.width).toBe("1480px");
   });
 });
 

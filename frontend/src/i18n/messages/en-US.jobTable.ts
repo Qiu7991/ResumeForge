@@ -19,6 +19,7 @@ const jobTable = {
   "jobTable.column.status": "Status",
   "jobTable.column.note": "Note",
   "jobTable.column.postedAt": "Posted",
+  "jobTable.column.importedAt": "Imported",
   "jobTable.column.actions": "Actions",
   "jobTable.action.favorite": "Favorite this job",
   "jobTable.action.unfavorite": "Remove from favorites",

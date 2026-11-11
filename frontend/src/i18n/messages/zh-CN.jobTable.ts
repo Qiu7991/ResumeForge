@@ -17,6 +17,7 @@ const jobTable = {
   "jobTable.column.status": "状态",
   "jobTable.column.note": "备注",
   "jobTable.column.postedAt": "发布时间",
+  "jobTable.column.importedAt": "导入时间",
   "jobTable.column.actions": "操作",
   "jobTable.action.favorite": "收藏岗位",
   "jobTable.action.unfavorite": "取消收藏",
