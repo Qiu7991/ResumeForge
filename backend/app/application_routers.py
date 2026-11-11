@@ -35,6 +35,7 @@ from .api import (
     interview_history,
     job_hunt,
     job_hunt_score,
+    job_hunt_tasks,
     job_match,
     jobs,
     jobs_analysis,
@@ -107,8 +108,12 @@ ROUTERS = (
     # AI 求职（BossHunter sidecar）：独立前缀 /api/ai-jobs，不与其他前缀抢路径。
     ai_jobs.router,
     # 自研求职采集（services/job_hunt）：独立前缀 /api/job-hunt，与 sidecar 并存，
-    # 用 job_hunt_backend 开关切换（默认 sidecar，旧路径不动）。
+    # 用 job_hunt_backend 开关切换（默认 native，旧路径不动）。
     job_hunt.router,
+    # 任务化采集（/collect/task/*：可暂停/停止/有进度）：同前缀，拆开是为了让
+    # job_hunt.py 守住 500 行预算。必须在 job_hunt.router 之后注册也无妨——
+    # /collect/task 与 /collect 是不同路径，不会互相遮蔽。
+    job_hunt_tasks.router,
     # 自研求职语义评分（五维 + 封顶）：/api/job-hunt/jobs/{id}/score
     job_hunt_score.router,
     jobs.router,

@@ -93,5 +93,29 @@ class JobSiteAdapter(ABC):
         """该平台允许抓的最大页数（防呆上限；子类可覆盖）。"""
         return 10
 
+    def content_ready_selector(self) -> str:
+        """**列表页**内容就绪判据：等这个 CSS 选择器命中后再取 HTML。
+
+        返回空串表示不声明，抓取层退化为「等固定时长」。它只描述搜索结果页——
+        详情页有独立的结构，见 ``detail_ready_selector``。
+        """
+        return ""
+
+    def detail_ready_selector(self) -> str:
+        """**详情页**内容就绪判据：等这个 CSS 选择器命中后再取 HTML。
+
+        为什么必须与列表页分开（2026-11-11 实测）：``cdp_fetcher`` 原本只问
+        ``content_ready_selector``，而 BOSS 返回的是列表页的 ``li.job-card-box``。
+        详情页永远等不到这个元素（实测真实夹具里详情页出现 0 次、列表页出现 15 次），
+        于是每次都白等满 ``content_wait_seconds``（8s）超时，然后**拿还没渲染完的
+        DOM 去解析**——表现出来的不是报错，而是 JD 又短又不完整：整段正文变成技能
+        标签（220 号："PostgreSQL MySQL LangChain…"）、或停在半句话
+        （216 号结尾「…任职」）。同样的详情页夹具静态解析是完整的（501 字），
+        所以只吃夹具的测试发现不了这个时序问题。
+
+        返回空串表示不声明，抓取层退化为「等固定时长」。
+        """
+        return ""
+
 
 __all__ = ["JobSiteAdapter", "JobStub", "JobDetail", "HuntCriteria", "JobParseError"]

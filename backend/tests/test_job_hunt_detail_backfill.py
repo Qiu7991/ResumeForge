@@ -105,3 +105,39 @@ def test_respects_limit(db_session):
 
     assert report.attempted == 2
     assert report.filled == 2
+
+
+def test_overwrite_refetches_jobs_that_already_have_jd(db_session):
+    """``overwrite=True`` 必须重抓已有 JD 的岗位。
+
+    回归背景（2026-11-11）：抓取层错用列表页的就绪选择器，导致入库的 JD 普遍残缺。
+    修好抓取层后，存量那些行的 description 非空，默认路径（只补空 JD）会全部跳过，
+    等于修不了——所以必须有这条强制重抓的路径。
+    """
+    job = _job(db_session, title="AI 工程师", url="u-old", description="工作内容：1、做A")
+    adapter = FakeAdapter(
+        {"u-old": JobDetail(title="AI 工程师", description="完整 JD：" + "很长的正文。" * 30)}
+    )
+
+    report = backfill_details(
+        db_session, [job.id], fetch=lambda url: url, adapter=adapter, overwrite=True
+    )
+
+    assert report.filled == 1
+    assert report.skipped_has_jd == 0, "overwrite 时不该跳过已有 JD"
+    db_session.refresh(job)
+    assert job.description.startswith("完整 JD：")
+    assert len(job.description) > 100
+
+
+def test_default_still_skips_existing_jd(db_session):
+    """默认行为不变：已有 JD 的不重抓（日常语义，避免重复访问引来风控）。"""
+    job = _job(db_session, title="AI 工程师", url="u2", description="已有正文")
+    adapter = FakeAdapter({"u2": JobDetail(title="AI 工程师", description="新正文")})
+
+    report = backfill_details(db_session, [job.id], fetch=lambda url: url, adapter=adapter)
+
+    assert report.skipped_has_jd == 1
+    assert report.filled == 0
+    db_session.refresh(job)
+    assert job.description == "已有正文"

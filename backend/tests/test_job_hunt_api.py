@@ -114,7 +114,7 @@ def test_collect_cursor_saved_on_interrupt(api, db_session, monkeypatch):
         return report
 
     monkeypatch.setattr("app.services.job_hunt.runner.JobHuntRunner.run", fake_run)
-    monkeypatch.setattr("app.api.job_hunt._acquire_client", lambda db: Stub(None))
+    monkeypatch.setattr("app.api.job_hunt.acquire_client", lambda db: Stub(None))
 
     resp = api.post("/api/job-hunt/collect", json={"site_key": "zhilian", "keywords": "AI"})
     assert resp.status_code == 200
@@ -149,8 +149,11 @@ def _patch_collect(monkeypatch, stubs):
     """把 collect 的浏览器侧打桩：返回固定 stubs，不碰真实浏览器/网站。"""
     from app.services.job_hunt.runner import HuntReport
 
+    # 取客户端的辅助已移到 job_hunt_shared，但 job_hunt.py 用的是
+    # `from ... import acquire_client`——它绑定的是**迁移那一刻的函数对象**，
+    # 所以打桩必须打路由模块里的这个名字（打 shared 模块里的原名不会生效）。
     monkeypatch.setattr(
-        "app.api.job_hunt._acquire_client", lambda db: object()
+        "app.api.job_hunt.acquire_client", lambda db: object()
     )
     monkeypatch.setattr(
         "app.api.job_hunt.cdp_fetcher", lambda client, adapter=None, **kw: (lambda url: "")
@@ -250,3 +253,81 @@ def test_collect_analyze_uses_force_false(api, monkeypatch):
     if captured:
         assert captured["force"] is False, "必须 force=False 才能不重复评分"
     api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
+
+
+# ---------------------------------------------------------------------------
+# 存量 JD 重抓（refetch-jd）：修复抓取层缺陷留下的残缺数据
+# ---------------------------------------------------------------------------
+
+
+def test_refetch_jd_picks_short_jds_and_passes_overwrite(api, db_session, monkeypatch):
+    """不带 job_ids 时：挑出「有链接且 JD 偏短」的岗位，并以 overwrite=True 排队。"""
+    from app.models.job import JOB_STATUS_OPEN, Job
+
+    short = Job(
+        title="短 JD 岗位", company="A公司", salary="8-12K",
+        description="工作内容：只有一行", status=JOB_STATUS_OPEN,
+        source_url="https://www.zhipin.com/job_detail/aaa.html",
+    )
+    long_jd = Job(
+        title="正常 JD 岗位", company="B公司", salary="8-12K",
+        description="很长的正文。" * 100, status=JOB_STATUS_OPEN,
+        source_url="https://www.zhipin.com/job_detail/bbb.html",
+    )
+    manual = Job(
+        title="手工录入岗位", company="C公司", salary="8-12K",
+        description="短", status=JOB_STATUS_OPEN, source_url="",
+    )
+    db_session.add_all([short, long_jd, manual])
+    db_session.commit()
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.api.job_hunt._start_jd_backfill",
+        lambda ids, adapter, **kw: captured.update(ids=list(ids), overwrite=kw.get("overwrite")),
+    )
+    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
+
+    resp = api.post("/api/job-hunt/refetch-jd", json={"short_threshold": 200})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert short.id in captured.get("ids", []), "JD 偏短且有链接的必须被选中"
+    assert long_jd.id not in captured.get("ids", []), "JD 已够长的不该被重抓"
+    assert captured.get("overwrite") is True, "重抓存量必须 overwrite=True，否则会被跳过"
+    assert body["queued"] >= 1
+    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
+
+
+def test_refetch_jd_skips_jobs_without_known_platform(api, db_session, monkeypatch):
+    """归属不到已注册平台的岗位（手工录入、陌生域名）如实跳过，不硬抓。"""
+    from app.models.job import JOB_STATUS_OPEN, Job
+
+    foreign = Job(
+        title="陌生站点岗位", company="D公司", salary="8-12K",
+        description="短", status=JOB_STATUS_OPEN,
+        source_url="https://jobs.example-unknown-site.test/1",
+    )
+    db_session.add(foreign)
+    db_session.commit()
+
+    called = {"n": 0}
+    monkeypatch.setattr(
+        "app.api.job_hunt._start_jd_backfill",
+        lambda ids, adapter, **kw: called.update(n=called["n"] + 1),
+    )
+    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
+
+    resp = api.post("/api/job-hunt/refetch-jd", json={})
+
+    assert resp.status_code == 200, resp.text
+    assert called["n"] == 0, "不认识的主机名不该触发任何抓取"
+    assert resp.json()["skipped"] >= 1
+    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
+
+
+def test_refetch_jd_refuses_in_sidecar_mode(api):
+    """sidecar 模式下拒绝：那条路径没有自研抓取器可用。"""
+    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
+    resp = api.post("/api/job-hunt/refetch-jd", json={})
+    assert resp.status_code == 409

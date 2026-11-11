@@ -19,11 +19,17 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..schemas.job_hunt import JobHuntConfig
-from ..services.job_hunt.collect_task import get_collect_manager
 from ..services.job_hunt.cursor_store import clear_cursor, load_cursor, save_cursor
 from ..services.job_hunt.registry import get_registry
-from ..services.job_hunt.runner import JobHuntRunner, HuntCriteria, cdp_fetcher, hash_criteria
+from ..services.job_hunt.runner import HuntCriteria, JobHuntRunner, cdp_fetcher, hash_criteria
 from ..services.job_hunt.settings import get_job_hunt_config, save_job_hunt_config
+from .job_hunt_shared import (
+    BLOCKLIST_KEY,
+    BlocklistConfig,
+    acquire_client,
+    is_blocked,
+    read_blocklist_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +96,7 @@ def collect(req: JobHuntCollectIn, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(
             404, f"未知平台 {req.site_key}；目前支持：{get_registry().supported_names()}"
         )
-    client = _acquire_client(db)
+    client = acquire_client(db)
     runner = JobHuntRunner(adapter, max_pages=req.max_pages)
     extra = {"city_code": req.city_code} if req.city_code else {}
     criteria = HuntCriteria(keywords=req.keywords, city=req.city, extra=extra)
@@ -196,8 +202,8 @@ def _persist_stubs(
     return ledger, new_ids
 
 
-def _start_jd_backfill(job_ids: list[int], adapter: Any) -> None:
-    """后台补抓 JD 正文（限速、只补空 JD）。
+def _start_jd_backfill(job_ids: list[int], adapter: Any, *, overwrite: bool = False) -> None:
+    """后台补抓 JD 正文（限速；``overwrite`` 时连已有 JD 的重抓）。
 
     不阻塞采集响应：15 条详情页按 1.5s 间隔要 20+ 秒，挂在请求上会超时。
     浏览器不可用时整批跳过，不影响已经入库的卡片。
@@ -208,11 +214,14 @@ def _start_jd_backfill(job_ids: list[int], adapter: Any) -> None:
         from ..services.job_hunt.runner import cdp_fetcher
 
         def _fetch_factory(db: Session) -> Any:
-            client = _acquire_client(db)
-            return cdp_fetcher(client, adapter)
+            client = acquire_client(db)
+            # page_kind="detail"：详情页有自己的就绪判据。用列表页的会等 li.job-card-box
+            # ——详情页永远没有它，白等超时后解析半渲染 DOM，JD 残缺（2026-11-11 实测）。
+            return cdp_fetcher(client, adapter, page_kind="detail")
 
         start_backfill_in_background(
-            SessionLocal, job_ids, fetch_factory=_fetch_factory, adapter=adapter
+            SessionLocal, job_ids, fetch_factory=_fetch_factory, adapter=adapter,
+            overwrite=overwrite,
         )
     except Exception as exc:  # noqa: BLE001 — 补抓是增强项，失败不该连累采集
         logger.info("JD 补抓启动失败（不影响入库）：%s: %s", type(exc).__name__, exc)
@@ -236,21 +245,6 @@ def _start_analysis(db: Session, job_ids: list[int]) -> str | None:
     except Exception as exc:  # noqa: BLE001 — 分析是增强项，失败不该连累采集
         logger.info("采集后启动分析失败（不影响入库）：%s: %s", type(exc).__name__, exc)
         return None
-
-
-def _acquire_client(db: Session):
-    """取专用浏览器的 CDP 客户端（复用投递台的浏览器管理，不自建）。"""
-    from ..services.apply._site_browser import get_browser_manager
-
-    try:
-        manager = get_browser_manager(db)
-        return manager.client()
-    except Exception as exc:  # noqa: BLE001 — 浏览器没启动/连不上 → 给可操作的提示
-        logger.info("native 采集取浏览器客户端失败：%s: %s", type(exc).__name__, exc)
-        raise HTTPException(
-            503,
-            "native 采集需要先启动专用浏览器（投递台 → 启动浏览器），稍后重试",
-        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -318,35 +312,13 @@ def _stub_from_payload(item: dict[str, Any]) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# 黑名单（屏蔽公司 / 关键词）
+# 黑名单（屏蔽公司 / 关键词）：类型与判定在 job_hunt_shared，这里只留读写路由
 # ---------------------------------------------------------------------------
-
-
-class BlocklistConfig(BaseModel):
-    """采集时自动跳过的公司名与关键词（大小写不敏感，子串匹配）。"""
-
-    companies: list[str] = Field(default_factory=list, max_length=200)
-    keywords: list[str] = Field(default_factory=list, max_length=200)
-
-
-_BLOCKLIST_KEY = "job_hunt_blocklist"
 
 
 @router.get("/blocklist")
 def read_blocklist(db: Session = Depends(get_db)) -> BlocklistConfig:
-    raw = db.execute(
-        _select_setting(), {"key": _BLOCKLIST_KEY}
-    ).scalar_one_or_none()
-    if not raw:
-        return BlocklistConfig()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return BlocklistConfig()
-    return BlocklistConfig(
-        companies=[str(x) for x in (data.get("companies") or [])][:200],
-        keywords=[str(x) for x in (data.get("keywords") or [])][:200],
-    )
+    return read_blocklist_config(db)
 
 
 @router.put("/blocklist")
@@ -362,176 +334,76 @@ def write_blocklist(config: BlocklistConfig, db: Session = Depends(get_db)) -> B
             "INSERT INTO app_setting (key, value) VALUES (:key, :value) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
         ),
-        {"key": _BLOCKLIST_KEY, "value": payload},
+        {"key": BLOCKLIST_KEY, "value": payload},
     )
     db.commit()
     return config
 
 
-def _select_setting():
-    from sqlalchemy import text
+class JobHuntRefetchIn(BaseModel):
+    """重抓指定岗位的 JD（覆盖已有正文）。"""
 
-    return text("SELECT value FROM app_setting WHERE key = :key")
-
-
-def is_blocked(stub: Any, config: BlocklistConfig) -> bool:
-    """这条卡片是否命中黑名单（公司名或标题里含任一关键词）。"""
-    company = (stub.company or "").lower()
-    title = (stub.title or "").lower()
-    for name in config.companies:
-        needle = name.strip().lower()
-        if needle and needle in company:
-            return True
-    for word in config.keywords:
-        needle = word.strip().lower()
-        if needle and (needle in title or needle in company):
-            return True
-    return False
+    job_ids: list[int] = Field(default_factory=list, max_length=200)
+    # 不传 job_ids 时：把库里有来源链接、但 JD 短于这个长度的岗位都重抓一遍。
+    # 默认 200 字——实测正常 JD 多在 300 字以上，短于这个值基本就是抓到摘要或
+    # 半渲染页面（2026-11-11 那次抓取层缺陷留下的存量）。
+    short_threshold: int = Field(default=200, ge=0, le=10000)
 
 
-# ---------------------------------------------------------------------------
-# 任务化采集（可暂停 / 可停止 / 有实时进度）
-# ---------------------------------------------------------------------------
+@router.post("/refetch-jd")
+def refetch_jd(req: JobHuntRefetchIn, db: Session = Depends(get_db)) -> dict:
+    """重抓 JD 正文——用于修复抓取层缺陷留下的存量残缺数据。
 
+    与采集时的补抓不同，这里 ``overwrite=True``：库里那些岗位已有非空 description，
+    默认的「只补空 JD」会全部跳过，修不了。
 
-class JobHuntTaskStartIn(BaseModel):
-    """启动一次后台采集任务。"""
-
-    site_key: str
-    keywords: str = ""
-    city: str = ""
-    max_pages: int = Field(default=1, ge=1, le=10)
-    city_code: str = ""
-
-
-@router.post("/collect/task")
-def start_collect_task(
-    req: JobHuntTaskStartIn, db: Session = Depends(get_db)
-) -> dict:
-    """启动后台采集任务，立刻返回 task_id。
-
-    与 ``POST /collect``（同步跑完）的区别：这个能查进度、能暂停、能停止。
-    同一时刻只允许一个采集任务——两个任务同时驱动同一个浏览器会互相踩。
+    只处理能归属到已注册平台的岗位（按 ``source_url`` 主机名判断）；其余平台/手工
+    录入的岗位无法重抓，如实跳过。后台线程跑，立刻返回本次排队的数量。
     """
     config = get_job_hunt_config(db)
     if config.job_hunt_backend != "native":
-        raise HTTPException(409, "当前是 sidecar 模式：请先在设置里切到 native")
+        raise HTTPException(409, "当前是 sidecar 模式：先切到 native 再用重抓")
 
-    adapter = get_registry().resolve(req.site_key)
-    if adapter is None:
-        raise HTTPException(404, f"未知平台 {req.site_key}")
+    from ..models.job import Job
 
-    manager = get_collect_manager()
-    running = manager.active()
-    if running is not None:
-        raise HTTPException(
-            409,
-            f"已有采集任务在跑（{running.site_key} {running.message or '进行中'}），请等它结束或先停止",
-        )
+    if req.job_ids:
+        candidates = db.query(Job).filter(Job.id.in_(req.job_ids)).all()
+    else:
+        # 候选 = 有链接、未删除、JD 偏短。长度判断放在 Python 里，因为 SQLite 的
+        # LENGTH() 对中文按字符数算而 Python 的 len() 也是字符数，两边一致；
+        # 但用 ORM 过滤能让被软删除的行自然排除，不必再写一遍 deleted_at 条件。
+        candidates = [
+            job
+            for job in db.query(Job).filter(Job.deleted_at.is_(None)).all()
+            if (job.source_url or "").strip()
+            and len((job.description or "").strip()) < req.short_threshold
+        ]
 
-    # 浏览器必须可用：在启动线程前就检查，避免任务起来后立即失败留下一个"已失败"任务。
-    client = _acquire_client(db)
-    blocklist = read_blocklist(db)
+    registry = get_registry()
+    by_site: dict[str, list[int]] = {}
+    skipped: list[int] = []
+    for job in candidates:
+        url = (job.source_url or "").strip()
+        adapter = next((a for a in registry.all() if a.supports(url)), None)
+        if adapter is None:
+            skipped.append(job.id)
+            continue
+        by_site.setdefault(adapter.key, []).append(job.id)
 
-    def worker(task: Any) -> None:
-        from ..database import SessionLocal
-        from ..services.job_hunt.collect_task import (
-            TASK_COMPLETED,
-            TASK_FAILED,
-            control_hook,
-        )
-        from ..services.job_hunt.runner import (
-            HuntCriteria,
-            JobHuntRunner,
-            cdp_fetcher,
-        )
+    queued = 0
+    for site_key, ids in by_site.items():
+        adapter = registry.resolve(site_key)
+        if adapter is None:  # 理论上不会发生：上面就是按 registry 的 key 分的组
+            skipped.extend(ids)
+            continue
+        _start_jd_backfill(ids, adapter, overwrite=True)
+        queued += len(ids)
 
-        session = SessionLocal()
-        try:
-            task.status = "running"
-            task.message = "开始采集…"
-            extra = {"city_code": req.city_code} if req.city_code else {}
-            criteria = HuntCriteria(keywords=req.keywords, city=req.city, extra=extra)
-            runner = JobHuntRunner(adapter, max_pages=req.max_pages)
-            report = runner.run(
-                criteria,
-                fetch=cdp_fetcher(client, adapter),
-                on_progress=control_hook(task),
-            )
-            kept = [s for s in report.stubs if not is_blocked(s, blocklist)]
-            task.blocked = len(report.stubs) - len(kept)
-            task.stubs = [asdict(s) for s in kept]
-            task.collected = len(kept)
-            task.stopped_reason = report.stopped_reason
-            # runner 在用户主动停止时给出 "stopped"（见 runner.run 的 on_progress 分支）。
-            task.status = TASK_STOPPED if report.stopped_reason == "stopped" else TASK_COMPLETED
-            task.message = (
-                f"完成：{len(kept)} 条"
-                + (f"（黑名单挡掉 {task.blocked} 条）" if task.blocked else "")
-            )
-        except Exception as exc:  # noqa: BLE001
-            # 用户已点停止时，抓取层抛的异常是"停止的副作用"，不是真失败：
-            # 此时应如实标 stopped（并保留已采到的部分），不要吓用户。
-            if task._stop.is_set():
-                task.status = TASK_STOPPED
-                task.stopped_reason = "stopped"
-                task.message = f"已停止（已采 {task.collected} 条）"
-            else:
-                task.status = TASK_FAILED
-                task.error = f"{type(exc).__name__}: {exc}"
-                task.message = "采集失败"
-        finally:
-            session.close()
-
-    task = manager.start(
-        site_key=req.site_key,
-        keywords=req.keywords,
-        city=req.city,
-        max_pages=req.max_pages,
-        worker=worker,
-    )
-    return task.snapshot()
+    return {
+        "queued": queued,
+        "skipped": len(skipped),
+        "skipped_ids": skipped[:50],
+        "by_site": {key: len(ids) for key, ids in by_site.items()},
+    }
 
 
-@router.get("/collect/task/{task_id}")
-def get_collect_task(task_id: str) -> dict:
-    """查任务进度（前端轮询这个）。"""
-    task = get_collect_manager().get(task_id)
-    if task is None:
-        raise HTTPException(404, "任务不存在（进程重启后任务会丢失，这是预期行为）")
-    return task.snapshot()
-
-
-@router.get("/collect/task/{task_id}/result")
-def get_collect_task_result(task_id: str) -> dict:
-    """取任务完整结果（含 stubs）；未完成时返回 409。"""
-    task = get_collect_manager().get(task_id)
-    if task is None:
-        raise HTTPException(404, "任务不存在")
-    if not task.snapshot()["finished"]:
-        raise HTTPException(409, "任务还没结束")
-    return task.full_result()
-
-
-@router.post("/collect/task/{task_id}/pause")
-def pause_collect_task(task_id: str) -> dict:
-    task = get_collect_manager().pause(task_id)
-    if task is None:
-        raise HTTPException(404, "任务不存在")
-    return task.snapshot()
-
-
-@router.post("/collect/task/{task_id}/resume")
-def resume_collect_task(task_id: str) -> dict:
-    task = get_collect_manager().resume(task_id)
-    if task is None:
-        raise HTTPException(404, "任务不存在")
-    return task.snapshot()
-
-
-@router.post("/collect/task/{task_id}/stop")
-def stop_collect_task(task_id: str) -> dict:
-    task = get_collect_manager().stop(task_id)
-    if task is None:
-        raise HTTPException(404, "任务不存在")
-    return task.snapshot()

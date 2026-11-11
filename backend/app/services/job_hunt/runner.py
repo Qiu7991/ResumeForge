@@ -228,6 +228,7 @@ def cdp_fetcher(
     client: Any,
     adapter: JobSiteAdapter | None = None,
     *,
+    page_kind: str = "list",
     timeout_seconds: float = 20.0,
     poll_interval: float = 0.4,
     content_wait_seconds: float = 8.0,
@@ -242,13 +243,25 @@ def cdp_fetcher(
        （岗位卡片 0 张），而同一页面等一两秒再取就是 15 张。只等 DOT ready 会得到
        「页面里没有岗位卡片」的假失败。
 
-    内容就绪的判据由适配器提供（``adapter.content_ready_selector`` 返回 CSS 选择器）；
+    内容就绪的判据由适配器提供，**按页面类型分开问**：
+
+    - ``page_kind="list"`` → ``adapter.content_ready_selector()``（搜索结果页）
+    - ``page_kind="detail"`` → ``adapter.detail_ready_selector()``（岗位详情页）
+
+    分开是必须的，不是洁癖。2026-11-11 实测：详情补抓错用了列表页的选择器，
+    BOSS 详情页永远等不到 ``li.job-card-box``（真实夹具里详情页出现 0 次、列表页
+    出现 15 次），于是每一条都白等满 8 秒超时后**拿半渲染的 DOM 去解析**——
+    整段正文变成技能标签（220 号："PostgreSQL MySQL LangChain…"）、或停在半句话
+    （216 号结尾「…任职」）。同样的详情页夹具静态解析是完整的（501 字），
+    失败形态是「JD 不全」而不是报错，所以只吃夹具的测试发现不了。
+
     适配器不声明时退化为「等固定时长」，保证通用层不依赖任何具体站点。
     """
     from ..browser.page_ready import ReadyWait, wait_for_page_state
 
     selector = ""
-    probe = getattr(adapter, "content_ready_selector", None)
+    probe_name = "detail_ready_selector" if page_kind == "detail" else "content_ready_selector"
+    probe = getattr(adapter, probe_name, None)
     if callable(probe):
         try:
             selector = probe() or ""

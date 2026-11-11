@@ -207,3 +207,98 @@ def test_cdp_fetcher_empty_html_is_parse_error():
     client = FakeCdpClient("")
     with pytest.raises(JobParseError):
         cdp_fetcher(client)("https://fake.example/list")
+
+
+# ---------------------------------------------------------------------------
+# 列表 / 详情 用各自的内容就绪选择器（2026-11-11：详情错用列表选择器 → JD 残缺）
+# ---------------------------------------------------------------------------
+
+
+class _SelectorRecorder:
+    """记录抓取层问了哪个选择器、等了哪个选择器。
+
+    ``hits`` 决定 querySelectorAll 的返回值：只有命中指定选择器时才算渲染完，
+    这样才能区分「等对了」和「等到超时仍在解析」。
+    """
+
+    def __init__(self, html: str, *, hits_for: str):
+        self.html = html
+        self.hits_for = hits_for
+        self.expressions: list[str] = []
+
+    def navigate(self, url: str, **kwargs):
+        self.expressions.append(f"navigate:{url}")
+
+    def evaluate(self, expression: str, **kwargs):
+        self.expressions.append(expression)
+        if "readyState" in expression:
+            return "complete"
+        if "querySelectorAll" in expression:
+            return 1 if self.hits_for in expression else 0
+        if "outerHTML" in expression:
+            return self.html
+        return None
+
+    def waited_for(self) -> list[str]:
+        return [
+            e for e in self.expressions if "querySelectorAll" in e and "outerHTML" not in e
+        ]
+
+
+class _DetailAdapter:
+    """只声明两个选择器的假适配器。"""
+
+    content_ready_selector = lambda self: "li.job-card-box"  # noqa: E731
+    detail_ready_selector = lambda self: ".job-sec-text"  # noqa: E731
+
+
+def test_cdp_fetcher_list_mode_waits_for_list_selector():
+    client = _SelectorRecorder("<html>list</html>", hits_for="li.job-card-box")
+    html = cdp_fetcher(client, _DetailAdapter(), page_kind="list", poll_interval=0.01)(
+        "https://fake.example/web/geek/jobs"
+    )
+
+    assert html == "<html>list</html>"
+    waited = client.waited_for()
+    assert waited, "列表模式必须等内容就绪，而不是只等 readyState"
+    assert any("li.job-card-box" in e for e in waited)
+    assert not any("job-sec-text" in e for e in waited), "列表页不该去等详情页的选择器"
+
+
+def test_cdp_fetcher_detail_mode_waits_for_detail_selector():
+    """回归：详情抓取曾错用列表选择器，导致等满超时后用半渲染 DOM 解析出残缺 JD。"""
+    client = _SelectorRecorder("<html>detail</html>", hits_for=".job-sec-text")
+    html = cdp_fetcher(client, _DetailAdapter(), page_kind="detail", poll_interval=0.01)(
+        "https://fake.example/job_detail/abc.html"
+    )
+
+    assert html == "<html>detail</html>"
+    waited = client.waited_for()
+    assert any(".job-sec-text" in e for e in waited), "详情模式必须等 JD 正文容器"
+    assert not any("li.job-card-box" in e for e in waited), (
+        "详情模式绝不能等列表页的卡片选择器——它永远命中不了，"
+        "只会白等满超时后拿半渲染的 DOM 解析出残缺 JD"
+    )
+
+
+def test_cdp_fetcher_defaults_to_list_mode():
+    """默认保持既有行为：不传 page_kind 时按列表页处理。"""
+    client = _SelectorRecorder("<html>x</html>", hits_for="li.job-card-box")
+    cdp_fetcher(client, _DetailAdapter(), poll_interval=0.01)("https://fake.example/x")
+
+    waited = client.waited_for()
+    assert any("li.job-card-box" in e for e in waited)
+    assert not any("job-sec-text" in e for e in waited)
+
+
+def test_boss_adapter_declares_distinct_selectors():
+    """BOSS 的两个选择器必须不同且都非空，否则详情抓取会退回等固定时长。"""
+    from app.services.job_hunt.sites.boss import BossAdapter
+
+    adapter = BossAdapter()
+    list_selector = adapter.content_ready_selector()
+    detail_selector = adapter.detail_ready_selector()
+
+    assert list_selector == "li.job-card-box"
+    assert detail_selector == ".job-sec-text"
+    assert list_selector != detail_selector

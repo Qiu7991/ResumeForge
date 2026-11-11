@@ -108,6 +108,40 @@ def test_parse_detail_raises_on_blank(adapter):
         adapter.parse_detail("<html><body>职位不存在</body></html>")
 
 
+def test_parse_detail_keeps_nested_div_content(adapter):
+    """正文里的嵌套 div 不能被截断。
+
+    回归（2026-11-11）：闭合位置原本用非贪婪 ``(.*?)</div>`` 找，遇到第一个内层
+    ``</div>`` 就收尾。实测 266 号岗位的 JD 只剩 70 字——正好截在第一个内层 div
+    之前（"工作内容：1、利用AI编程工具…"）。真实页面里 JD 带分组小标题/折叠块是常态，
+    所以这不是理论边界。
+    """
+    html = (
+        '<div class="job-sec-text">'
+        "工作内容："
+        '<div class="group-a">1、做A</div>'
+        "<div>2、做B</div>"
+        "3、做C"
+        "</div>"
+        "<div>容器之后的兄弟节点，不能吞进来</div>"
+    )
+    d = adapter.parse_detail(html)
+
+    assert "1、做A" in d.description
+    assert "2、做B" in d.description, "内层 div 之后的内容被截断了"
+    assert "3、做C" in d.description, "容器收尾的内容被截断了"
+    assert "兄弟节点" not in d.description, "只应取本容器内部，不能吞掉后面的同级节点"
+
+
+def test_parse_detail_unbalanced_html_keeps_what_it_has(adapter):
+    """页面被截断（闭合标签缺失）时要给能取到的那部分，而不是整条丢弃。"""
+    html = '<div class="job-sec-text">岗位职责：1、负责A；2、负责B'
+    d = adapter.parse_detail(html)
+
+    assert "负责A" in d.description
+    assert "负责B" in d.description
+
+
 # ---------- 字体解密端到端（列表乱码 → 详情明文对照）----------
 
 

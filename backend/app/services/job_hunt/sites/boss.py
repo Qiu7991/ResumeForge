@@ -54,12 +54,36 @@ _D_TITLE_RE = re.compile(r'<h1[^>]*title="([^"]+)"')
 _D_SALARY_RE = re.compile(r'<span[^>]*class="salary"[^>]*>\s*([^<]+?)\s*</span>')
 _D_COMPANY_RE = re.compile(r'<a[^>]*href="[^"]*/gongsi/[^"]*"[^>]*>\s*([^<]{2,60}?)\s*</a>')
 _D_COMPANY_FALLBACK_RE = re.compile(r'class="[^"]*company-name[^"]*"[^>]*>\s*([^<]{2,60}?)\s*<')
-_D_SECTION_RE = re.compile(
-    r'<div[^>]*class="job-sec-text"[^>]*>(.*?)</div>', re.S
-)
+# 正文容器的**开标签**。闭合位置不能用非贪婪 ``(.*?)</div>`` 去找：JD 正文里常带
+# 嵌套 div（分组小标题、折叠块），那样会在第一个内层 ``</div>`` 处截断，解析出的
+# JD 只剩开头一段——2026-11-11 实测 266 号岗位就是这样只剩 70 字
+# （"工作内容：1、利用AI编程工具…" 正好截在第一个内层 div 之前）。
+# 所以先只匹配开标签，再用 ``_extract_div_inner`` 按深度配对找真正的闭合位置。
+_D_SECTION_OPEN_RE = re.compile(r'<div[^>]*class="job-sec-text"[^>]*>', re.S)
+_DIV_TAG_RE = re.compile(r"<div\b[^>]*>|</div\s*>", re.I)
 _BR_RE = re.compile(r"<br\s*/?>", re.I)
 _TAG_STRIP_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"[ \t\u00a0]+")
+
+
+def _extract_div_inner(html: str, open_end: int) -> str:
+    """从开标签结束处（``open_end``）按 div 深度配对，返回容器内部的 HTML。
+
+    纯正则做不到这件事：``(.*?)</div>`` 遇到嵌套就提前收尾，而贪婪 ``(.*)</div>``
+    又会把容器后面的整页内容都吞进来。只有数深度才知道哪个 ``</div>`` 属于本容器。
+
+    深度不平衡（页面被截断、或标签本身不配对）时返回能取到的全部内容——宁可给
+    一段可能不完整的正文，也不要因为一个残缺标签把整条 JD 丢掉。
+    """
+    depth = 1
+    for match in _DIV_TAG_RE.finditer(html, open_end):
+        if match.group(0).lower().startswith("</div"):
+            depth -= 1
+            if depth == 0:
+                return html[open_end : match.start()]
+        else:
+            depth += 1
+    return html[open_end:]
 
 
 def _clean(fragment: str) -> str:
@@ -154,7 +178,7 @@ class BossAdapter(JobSiteAdapter):
 
     def parse_detail(self, html: str) -> JobDetail:
         title_m = _D_TITLE_RE.search(html)
-        section_m = _D_SECTION_RE.search(html)
+        section_m = _D_SECTION_OPEN_RE.search(html)
         if title_m is None and section_m is None:
             raise JobParseError(
                 "详情页缺标题与 JD 正文（可能未登录、岗位已下线或结构改版）",
@@ -162,7 +186,9 @@ class BossAdapter(JobSiteAdapter):
             )
 
         title = _clean(title_m.group(1)) if title_m else ""
-        description = _clean(section_m.group(1)) if section_m else ""
+        description = (
+            _clean(_extract_div_inner(html, section_m.end())) if section_m else ""
+        )
 
         salary_m = _D_SALARY_RE.search(html)
         salary_text = _clean(salary_m.group(1)) if salary_m else ""
@@ -200,6 +226,16 @@ class BossAdapter(JobSiteAdapter):
         直接取 outerHTML 会拿到空壳；等这个选择器命中再取才稳定。
         """
         return "li.job-card-box"
+
+    def detail_ready_selector(self) -> str:
+        """详情页内容就绪判据：JD 正文容器出现。
+
+        用 ``.job-sec-text`` 而不是整页就绪：实测详情页的职位描述也是异步填充的，
+        ``readyState=complete`` 时取到的正文可能只有开头一段（或干脆是标签列表）。
+        这个类名在真实夹具里出现两次——一次是职位描述、一次是公司介绍
+        （``fold-text``）——任一命中都说明正文区已经渲染，可以取了。
+        """
+        return ".job-sec-text"
 
     def max_pages(self) -> int:
         # BOSS 列表页实测一页 15 条；翻页上限按 10 页保守设。

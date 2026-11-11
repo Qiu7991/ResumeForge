@@ -63,11 +63,17 @@ def backfill_details(
     adapter: Any,
     interval: float = DETAIL_INTERVAL_SECONDS,
     limit: int = DETAIL_BATCH_LIMIT,
+    overwrite: bool = False,
 ) -> DetailBackfillReport:
     """为给定岗位补抓 JD 正文。
 
     ``fetch(url) -> html`` 由调用方注入（生产是 CDP 抓取器，测试是假函数），
     所以本函数不依赖浏览器实现，也不做导航——它只做「取页面 → 解析 → 写库」。
+
+    ``overwrite=True`` 时连已有 JD 的岗位也重抓。默认 ``False``（只补空 JD）是
+    日常语义：评过的岗位不该被重复访问，那既慢又容易招风控。但抓取层有过缺陷时
+    （2026-11-11：详情错用列表页的就绪选择器，导致入库的 JD 普遍残缺），存量数据
+    需要一次强制重抓才能修好——那些岗位的 description 非空，默认路径会全部跳过。
     """
     from .base import JobParseError
 
@@ -80,7 +86,7 @@ def backfill_details(
         if job is None:
             report.errors.append(f"岗位 {job_id} 不存在")
             continue
-        if (job.description or "").strip():
+        if not overwrite and (job.description or "").strip():
             # 已有 JD：不重复抓（这也是「评一次不重复」的上游保障）。
             report.skipped_has_jd += 1
             continue
@@ -132,6 +138,7 @@ def start_backfill_in_background(
     *,
     fetch_factory: Any,
     adapter: Any,
+    overwrite: bool = False,
 ) -> threading.Thread:
     """后台线程跑补抓。
 
@@ -139,16 +146,24 @@ def start_backfill_in_background(
     SQLAlchemy 的 Session 不是线程安全的，请求结束后它还会被关闭。
 
     ``fetch_factory(db)`` 返回抓取器（内部要自己取 CDP 客户端）。
+
+    ``overwrite`` 透传给 ``backfill_details``：修抓取层缺陷后重抓存量 JD 时要传 True。
     """
     thread = threading.Thread(
-        target=_run_backfill, args=(db_factory, job_ids, fetch_factory, adapter), daemon=True
+        target=_run_backfill,
+        args=(db_factory, job_ids, fetch_factory, adapter, overwrite),
+        daemon=True,
     )
     thread.start()
     return thread
 
 
 def _run_backfill(
-    db_factory: Any, job_ids: list[int], fetch_factory: Any, adapter: Any
+    db_factory: Any,
+    job_ids: list[int],
+    fetch_factory: Any,
+    adapter: Any,
+    overwrite: bool = False,
 ) -> None:
     db = db_factory()
     try:
@@ -157,7 +172,7 @@ def _run_backfill(
         logger.info("JD 补抓跳过（抓取器不可用）：%s: %s", type(exc).__name__, exc)
         return
     try:
-        backfill_details(db, job_ids, fetch=fetch, adapter=adapter)
+        backfill_details(db, job_ids, fetch=fetch, adapter=adapter, overwrite=overwrite)
     except Exception as exc:  # noqa: BLE001
         logger.warning("JD 补抓异常：%s: %s", type(exc).__name__, exc)
     finally:
