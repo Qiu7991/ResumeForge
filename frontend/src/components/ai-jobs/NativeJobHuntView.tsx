@@ -38,7 +38,6 @@ import { useLocale } from "../../i18n/i18nContext";
 import { useJobHuntNative } from "../../hooks/useJobHuntNative";
 import ScorePanel from "./ScorePanel";
 import BlocklistCard from "./BlocklistCard";
-import PipelineStrip, { buildSteps } from "./PipelineStrip";
 import { useCollectTask } from "../../hooks/useCollectTask";
 import type { JobHuntStatus } from "../../types/jobHunt";
 import type { JobList } from "../../types/job";
@@ -87,6 +86,12 @@ export default function NativeJobHuntView({ status }: Props) {
     scoreTask,
   } = useCandidates();
   const scoreRunning = Boolean(scoreTask?.running);
+
+  // 刷新页面后把后台还在跑的采集任务接回来（进度原本只活在内存里）。
+  const restoreCollectTask = collectTask.restore;
+  useEffect(() => {
+    void restoreCollectTask();
+  }, [restoreCollectTask]);
 
   // 采集链路的「落库 → 补 JD → 评分」都在后台线程里跑完；任务快照里
   // `score_started` 为真时评分任务才真的起来了，这时开始轮询分数。
@@ -330,19 +335,6 @@ export default function NativeJobHuntView({ status }: Props) {
           </div>
         )}
       </Card>
-
-      <PipelineStrip
-        steps={buildSteps({
-          collecting,
-          collected: task?.collected ?? candidates.length,
-          currentPage: task?.current_page ?? 0,
-          maxPages: task?.max_pages ?? maxPages,
-          imported: importedCandidates,
-          scored: scoredCandidates,
-          inQueue: queued,
-          paused: task?.status === "paused",
-        })}
-      />
 
       {/* ---------- 第二栏：采到的岗位（按分数线分水岭）----------
           用户要的是「分数高的在上面，优先级最高；低的在下面」。

@@ -153,6 +153,25 @@ def start_collect_task(
     return task.snapshot()
 
 
+@router.get("/collect/active")
+def get_active_collect_task() -> dict:
+    """当前还没结束的采集任务（没有则 ``{active: false}``）。
+
+    **为什么需要它**（2026-11-12）：任务快照只活在前端内存里，页面一刷新就 null——
+    但采集/补 JD/评分在后台还在跑。用户刷一下页面，进度全没了，只能干等或者以为挂了。
+
+    前端挂载时先问一次这个接口，拿到就把轮询接上；进程重启后任务确实丢了，
+    这时返回 ``{active: false}`` 是诚实的（任务生命周期就几分钟，不做持久化）。
+
+    路由必须声明在 ``/collect/task/{task_id}`` **之前**：否则 "active" 会被当成
+    task_id 去解析。字面量段优先是 FastAPI 的既定规则，这里显式遵守。
+    """
+    task = get_collect_manager().active()
+    if task is None:
+        return {"active": False}
+    return {"active": True, **task.snapshot()}
+
+
 @router.get("/collect/task/{task_id}")
 def get_collect_task(task_id: str) -> dict:
     """查任务进度（前端轮询这个）。"""
@@ -280,8 +299,20 @@ def _auto_score(
         fetch = cdp_fetcher(client, adapter, page_kind="detail")
         # **必须用候选专用的补抓**：detail_backfill 是按 Job 模型读写的，
         # 拿候选 id 传进去会全部被判成"已有 JD"静默跳过（实测 尝试 0/跳过 11）。
+        task.jd_total = len(candidate_ids)
+
+        def _jd_progress(done: int, total: int) -> None:
+            # 直接改进度字段：轮询接口读的是 task.snapshot()，不需要额外的通道。
+            task.jd_done = done
+            task.jd_total = total
+
         report = backfill_candidate_jd(
-            session, candidate_ids, fetch=fetch, adapter=adapter, limit=len(candidate_ids)
+            session,
+            candidate_ids,
+            fetch=fetch,
+            adapter=adapter,
+            limit=len(candidate_ids),
+            on_progress=_jd_progress,
         )
         task.jd_filled = report.filled
         # 把失败原因也打出来：只记数量时"尝试 3 / 成功 0"完全查不出为什么。

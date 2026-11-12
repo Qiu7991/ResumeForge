@@ -15,8 +15,10 @@ requirements / additional_info），详情页解析出来是完整正文，按�
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -75,11 +77,15 @@ def backfill_candidate_jd(
     adapter: Any,
     interval: float = DETAIL_INTERVAL_SECONDS,
     limit: int | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> CandidateJdReport:
     """给备选岗位补 JD 正文（``fetch(url) -> html`` 由调用方注入）。
 
     与正式岗位那条的差别只有两点：读写的模型是 ``CandidateJob``；「已有 JD」按候选的
-    ``description/requirements/raw_text`` 判（与评分判定同源，见 ``candidate_scoring``）。
+    ``description/raw_text`` 判（与评分判定同源，见 ``candidate_scoring``）。
+
+    ``on_progress(done, total)`` 每处理完一条回调一次：**补 JD 是限速的**（每条 1.5s），
+    15 条要 20 多秒；没有进度回调时界面只能干等，看不出是在跑还是卡住了。
     """
     from .candidate_scoring import candidate_has_jd
 
@@ -88,6 +94,7 @@ def backfill_candidate_jd(
         return report
 
     ids = candidate_ids[:limit] if limit is not None else candidate_ids
+    total = len(ids)
     for index, candidate_id in enumerate(ids):
         candidate = db.get(CandidateJob, candidate_id)
         if candidate is None:
@@ -95,6 +102,9 @@ def backfill_candidate_jd(
             continue
         if candidate_has_jd(candidate):
             report.skipped_has_jd += 1
+            if on_progress is not None:
+                with contextlib.suppress(Exception):
+                    on_progress(index + 1, total)
             continue
         url = (candidate.source_url or "").strip()
         if not url:
@@ -127,6 +137,12 @@ def backfill_candidate_jd(
             report.errors.append(
                 f"备选岗位 {candidate_id} 抓取失败：{type(exc).__name__}: {exc}"
             )
+
+        # 进度回调放在限速之前：用户看到的是"这条处理完了"，而不是"下一条开始前"。
+        # 回调是展示层，出任何异常都不该拖垮补抓。
+        if on_progress is not None:
+            with contextlib.suppress(Exception):
+                on_progress(index + 1, total)
 
         if index < len(ids) - 1 and interval > 0:
             time.sleep(interval)

@@ -142,6 +142,9 @@ export interface CollectTaskSnapshot {
   candidate_count?: number;
   /** 与正式岗位/暂存区重复而跳过的条数。 */
   duplicates?: number;
+  /** 补 JD 的处理进度：已处理 / 总数（补 JD 限速，界面上要能看到几分之几）。 */
+  jd_done?: number;
+  jd_total?: number;
   /** 补 JD 成功的条数。 */
   jd_filled?: number;
   /** 是否已把评分任务交给后台（为真时前端才开始轮询分数）。 */

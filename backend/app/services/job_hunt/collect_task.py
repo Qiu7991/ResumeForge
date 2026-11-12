@@ -70,6 +70,10 @@ class CollectTask:
     candidate_ids: list[int] = field(default_factory=list)
     # 与正式岗位/暂存区重复而跳过的条数。
     duplicates: int = 0
+    # 补 JD 的处理进度：已处理 / 总数。补 JD 是限速的（每条 1.5s），15 条要 20 多秒，
+    # 没有这两个数界面只能干等——看不出是在跑还是卡住了。
+    jd_done: int = 0
+    jd_total: int = 0
     # 补 JD 成功的条数。
     jd_filled: int = 0
     # 是否已把评分任务交给后台。
@@ -103,6 +107,8 @@ class CollectTask:
             "stage": self.stage,
             "candidate_count": len(self.candidate_ids),
             "duplicates": self.duplicates,
+            "jd_done": self.jd_done,
+            "jd_total": self.jd_total,
             "jd_filled": self.jd_filled,
             "score_started": self.score_started,
         }

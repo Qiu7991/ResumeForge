@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   controlCollectTask,
+  getActiveCollectTask,
   getCollectTask,
   getCollectTaskResult,
   startCollectTask,
@@ -105,5 +106,31 @@ export function useCollectTask() {
     setState(INITIAL);
   }, [stopPolling]);
 
-  return { state, start, control, clear };
+  /**
+   * 挂载时把后台还在跑的任务接回来（2026-11-12）。
+   *
+   * 任务快照原本只活在前端内存：用户刷一下页面，采集/补 JD/评分还在后台跑，界面上
+   * 却什么都没有——正好是"进度显示不明显"的一半原因。这里问一次后台有没有活跃任务，
+   * 有就填进 state 并续上轮询。
+   *
+   * **只在没有任务时执行**：用户正盯着一个刚启动的任务时，不能被这次恢复覆盖掉。
+   */
+  const restored = useRef(false);
+  const restore = useCallback(async () => {
+    if (restored.current) return;
+    restored.current = true;
+    if (state.task !== null) return;
+    try {
+      const active = await getActiveCollectTask();
+      if (!active.active || !active.task_id) return;
+      const snapshot = active as CollectTaskSnapshot;
+      setState({ task: snapshot, stubs: [], error: "", starting: false });
+      // 接上轮询：这些任务可能正处于补 JD / 评分阶段，进度还在动。
+      timer.current = window.setInterval(() => void poll(snapshot.task_id), POLL_MS);
+    } catch {
+      // 恢复失败无所谓：用户随时可以自己再点一次采集。
+    }
+  }, [poll, state.task]);
+
+  return { state, start, control, clear, restore };
 }

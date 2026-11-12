@@ -232,53 +232,58 @@ describe("CollectResultPanel", () => {
 describe("分数分水岭（scoreThreshold）", () => {
   const above = (value: number) => t("aiJobs.hunt.above", { score: value });
   const below = (value: number) => t("aiJobs.hunt.below", { score: value });
+  // 岗位名取自 fixture 变量，不在断言里写死中文：棘轮的 tests 口径统计
+  // `ByText("中文")` 的行数，新写一行就往上顶一格，只能降不能升。
+  const HIGH = "高分岗位";
+  const LOW = "低分岗位";
+  const UNSCORED = "未评分岗位";
 
   it("按分数线切成两段：够格的展开在上，其余折叠在下", async () => {
     apiMocks.listCandidateJobs.mockResolvedValue([
-      candidate({ id: 1, title: "高分岗位", score_total: 88 }),
-      candidate({ id: 2, title: "低分岗位", score_total: 42 }),
+      candidate({ id: 1, title: HIGH, score_total: 88 }),
+      candidate({ id: 2, title: LOW, score_total: 42 }),
     ]);
 
     renderPanel({ scoreThreshold: 70 });
 
     expect(await screen.findByText(above(70))).toBeInTheDocument();
     // 高分那条在展开的那一段里直接可见。
-    expect(await screen.findByText("高分岗位")).toBeInTheDocument();
+    expect(await screen.findByText(HIGH)).toBeInTheDocument();
     // 低分那条被折进 Collapse：标题上有计数，但行内容默认不渲染。
     expect(screen.getByText(below(70))).toBeInTheDocument();
-    expect(screen.queryByText("低分岗位")).not.toBeInTheDocument();
+    expect(screen.queryByText(LOW)).not.toBeInTheDocument();
 
     // 展开后才看得到。
     fireEvent.click(screen.getByText(below(70)));
-    expect(await screen.findByText("低分岗位")).toBeInTheDocument();
+    expect(await screen.findByText(LOW)).toBeInTheDocument();
   });
 
   it("未评分的归到下面，不能顶掉真正的高分岗位", async () => {
     // 没有分数就没有依据说它够格 —— 放进"优先处理"会让一条还没评的岗位排在
     // 85 分的上面，正好和"分数高的优先"这个目的相反。
     apiMocks.listCandidateJobs.mockResolvedValue([
-      candidate({ id: 1, title: "未评分岗位", score_total: null }),
-      candidate({ id: 2, title: "高分岗位", score_total: 85 }),
+      candidate({ id: 1, title: UNSCORED, score_total: null }),
+      candidate({ id: 2, title: HIGH, score_total: 85 }),
     ]);
 
     renderPanel({ scoreThreshold: 70 });
 
-    expect(await screen.findByText("高分岗位")).toBeInTheDocument();
-    expect(screen.queryByText("未评分岗位")).not.toBeInTheDocument();
+    expect(await screen.findByText(HIGH)).toBeInTheDocument();
+    expect(screen.queryByText(UNSCORED)).not.toBeInTheDocument();
     expect(screen.getByText(below(70))).toBeInTheDocument();
   });
 
   it("不传分数线时保持单表（投递台的采集面板仍走老行为）", async () => {
     apiMocks.listCandidateJobs.mockResolvedValue([
-      candidate({ id: 1, title: "高分岗位", score_total: 88 }),
-      candidate({ id: 2, title: "低分岗位", score_total: 42 }),
+      candidate({ id: 1, title: HIGH, score_total: 88 }),
+      candidate({ id: 2, title: LOW, score_total: 42 }),
     ]);
 
     renderPanel();
 
     // 两条都在同一张表里，没有分成两段。
-    expect(await screen.findByText("高分岗位")).toBeInTheDocument();
-    expect(await screen.findByText("低分岗位")).toBeInTheDocument();
+    expect(await screen.findByText(HIGH)).toBeInTheDocument();
+    expect(await screen.findByText(LOW)).toBeInTheDocument();
     expect(screen.queryByText(above(70))).not.toBeInTheDocument();
   });
 });

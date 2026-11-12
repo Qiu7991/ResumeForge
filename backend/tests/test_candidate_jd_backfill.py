@@ -92,3 +92,56 @@ def test_splits_description_and_requirements(db_session):
     assert "负责 A" in row.description
     # 要求段能被切出来就落进 requirements；切不出也至少正文不丢。
     assert (row.requirements or "") + row.description
+
+
+def test_reports_progress_per_candidate(db_session):
+    """每处理完一条就要回调一次进度。
+
+    补 JD 是限速的（每条 1.5s），15 条要 20 多秒。没有进度回调，界面上只能干等，
+    看不出是在跑还是卡住了——那正是「进度显示不明显」的一部分。
+    """
+    rows = [
+        _candidate(db_session, title=f"岗位{i}", url=f"u{i}") for i in range(3)
+    ]
+    adapter = FakeAdapter(
+        {
+            f"u{i}": JobDetail(
+                title=f"岗位{i}", description=f"职责 {i}。", salary_decoded="8-12K", salary_decoded_ok=True
+            )
+            for i in range(3)
+        }
+    )
+
+    seen: list[tuple[int, int]] = []
+    backfill_candidate_jd(
+        db_session,
+        [row.id for row in rows],
+        fetch=lambda url: url,
+        adapter=adapter,
+        interval=0,
+        on_progress=lambda done, total: seen.append((done, total)),
+    )
+
+    assert seen == [(1, 3), (2, 3), (3, 3)], "进度必须是逐条递增的 (done, total)"
+
+
+def test_progress_counts_already_filled_candidates(db_session):
+    """已有 JD 被跳过的那些也要推进度，否则分母不动、看起来像卡住。"""
+    has_jd = _candidate(db_session, title="已有正文", url="a")
+    has_jd.description = "已有。"
+    db_session.commit()
+    empty = _candidate(db_session, title="空的", url="b")
+
+    seen: list[tuple[int, int]] = []
+    backfill_candidate_jd(
+        db_session,
+        [has_jd.id, empty.id],
+        fetch=lambda url: url,
+        adapter=FakeAdapter(
+            {"b": JobDetail(title="空的", description="新正文", salary_decoded="", salary_decoded_ok=False)}
+        ),
+        interval=0,
+        on_progress=lambda done, total: seen.append((done, total)),
+    )
+
+    assert seen == [(1, 2), (2, 2)]
