@@ -127,6 +127,12 @@ def backfill_candidate_jd(
                     candidate.salary = detail.salary_decoded[:64]
                 if detail.location and not (candidate.location or "").strip():
                     candidate.location = detail.location
+                # 公司名升级：列表页给的是品牌短名/截断串，详情页「工商信息」是工商全称。
+                # 只允许"更完整替换更不完整"，防详情页解析出错时把好名字冲掉。
+                from .company_name import should_replace_company
+
+                if should_replace_company(candidate.company, detail.company):
+                    candidate.company = detail.company[:128]
                 db.flush()
                 report.filled += 1
             else:

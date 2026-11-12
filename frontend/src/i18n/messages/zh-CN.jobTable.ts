@@ -8,6 +8,9 @@
  * `JOB_STATUS_META` 改成 labelKey（另起一批）。
  */
 const jobTable = {
+  "company.lookupHint": "在风鸟查「{name}」（浏览器新标签打开，首次需扫码登录一次）",
+  "company.truncatedHint": "公司名被招聘网站截断了（带「...」）。补抓岗位详情后能得到工商全名，那时才能查。",
+  "company.shortNameHint": "招聘网站只给了品牌短名，查风鸟需要工商全名。补抓岗位详情后会自动换成全名。",
   "jobTable.column.favorite": "收藏",
   "jobTable.column.title": "岗位",
   "jobTable.column.company": "公司",

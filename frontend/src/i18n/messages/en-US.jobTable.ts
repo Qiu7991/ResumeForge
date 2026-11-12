@@ -10,6 +10,9 @@
  * `JOB_STATUS_META` in `types/job.ts` to labelKeys first (separate batch).
  */
 const jobTable = {
+  "company.lookupHint": "Look up \"{name}\" on Riskbird (opens in a new tab; wechat login needed once)",
+  "company.truncatedHint": "The company name was truncated by the job site (trailing \"...\"). Re-fetch the job details to get the registered full name.",
+  "company.shortNameHint": "The job site only gave a brand short name. Riskbird needs the registered full name, which is filled in after re-fetching details.",
   "jobTable.column.favorite": "Favorite",
   "jobTable.column.title": "Job",
   "jobTable.column.company": "Company",

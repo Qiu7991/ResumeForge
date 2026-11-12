@@ -47,6 +47,7 @@ import CollectResultPanel from "../apply/CollectResultPanel";
 import { startBrowser } from "../../api/apply";
 import CollectProgressPanel from "./CollectProgressPanel";
 import HuntFilterForm, { DEFAULT_FILTERS, DEFAULT_KEYWORDS } from "./HuntFilterForm";
+import CompanyName from "../common/CompanyName";
 
 const { Text, Title } = Typography;
 
@@ -165,7 +166,14 @@ export default function NativeJobHuntView({ status }: Props) {
 
   const columns: ColumnsType<JobList> = [
     { title: t("aiJobs.native.col.title"), dataIndex: "title", ellipsis: true, width: 240 },
-    { title: t("aiJobs.native.col.company"), dataIndex: "company", ellipsis: true, width: 160 },
+    {
+      title: t("aiJobs.native.col.company"),
+      dataIndex: "company",
+      ellipsis: true,
+      width: 160,
+      // 公司名可点查风鸟（系统默认浏览器）。截断名/短名渲染成纯文本+说明。
+      render: (value: string) => <CompanyName name={value} />,
+    },
     { title: t("aiJobs.native.col.location"), dataIndex: "location", ellipsis: true, width: 150 },
     {
       title: t("aiJobs.native.col.salary"),

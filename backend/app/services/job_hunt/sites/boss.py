@@ -69,8 +69,32 @@ _FILTER_PARAM_ORDER: tuple[str, ...] = (
 # 详情页
 _D_TITLE_RE = re.compile(r'<h1[^>]*title="([^"]+)"')
 _D_SALARY_RE = re.compile(r'<span[^>]*class="salary"[^>]*>\s*([^<]+?)\s*</span>')
-_D_COMPANY_RE = re.compile(r'<a[^>]*href="[^"]*/gongsi/[^"]*"[^>]*>\s*([^<]{2,60}?)\s*</a>')
-_D_COMPANY_FALLBACK_RE = re.compile(r'class="[^"]*company-name[^"]*"[^>]*>\s*([^<]{2,60}?)\s*<')
+# **工商全名**：详情页「工商信息」区块里的公司名称，是页面上唯一的工商全称。
+#
+# 它是首选来源。列表页给的是品牌展示名（``示例传媒``）或 BOSS 自己截断的串
+# （``广州市示例国际贸...``），而「工商信息」里是 ``广州示例传媒科技有限公司``。
+# 夹具实证：``boss_detail.html:824``
+#   <li class="company-name"><span>公司名称</span>示例网络科技（广州）有限公司</li>
+#
+# 用 ``business-info-box`` 定位再取其中的 ``li.company-name``：裸 ``company-name``
+# 会同时命中相似职位卡片（``boss_detail.html:664`` → 广州另一家公司），拿错公司比拿不到更糟。
+_D_BUSINESS_NAME_RE = re.compile(
+    r'class="[^"]*business-info-box[^"]*"[\s\S]{0,4000}?'
+    r'<li[^>]*class="[^"]*company-name[^"]*"[^>]*>\s*'
+    r'(?:<span>[^<]*</span>)?\s*([^<]{2,80}?)\s*</li>'
+)
+
+# 侧栏公司（短名）作为兜底。**限定在 ``sider-company`` 作用域内**：
+# 裸 ``a[href*="/gongsi/"]`` 会命中顶部导航「公司」菜单（``boss_detail.html:461``），
+# 实测解析结果变成 company == "公司"。
+_D_COMPANY_RE = re.compile(
+    r'class="[^"]*sider-company[^"]*"[\s\S]{0,1200}?'
+    r'<a[^>]*href="[^"]*/gongsi/[^"]*"[^>]*>\s*([^<]{2,60}?)\s*</a>'
+)
+_D_COMPANY_FALLBACK_RE = re.compile(
+    r'class="[^"]*sider-company[^"]*"[\s\S]{0,1200}?'
+    r'class="[^"]*company-name[^"]*"[^>]*>\s*([^<]{2,60}?)\s*<'
+)
 # 正文容器的**开标签**。闭合位置不能用非贪婪 ``(.*?)</div>`` 去找：JD 正文里常带
 # 嵌套 div（分组小标题、折叠块），那样会在第一个内层 ``</div>`` 处截断，解析出的
 # JD 只剩开头一段——2026-11-11 实测 266 号岗位就是这样只剩 70 字
@@ -343,8 +367,14 @@ class BossAdapter(JobSiteAdapter):
         salary_m = _D_SALARY_RE.search(html)
         salary_text = _clean_salary(salary_m.group(1)) if salary_m else ""
 
-        company_m = _D_COMPANY_RE.search(html) or _D_COMPANY_FALLBACK_RE.search(html)
-        company = _clean(company_m.group(1)) if company_m else ""
+        # 公司名三级优先：工商全名 → 侧栏短名 → 侧栏 company-name。
+        # 工商全名最完整，而且它是风鸟查询需要的那个名字（见前端 riskbirdUrl）。
+        business_m = _D_BUSINESS_NAME_RE.search(html)
+        if business_m is not None:
+            company = _clean(business_m.group(1))
+        else:
+            company_m = _D_COMPANY_RE.search(html) or _D_COMPANY_FALLBACK_RE.search(html)
+            company = _clean(company_m.group(1)) if company_m else ""
 
         # 详情页薪资是明文：能直接当 ground-truth，不需要字体解密。
         decoded_ok = bool(salary_text) and not boss_font.encoded_chars_in(salary_text)

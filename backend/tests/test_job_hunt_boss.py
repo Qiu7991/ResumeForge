@@ -114,7 +114,10 @@ def test_parse_list_count_and_fields(adapter):
 
     first = stubs[0]
     assert first.title == "AI人工智能技术员（服装方向）"
-    assert first.company == "依卡瑞"
+    # 公司名只断言结构：夹具里是真实采集数据，具体名字不入公开仓库（脱敏纪律）。
+    # 这条真正守护的是"能解析出公司名且不是导航菜单文本"。
+    assert first.company
+    assert first.company not in {"公司", "企业", "查看"}
     assert first.location.startswith("广州")
     assert first.url.startswith("https://www.zhipin.com/job_detail/")
     # 薪资必须是字体编码原文，不能被「猜」成数字
@@ -345,3 +348,60 @@ def test_list_salary_keeps_private_use_digits(adapter):
     assert boss_font.encoded_chars_in(stubs[0].salary_raw), (
         "列表 salary_raw 必须是 PUA 密文原文，不能已被折算"
     )
+
+
+def test_parse_detail_uses_business_full_name(adapter):
+    """公司名取工商全名，不是品牌短名。
+
+    实测背景（2026-11-12）：列表页给的是 `示例科技` 这种品牌展示名，或 BOSS 自己截断的
+    `广州市示例国际贸...`；只有详情页「工商信息」里是工商全称
+    （夹具 `boss_detail.html:824` → `示例网络科技（广州）有限公司`）。
+    这个全名也是风鸟查公司的输入，短名查不到。
+    """
+    detail = adapter.parse_detail(load("boss_detail.html"))
+    listing = adapter.parse_list(load("boss_list.html"))[0]
+
+    # 断言结构而不是具体公司名（夹具是真实数据，名字不入公开仓库）：
+    # 工商全名必须比列表页的品牌名更长，且带公司后缀——这就是"取到了全名"的证据。
+    assert detail.company
+    assert len(detail.company) > len(listing.company)
+    assert detail.company.endswith(("有限公司", "有限责任公司", "股份有限公司"))
+
+
+def test_parse_detail_company_is_not_nav_menu(adapter):
+    """回归：裸 `a[href*="/gongsi/"]` 会命中顶部导航「公司」菜单。
+
+    实测踩过：夹具 `boss_detail.html:461` 有 `<a ka="header_brand" href=".../gongsi/">公司</a>`，
+    于是 company 被解析成 `公司`。现在正则限定在 `sider-company` 作用域内。
+    """
+    detail = adapter.parse_detail(load("boss_detail.html"))
+
+    assert detail.company != "公司"
+    # 真名的首两字来自夹具，用"不是导航噪声 + 够长"表达同一件事。
+    assert len(detail.company) >= 4
+
+
+def test_parse_detail_company_not_from_similar_jobs(adapter):
+    """回归：`company-name` 也会命中「相似职位」卡片里的公司。
+
+    夹具里相似卡片有 `广州另一家公司`，那是别的公司 —— 拿错公司名比拿不到更糟。
+    """
+    detail = adapter.parse_detail(load("boss_detail.html"))
+
+    assert detail.company != "广州另一家公司"
+
+
+def test_business_name_wins_over_sidebar_short_name(adapter):
+    """三级优先：工商全名 > 侧栏短名。"""
+    # parse_detail 要求标题或正文至少有一个，否则按"页面不完整"抛错——这是既有契约。
+    html = (
+        '<h1 title="AI工程师">AI工程师</h1>'
+        '<div class="job-sec-text">岗位职责：负责开发。</div>'
+        '<div class="sider-company"><a href="/gongsi/abc.html">示例传媒</a></div>'
+        '<div class="detail-section-item business-info-box">'
+        '<li class="company-name"><span>公司名称</span>广州示例传媒科技有限公司</li>'
+        "</div>"
+    )
+    d = adapter.parse_detail(html)
+
+    assert d.company == "广州示例传媒科技有限公司"

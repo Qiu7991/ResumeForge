@@ -10,6 +10,7 @@ import { JOB_STATUS_META, type JobList, type Page } from "../../types";
 import { formatDateTime } from "../../utils/format";
 import { RowActions, RowContextMenu, type RowActionItem } from "../common/RowActions";
 import SkillTags from "../SkillTags";
+import CompanyName from "../common/CompanyName";
 import { JOB_SOURCE_LABEL_KEYS, jobSourceKind } from "../../utils/jobSource";
 import { nextSortState, sortOrderFor, type JobSortState } from "../../utils/jobSort";
 import { t } from "../../i18n";
@@ -154,7 +155,9 @@ export default function JobTable({
       sorter: true,
       sortOrder: sortOrderFor("company", sortState),
       showSorterTooltip: { title: t("jobTable.sort.company") },
-      render: (value) => value || "-",
+      // 公司名可点：跳到风鸟查这家公司（系统默认浏览器新标签）。
+      // 截断名/品牌短名查不到，组件会渲染成纯文本并给出说明。
+      render: (value: string) => <CompanyName name={value} disabled={batchAction !== null} />,
     },
     {
       title: t("jobTable.column.location"),

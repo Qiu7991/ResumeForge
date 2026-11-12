@@ -24,6 +24,7 @@ import { QUEUE_STATUS_META } from "../../../types";
 import { formatDateTime } from "../../../utils/format";
 import { AdmissionTag } from "./AdmissionTag";
 import ApplyResultCell from "./ApplyResultCell";
+import CompanyName from "../../common/CompanyName";
 
 export function QueueTable({
   items,
@@ -124,7 +125,7 @@ export function QueueTable({
           <Space size={4} wrap>
             {item.company && (
               <Typography.Text type="secondary" ellipsis>
-                {item.company}
+                <CompanyName name={item.company} />
               </Typography.Text>
             )}
             {item.apply_supported === false && (

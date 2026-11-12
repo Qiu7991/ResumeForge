@@ -35,6 +35,7 @@ import { useNavigate } from "react-router-dom";
 import type { Job } from "../types";
 import { getMatchAnalyzingIds, subscribeMatchAnalysis } from "../utils/jobMatchAnalysisState";
 import SkillTags from "./SkillTags";
+import CompanyName from "./common/CompanyName";
 import { t, type MessageKey } from "../i18n";
 import { useLocale } from "../i18n/i18nContext";
 import {
@@ -269,7 +270,7 @@ export default function JobDetailDrawer({
 
           <Descriptions column={2} size="small" style={{ marginTop: 16, marginBottom: 16 }}>
             <Descriptions.Item label={t("jobDetail.field.company")}>
-              {job.company || "-"}
+              <CompanyName name={job.company} />
             </Descriptions.Item>
             <Descriptions.Item label={t("jobDetail.field.location")}>
               {job.location || "-"}
