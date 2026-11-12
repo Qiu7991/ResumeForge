@@ -32,6 +32,17 @@ export interface ApplyQueueItem {
    * **可选**：缺失按"支持"处理（与后端默认同向），判断写 `=== false`，别写 `!x`。
    */
   apply_supported?: boolean;
+  /**
+   * 最近一次**投递执行**的结果（2026-11-12）。与 `status` 是两件事：
+   * - `status` 回答"要不要投"（pending/skipped/done/failed 四态）
+   * - 这三个字段回答"投了没有、成没成、什么时候投的"（来自投递记录）
+   *
+   * 未投过时 `last_apply_status` 为 null。
+   */
+  last_apply_status?: TaskItemStatus | null;
+  last_apply_at?: string | null;
+  /** 失败分类（稳定码，空串 = 未失败）。展示名在语言包里。 */
+  last_failure_category?: string;
   created_at: string;
   updated_at: string;
 }

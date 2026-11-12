@@ -23,6 +23,7 @@ import type { ApplyQueueItem } from "../../../types";
 import { QUEUE_STATUS_META } from "../../../types";
 import { formatDateTime } from "../../../utils/format";
 import { AdmissionTag } from "./AdmissionTag";
+import ApplyResultCell from "./ApplyResultCell";
 
 export function QueueTable({
   items,
@@ -139,7 +140,13 @@ export function QueueTable({
       ),
     },
     {
-      title: t("applyQueue.column.admission"),
+      // 「准入」这个列名用户看不懂（实测反馈"这个是什么意思"）。它在回答的是
+      // **「这条岗位能不能投」**——所以列头挂一句解释，而不是让人去猜。
+      title: (
+        <Tooltip title={t("applyQueue.admission.columnHint")}>
+          <span>{t("applyQueue.column.admission")}</span>
+        </Tooltip>
+      ),
       key: "admission",
       width: 140,
       render: (_, item) => <AdmissionTag item={item} />,
@@ -153,6 +160,15 @@ export function QueueTable({
         const meta = QUEUE_STATUS_META[value];
         return <Tag color={meta.color}>{t(QUEUE_STATUS_LABEL_KEYS[value])}</Tag>;
       },
+    },
+    {
+      // 投递结果（2026-11-12）：用户问「这个是什么意思」——原来看不出"投了没有、
+      // 投成没成、什么时候投的"。状态列只回答"要不要投"（队列四态），
+      // 真正的执行结果在投递记录里，现在一并显示出来。
+      title: t("applyQueue.column.applyResult"),
+      key: "applyResult",
+      width: 160,
+      render: (_, item) => <ApplyResultCell item={item} />,
     },
     {
       title: t("applyQueue.column.assets"),

@@ -11,6 +11,7 @@ from .base import (
     MAX_QUEUE_BATCH,
     MAX_TASK_TARGETS,
     QueueStatus,
+    TaskItemStatus,
 )
 
 # ===== 投递队列 =====
@@ -78,6 +79,18 @@ class ApplyQueueItemOut(BaseModel):
     # 默认 True 是刻意的兜底方向——万一某处没算，结果是"界面允许、后端拒绝并说明原因"，
     # 而不是把能投的岗位误标成不能投。
     apply_supported: bool = True
+    # ---- 最近一次投递结果（2026-11-12）----
+    #
+    # 队列的 `status` 只有 pending/skipped/done/failed 四态，它回答的是"要不要投"；
+    # 而"投了没有、投成没成、什么时候投的"要看**投递记录**（apply_task_item）。
+    # 以前界面只显示前者，于是用户看到一排「已投递」却不知道是什么时候投的、
+    # 到底成没成——这正是"这个是什么意思"的来源。
+    #
+    # 未投过时为 None；投过则给最近一次的结果。
+    last_apply_status: TaskItemStatus | None = None
+    last_apply_at: datetime | None = None
+    # 失败分类（稳定码，展示名在语言包；空串 = 未失败）。
+    last_failure_category: str = ""
     created_at: datetime
     updated_at: datetime
 

@@ -14,6 +14,7 @@ from ...models.apply import (
     HARD_GATES,
     QUEUE_STATUS_PENDING,
     ApplyQueueItem,
+    ApplyTaskItem,
 )
 from ...models.job import Job
 from ...models.profile import utcnow
@@ -68,7 +69,41 @@ def unsupported_site_message(job: Job) -> str:
     )
 
 
-def _queue_out(db: Session, item: ApplyQueueItem, job: Job | None) -> ApplyQueueItemOut:
+def _last_apply_results(
+    db: Session, job_ids: Sequence[int | None]
+) -> dict[int, ApplyTaskItem]:
+    """每个岗位**最近一次**投递记录（一次查询，避免逐行 N+1）。
+
+    按 `finished_at` 倒序取，同岗位只留第一条。`finished_at` 为空（还没跑完）的跳过——
+    那是"正在投"，没有结果可说。
+    """
+    ids = sorted({job_id for job_id in job_ids if job_id})
+    if not ids:
+        return {}
+    rows = (
+        db.query(ApplyTaskItem)
+        .filter(
+            ApplyTaskItem.job_id.in_(ids),
+            ApplyTaskItem.deleted_at.is_(None),
+            ApplyTaskItem.finished_at.isnot(None),
+        )
+        .order_by(ApplyTaskItem.finished_at.desc(), ApplyTaskItem.id.desc())
+        .all()
+    )
+    latest: dict[int, ApplyTaskItem] = {}
+    for row in rows:
+        if row.job_id is None or row.job_id in latest:
+            continue
+        latest[row.job_id] = row
+    return latest
+
+
+def _queue_out(
+    db: Session,
+    item: ApplyQueueItem,
+    job: Job | None,
+    last_apply: ApplyTaskItem | None = None,
+) -> ApplyQueueItemOut:
     match = latest_match(db, item.job_id)
     admission = _admission_of_match(match) if match is not None else None
     hard_gate = match.hard_gate if match is not None and match.hard_gate in HARD_GATES else None
@@ -95,6 +130,9 @@ def _queue_out(db: Session, item: ApplyQueueItem, job: Job | None) -> ApplyQueue
         requires_confirm=_match_requires_confirm(match) if match is not None else False,
         # 「能不能自动投」由来源决定，与匹配结论无关；界面上据此禁用勾选并说明原因。
         apply_supported=job_apply_site(job) is not None,
+        last_apply_status=last_apply.status if last_apply is not None else None,
+        last_apply_at=last_apply.finished_at if last_apply is not None else None,
+        last_failure_category=(last_apply.failure_category if last_apply is not None else ""),
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
@@ -117,9 +155,16 @@ def list_queue(db: Session, limit: int = MAX_QUEUE_LIST) -> list[ApplyQueueItemO
     )
     # 岗位一次性取回，避免每行一次查询（队列条数不多，但这属于该顺手做对的事）。
     jobs = _jobs_by_id(db, [item.job_id for item in items])
+    # 最近一次投递结果同样批量取：每行都回答"投了没有、成没成、什么时候投的"。
+    last_applies = _last_apply_results(db, [item.job_id for item in items])
     # job_id 在模型层可空（岗位删除后置空）；_jobs_by_id 只收非空 id，这里对 None 直接给 None。
     return [
-        _queue_out(db, item, jobs.get(item.job_id) if item.job_id is not None else None)
+        _queue_out(
+            db,
+            item,
+            jobs.get(item.job_id) if item.job_id is not None else None,
+            last_applies.get(item.job_id) if item.job_id is not None else None,
+        )
         for item in items
     ]
 

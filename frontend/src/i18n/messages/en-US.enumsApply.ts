@@ -14,7 +14,9 @@ const enumsApply = {
   // ===== Queue status (QUEUE_STATUS_META) =====
   "enumsApply.queueStatus.pending": "Pending",
   "enumsApply.queueStatus.skipped": "Skipped",
-  "enumsApply.queueStatus.done": "Applied",
+  // Queue "done" means "handled", not "applied successfully" — the real result is
+  // in the Result column. Two identical labels made the two columns indistinguishable.
+  "enumsApply.queueStatus.done": "Handled",
 
   // ===== Batch status (TASK_STATUS_META) =====
   "enumsApply.taskStatus.pending": "Waiting",

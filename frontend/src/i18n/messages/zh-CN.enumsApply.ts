@@ -13,7 +13,9 @@ const enumsApply = {
   // ===== 队列状态（QUEUE_STATUS_META）=====
   "enumsApply.queueStatus.pending": "待投递",
   "enumsApply.queueStatus.skipped": "已跳过",
-  "enumsApply.queueStatus.done": "已投递",
+  // 队列的 done 是"这条从队列里处理完了"，**不是**"投递成功"——后者要看投递记录
+  // （队列里的「投递结果」列）。两者都叫「已投递」时用户分不清哪个是真的结果。
+  "enumsApply.queueStatus.done": "已处理",
 
   // ===== 批次状态（TASK_STATUS_META）=====
   "enumsApply.taskStatus.pending": "等待中",
