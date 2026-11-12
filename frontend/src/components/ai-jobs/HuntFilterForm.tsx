@@ -5,11 +5,23 @@
  * 为什么单独成组件：`NativeJobHuntView` 已经 430+ 行（守 500 行预算），而这块是
  * 自成一体的表单——它的选项表、默认值、与"有未生效筛选"的提示都在这里收口。
  *
- * 编码表**不在前端**：界面上是中文标签，后端用 `services/job_hunt/search_filters`
+ * 编码表**不在前端**：界面是中文标签，后端用 `services/job_hunt/search_filters`
  * 按已验证的离线快照折成 BOSS 数字编码。前端自己写一份映射必然分叉，而分叉的后果是
  * 静默筛错（站点不报错，返回的却是没筛过的结果）。
+ *
+ * ## 布局：分区 + 行内固定标签（方案 A，2026-11-12）
+ *
+ * 用户反馈「做的很撕裂」。诊断下来不是配色问题，是三组不同性质的信息挤在同一层：
+ *
+ * 1. 平台/城市/页数 与 关键词/筛选 是两件事（"去哪搜、搜多少" vs "搜什么、筛什么"），
+ *    原来两排之间没有任何视觉区分；
+ * 2. 全部靠 placeholder 表达含义——一旦选了值 placeholder 就消失，用户不知道这格叫什么；
+ * 3. 320px 的关键词框把 5 个筛选挤成不同的窄宽度。
+ *
+ * 现在：**每个控件前有固定宽度的文字标签**，筛选按 2 列网格排，块与块之间用分隔线断开。
+ * 这套对齐投递台已有的做法（`CollectSiteFilters` + `CollectConfigForm`），全站一致。
  */
-import { Checkbox, Select, Space, Tooltip, Typography } from "antd";
+import { Checkbox, Select, Tooltip, Typography } from "antd";
 
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
@@ -109,6 +121,22 @@ interface Props {
   unapplied?: string[];
 }
 
+/**
+ * 一行「标签 + 控件」。
+ *
+ * 标签用**固定宽度**而不是 antd Form.Item 的 labelCol：这里控件宽度各不相同
+ * （关键词要宽、经验中等、复选框最窄），固定标签列能让左边缘对齐成一条竖线。
+ * Form.Item 的栅格适合整表单，不适合这种混合宽度的小工具条。
+ */
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="hunt-field">
+      <span className="hunt-field-label">{label}</span>
+      <div className="hunt-field-control">{children}</div>
+    </div>
+  );
+}
+
 export default function HuntFilterForm({
   keywords,
   onKeywordsChange,
@@ -132,48 +160,62 @@ export default function HuntFilterForm({
   };
 
   return (
-    <Space orientation="vertical" size={8} style={{ width: "100%" }}>
-      <Space wrap size={8}>
+    <div className="hunt-filters">
+      <Field label={t("aiJobs.hunt.keywordsLabel")}>
         <Tooltip title={t("aiJobs.hunt.keywordsHint")}>
           <Select
             mode="tags"
             value={keywords}
             onChange={(values) => onKeywordsChange(values as string[])}
-            placeholder={t("aiJobs.hunt.keywordsLabel")}
-            // 选项留空：这是自由输入，"tags" 模式下回车即添加。
+            placeholder={t("aiJobs.hunt.keywordsPlaceholder")}
+            // 自由输入：tags 模式回车即添加，不需要预设选项。
             options={[]}
-            style={{ minWidth: 320 }}
+            style={{ width: "100%" }}
             aria-label={t("aiJobs.hunt.keywordsLabel")}
           />
         </Tooltip>
+      </Field>
 
+      {/* 筛选按 2 列网格排：左边缘对齐成一条竖线，那正是"看着整齐"的来源。 */}
+      <div className="hunt-filter-grid">
         {(Object.keys(GROUP_LABEL_KEYS) as FilterGroupKey[]).map((group) => (
-          <Tooltip key={group} title={t(GROUP_LABEL_KEYS[group])}>
+          <Field key={group} label={t(GROUP_LABEL_KEYS[group])}>
             <Select
               mode="multiple"
               allowClear
               value={filters[group] ?? []}
               onChange={(values) => setGroup(group, values as string[])}
-              placeholder={t(GROUP_LABEL_KEYS[group])}
+              placeholder={t("aiJobs.hunt.filterAny")}
               options={FILTER_OPTIONS[group].map((label) => ({ value: label, label }))}
-              style={{ minWidth: 132 }}
+              style={{ width: "100%" }}
+              // 标签多时收起成 +N。`responsive` 在网格里算不准宽度（父级的
+              // minmax(0,1fr) 让它量到 0），实测「应届生/1年以内/1-3年」三项会挤爆
+              // 格子、把右侧截断。固定上限 1 更稳：选 3 项就显示「应届生 +2」。
+              maxTagCount={1}
               aria-label={t(GROUP_LABEL_KEYS[group])}
             />
-          </Tooltip>
+          </Field>
         ))}
 
-        <Tooltip title={t("aiJobs.hunt.newestFirstHint")}>
-          <Checkbox checked={newestFirst} onChange={(e) => onNewestFirstChange(e.target.checked)}>
-            {t("aiJobs.hunt.newestFirst")}
-          </Checkbox>
-        </Tooltip>
-      </Space>
+        <Field label={t("aiJobs.hunt.sortLabel")}>
+          <Tooltip title={t("aiJobs.hunt.newestFirstHint")}>
+            <Checkbox
+              checked={newestFirst}
+              onChange={(e) => onNewestFirstChange(e.target.checked)}
+            >
+              {t("aiJobs.hunt.newestFirst")}
+            </Checkbox>
+          </Tooltip>
+        </Field>
+      </div>
 
       {unapplied.length > 0 ? (
         <Text type="warning" style={{ fontSize: 12 }}>
-          {t("aiJobs.hunt.unapplied", { list: unapplied.join(t("aiJobs.native.errorSeparator")) })}
+          {t("aiJobs.hunt.unapplied", {
+            list: unapplied.join(t("aiJobs.native.errorSeparator")),
+          })}
         </Text>
       ) : null}
-    </Space>
+    </div>
   );
 }

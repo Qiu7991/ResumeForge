@@ -225,76 +225,15 @@ export default function NativeJobHuntView({ status }: Props) {
           </Space>
         }
       >
-        <Space wrap size={8}>
-          <Select
-            value={siteKey}
-            onChange={setSiteKey}
-            style={{ width: 140 }}
-            options={status.platforms.map((platform) => ({ value: platform.key, label: platform.name }))}
-          />
-          <Input
-            value={city}
-            onChange={(e) => setCity(e.target.value)}
-            placeholder={t("aiJobs.native.city")}
-            style={{ width: 120 }}
-          />
-          <Select
-            value={maxPages}
-            onChange={setMaxPages}
-            style={{ width: 110 }}
-            options={[1, 2, 3, 5].map((n) => ({
-              value: n,
-              label: t("aiJobs.native.pages", { n }),
-            }))}
-          />
-          <Tooltip title={t("aiJobs.hunt.thresholdHint")}>
-            <Space size={6}>
-              <Text>{t("aiJobs.hunt.threshold")}</Text>
-              <InputNumber
-                value={threshold}
-                onChange={(value) => setThreshold(typeof value === "number" ? value : 70)}
-                min={0}
-                max={100}
-                step={5}
-                style={{ width: 72 }}
-                aria-label={t("aiJobs.hunt.threshold")}
-              />
-            </Space>
-          </Tooltip>
-          <Tooltip title={t("aiJobs.native.autoScoreHint")}>
-            <Checkbox checked={autoScore} onChange={(e) => setAutoScore(e.target.checked)}>
-              {t("aiJobs.native.autoScore")}
-            </Checkbox>
-          </Tooltip>
-          <Button
-            type="primary"
-            loading={collectTask.state.starting || collecting}
-            disabled={collecting}
-            onClick={() => void onCollect()}
-          >
-            {t("aiJobs.native.collect")}
-          </Button>
-          {collecting && (
-            <>
-              {task?.status === "paused" ? (
-                <Button onClick={() => void collectTask.control("resume")}>
-                  {t("aiJobs.pipeline.resume")}
-                </Button>
-              ) : (
-                <Button onClick={() => void collectTask.control("pause")}>
-                  {t("aiJobs.pipeline.pause")}
-                </Button>
-              )}
-              <Button danger onClick={() => void collectTask.control("stop")}>
-                {t("aiJobs.pipeline.stop")}
-              </Button>
-            </>
-          )}
-        </Space>
-
-        {/* 多关键词 + 站点筛选 + 最新优先：单独成组，与"平台/城市/页数"分开——
-            前者决定"搜什么"，后者决定"去哪搜、搜多少"。 */}
-        <div style={{ marginTop: 8 }}>
+        {/* ---------- 分区一：搜索条件（搜什么、筛什么）----------
+            放在最上面：这是用户每轮都要调的东西（换关键词、调经验）。 */}
+        <div className="hunt-section">
+          <div className="hunt-section-title">
+            <Text strong>{t("aiJobs.hunt.sectionQuery")}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t("aiJobs.hunt.sectionQueryHint")}
+            </Text>
+          </div>
           <HuntFilterForm
             keywords={keywords}
             onKeywordsChange={setKeywords}
@@ -304,6 +243,112 @@ export default function NativeJobHuntView({ status }: Props) {
             onNewestFirstChange={setNewestFirst}
             unapplied={task?.unapplied_filters ?? []}
           />
+        </div>
+
+        {/* ---------- 分区二：数据源与动作（去哪搜、搜多少、开始）----------
+            与上面分开：这一组是"这次跑哪儿、跑多久"，改得没那么频繁。 */}
+        <div className="hunt-section">
+          <div className="hunt-section-title">
+            <Text strong>{t("aiJobs.hunt.sectionSource")}</Text>
+          </div>
+          <div className="hunt-source-row">
+            <div className="hunt-field">
+              <span className="hunt-field-label">{t("aiJobs.hunt.platform")}</span>
+              <div className="hunt-field-control">
+                <Select
+                  value={siteKey}
+                  onChange={setSiteKey}
+                  style={{ width: "100%" }}
+                  options={status.platforms.map((platform) => ({
+                    value: platform.key,
+                    label: platform.name,
+                  }))}
+                  aria-label={t("aiJobs.hunt.platform")}
+                />
+              </div>
+            </div>
+            <div className="hunt-field">
+              <span className="hunt-field-label">{t("aiJobs.native.city")}</span>
+              <div className="hunt-field-control">
+                <Input
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  aria-label={t("aiJobs.native.city")}
+                />
+              </div>
+            </div>
+            <div className="hunt-field">
+              <span className="hunt-field-label">{t("aiJobs.hunt.pagesLabel")}</span>
+              <div className="hunt-field-control">
+                <Select
+                  value={maxPages}
+                  onChange={setMaxPages}
+                  style={{ width: "100%" }}
+                  options={[1, 2, 3, 5].map((n) => ({
+                    value: n,
+                    label: t("aiJobs.native.pages", { n }),
+                  }))}
+                  aria-label={t("aiJobs.hunt.pagesLabel")}
+                />
+              </div>
+            </div>
+            <div className="hunt-field hunt-field--narrow">
+              <Tooltip title={t("aiJobs.hunt.thresholdHint")}>
+                <span className="hunt-field-label">{t("aiJobs.hunt.threshold")}</span>
+              </Tooltip>
+              <div className="hunt-field-control">
+                <InputNumber
+                  value={threshold}
+                  onChange={(value) => setThreshold(typeof value === "number" ? value : 70)}
+                  min={0}
+                  max={100}
+                  step={5}
+                  style={{ width: "100%" }}
+                  aria-label={t("aiJobs.hunt.threshold")}
+                />
+              </div>
+            </div>
+          </div>
+
+          <Space wrap size={12} style={{ marginTop: 12 }}>
+            <Tooltip title={t("aiJobs.native.autoScoreHint")}>
+              <Checkbox checked={autoScore} onChange={(e) => setAutoScore(e.target.checked)}>
+                {t("aiJobs.native.autoScore")}
+              </Checkbox>
+            </Tooltip>
+            <Button
+              type="primary"
+              loading={collectTask.state.starting || collecting}
+              disabled={collecting}
+              onClick={() => void onCollect()}
+            >
+              {t("aiJobs.native.collect")}
+            </Button>
+            {collecting && (
+              <>
+                {task?.status === "paused" ? (
+                  <Button onClick={() => void collectTask.control("resume")}>
+                    {t("aiJobs.pipeline.resume")}
+                  </Button>
+                ) : (
+                  <Button onClick={() => void collectTask.control("pause")}>
+                    {t("aiJobs.pipeline.pause")}
+                  </Button>
+                )}
+                <Button danger onClick={() => void collectTask.control("stop")}>
+                  {t("aiJobs.pipeline.stop")}
+                </Button>
+              </>
+            )}
+            {/* 组合数提示：4 词 × 3 页 = 12 次翻页，点之前先让人知道要跑多久。 */}
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t("aiJobs.hunt.comboHint", {
+                keywords: keywords.length || 1,
+                pages: maxPages,
+                total: (keywords.length || 1) * maxPages,
+              })}
+            </Text>
+          </Space>
         </div>
 
         {/* 黑名单折叠：长效配置，不该占首屏。展开后才渲染（省一次接口调用）。 */}

@@ -147,3 +147,113 @@
   border-top: 1px solid var(--rf-border-subtle);
   width: 100%;
 }
+
+/* ---- AI 求职：采集筛选表单（方案 A：分区 + 行内固定标签）----
+ *
+ * 为什么要自定义而不是纯靠 antd Space：控件宽度各不相同（关键词要宽、经验中等、
+ * 复选框最窄），Space 的自动排布会让它们挤成不同宽度的一排——那就是用户说的
+ * 「撕裂」。固定标签列 + 两列网格把左边缘拉成一条竖线，观感就整齐了。
+ */
+.hunt-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 一行「标签 + 控件」。标签固定 88px，控件占满剩余宽度。 */
+.hunt-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hunt-field-label {
+  flex: 0 0 88px;
+  color: var(--rf-text-secondary, rgba(0, 0, 0, 0.65));
+  font-size: 13px;
+  line-height: 32px;
+  /* 标签不换行：换行会让同一行的控件基线错开，正是「撕裂」的来源之一。 */
+  white-space: nowrap;
+}
+
+.hunt-field-control {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 5 个筛选 + 「最新优先」按两列排。窄屏自动变一列。
+ *
+ * 用 `max-content` 兜住标签列 + `minmax(0,1fr)` 分控件：两列的"标签+控件"总宽
+ * 一致，左边缘才对得整齐。之前纯 1fr 平分时，关键词那一行是整宽的，跟下面的
+ * 两列宽度对不上，视觉上宽窄不一。 */
+.hunt-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 32px;
+  /* 与关键词那一行的左边缘对齐（关键词行没有第二列，靠这个内边距补齐视觉重心）。 */
+  max-width: 1100px;
+}
+
+@media (max-width: 767px) {
+  .hunt-filter-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 窄屏标签不再固定宽度：88px 会把控件压得只剩一小条。 */
+  .hunt-field-label {
+    flex-basis: 72px;
+  }
+}
+
+/* ---- 分区容器：把「搜索条件」与「数据源」用细分隔线断开 ----
+ *
+ * 用户反馈「撕裂」的根因之一是两排控件之间没有任何视觉区分，但语义完全不同
+ * （搜什么 vs 去哪搜）。细线 + 间距是最低成本的分离，不需要额外的卡片边框。
+ */
+.hunt-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 0;
+}
+
+.hunt-section + .hunt-section {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.hunt-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 数据源那一行：平台/城市/翻页数/分数线 四项。
+ *
+ * 用固定 4 列而不是 auto-fit：`auto-fit + minmax(220px, 1fr)` 在 1200px 宽度下
+ * 会算成 5 列，于是分数线被挤到下一行、右边留一大片空白——那就是「撕裂感」的
+ * 另一种表现。固定 4 列让它们始终在同一行、等宽对齐。 */
+.hunt-source-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 20px;
+}
+
+/* 分数线不需要和别人一样宽，但也不该被拉成一整条：给它一个上限，剩下的留白。 */
+.hunt-field--narrow .hunt-field-control {
+  max-width: 96px;
+}
+
+/* 窄屏：4 列变 2 列，再窄变 1 列。 */
+@media (max-width: 1100px) {
+  .hunt-source-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .hunt-source-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
