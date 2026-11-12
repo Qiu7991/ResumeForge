@@ -71,10 +71,28 @@ function buildCards(
   const scoreRunning = Boolean(scoreTask?.running);
   const scoreFailed = scoreTask?.status === "failed";
 
+  // 采集线程**已经跑完了**吗？这是判断前两步是否完成的总闸门。
+  //
+  // 之前是拿 stage 猜："stage === 'staged' 就是在写入中"——结果当一批全是重复
+  // （candidate_ids 为空、没有补 JD 与评分）时，stage 永远停在 "staged"，
+  // 卡片永远转蓝圈、总进度卡 25%。用户看到的就是「莫名其妙，到底卡住了没有」。
+  //
+  // 现在改成看 **task.finished**：采集线程结束了，前两步必然已经结束，
+  // 唯一可能还在跑的是评分（另一个任务，看 scoreTask）。
+  const collectFinished = Boolean(task?.finished) && !collecting;
+
+  const staged = task?.candidate_count ?? 0;
+  const duplicates = task?.duplicates ?? 0;
+  const jdDone = task?.jd_done ?? 0;
+  const jdTotal = task?.jd_total ?? 0;
+  const scoreDone = scoreTask?.completed ?? 0;
+  const scoreFailedCount = scoreTask?.failed ?? 0;
+  const scoreTotal = scoreTask?.requested ?? 0;
+
   // ---- 1. 采集 ----
   const collectState: CardState = failed
     ? "failed"
-    : collecting
+    : collecting || (!collectFinished && (task?.stage === "collected" || !task?.stage))
       ? "running"
       : (task?.collected ?? 0) > 0
         ? "done"
@@ -85,40 +103,40 @@ function buildCards(
       : null;
 
   // ---- 2. 写入待导入 ----
-  const staged = task?.candidate_count ?? 0;
-  const duplicates = task?.duplicates ?? 0;
+  // 采集线程结束 = 这一步结束。**即使一条都没新建**（全是重复）也是"完成"，
+  // 不是"进行中"——这正是不该转蓝圈的那种情况。
   const stageState: CardState = failed
     ? "failed"
-    : (task?.stage === "filling_jd" || task?.stage === "scoring") || staged > 0
+    : collectFinished
       ? "done"
-      : task?.stage === "staged"
+      : task?.stage === "collected"
         ? "running"
         : "idle";
 
   // ---- 3. 补抓 JD ----
-  const jdDone = task?.jd_done ?? 0;
-  const jdTotal = task?.jd_total ?? 0;
+  // 采集线程结束后这一步必然是结束态：**有得补是"完成"，没得补也是"完成"**
+  // （一分钱都不用花，不该让总进度挂着一个永远不会动的缺口）。
   const jdState: CardState = failed
     ? "failed"
-    : task?.stage === "filling_jd"
-      ? "running"
-      : task?.stage === "scoring"
-        ? "done"
+    : collectFinished
+      ? "done"
+      : task?.stage === "filling_jd"
+        ? "running"
         : "idle";
-  const jdPercent =
-    jdTotal > 0 ? Math.min(100, Math.round((jdDone / jdTotal) * 100)) : null;
+  const jdPercent = jdTotal > 0 ? Math.min(100, Math.round((jdDone / jdTotal) * 100)) : null;
 
   // ---- 4. AI 评分 ----
-  const scoreDone = scoreTask?.completed ?? 0;
-  const scoreFailedCount = scoreTask?.failed ?? 0;
-  const scoreTotal = scoreTask?.requested ?? 0;
+  // 同上：采集线程结束且没有可评的候选（全重复）= 这一步已经"走完"，
+  // 不是"还没开始"。否则底部会一直显示"待运行"而用户明明什么都没在跑。
   const scoreState: CardState = scoreFailed
     ? "failed"
     : scoreRunning
       ? "running"
       : scoreTotal > 0 && scoreDone + scoreFailedCount >= scoreTotal
         ? "done"
-        : "idle";
+        : collectFinished
+          ? "done"
+          : "idle";
   const scorePercent =
     scoreTotal > 0
       ? Math.min(100, Math.round(((scoreDone + scoreFailedCount) / scoreTotal) * 100))
@@ -143,10 +161,13 @@ function buildCards(
       key: "stage",
       label: t("aiJobs.stage.stage"),
       value: staged > 0 ? String(staged) : null,
+      // 全部重复时给一句明确的话：不是"在做"，是"这批都收过了"。
       caption:
-        duplicates > 0
-          ? t("aiJobs.stage.duplicates", { count: duplicates })
-          : t("aiJobs.stage.stageUnit"),
+        collectFinished && staged === 0 && duplicates > 0
+          ? t("aiJobs.stage.allDuplicate", { count: duplicates })
+          : duplicates > 0
+            ? t("aiJobs.stage.duplicates", { count: duplicates })
+            : t("aiJobs.stage.stageUnit"),
       state: stageState,
       percent: null,
     },
@@ -154,10 +175,13 @@ function buildCards(
       key: "fill_jd",
       label: t("aiJobs.stage.fillJd"),
       value: jdTotal > 0 ? `${jdDone}/${jdTotal}` : null,
+      // 没有需要补的（全是重复，或都有正文）说「无需补抓」，而不是留一个空 "—"。
       caption:
         jdTotal > 0
           ? t("aiJobs.stage.fillJdFilled", { count: task?.jd_filled ?? 0 })
-          : t("aiJobs.stage.fillJdUnit"),
+          : collectFinished
+            ? t("aiJobs.stage.fillJdNotNeeded")
+            : t("aiJobs.stage.fillJdUnit"),
       state: jdState,
       percent: jdPercent,
     },
@@ -168,7 +192,11 @@ function buildCards(
       caption:
         scoreFailedCount > 0
           ? t("aiJobs.stage.scoreFailedCount", { count: scoreFailedCount })
-          : t("aiJobs.stage.scoreUnit"),
+          : scoreTotal > 0
+            ? t("aiJobs.stage.scoreUnit")
+            : collectFinished
+              ? t("aiJobs.stage.scoreNotNeeded")
+              : t("aiJobs.stage.scoreUnit"),
       state: scoreState,
       percent: scorePercent,
     },
@@ -195,11 +223,28 @@ export default function CollectProgressPanel({
   // 后端错误可能带协议值前缀（`browser_required: `），展示前剥掉。
   const errorText = (task?.error ?? "").replace(/^[a-z_]+:\s*/, "");
 
+  /**
+   * 总进度：四步的平均完成度。
+   *
+   * 三步口径（之前只按 100/0 摊，会出现"总进度 25% 却标已完成"）：
+   * - 已完成 → 100
+   * - 未开始（idle）→ **不计入分母**：还没轮到它，把 0 算进去会让进度凭空变慢，
+   *   看着像卡住
+   * - 在跑 → 用它自己的子进度（没有子进度时按 50 记，表示"正在这一步中间"）
+   */
   const overallPercent = (() => {
-    const parts = cards.map((card) => (card.state === "done" ? 100 : (card.percent ?? 0)));
-    if (parts.length === 0) return 0;
-    return Math.round(parts.reduce((sum, value) => sum + value, 0) / parts.length);
+    const counted = cards.filter((card) => card.state !== "idle");
+    if (counted.length === 0) return 0;
+    const sum = counted.reduce((total, card) => {
+      if (card.state === "done") return total + 100;
+      return total + (card.percent ?? 50);
+    }, 0);
+    return Math.round(sum / counted.length);
   })();
+
+  // 全部完成 = 每张卡都 done。用它决定底部的状态标签，**不用百分比**：
+  // 百分比可能因为四舍五入显示 100 而其实还差一步。
+  const allDone = cards.every((card) => card.state === "done" || card.state === "failed");
 
   return (
     <div style={{ marginTop: 12 }}>
@@ -285,14 +330,26 @@ export default function CollectProgressPanel({
       </div>
 
       <Space wrap style={{ marginTop: 10 }} size={8}>
-        <Tag color={failed ? "error" : collecting || scoreTask?.running ? "processing" : "success"}>
+        <Tag
+          color={
+            failed
+              ? "error"
+              : collecting || scoreTask?.running
+                ? "processing"
+                : allDone
+                  ? "success"
+                  : "default"
+          }
+        >
           {failed
             ? t("aiJobs.progress.badge.failed")
             : collecting
               ? t("aiJobs.progress.badge.collecting")
               : scoreTask?.running
                 ? t("aiJobs.progress.badge.scoring")
-                : t("aiJobs.progress.badge.done")}
+                : allDone
+                  ? t("aiJobs.progress.badge.done")
+                  : t("aiJobs.progress.badge.idle")}
         </Tag>
         <Text type="secondary">{scoreTask?.running ? scoreTask?.message : task?.message}</Text>
         {task?.blocked ? (

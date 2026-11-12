@@ -120,7 +120,12 @@ def start_collect_task(
                     candidate_ids = _stage_results(session, task, kept, adapter)
                     task.candidate_ids = candidate_ids
                     task.stage = "staged"
-                    task.message = f"已入库 {len(candidate_ids)} 条备选岗位"
+                    # 0 条新建时要说清"都收过了"，而不是"已入库 0 条"——后者看着像失败。
+                    task.message = (
+                        f"已入库 {len(candidate_ids)} 条备选岗位"
+                        if candidate_ids
+                        else f"这批 {task.duplicates} 条都已经收过了，没有新岗位"
+                    )
                 except Exception as exc:  # noqa: BLE001 — 落库失败不该吞掉已采到的结果
                     logger.warning("采集结果落暂存区失败：%s: %s", type(exc).__name__, exc)
                     task.error = f"落库失败：{exc}"
@@ -129,6 +134,12 @@ def start_collect_task(
                 # ---- 自动补 JD + 评分 ----
                 if req.auto_score and candidate_ids:
                     _auto_score(session, task, candidate_ids, adapter, client, req.resume_id)
+                elif not candidate_ids:
+                    # 这一批全是重复（都已经在库里或暂存区里）——**没有可补 JD/评分的**。
+                    # 必须把 stage 推到终点，否则它会停在 "staged"，而界面把 "staged"
+                    # 判成"写入待导入进行中"，于是永远转着蓝圈、总进度卡在 25%。
+                    # 实测就是这个：采 12 条全重复，界面看着像卡住，实际早跑完了。
+                    task.stage = "done"
         except Exception as exc:  # noqa: BLE001
             # 用户已点停止时，抓取层抛的异常是"停止的副作用"，不是真失败：
             # 此时应如实标 stopped（并保留已采到的部分），不要吓用户。
@@ -294,13 +305,12 @@ def _auto_score(
 
     # ---- 1. 补 JD ----
     task.stage = "filling_jd"
+    task.jd_total = len(candidate_ids)
     task.message = "正在补抓 JD 正文…"
     try:
         fetch = cdp_fetcher(client, adapter, page_kind="detail")
         # **必须用候选专用的补抓**：detail_backfill 是按 Job 模型读写的，
         # 拿候选 id 传进去会全部被判成"已有 JD"静默跳过（实测 尝试 0/跳过 11）。
-        task.jd_total = len(candidate_ids)
-
         def _jd_progress(done: int, total: int) -> None:
             # 直接改进度字段：轮询接口读的是 task.snapshot()，不需要额外的通道。
             task.jd_done = done
@@ -341,3 +351,8 @@ def _auto_score(
     except Exception as exc:  # noqa: BLE001
         logger.info("采集后评分启动失败：%s: %s", type(exc).__name__, exc)
         task.message = f"评分启动失败：{exc}"
+
+    # 采集线程的全部工作到此结束：把 stage 推到终点。
+    # "scoring" 只是**交接给评分任务**的那一刻，不是终点——评分是另一个后台任务，
+    # 它的进度看 CandidateScoreTask。stage 留在这里会让采集任务看起来永远没跑完。
+    task.stage = "done"
