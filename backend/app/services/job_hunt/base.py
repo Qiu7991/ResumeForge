@@ -47,6 +47,13 @@ class JobStub:
     # "10年经验" 的岗位混进应届生的池子里。
     experience: str = ""
     education: str = ""
+    # 求职类型（校招/社招/实习）。**列表页本身不带这个字段**——它是用户采集时选的
+    # 筛选条件（BOSS 的 jobType 参数）传下来的，由 worker 统一回填。
+    #
+    # 为什么必须带上：候选导入岗位广场时 `job_type_from_title(title) or candidate.job_type
+    # or "校招"` —— 前两项都为空就落"校招"兜底。采集来的岗位标题普遍不带类型词，
+    # 于是**全部显示成校招**（用户实测反馈）。用户明明选了「全职」，这个信息不该丢。
+    job_type: str = ""
 
 
 @dataclass

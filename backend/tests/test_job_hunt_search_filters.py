@@ -151,3 +151,54 @@ def test_salary_passes_no_range_means_no_filter():
     from app.services.job_hunt.search_filters import salary_passes
 
     assert salary_passes("3-5K", 0, 0) is True
+
+
+# ---------------------------------------------------------------------------
+# 求职类型回填（BOSS 列表页不带岗位类型 → 全是「校招」的根因）
+# ---------------------------------------------------------------------------
+
+
+def test_job_type_from_full_time_filter():
+    """用户选「全职」→ 库内「社招」。
+
+    库内只有 校招/社招/实习 三档；「全职」表达的是"不是学生岗"，
+    对应「社招」而不是字面反义的「实习」。
+    """
+    from app.services.job_hunt.search_filters import job_type_from_filters
+
+    assert job_type_from_filters({"jobType": ["全职"]}) == "社招"
+
+
+def test_job_type_from_intern_filter():
+    """「实习」→ 实习。
+
+    注意：离线快照的 jobTypeList 里**没有实习**（只采到 不限/全职/兼职），
+    所以映射表不能只依赖快照 —— BOSS 的 jobType=1902 是实存在的。
+    """
+    from app.services.job_hunt.search_filters import job_type_from_filters
+
+    assert job_type_from_filters({"jobType": ["实习"]}) == "实习"
+
+
+def test_job_type_empty_when_not_selected():
+    """没选类型时返回空串，让导入侧按标题推断——那条链路本来是对的，
+    不该被采集覆盖。"""
+    from app.services.job_hunt.search_filters import job_type_from_filters
+
+    assert job_type_from_filters({}) == ""
+    assert job_type_from_filters({"jobType": []}) == ""
+    assert job_type_from_filters(None) == ""
+
+
+def test_stub_has_job_type_field():
+    """回归：`JobStub` 必须真的有 `job_type` 字段。
+
+    实测踩过的坑：worker 里写的是 `getattr(stub, "job_type", "")`，而 dataclass 上
+    根本没有这个字段 → 恒为空串 → 导入时落到 `or "校招"` 兜底 → 采集来的岗位
+    全部显示成校招。`getattr` 的默认值把这件事变成了静默失败。
+    """
+    from app.services.job_hunt.base import JobStub
+
+    stub = JobStub(title="AI视频制作师")
+    assert hasattr(stub, "job_type")
+    assert stub.job_type == ""

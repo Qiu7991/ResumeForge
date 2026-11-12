@@ -114,6 +114,7 @@ def start_collect_task(
         try:
             from ..services.job_hunt.search_filters import (
                 filter_stub_by_tags,
+                job_type_from_filters,
                 resolve_search_filters,
                 salary_passes,
                 salary_tiers_for_range,
@@ -179,6 +180,15 @@ def start_collect_task(
                 if report.stopped_reason == "stopped":
                     stopped = True
                     break
+
+            # 求职类型回填：BOSS 列表页**不带**岗位类型，用户选的「全职/实习」
+            # 是唯一可用的类型信息。不回填的话导入侧会走
+            # `job_type_from_title(title) or candidate.job_type or "校招"` 兜底，
+            # 而采集来的标题普遍不含类型词 → **全部显示成校招**（用户实测反馈）。
+            stored_job_type = job_type_from_filters(req.filters)
+            if stored_job_type:
+                for stub in all_stubs:
+                    stub.job_type = stored_job_type
 
             kept: list[Any] = []
             tag_filtered = 0

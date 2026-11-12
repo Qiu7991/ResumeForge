@@ -124,6 +124,49 @@ _SALARY_TIERS: tuple[tuple[str, float, float], ...] = (
 )
 
 
+# BOSS 的求职类型（jobType）→ 库内 job_type 三个值之一。
+#
+# 库内只有 校招 / 社招 / 实习 三档（见 `job_parser.metadata._normalize_job_type`）。
+# BOSS 的「全职」对应库内的「社招」——它表达的是"不是学生岗"，不是"非实习"的字面反义。
+# 「兼职」也归社招：它是社会招聘的一种，库内没有"兼职"这一档，硬造会让筛选/展示都多一档。
+JOB_TYPE_PARAM_TO_STORED: dict[str, str] = {
+    "1901": "社招",  # 全职
+    "1902": "实习",  # 实习
+    "1903": "社招",  # 兼职
+}
+
+# 中文标签 → 编码。
+#
+# **不只依赖 `boss_filters_catalog._SNAPSHOT`**：那份离线快照的 jobTypeList 只采到
+# 「不限/全职/兼职」三项，没有「实习」——而 BOSS 的 jobType=1902 是实存在的
+# （BossHunter 的映射表 `platforms/boss.py:36-40` 有）。只用快照会让"选了实习"返回空。
+# 这里以 BossHunter 已验证的表为准，与快照取并集。
+_JOB_TYPE_LABEL_TO_CODE: dict[str, str] = {
+    "全职": "1901",
+    "实习": "1902",
+    "兼职": "1903",
+}
+
+
+def job_type_from_filters(filters: dict[str, list[str]] | None) -> str:
+    """用户选的「求职类型」→ 库内 job_type。取第一个能映射的；没有则空串。
+
+    **只在用户明确选了类型时返回**：没选时返回空串，让导入侧按标题推断（`job_type_from_title`），
+    推断不出再兜底——那条链路本来就是对的，不该被采集覆盖。
+    """
+    if not filters:
+        return ""
+    labels = filters.get("jobType") or []
+    if not labels:
+        return ""
+    for label in labels:
+        code = _JOB_TYPE_LABEL_TO_CODE.get((label or "").strip())
+        stored = JOB_TYPE_PARAM_TO_STORED.get(code or "")
+        if stored:
+            return stored
+    return ""
+
+
 def salary_passes(
     job_salary: str, min_k: float, max_k: float, *, ceil_ratio: float = 1.5
 ) -> bool:
