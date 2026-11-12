@@ -70,6 +70,17 @@ class CollectTask:
     candidate_ids: list[int] = field(default_factory=list)
     # 与正式岗位/暂存区重复而跳过的条数。
     duplicates: int = 0
+    # 多关键词的进度：当前第几个 / 共几个、当前关键词。界面上要能看出"在跑第 2 个词"，
+    # 否则一趟 4 个关键词 × 3 页要跑好几分钟，用户只看到一个总数在慢慢涨。
+    keyword_index: int = 0
+    keyword_total: int = 0
+    keyword: str = ""
+    # 用户选了但没能生效的筛选项（如快照里认不出的标签）。界面要如实显示——
+    # 静默丢弃会让用户以为筛了，采到的却是没筛过的结果。
+    unapplied_filters: list[str] = field(default_factory=list)
+    # 本地二次筛选挡掉的条数（经验/学历标签不符）。与黑名单挡掉的数分开记：
+    # 「被黑名单挡掉」是用户自己设的，「被筛选条件挡掉」是条件不匹配，两者含义不同。
+    tag_filtered: int = 0
     # 补 JD 的处理进度：已处理 / 总数。补 JD 是限速的（每条 1.5s），15 条要 20 多秒，
     # 没有这两个数界面只能干等——看不出是在跑还是卡住了。
     jd_done: int = 0
@@ -107,6 +118,11 @@ class CollectTask:
             "stage": self.stage,
             "candidate_count": len(self.candidate_ids),
             "duplicates": self.duplicates,
+            "unapplied_filters": list(self.unapplied_filters),
+            "tag_filtered": self.tag_filtered,
+            "keyword_index": self.keyword_index,
+            "keyword_total": self.keyword_total,
+            "keyword": self.keyword,
             "jd_done": self.jd_done,
             "jd_total": self.jd_total,
             "jd_filled": self.jd_filled,

@@ -23,12 +23,17 @@
 """
 from __future__ import annotations
 
+import logging
 import re
+import time
+from typing import Any
 from urllib.parse import quote
 
 from ...sites.boss_text import normalize_text
 from ..base import HuntCriteria, JobDetail, JobParseError, JobSiteAdapter, JobStub
 from . import boss_font
+
+logger = logging.getLogger(__name__)
 
 _BASE = "https://www.zhipin.com"
 
@@ -50,6 +55,17 @@ _LOCATION_RE = re.compile(r'<span[^>]*class="company-location"[^>]*>(.*?)</span>
 _TAGS_RE = re.compile(r'<ul[^>]*class="tag-list"[^>]*>(.*?)</ul>', re.S)
 _TAG_ITEM_RE = re.compile(r"<li[^>]*>([^<]{1,20})</li>")
 
+# 搜索筛选参数的**固定顺序**（与 BossHunter 验证过的拼法一致）。
+# 站点本身对顺序不敏感，但固定顺序让 URL 可断言、排查时能逐字符 diff。
+_FILTER_PARAM_ORDER: tuple[str, ...] = (
+    "jobType",
+    "experience",
+    "degree",
+    "scale",
+    "salary",
+    "industry",
+)
+
 # 详情页
 _D_TITLE_RE = re.compile(r'<h1[^>]*title="([^"]+)"')
 _D_SALARY_RE = re.compile(r'<span[^>]*class="salary"[^>]*>\s*([^<]+?)\s*</span>')
@@ -62,6 +78,10 @@ _D_COMPANY_FALLBACK_RE = re.compile(r'class="[^"]*company-name[^"]*"[^>]*>\s*([^
 # 所以先只匹配开标签，再用 ``_extract_div_inner`` 按深度配对找真正的闭合位置。
 _D_SECTION_OPEN_RE = re.compile(r'<div[^>]*class="job-sec-text"[^>]*>', re.S)
 _DIV_TAG_RE = re.compile(r"<div\b[^>]*>|</div\s*>", re.I)
+# 经验/学历标签的判定。用正则而不是枚举：站点会加「仅限在校生」这类变体，
+# 枚举一旦漏了就静默不识别。这两条只用于**本地二次筛选兜底**，认错也不会影响主路径。
+_EXPERIENCE_TAG_RE = re.compile(r"^(经验不限|在校生|应届生|\d+[\-~]\d+年|\d+年以内|\d+年以上|\d+年)$")
+_EDUCATION_TAG_RE = re.compile(r"^(学历不限|初中及以下|中专/中技|中专|中技|高中|大专|本科|硕士|博士|MBA/EMBA)$")
 _BR_RE = re.compile(r"<br\s*/?>", re.I)
 _TAG_STRIP_RE = re.compile(r"<[^>]+>")
 
@@ -84,6 +104,67 @@ def _extract_div_inner(html: str, open_end: int) -> str:
         else:
             depth += 1
     return html[open_end:]
+
+
+# 滚动加载用到的三个 DOM 脚本。与 ``services/sites/boss_search_scripts`` 同源思路，
+# 但这里是**独立实现**：那边返回结构化抽取结果，这边只要"滚一下 + 数卡片"，
+# 抽取仍走本模块的 `parse_list`（正则），两套口径不能混。
+
+_CARD_COUNT_JS = """(() => {
+  return document.querySelectorAll('li.job-card-box, .job-card-wrapper, .job-card-box').length;
+})()"""
+
+_SCROLL_JS = """(() => {
+  const card = document.querySelector('li.job-card-box, .job-card-wrapper, .job-card-box');
+  let el = card ? card.parentElement : null;
+  let scrolled = '';
+  while (el && el !== document.body) {
+    if (el.scrollHeight > el.clientHeight + 4) {
+      el.scrollTop = el.scrollHeight;
+      scrolled = 'container';
+      break;
+    }
+    el = el.parentElement;
+  }
+  if (!scrolled) { window.scrollTo(0, document.body.scrollHeight); scrolled = 'window'; }
+  return scrolled;
+})()"""
+
+
+def _card_count(client: Any) -> int | None:
+    """当前搜索页上的岗位卡片数量；读不到返回 None。"""
+    try:
+        value = client.evaluate(_CARD_COUNT_JS)
+    except Exception:  # noqa: BLE001 — 读不到就当没有更多
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _scroll_list(client: Any) -> None:
+    """把岗位列表滚到底部，触发站点的「下滑加载更多」。"""
+    try:
+        client.evaluate(_SCROLL_JS)
+    except Exception:  # noqa: BLE001 — 滚动失败由下一步的数量检查兜底
+        logger.info("BOSS 滚动列表失败", exc_info=True)
+
+
+def _wait_card_growth(
+    client: Any, baseline: int, *, timeout: float = 12.0, poll: float = 0.4
+) -> bool:
+    """滚动后等新卡片渲染：数量超过基线即成功；预算用完仍没长 → 到底了。
+
+    12 秒是保守值：BOSS 的"加载更多"是一次 XHR + 渲染，弱网下也在几秒内完成。
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        count = _card_count(client)
+        if count is not None and count > baseline:
+            return True
+        time.sleep(poll)
+    return False
 
 
 def _clean(fragment: str) -> str:
@@ -137,10 +218,26 @@ class BossAdapter(JobSiteAdapter):
     name = "BOSS直聘"
 
     def build_search_url(self, criteria: HuntCriteria, page: int = 1) -> str:
-        """``zhipin.com/web/geek/jobs?query=..&city=..&page=n``。
+        """``zhipin.com/web/geek/job?query=..&city=..&<筛选>..&sortType=2&page=n``。
 
-        ``city`` 支持两种写法：写城市名时按名称参数传（站点会重定向到对应 city 码），
-        写纯数字时按 city 码直接传。真实翻页参数形态夜间未实测 → blocked.md。
+        参数顺序与 BossHunter 验证过的一致（``collection/platforms/boss.py:563-567``）：
+
+            query → city → jobType → experience → degree → scale → salary → industry
+                  → sortType → page
+
+        **四个容易拼错的点**（都是实测踩过的）：
+
+        1. 路径是 ``/web/geek/job``（**单数**）。曾经写成 ``jobs``，站点不报错但返回的不是
+           搜索结果——那种"看起来成功"的错最难查。
+        2. 参数名是 ``query``，不是 ``keyword``。
+        3. 多值筛选是**单个参数 + 逗号**（``experience=102,103,104``），不是重复 key。
+        4. ``sortType=2`` 只在「最新优先」时出现；默认排序下**完全不出现**该参数。
+
+        ``city`` 支持两种写法：纯数字按 city 码传；城市名走 ``cityName``（站点会重定向
+        到对应 city 码）——后者只是兜底，正式入口应传 city_code。
+
+        筛选与排序从 ``criteria.extra`` 读（``filters`` / ``sort``），编码由调用方
+        按 ``services/sites/boss_filters_catalog`` 的已验证快照解析好。
         """
         params: list[str] = []
         kw = (criteria.keywords or "").strip()
@@ -151,10 +248,31 @@ class BossAdapter(JobSiteAdapter):
             if city.isdigit():
                 params.append(f"city={city}")
             else:
+                # 城市名兜底：站点会重定向到 city 码。生产路径应传 city_code（见上）。
                 params.append(f"cityName={quote(city)}")
+
+        extra = criteria.extra or {}
+
+        # 筛选：{参数名: "编码,编码"}，编码已在调用方校验过。**顺序固定**——
+        # 站点对参数顺序不敏感，但固定的顺序让 URL 可断言、可对比（排查时能逐字符 diff）。
+        filters = extra.get("filters")
+        if isinstance(filters, dict):
+            for name in _FILTER_PARAM_ORDER:
+                value = filters.get(name)
+                if not value:
+                    continue
+                # 逗号也编码成 %2C（与 BossHunter 的实测形态一致）。裸逗号站点也认，
+                # 但统一成编码形态让 URL 可与参考实现逐字符比对。
+                encoded = quote(str(value), safe="")
+                params.append(f"{quote(str(name), safe='')}={encoded}")
+
+        # 最新优先：只有显式要 newest 才加。默认排序不带这个参数。
+        if (extra.get("sort") or "") == "newest":
+            params.append("sortType=2")
+
         if page and int(page) > 1:
             params.append(f"page={int(page)}")
-        return f"{_BASE}/web/geek/jobs?" + "&".join(params)
+        return f"{_BASE}/web/geek/job?" + "&".join(params)
 
     def parse_list(self, html: str) -> list[JobStub]:
         starts = list(_CARD_START_RE.finditer(html))
@@ -183,6 +301,10 @@ class BossAdapter(JobSiteAdapter):
             if not location and tags:
                 # 标签里有时混着地区/经验，地区优先取含「·」的那条
                 location = next((t for t in tags if "·" in t), "")
+            # 经验/学历标签（"1-3年" "本科"）：标签里本来就是有的，之前只用来兜底地区、
+            # 其余丢弃。留着做采集后的本地二次筛选（站点侧参数是主路径，这是兜底）。
+            experience = next((tag for tag in tags if _EXPERIENCE_TAG_RE.match(tag)), "")
+            education = next((tag for tag in tags if _EDUCATION_TAG_RE.match(tag)), "")
             salary_raw = _clean_salary(salary_m.group(1)) if salary_m else ""
             # 列表页直接给出解码结果：字体映射已实证收敛（见 boss_font.BOSS_TTF_MAP），
             # 不必等详情页的明文对照。解不完整时 decode_salary 会保持 ok=False。
@@ -196,6 +318,8 @@ class BossAdapter(JobSiteAdapter):
                     salary_decoded=decoded.text,
                     salary_decoded_ok=decoded.ok,
                     url=url,
+                    experience=experience,
+                    education=education,
                 )
             )
         if not stubs:
@@ -262,6 +386,41 @@ class BossAdapter(JobSiteAdapter):
         （``fold-text``）——任一命中都说明正文区已经渲染，可以取了。
         """
         return ".job-sec-text"
+
+    def fetch_page(self, client: Any, url: str, page: int, *, fetch: Any) -> str:
+        """BOSS 专用翻页：第 1 页导航，第 2 页起**滚动加载**。
+
+        为什么不能每页都导航（2026-10-09 实测，两处独立验证）：
+        ``services/sites/boss_search.py`` 与 BossHunter 都记录同一个结论——BOSS 搜索页
+        **不吃 URL 的 page 参数**，换 page 值导航返回的永远是同一批推荐位。站点靠
+        「向下滑动列表」加载更多。
+
+        这正是「每轮只采到十几条、再采就全是重复」的根因：我们一直在逐页导航，
+        第 2 页拿到的还是第 1 页的内容，全部被去重挡掉。
+
+        实现刻意简单：用页面**已解析出的卡片数**做基线，滚动后等数量增长，然后直接取
+        ``outerHTML`` 交给既有的 ``parse_list``。不迁 ``services/sites`` 那套结构化抽取
+        ——那会引入第二套卡片解析口径，和本适配器的正则解析分叉。
+        """
+        if page <= 1:
+            return fetch(url)
+
+        baseline = _card_count(client)
+        if baseline is None:
+            # 读不到卡片数：页面可能不在搜索页。按「没有更多」处理，交给 runner 干净收尾
+            # ——报错反而会把已经采到的也拖成整批失败。
+            logger.info("BOSS 滚动翻页：读不到卡片数，按没有更多处理")
+            return ""
+
+        _scroll_list(client)
+        if not _wait_card_growth(client, baseline):
+            # 滚到底仍没有新卡片 → 到底了。返回空 HTML，parse_list 会抛"没有卡片"，
+            # runner 按 no_results 收尾（与翻满 max_pages 同一种正常结束）。
+            logger.info("BOSS 滚动翻页：滚动后没有新卡片，已到底")
+            return ""
+
+        html = client.evaluate("document.documentElement.outerHTML")
+        return html if isinstance(html, str) else ""
 
     def max_pages(self) -> int:
         # BOSS 列表页实测一页 15 条；翻页上限按 10 页保守设。

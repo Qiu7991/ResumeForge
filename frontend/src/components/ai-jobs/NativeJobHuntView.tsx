@@ -46,6 +46,7 @@ import { usePersistentNumber } from "../../hooks/usePersistentNumber";
 import CollectResultPanel from "../apply/CollectResultPanel";
 import { startBrowser } from "../../api/apply";
 import CollectProgressPanel from "./CollectProgressPanel";
+import HuntFilterForm, { DEFAULT_FILTERS, DEFAULT_KEYWORDS } from "./HuntFilterForm";
 
 const { Text, Title } = Typography;
 
@@ -64,7 +65,11 @@ export default function NativeJobHuntView({ status }: Props) {
   const result = state.lastResult;
 
   const [siteKey, setSiteKey] = useState(status.platforms[0]?.key ?? "boss");
-  const [keywords, setKeywords] = useState("AI");
+  // 多关键词（默认预填 4 个）：单关键词翻到底就那十几条，第二轮开始全是重复。
+  const [keywords, setKeywords] = useState<string[]>(DEFAULT_KEYWORDS);
+  const [filters, setFilters] = useState<Record<string, string[]>>(DEFAULT_FILTERS);
+  // 最新优先（BOSS 的 sortType=2）：不勾的话每次翻到的都是默认排序里的同一批。
+  const [newestFirst, setNewestFirst] = useState(true);
   const [city, setCity] = useState(t("aiJobs.native.defaultCity"));
   const [maxPages, setMaxPages] = useState(1);
   const [selected, setSelected] = useState<number[]>([]);
@@ -127,7 +132,11 @@ export default function NativeJobHuntView({ status }: Props) {
     setQueued(0);
     await collectTask.start({
       site_key: siteKey,
-      keywords,
+      // 单词位留给"只有一个关键词"的兼容场景，多词走 keyword_list。
+      keywords: keywords.length === 1 ? keywords[0] : "",
+      keyword_list: keywords,
+      filters,
+      sort: newestFirst ? "newest" : "default",
       city,
       max_pages: maxPages,
       // 默认都开：采完自动落备选区 + 补 JD + 评分，用户按分数挑——这正是
@@ -224,12 +233,6 @@ export default function NativeJobHuntView({ status }: Props) {
             options={status.platforms.map((platform) => ({ value: platform.key, label: platform.name }))}
           />
           <Input
-            value={keywords}
-            onChange={(e) => setKeywords(e.target.value)}
-            placeholder={t("aiJobs.native.keywords")}
-            style={{ width: 180 }}
-          />
-          <Input
             value={city}
             onChange={(e) => setCity(e.target.value)}
             placeholder={t("aiJobs.native.city")}
@@ -288,6 +291,20 @@ export default function NativeJobHuntView({ status }: Props) {
             </>
           )}
         </Space>
+
+        {/* 多关键词 + 站点筛选 + 最新优先：单独成组，与"平台/城市/页数"分开——
+            前者决定"搜什么"，后者决定"去哪搜、搜多少"。 */}
+        <div style={{ marginTop: 8 }}>
+          <HuntFilterForm
+            keywords={keywords}
+            onKeywordsChange={setKeywords}
+            filters={filters}
+            onFiltersChange={setFilters}
+            newestFirst={newestFirst}
+            onNewestFirstChange={setNewestFirst}
+            unapplied={task?.unapplied_filters ?? []}
+          />
+        </div>
 
         {/* 黑名单折叠：长效配置，不该占首屏。展开后才渲染（省一次接口调用）。 */}
         <div style={{ marginTop: 12 }}>

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Any
 
 
 class JobParseError(Exception):
@@ -40,6 +41,12 @@ class JobStub:
     url: str = ""
     # 发布时间原文（"昨天"、"3 天前" 等）；解析不出就空串。
     posted_at: str = ""
+    # 列表页就能看到的经验/学历标签（"1-3年" "本科"）。BOSS 的 tag-list 里本来就有，
+    # 之前只用来兜底地区、其余丢弃。现在留着做**采集后本地二次筛选**：站点侧筛选
+    # （URL 参数）是主路径，本地这道是兜底——站点改版或参数失效时，至少不会把
+    # "10年经验" 的岗位混进应届生的池子里。
+    experience: str = ""
+    education: str = ""
 
 
 @dataclass
@@ -100,6 +107,21 @@ class JobSiteAdapter(ABC):
         详情页有独立的结构，见 ``detail_ready_selector``。
         """
         return ""
+
+    def fetch_page(self, client: Any, url: str, page: int, *, fetch: Any) -> str:
+        """取一页搜索结果的 HTML。``page`` 从 1 开始。
+
+        默认实现：**每页都导航** ``url`` 再取 outerHTML——这是 ``job_hunt`` 一直以来的
+        行为，所有平台都走这条，改动为零。
+
+        子类可覆写以支持「第 1 页导航、后续滚动加载」的站点（当前只有 BOSS 需要：它
+        **不吃 URL 的 page 参数**，第 2 页起无论 page 写几都返回同一批推荐位——这就是
+        「每轮采到的都是那十几条、过一会全显示重复」的根因）。
+
+        ``fetch`` 是已构造好的抓取器（``cdp_fetcher(client, adapter)``），默认实现直接
+        用它；覆写时通常也先调 ``fetch(url)`` 拿第 1 页。
+        """
+        return fetch(url)
 
     def detail_ready_selector(self) -> str:
         """**详情页**内容就绪判据：等这个 CSS 选择器命中后再取 HTML。

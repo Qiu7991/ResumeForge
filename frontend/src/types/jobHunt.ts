@@ -142,6 +142,14 @@ export interface CollectTaskSnapshot {
   candidate_count?: number;
   /** 与正式岗位/暂存区重复而跳过的条数。 */
   duplicates?: number;
+  /** 用户选了但没能生效的筛选项（快照里认不出的标签），界面要如实显示。 */
+  unapplied_filters?: string[];
+  /** 本地二次筛选（经验/学历标签）挡掉的条数。 */
+  tag_filtered?: number;
+  /** 多关键词进度：当前第几个 / 共几个、当前关键词。 */
+  keyword_index?: number;
+  keyword_total?: number;
+  keyword?: string;
   /** 补 JD 的处理进度：已处理 / 总数（补 JD 限速，界面上要能看到几分之几）。 */
   jd_done?: number;
   jd_total?: number;

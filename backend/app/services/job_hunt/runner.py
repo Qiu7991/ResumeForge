@@ -136,6 +136,7 @@ class JobHuntRunner:
         fetch: Callable[[str], str] | None = None,
         on_progress: Callable[[int, int, int], bool | None] | None = None,
         cursor: HuntCursor | None = None,
+        client: Any = None,
     ) -> HuntReport:
         """跑一次采集。
 
@@ -146,6 +147,10 @@ class JobHuntRunner:
             on_progress: 每页回调 ``(page, new_count, total)``；返回 False 主动停止。
             cursor: 断点游标（J7）。给了就 ``site``/``hash`` 匹配则从 last_page+1 续翻，
                 已见 URL 按重复计；site/hash 不匹配时按从头开始。
+            client: CDP 客户端（可选）。给了就交给 ``adapter.fetch_page()``，让它决定
+                每一页怎么取——BOSS 需要「第 1 页导航、后续滚动加载」，而它**不吃 URL 的
+                page 参数**，逐页导航拿到的永远是同一批（这是"全是重复"的根因）。
+                不传时退回 ``fetch(url)``，与既有行为完全一致（现有测试全走这条）。
 
         Returns:
             ``HuntReport``——翻页/去重/停止的账目 + ``next_cursor``（可存起来下次续）。
@@ -181,7 +186,13 @@ class JobHuntRunner:
         for page in range(start_page, self._max_pages + 1):
             url = self._adapter.build_search_url(query, page)
             try:
-                html = fetch(url)
+                # 有 client 时交给适配器决定取页方式（BOSS 第 2 页起滚动加载）；
+                # 没有时退回「导航 + 取 HTML」，与既有行为一致。
+                html = (
+                    self._adapter.fetch_page(client, url, page, fetch=fetch)
+                    if client is not None
+                    else fetch(url)
+                )
                 page_stubs = self._adapter.parse_list(html)
             except JobParseError as exc:
                 report.errors.append(f"第 {page} 页解析失败：{exc.detail}")

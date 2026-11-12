@@ -149,13 +149,21 @@ function buildCards(
       key: "collect",
       label: t("aiJobs.stage.collect"),
       value: task?.collected !== undefined && task.collected > 0 ? String(task.collected) : null,
+      // 多关键词时优先显示"第几个词"：一趟 4 词 × 3 页要几分钟，
+      // 只看到总数在慢慢涨，不知道跑到哪了。
       caption:
-        collecting && task?.max_pages
-          ? t("aiJobs.stage.collectPaging", {
-              page: task.current_page ?? 0,
-              pages: task.max_pages,
+        collecting && (task?.keyword_total ?? 0) > 1
+          ? t("aiJobs.stage.collectKeyword", {
+              index: task?.keyword_index ?? 1,
+              total: task?.keyword_total ?? 1,
+              keyword: task?.keyword ?? "",
             })
-          : t("aiJobs.stage.collectUnit"),
+          : collecting && task?.max_pages
+            ? t("aiJobs.stage.collectPaging", {
+                page: task.current_page ?? 0,
+                pages: task.max_pages,
+              })
+            : t("aiJobs.stage.collectUnit"),
       state: collectState,
       percent: collectPercent,
     },

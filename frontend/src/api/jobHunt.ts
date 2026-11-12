@@ -111,6 +111,17 @@ export function startCollectTask(payload: {
   auto_score?: boolean;
   /** 用哪份简历评分；不传走设置里的默认简历。 */
   resume_id?: number | null;
+  /**
+   * 多关键词：每个词各自翻到 `max_pages`（与 BossHunter 的笛卡尔积语义一致）。
+   *
+   * 单关键词翻到底就那十几条，第二轮开始全是重复；多个相关词能显著扩大采集面。
+   * 传了它 `keywords` 就被忽略。
+   */
+  keyword_list?: string[];
+  /** 站点筛选：`{分组: [中文标签]}`，如 `{experience: ["应届生"], degree: ["本科"]}`。 */
+  filters?: Record<string, string[]>;
+  /** 最新优先（BOSS 的 `sortType=2`）。不加它每次翻到的都是默认排序里的同一批。 */
+  sort?: "newest" | "default";
 }): Promise<CollectTaskSnapshot> {
   return request<CollectTaskSnapshot>("/job-hunt/collect/task", {
     method: "POST",

@@ -39,10 +39,23 @@ class JobHuntTaskStartIn(BaseModel):
     """启动一次后台采集任务。"""
 
     site_key: str
+    # 向下兼容的单关键词（老前端/老调用方还在用）。
     keywords: str = ""
+    # 多关键词：每个词各自翻到 max_pages（与 BossHunter 的笛卡尔积语义一致）。
+    #
+    # 为什么要多关键词：单关键词翻到底就是那十几条，第二轮开始全是重复。
+    # 多个相关词（AI / AI应用 / 大模型 / Agent）能显著扩大采集面——这是"抓得多"
+    # 的前提之一，另一半是翻页必须真的翻得动（见 sites/boss.py 的 fetch_page）。
+    keyword_list: list[str] = Field(default_factory=list, max_length=20)
     city: str = ""
     max_pages: int = Field(default=1, ge=1, le=10)
     city_code: str = ""
+    # 站点筛选：{分组: [中文标签]}，如 {"experience": ["应届生","1-3年"], "degree": ["本科"]}。
+    # 由 `services/job_hunt/search_filters` 折成编码，编码来自已验证的离线快照。
+    filters: dict[str, list[str]] = Field(default_factory=dict)
+    # 排序：newest = 最新优先（BOSS 的 sortType=2）。**这是消除重复的关键**——
+    # 不加它每次翻到的都是默认排序里的同一批。
+    sort: str = Field(default="newest", pattern="^(newest|default)$")
     # 采集结果是否写进备选岗位暂存区。
     #
     # **默认 True** 是刻意的（2026-11-11）：用户反馈的痛点就是「采完就停」——原来
@@ -91,21 +104,93 @@ def start_collect_task(
 
         session = SessionLocal()
         try:
+            from ..services.job_hunt.search_filters import (
+                filter_stub_by_tags,
+                resolve_search_filters,
+            )
+
             task.status = "running"
             task.message = "开始采集…"
-            extra = {"city_code": req.city_code} if req.city_code else {}
-            criteria = HuntCriteria(keywords=req.keywords, city=req.city, extra=extra)
-            runner = JobHuntRunner(adapter, max_pages=req.max_pages)
-            report = runner.run(
-                criteria,
-                fetch=cdp_fetcher(client, adapter),
-                on_progress=control_hook(task),
-            )
-            kept = [s for s in report.stubs if not is_blocked(s, blocklist)]
-            task.blocked = len(report.stubs) - len(kept)
+
+            # ---- 组装搜索条件（筛选 + 排序 + 多关键词）----
+            extra: dict[str, Any] = {}
+            if req.city_code:
+                extra["city_code"] = req.city_code
+            resolved = resolve_search_filters(req.filters)
+            if resolved.params:
+                extra["filters"] = resolved.params
+            if req.sort == "newest":
+                # 最新优先：不加这个参数，每次翻到的都是默认排序里的同一批。
+                extra["sort"] = "newest"
+            # 如实记下哪些条件没生效（界面要显示），而不是假装筛过了。
+            task.unapplied_filters = list(resolved.unapplied)
+
+            # 多关键词：优先用 keyword_list；为空时回退到单关键词（老调用方）。
+            keyword_list = [k.strip() for k in req.keyword_list if k.strip()]
+            if not keyword_list:
+                keyword_list = [req.keywords.strip() or ""]
+
+            # 每个关键词各自跑一次 run：**独立游标、独立进度、天然串行**。
+            # 不在 runner 里做多词循环——那会改动 `hash_criteria` 的键（keywords 参与
+            # 游标哈希），把已有的断点全部作废。
+            all_stubs: list[Any] = []
+            total_blocked = 0
+            stopped = False
+            last_reason = ""
+            task.keyword_total = len(keyword_list)
+
+            for index, keyword in enumerate(keyword_list, start=1):
+                if task._stop.is_set():
+                    stopped = True
+                    break
+                task.keyword_index = index
+                task.keyword = keyword
+                task.message = (
+                    f"正在采集「{keyword}」（{index}/{len(keyword_list)}）…"
+                )
+                criteria = HuntCriteria(keywords=keyword, city=req.city, extra=dict(extra))
+                runner = JobHuntRunner(adapter, max_pages=req.max_pages)
+                report = runner.run(
+                    criteria,
+                    fetch=cdp_fetcher(client, adapter),
+                    on_progress=control_hook(task),
+                    client=client,
+                )
+                all_stubs.extend(report.stubs)
+                last_reason = report.stopped_reason
+                if report.stopped_reason == "stopped":
+                    stopped = True
+                    break
+
+            kept: list[Any] = []
+            tag_filtered = 0
+            for stub in all_stubs:
+                if is_blocked(stub, blocklist):
+                    total_blocked += 1
+                    continue
+                # 本地二次筛选（经验/学历）：站点侧参数是主路径，这道是兜底——
+                # 实测 BOSS 的筛选不严格，选「应届生」仍会混进「1-3年」。
+                # 标签缺失时放过（宁可多留一条，也不静默少数据）。
+                if not filter_stub_by_tags(stub, req.filters):
+                    tag_filtered += 1
+                    continue
+                kept.append(stub)
+            # 跨关键词去重：同一个岗位可能在多个关键词的结果里出现。
+            deduped: list[Any] = []
+            seen_urls: set[str] = set()
+            for stub in kept:
+                url = (getattr(stub, "url", "") or "").strip().split("#", 1)[0]
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                deduped.append(stub)
+            kept = deduped
+
+            task.blocked = total_blocked
+            task.tag_filtered = tag_filtered
             task.stubs = [asdict(s) for s in kept]
             task.collected = len(kept)
-            task.stopped_reason = report.stopped_reason
+            task.stopped_reason = "stopped" if stopped else last_reason
             task.stage = "collected"
             task.message = (
                 f"采集到 {len(kept)} 条"
@@ -120,7 +205,7 @@ def start_collect_task(
             # 现在改成同样的口径：整个 worker 结束才落终态。
 
             # 用户主动停止：不再做后续两步，直接终态。
-            if report.stopped_reason == "stopped":
+            if stopped:
                 task.status = TASK_STOPPED
                 task.stage = "done"
                 return

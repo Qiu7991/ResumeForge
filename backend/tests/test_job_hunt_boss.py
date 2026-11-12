@@ -41,7 +41,9 @@ def test_supports(adapter):
 
 def test_build_search_url(adapter):
     url = adapter.build_search_url(HuntCriteria(keywords="AI"), page=1)
-    assert url == "https://www.zhipin.com/web/geek/jobs?query=AI"
+    # 路径是 **单数** /web/geek/job：写成 jobs 站点不报错但返回的不是搜索结果，
+    # 那种"看起来成功"的错最难查（见 build_search_url 的 docstring）。
+    assert url == "https://www.zhipin.com/web/geek/job?query=AI"
     # 数字城市码直接当 city 传
     url = adapter.build_search_url(HuntCriteria(keywords="AI", city="101280100"), page=1)
     assert "city=101280100" in url
@@ -50,6 +52,57 @@ def test_build_search_url(adapter):
     assert "cityName=%E5%B9%BF%E5%B7%9E" in url
     # 第 2 页起带 page
     assert "page=2" in adapter.build_search_url(HuntCriteria(keywords="AI"), page=2)
+
+
+def test_build_search_url_matches_reference_shape(adapter):
+    """与 BossHunter 的实测 URL 逐字符一致。
+
+    参考形态（``collection/platforms/boss.py:563-567`` 按真实地址还原）::
+
+        /web/geek/job?query=ai%E5%BA%94%E7%94%A8&city=101280100
+        &jobType=1901&experience=102%2C103%2C104&degree=203&sortType=2&page=2
+
+    四个容易拼错的点都在这一条里：路径单数、参数名 query、多值用 %2C 连接、
+    sortType=2 在 page 之前。
+    """
+    criteria = HuntCriteria(
+        keywords="ai应用",
+        city="101280100",
+        extra={
+            "filters": {"jobType": "1901", "experience": "102,103,104", "degree": "203"},
+            "sort": "newest",
+        },
+    )
+    assert adapter.build_search_url(criteria, page=2) == (
+        "https://www.zhipin.com/web/geek/job?query=ai%E5%BA%94%E7%94%A8&city=101280100"
+        "&jobType=1901&experience=102%2C103%2C104&degree=203&sortType=2&page=2"
+    )
+
+
+def test_sort_only_when_newest(adapter):
+    """默认排序下**完全不出现** sortType 参数，不是 sortType=0。"""
+    plain = adapter.build_search_url(HuntCriteria(keywords="AI"), page=1)
+    assert "sortType" not in plain
+    # 显式 newest 才加
+    newest = adapter.build_search_url(
+        HuntCriteria(keywords="AI", extra={"sort": "newest"}), page=1
+    )
+    assert newest.endswith("&sortType=2")
+
+
+def test_filter_order_is_fixed(adapter):
+    """筛选参数按固定顺序拼（便于逐字符比对与排查）。
+
+    站点对顺序不敏感，但顺序固定 = URL 可断言；乱序时这条测试会红，而不是靠人肉看。
+    """
+    criteria = HuntCriteria(
+        keywords="AI",
+        city="101280100",
+        extra={"filters": {"salary": "405", "degree": "203", "jobType": "1901"}},
+    )
+    url = adapter.build_search_url(criteria, page=1)
+    # jobType 在 degree 前、degree 在 salary 前（_FILTER_PARAM_ORDER 的顺序）
+    assert url.index("jobType=") < url.index("degree=") < url.index("salary=")
 
 
 # ---------- 列表解析 ----------
