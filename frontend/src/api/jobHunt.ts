@@ -122,6 +122,14 @@ export function startCollectTask(payload: {
   filters?: Record<string, string[]>;
   /** 最新优先（BOSS 的 `sortType=2`）。不加它每次翻到的都是默认排序里的同一批。 */
   sort?: "newest" | "default";
+  /**
+   * 薪资区间（单位 K），0 = 该边界不限。
+   *
+   * BOSS 只有 6 个固定档位、没有自定义区间参数，所以后端走两步：站点侧先拉覆盖
+   * 这个区间的档位并集（宁可多拉），采回来再本地精筛到区间。
+   */
+  salary_min_k?: number;
+  salary_max_k?: number;
 }): Promise<CollectTaskSnapshot> {
   return request<CollectTaskSnapshot>("/job-hunt/collect/task", {
     method: "POST",

@@ -21,7 +21,7 @@
  * 现在：**每个控件前有固定宽度的文字标签**，筛选按 2 列网格排，块与块之间用分隔线断开。
  * 这套对齐投递台已有的做法（`CollectSiteFilters` + `CollectConfigForm`），全站一致。
  */
-import { Checkbox, Select, Tooltip, Typography } from "antd";
+import { Checkbox, InputNumber, Select, Tooltip, Typography } from "antd";
 
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
@@ -117,6 +117,10 @@ interface Props {
   onFiltersChange: (next: Record<string, string[]>) => void;
   newestFirst: boolean;
   onNewestFirstChange: (next: boolean) => void;
+  /** 薪资区间（K）；0 = 该边界不限。 */
+  salaryMinK: number;
+  salaryMaxK: number;
+  onSalaryRangeChange: (min: number, max: number) => void;
   /** 未生效的筛选项（后端回报），界面要如实显示。 */
   unapplied?: string[];
 }
@@ -144,6 +148,9 @@ export default function HuntFilterForm({
   onFiltersChange,
   newestFirst,
   onNewestFirstChange,
+  salaryMinK,
+  salaryMaxK,
+  onSalaryRangeChange,
   unapplied = [],
 }: Props) {
   // 模块级 t()：必须订阅语言变化，否则切语言后这一块不重渲染。
@@ -178,7 +185,39 @@ export default function HuntFilterForm({
 
       {/* 筛选按 2 列网格排：左边缘对齐成一条竖线，那正是"看着整齐"的来源。 */}
       <div className="hunt-filter-grid">
-        {(Object.keys(GROUP_LABEL_KEYS) as FilterGroupKey[]).map((group) => (
+        {/* 薪资**不用下拉档位**：BOSS 只有 6 个粗档（3-5K / 5-10K / ...），
+            而用户要的是「8-12K」这种精确区间。双输入 + 站点档位并集 + 本地精筛
+            才能同时满足"站内筛"和"精确"。 */}
+        <Field label={t("aiJobs.hunt.filter.salary")}>
+          <div className="hunt-salary-range">
+            <InputNumber
+              value={salaryMinK || null}
+              onChange={(value) => onSalaryRangeChange(value ?? 0, salaryMaxK)}
+              min={0}
+              max={500}
+              step={1}
+              placeholder={t("aiJobs.hunt.salaryMin")}
+              aria-label={t("aiJobs.hunt.salaryMin")}
+              style={{ width: "100%" }}
+            />
+            <span className="hunt-salary-dash">–</span>
+            <InputNumber
+              value={salaryMaxK || null}
+              onChange={(value) => onSalaryRangeChange(salaryMinK, value ?? 0)}
+              min={0}
+              max={500}
+              step={1}
+              placeholder={t("aiJobs.hunt.salaryMax")}
+              aria-label={t("aiJobs.hunt.salaryMax")}
+              style={{ width: "100%" }}
+            />
+            <span className="hunt-salary-unit">{t("aiJobs.hunt.salaryUnit")}</span>
+          </div>
+        </Field>
+
+        {(Object.keys(GROUP_LABEL_KEYS) as FilterGroupKey[])
+          .filter((group) => group !== "salary")
+          .map((group) => (
           <Field key={group} label={t(GROUP_LABEL_KEYS[group])}>
             <Select
               mode="multiple"

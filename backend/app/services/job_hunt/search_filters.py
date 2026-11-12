@@ -112,6 +112,76 @@ def resolve_search_filters(
     return result
 
 
+# BOSS 的薪资档位边界（单位 K）。**档位是站点的枚举，不能自有增减**——
+# 我们做的是"把用户填的任意区间映射成覆盖它的档位并集，再在本地精筛到区间"。
+_SALARY_TIERS: tuple[tuple[str, float, float], ...] = (
+    ("402", 0.0, 3.0),
+    ("403", 3.0, 5.0),
+    ("404", 5.0, 10.0),
+    ("405", 10.0, 20.0),
+    ("406", 20.0, 50.0),
+    ("407", 50.0, float("inf")),
+)
+
+
+def salary_passes(
+    job_salary: str, min_k: float, max_k: float, *, ceil_ratio: float = 1.5
+) -> bool:
+    """岗位薪资是否通过用户填的期望区间（采集后本地精筛）。
+
+    规则对齐 BossHunter 的 `ai/prefilter.py:49-73`（同一套判断，已验证）：
+
+    1. **够不着**：岗位薪资上限 < 期望下限 → 拦；
+    2. **好高骛远**：岗位薪资下限 > 期望上限 × ceil_ratio → 拦。1.5 是"值得一试"的
+       余量——岗位开 20K 而你想要 15K，仍可能谈到 15K；开到 30K 就基本不是同一个层级了；
+    3. **面议/解析不出**：**放过**（BossHunter 默认拦，但那是"海投自动投递"的取舍；
+       我们这里是收集候选给人挑，多留一条面议岗位比误杀更划算）。
+
+    用户没填区间（两项都 ≤ 0）→ 不筛。
+    """
+    if min_k <= 0 and max_k <= 0:
+        return True
+
+    from .scoring import _parse_salary_range
+
+    parsed = _parse_salary_range(job_salary)
+    if parsed is None:
+        # 面议 / 解析不出：放过。见上面第 3 条。
+        return True
+    job_low, job_high = parsed
+    if job_high < job_low:
+        job_low, job_high = job_high, job_low
+
+    # 够不着 / 好高骛远任一命中就拦。
+    if min_k > 0 and job_high < min_k:
+        return False
+    return not (max_k > 0 and job_low > max_k * max(ceil_ratio, 1.0))
+
+
+def salary_tiers_for_range(min_k: float, max_k: float) -> str:
+    """把任意薪资区间映射成**覆盖它**的 BOSS 档位并集（逗号分隔的编码）。
+
+    为什么要这么做：BOSS 的薪资筛选只有 6 个固定档（3K以下 / 3-5K / 5-10K /
+    10-20K / 20-50K / 50K以上），**没有自定义区间参数**。用户填 8-12K 时，
+    站点侧只能先拉「5-10K + 10-20K」这两档（∪ 覆盖 8-12K），
+    再由本地精筛砍到真正的 8-12K。
+
+    **宁可多拉不可漏拉**：档位取并集而不是交集，漏掉一档就永远看不到那批岗位，
+    而多拉的那部分本地会筛掉。
+    """
+    if min_k <= 0 and max_k <= 0:
+        return ""
+    lo = min_k if min_k > 0 else 0.0
+    hi = max_k if max_k > 0 else float("inf")
+    codes = [
+        code
+        for code, tier_lo, tier_hi in _SALARY_TIERS
+        # 区间有交集就纳入（含端点：8-12K 与 5-10K 在 8-10 上相交）。
+        if tier_lo <= hi and tier_hi >= lo
+    ]
+    return ",".join(codes)
+
+
 def filter_options(group_key: str) -> tuple[tuple[str, str], ...]:
     """某一组的 ``(编码, 标签)`` 清单，供前端渲染下拉（去掉「不限」那一项）。"""
     snapshot_key = GROUP_TO_SNAPSHOT_KEY.get(group_key)

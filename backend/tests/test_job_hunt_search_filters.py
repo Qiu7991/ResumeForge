@@ -83,3 +83,71 @@ def test_local_filter_keeps_education_unlimited_jobs():
     job = SimpleNamespace(experience="", education="学历不限")
 
     assert filter_stub_by_tags(job, {"degree": ["本科"]}) is True
+
+
+# ---------------------------------------------------------------------------
+# 薪资区间（BOSS 没有自定义区间参数，靠"档位并集 + 本地精筛"两步）
+# ---------------------------------------------------------------------------
+
+
+def test_salary_range_maps_to_covering_tiers():
+    """8-12K 要拉覆盖它的档位并集：5-10K(404) + 10-20K(405)。
+
+    **宁可多拉不可漏拉**：取交集就永远看不到 8-12K 里属于 5-10K 的那部分。
+    """
+    from app.services.job_hunt.search_filters import salary_tiers_for_range
+
+    assert salary_tiers_for_range(8, 12) == "404,405"
+
+
+def test_salary_range_empty_when_unset():
+    from app.services.job_hunt.search_filters import salary_tiers_for_range
+
+    assert salary_tiers_for_range(0, 0) == ""
+
+
+def test_salary_passes_rejects_too_low():
+    """够不着就拦：岗位上限低于期望下限。规则对齐 BossHunter prefilter。"""
+    from app.services.job_hunt.search_filters import salary_passes
+
+    assert salary_passes("3-5K", 8, 12) is False
+
+
+def test_salary_passes_allows_overlap():
+    """有交集就放过：8-12K 与 12-24K 在 12 上接上。"""
+    from app.services.job_hunt.search_filters import salary_passes
+
+    assert salary_passes("8-12K", 8, 12) is True
+    assert salary_passes("12-24K·14薪", 8, 12) is True
+
+
+def test_salary_passes_rejects_far_above_with_ceiling():
+    """好高骛远也拦：岗位下限超过期望上限 × 1.5。
+
+    1.5 是"值得一试"的余量——开 20K 而想要 12K 仍可能谈到，开 60K 就不是同一层级。
+    """
+    from app.services.job_hunt.search_filters import salary_passes
+
+    # 12 × 1.5 = 18；下限 20 > 18 → 拦
+    assert salary_passes("20-30K", 8, 12) is False
+    # 下限 15 < 18 → 放过
+    assert salary_passes("15-25K", 8, 12) is True
+
+
+def test_salary_passes_allows_negotiable():
+    """面议 / 解析不出 → 放过。
+
+    BossHunter 默认拦（它是海投自动投递）；我们这里是收集候选给人挑，
+    多留一条面议岗位比误杀更划算。
+    """
+    from app.services.job_hunt.search_filters import salary_passes
+
+    assert salary_passes("面议", 8, 12) is True
+    assert salary_passes("", 8, 12) is True
+
+
+def test_salary_passes_no_range_means_no_filter():
+    """用户没填区间就不筛。"""
+    from app.services.job_hunt.search_filters import salary_passes
+
+    assert salary_passes("3-5K", 0, 0) is True

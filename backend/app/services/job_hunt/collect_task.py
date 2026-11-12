@@ -81,6 +81,8 @@ class CollectTask:
     # 本地二次筛选挡掉的条数（经验/学历标签不符）。与黑名单挡掉的数分开记：
     # 「被黑名单挡掉」是用户自己设的，「被筛选条件挡掉」是条件不匹配，两者含义不同。
     tag_filtered: int = 0
+    # 本地薪资精筛挡掉的条数（站点只按档位粗筛，这里精筛到用户填的区间）。
+    salary_filtered: int = 0
     # 补 JD 的处理进度：已处理 / 总数。补 JD 是限速的（每条 1.5s），15 条要 20 多秒，
     # 没有这两个数界面只能干等——看不出是在跑还是卡住了。
     jd_done: int = 0
@@ -120,6 +122,7 @@ class CollectTask:
             "duplicates": self.duplicates,
             "unapplied_filters": list(self.unapplied_filters),
             "tag_filtered": self.tag_filtered,
+            "salary_filtered": self.salary_filtered,
             "keyword_index": self.keyword_index,
             "keyword_total": self.keyword_total,
             "keyword": self.keyword,

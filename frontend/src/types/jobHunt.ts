@@ -146,6 +146,8 @@ export interface CollectTaskSnapshot {
   unapplied_filters?: string[];
   /** 本地二次筛选（经验/学历标签）挡掉的条数。 */
   tag_filtered?: number;
+  /** 本地薪资精筛挡掉的条数（站点只按档位粗筛）。 */
+  salary_filtered?: number;
   /** 多关键词进度：当前第几个 / 共几个、当前关键词。 */
   keyword_index?: number;
   keyword_total?: number;

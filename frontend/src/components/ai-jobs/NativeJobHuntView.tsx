@@ -70,6 +70,10 @@ export default function NativeJobHuntView({ status }: Props) {
   const [filters, setFilters] = useState<Record<string, string[]>>(DEFAULT_FILTERS);
   // 最新优先（BOSS 的 sortType=2）：不勾的话每次翻到的都是默认排序里的同一批。
   const [newestFirst, setNewestFirst] = useState(true);
+  // 薪资区间（K）；0 = 不限。BOSS 没有自定义区间参数，后端会先拉覆盖区间的档位并集、
+  // 采回来再本地精筛到这个区间。
+  const [salaryMinK, setSalaryMinK] = useState(0);
+  const [salaryMaxK, setSalaryMaxK] = useState(0);
   const [city, setCity] = useState(t("aiJobs.native.defaultCity"));
   const [maxPages, setMaxPages] = useState(1);
   const [selected, setSelected] = useState<number[]>([]);
@@ -137,6 +141,8 @@ export default function NativeJobHuntView({ status }: Props) {
       keyword_list: keywords,
       filters,
       sort: newestFirst ? "newest" : "default",
+      salary_min_k: salaryMinK,
+      salary_max_k: salaryMaxK,
       city,
       max_pages: maxPages,
       // 默认都开：采完自动落备选区 + 补 JD + 评分，用户按分数挑——这正是
@@ -241,6 +247,12 @@ export default function NativeJobHuntView({ status }: Props) {
             onFiltersChange={setFilters}
             newestFirst={newestFirst}
             onNewestFirstChange={setNewestFirst}
+            salaryMinK={salaryMinK}
+            salaryMaxK={salaryMaxK}
+            onSalaryRangeChange={(min, max) => {
+              setSalaryMinK(min);
+              setSalaryMaxK(max);
+            }}
             unapplied={task?.unapplied_filters ?? []}
           />
         </div>

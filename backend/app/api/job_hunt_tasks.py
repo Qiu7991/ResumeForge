@@ -56,6 +56,14 @@ class JobHuntTaskStartIn(BaseModel):
     # 排序：newest = 最新优先（BOSS 的 sortType=2）。**这是消除重复的关键**——
     # 不加它每次翻到的都是默认排序里的同一批。
     sort: str = Field(default="newest", pattern="^(newest|default)$")
+    # 薪资区间（单位 K）。0 = 该边界不限。
+    #
+    # **为什么不用站点档位**：BOSS 只有 6 个固定档（3K以下/3-5K/5-10K/10-20K/
+    # 20-50K/50K以上），没有自定义区间参数。用户要的是「8-12K」这种精确区间，
+    # 所以走两步：站点侧先拉覆盖它的档位并集（宁可多拉），采回来再本地精筛到区间。
+    # 本地判断规则对齐 BossHunter 的 prefilter（够不着就拦、好高骛远也拦）。
+    salary_min_k: float = Field(default=0, ge=0, le=500)
+    salary_max_k: float = Field(default=0, ge=0, le=500)
     # 采集结果是否写进备选岗位暂存区。
     #
     # **默认 True** 是刻意的（2026-11-11）：用户反馈的痛点就是「采完就停」——原来
@@ -107,6 +115,8 @@ def start_collect_task(
             from ..services.job_hunt.search_filters import (
                 filter_stub_by_tags,
                 resolve_search_filters,
+                salary_passes,
+                salary_tiers_for_range,
             )
 
             task.status = "running"
@@ -117,8 +127,16 @@ def start_collect_task(
             if req.city_code:
                 extra["city_code"] = req.city_code
             resolved = resolve_search_filters(req.filters)
-            if resolved.params:
-                extra["filters"] = resolved.params
+            filter_params = dict(resolved.params)
+            # 薪资：用户填了区间就覆盖档位（区间更精确），否则保留他选的档。
+            if req.salary_min_k > 0 or req.salary_max_k > 0:
+                tiers = salary_tiers_for_range(req.salary_min_k, req.salary_max_k)
+                if tiers:
+                    filter_params["salary"] = tiers
+                else:
+                    filter_params.pop("salary", None)
+            if filter_params:
+                extra["filters"] = filter_params
             if req.sort == "newest":
                 # 最新优先：不加这个参数，每次翻到的都是默认排序里的同一批。
                 extra["sort"] = "newest"
@@ -164,6 +182,7 @@ def start_collect_task(
 
             kept: list[Any] = []
             tag_filtered = 0
+            salary_filtered = 0
             for stub in all_stubs:
                 if is_blocked(stub, blocklist):
                     total_blocked += 1
@@ -173,6 +192,14 @@ def start_collect_task(
                 # 标签缺失时放过（宁可多留一条，也不静默少数据）。
                 if not filter_stub_by_tags(stub, req.filters):
                     tag_filtered += 1
+                    continue
+                # 薪资：站点只按档位粗筛，这里精筛到用户填的区间。
+                if not salary_passes(
+                    getattr(stub, "salary_decoded", "") or getattr(stub, "salary_raw", ""),
+                    req.salary_min_k,
+                    req.salary_max_k,
+                ):
+                    salary_filtered += 1
                     continue
                 kept.append(stub)
             # 跨关键词去重：同一个岗位可能在多个关键词的结果里出现。
@@ -188,6 +215,7 @@ def start_collect_task(
 
             task.blocked = total_blocked
             task.tag_filtered = tag_filtered
+            task.salary_filtered = salary_filtered
             task.stubs = [asdict(s) for s in kept]
             task.collected = len(kept)
             task.stopped_reason = "stopped" if stopped else last_reason

@@ -257,3 +257,25 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---- 薪资区间输入：两个数字框 + 连字符 + 单位 ----
+ *
+ * 为什么不用下拉：BOSS 的薪资筛选只有 6 个粗档（3-5K / 5-10K / 10-20K …），
+ * 而用户要的是「8-12K」这种精确区间。双输入让区间随手可填。
+ */
+.hunt-salary-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hunt-salary-dash {
+  color: var(--rf-text-secondary, rgba(0, 0, 0, 0.45));
+  flex: 0 0 auto;
+}
+
+.hunt-salary-unit {
+  color: var(--rf-text-secondary, rgba(0, 0, 0, 0.45));
+  font-size: 12px;
+  flex: 0 0 auto;
+}
