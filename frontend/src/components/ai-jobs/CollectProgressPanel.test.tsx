@@ -111,6 +111,21 @@ describe("CollectProgressPanel 状态判定", () => {
     expect(screen.queryByText(t("aiJobs.stage.fillJdNotNeeded"))).not.toBeInTheDocument();
   });
 
+  it("采集已结束但评分还在跑：不能显示「已完成」", () => {
+    // 这是用户截图里那个：采集卡绿了、进度条 100%、标签「已完成」，
+    // 但补 JD 显示 0/1、评分还没开始。矛盾的信息让人以为卡住了。
+    //
+    // 根因是后端在采集刚结束就设了 completed（补 JD/评分之前），而前端拿 finished
+    // 当"全部完成"。现在两者分开：finished = 采集线程结束，评分看 scoreTask。
+    renderPanel({
+      task: task({ candidate_count: 1, duplicates: 17, jd_done: 1, jd_total: 1, jd_filled: 0 }),
+      scoreTask: { running: true, status: "running", requested: 1, completed: 0, failed: 0 },
+    });
+
+    expect(screen.getByText(t("aiJobs.progress.badge.scoring"))).toBeInTheDocument();
+    expect(screen.queryByText(t("aiJobs.progress.badge.done"))).not.toBeInTheDocument();
+  });
+
   it("采集失败时状态标签是失败", () => {
     renderPanel({
       task: task({ status: "failed", finished: true, error: "browser_required: 请先启动浏览器" }),

@@ -107,12 +107,23 @@ def start_collect_task(
             task.collected = len(kept)
             task.stopped_reason = report.stopped_reason
             task.stage = "collected"
-            # runner 在用户主动停止时给出 "stopped"（见 runner.run 的 on_progress 分支）。
-            task.status = TASK_STOPPED if report.stopped_reason == "stopped" else TASK_COMPLETED
             task.message = (
-                f"完成：{len(kept)} 条"
+                f"采集到 {len(kept)} 条"
                 + (f"（黑名单挡掉 {task.blocked} 条）" if task.blocked else "")
             )
+            # **这里不设终态**（2026-11-12 修正）：采集只是第一步，后面还有落库、补 JD、
+            # 评分。以前在这里就把 status 设成 completed，于是 `finished` 立刻为真——
+            # 界面据此判"全部完成"、进度条冲到 100%，而补 JD 明明还在跑（截图里
+            # "0/1 成功 0" 与 "已完成" 同时出现就是这个原因）。
+            #
+            # 与 BossHunter 的差距也在这里：它的采集/评分是**一条串行管道，末端才终态**。
+            # 现在改成同样的口径：整个 worker 结束才落终态。
+
+            # 用户主动停止：不再做后续两步，直接终态。
+            if report.stopped_reason == "stopped":
+                task.status = TASK_STOPPED
+                task.stage = "done"
+                return
 
             # ---- 落暂存区（方案 3 的核心：采集结果不再只活在内存里）----
             if req.persist and kept:
@@ -140,6 +151,15 @@ def start_collect_task(
                     # 判成"写入待导入进行中"，于是永远转着蓝圈、总进度卡在 25%。
                     # 实测就是这个：采 12 条全重复，界面看着像卡住，实际早跑完了。
                     task.stage = "done"
+
+            # 全部步骤做完，这才算完成。**必须放在最后**：这里的 status 是界面判断
+            # "还要不要等"的唯一依据。
+            task.status = TASK_COMPLETED
+            task.stage = "done"
+            task.message = (
+                f"完成：{len(kept)} 条"
+                + (f"（黑名单挡掉 {task.blocked} 条）" if task.blocked else "")
+            )
         except Exception as exc:  # noqa: BLE001
             # 用户已点停止时，抓取层抛的异常是"停止的副作用"，不是真失败：
             # 此时应如实标 stopped（并保留已采到的部分），不要吓用户。

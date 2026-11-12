@@ -77,8 +77,8 @@ function buildCards(
   // （candidate_ids 为空、没有补 JD 与评分）时，stage 永远停在 "staged"，
   // 卡片永远转蓝圈、总进度卡 25%。用户看到的就是「莫名其妙，到底卡住了没有」。
   //
-  // 现在改成看 **task.finished**：采集线程结束了，前两步必然已经结束，
-  // 唯一可能还在跑的是评分（另一个任务，看 scoreTask）。
+  // 现在改成看 **task.finished**：采集线程结束了，前两步必然已经结束。
+  //
   const collectFinished = Boolean(task?.finished) && !collecting;
 
   const staged = task?.candidate_count ?? 0;
@@ -128,6 +128,8 @@ function buildCards(
   // ---- 4. AI 评分 ----
   // 同上：采集线程结束且没有可评的候选（全重复）= 这一步已经"走完"，
   // 不是"还没开始"。否则底部会一直显示"待运行"而用户明明什么都没在跑。
+  // 评分卡的三态顺序很重要：**scoreRunning 优先于一切**（除了 failed）。
+  // 上一版把 collectFinished ? done 放在后面，导致评分刚起跑时卡片就绿了。
   const scoreState: CardState = scoreFailed
     ? "failed"
     : scoreRunning
@@ -216,6 +218,12 @@ export default function CollectProgressPanel({
   const failed = task?.status === "failed" || Boolean(task?.error);
   const cards = buildCards(task, scoreTask, collecting);
 
+  // 整体是否真的结束 = 采集线程结束 **且** 评分任务不在跑。
+  // 采集结束不等于全部结束：评分是另一个后台任务（CandidateScoreTask），
+  // 采集刚交接到评分时，采集任务已经是 completed 而分数还没出。
+  const allFinished =
+    Boolean(task?.finished) && !collecting && !Boolean(scoreTask?.running);
+
   // 采集失败且是"浏览器没启动"时直接给补救按钮——这是最常见的失败原因。
   // 判据是后端返回的**协议值前缀** `browser_required`，不是中文文案匹配：
   // 靠文案匹配时后端改一次措辞，这个按钮就静默消失，用户又回到"转一下没反应"。
@@ -242,9 +250,11 @@ export default function CollectProgressPanel({
     return Math.round(sum / counted.length);
   })();
 
-  // 全部完成 = 每张卡都 done。用它决定底部的状态标签，**不用百分比**：
-  // 百分比可能因为四舍五入显示 100 而其实还差一步。
-  const allDone = cards.every((card) => card.state === "done" || card.state === "failed");
+  // 全部完成 = 采集线程结束 **且** 评分任务不在跑，且每张卡都到终态。
+  // 光看卡片不够：评分卡在 scoreRunning 时是 running，但如果后端刚交接、scoreTask
+  // 还没到手，卡片会短暂显示 idle——那时也不能说"完成"。
+  const allDone =
+    allFinished && cards.every((card) => card.state === "done" || card.state === "failed");
 
   return (
     <div style={{ marginTop: 12 }}>
