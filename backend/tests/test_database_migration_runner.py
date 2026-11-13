@@ -128,3 +128,31 @@ def test_migration_runner_repairs_schema_when_revision_says_head(tmp_path):
         _assert_head_schema(engine)
     finally:
         engine.dispose()
+
+
+def test_repair_schema_off_leaves_structure_alone(tmp_path):
+    """`repair_schema=False` 时不得自愈：备份导入路径靠它把"被改过的包"交给上层拒收。
+
+    两条路径的语义截然不同，必须钉住：
+    - 启动：库是本机真实数据，版本号说谎就补结构（默认 `repair_schema=True`）；
+    - 备份导入：库是别人给的包解出来的副本，版本号与结构不符 = 包被改过，
+      **拒收**才是正确行为。自愈会把篡改抹平——那正是整包校验要防的事。
+    """
+    engine = _empty_engine(tmp_path, "runner-no-repair.db")
+    try:
+        assert run_database_migrations(engine) is None
+        with engine.begin() as connection:
+            connection.exec_driver_sql("ALTER TABLE job DROP COLUMN favorited_at")
+
+        # 关掉自愈：什么都不做，缺失原样保留（上层据此拒收）。
+        assert run_database_migrations(engine, repair_schema=False) is None
+        from app.database_migrations import _missing_schema_objects
+
+        still_missing = _missing_schema_objects(engine)
+        assert "job.favorited_at" in still_missing, "repair_schema=False 时不该补结构"
+
+        # 再开着自愈跑一次：应当补齐（证明开关真的只是开关，不是坏了）。
+        assert run_database_migrations(engine) is None
+        _assert_head_schema(engine)
+    finally:
+        engine.dispose()

@@ -215,7 +215,9 @@ def backup_sqlite_database(bind: Engine, output_dir: Path | None = None) -> Path
     logger.info("SQLite 备份已创建 path=%s", destination)
     return destination
 
-def run_database_migrations(bind: Engine, *, backup: bool = True) -> Path | None:
+def run_database_migrations(
+    bind: Engine, *, backup: bool = True, repair_schema: bool = True
+) -> Path | None:
     """把当前库升级到 Alembic head；迁移前如有用户数据先做一次 SQLite 快照。
 
     职责只有两件：迁移前快照 + ``upgrade head``。它不判定库的版本、不归档 pre-2.0
@@ -228,6 +230,14 @@ def run_database_migrations(bind: Engine, *, backup: bool = True) -> Path | None
     and migrates it only to see whether the archive is importable. Backing that
     up would drop a full copy of the user's database into a staging directory
     that nothing ever prunes.
+
+    ``repair_schema`` 决定"版本号已是 head 但结构缺失"时**自愈还是放手**：
+
+    - 启动路径（`application.py` / 数据集切换）传默认 True：库是本机的真实数据，
+      版本号说谎（如迁移重编号导致 revision 恰好同名）时补结构才是用户想要的。
+    - 备份导入路径（`data_backup.import_archive`）**必须传 False**：那里的库是
+      别人给的压缩包解出来的副本，版本号与结构不符意味着**包被改过**，拒收才是
+      正确行为。自愈会把"被篡改"静默抹平——那正是整包校验要防的事。
     """
     config = build_alembic_config(bind)
     scripts = ScriptDirectory.from_config(config)
@@ -245,6 +255,10 @@ def run_database_migrations(bind: Engine, *, backup: bool = True) -> Path | None
         # 自检只读，不写库。
         missing_schema = _missing_schema_objects(bind)
         if not missing_schema:
+            return None
+        if not repair_schema:
+            # 备份导入路径：结构不符 = 包被改过，交给上层拒收（它会比对表清单并报
+            # 「缺少数据表」）。这里不能修，修了等于替被篡改的包盖章。
             return None
         logger.warning(
             "版本号已是 head（%s）但结构与代码不符，重放迁移补齐：缺 %d 项，例如 %s",

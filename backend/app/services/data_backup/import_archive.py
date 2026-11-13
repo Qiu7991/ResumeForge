@@ -305,7 +305,9 @@ def _upgrade_candidate(database: Path) -> None:
 
     engine = build_engine(database_url_for(database))
     try:
-        run_database_migrations(engine, backup=False)
+        # repair_schema=False：这是别人给的包解出来的副本，版本号与结构不符 = 包被改过，
+        # 必须让下面的表清单校验拒收，不能在这里自愈（见 run_database_migrations docstring）。
+        run_database_migrations(engine, backup=False, repair_schema=False)
     finally:
         engine.dispose()
 
