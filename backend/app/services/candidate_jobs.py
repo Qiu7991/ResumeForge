@@ -19,6 +19,7 @@ from ..models.material import (
     CandidateJob,
 )
 from ..schemas.job import RECOGNITION_SOURCE_OFFICIAL, JobCreate
+from .candidate_origin import is_collected_candidate
 from ..schemas.material import CandidateJobCreate, CandidateJobUpdate
 from .job.job_service import create_job_record, find_by_job_identity, find_job_by_identity
 from .job_hunt.candidate_scoring import migrate_candidate_score
@@ -32,10 +33,9 @@ logger = logging.getLogger(__name__)
 MAX_CANDIDATE_LIST = 300
 
 # 导入正式岗位时写进 ``Job.recognition_source`` 的来源：采集来的与手动粘贴的分开标注，
-# 用户日后回溯"这条是怎么进来的"才有意义。判据是**有没有采集批次**，而不是猜标题。
+# 用户日后回溯"这条是怎么进来的"才有意义。
 RECOGNITION_SOURCE_COLLECT = "岗位采集"
 RECOGNITION_SOURCE_MANUAL = "备选岗位导入"
-
 
 def _filtered_query(
     db: Session,
@@ -374,7 +374,9 @@ def import_candidates(db: Session, candidate_ids: list[int]) -> dict:
                 status=JOB_STATUS_OPEN,
                 recognition_source=(
                     RECOGNITION_SOURCE_COLLECT
-                    if candidate.collect_task_id or candidate.source == RECOGNITION_SOURCE_OFFICIAL
+                    if candidate.collect_task_id
+                    or candidate.source == RECOGNITION_SOURCE_OFFICIAL
+                    or is_collected_candidate(candidate.source)
                     else RECOGNITION_SOURCE_MANUAL
                 ),
             ),

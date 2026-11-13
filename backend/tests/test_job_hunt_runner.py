@@ -8,7 +8,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.job_hunt.base import HuntCriteria, JobParseError, JobSiteAdapter, JobStub
+from app.services.job_hunt.base import (
+    HuntCriteria,
+    JobDetail,
+    JobParseError,
+    JobSiteAdapter,
+    JobStub,
+)
 from app.services.job_hunt.runner import JobHuntRunner, cdp_fetcher, criteria_from
 
 

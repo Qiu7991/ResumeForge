@@ -35,7 +35,7 @@ from ..services.candidate_jobs import (
     list_candidate_job_ids,
     list_candidate_jobs_page,
 )
-from ..services.candidate_jobs_read import candidates_by_ids
+from ..services.candidate_jobs_read import candidates_by_ids, with_queue_flags
 from ..services.csv_io import MAX_IMPORT_FILE_CHARS
 
 logger = logging.getLogger(__name__)
@@ -93,7 +93,10 @@ def read_candidate_jobs_page(
         page_size=page_size,
         sort=sort,
     )
-    return Page(items=items, total=total)
+    # 与 `GET /api/candidate-jobs`（动作层）走**同一个注水函数**：那个端点用
+    # `with_queue_flags` 补 `in_apply_queue` / `collected_at`，这里若直接返回裸模型，
+    # 同一个界面换成分页端点就会整列变成「未入队 / 手动添加」——两套出口必须同口径。
+    return Page(items=with_queue_flags(db, items), total=total)
 
 
 add_action_route(router, all_actions()["create_candidate_job"], route_path="")

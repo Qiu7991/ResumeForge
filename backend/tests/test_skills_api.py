@@ -7,7 +7,6 @@ from urllib.parse import quote
 from app import database
 from app.api import skills as skills_api
 from app.services.data_backup import restore_directory
-from app.services.assistant.builtin_skills import SKILLS_DIR
 
 import pytest
 

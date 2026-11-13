@@ -2,7 +2,6 @@
 """备选岗位批量评分任务：缺 JD 不中断整批、环境错误才收尾、单条失败继续。"""
 from __future__ import annotations
 
-import pytest
 
 from app.models.material import CANDIDATE_JOB_PENDING, CandidateJob
 from app.services.job_hunt import candidate_score_task as task_mod

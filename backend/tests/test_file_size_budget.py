@@ -277,9 +277,8 @@ _EXEMPTIONS: dict[str, Exemption] = {
     "backend/app/services/interview/interview.py": Exemption(
         "合并后 505 行：上游已到 499，二开加教练参考答案落库", _FORK_BACKSTOP
     ),
-    "frontend/src/components/ai-jobs/NativeJobHuntView.tsx": Exemption(
-        "采集工作台一屏的编排（筛选+进度+候选表+动作），拆开会让一条交互跨两文件", _FORK_BACKSTOP
-    ),
+    # NativeJobHuntView.tsx 的豁免已删除（2026-11-13）：把「数据源与动作」那一区
+    # 抽成 HuntSourceRow 之后降到 463 行，原条目成了幽灵豁免。
     "frontend/src/features/apply/ApplyQueuePanel.tsx": Exemption(
         "合并后 533 行：上游已到 481，二开加准入提示与投递结果列", _FORK_BACKSTOP
     ),

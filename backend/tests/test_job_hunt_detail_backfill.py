@@ -2,7 +2,6 @@
 """JD 补抓测试：只补空 JD、限速、单条失败不中断、详情页薪资覆盖列表页。"""
 from __future__ import annotations
 
-import pytest
 
 from app.models.job import JOB_STATUS_OPEN, Job
 from app.services.job_hunt.base import JobParseError, JobDetail

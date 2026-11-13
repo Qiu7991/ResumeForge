@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from ..models.material import CandidateJob
 from ..schemas.material import CandidateJobOut
 from .apply._queue import queued_job_ids
+from .candidate_origin import is_collected_candidate
 from .trash import live_only
 
 
@@ -59,7 +60,16 @@ def with_queue_flags(db: Session, rows: list[CandidateJob]) -> list[CandidateJob
                         row.imported_job_id and int(row.imported_job_id) in queued
                     ),
                     # 采集来的候选才有「采集时间」；手动粘贴的留空（界面显示为"手动添加"）。
-                    "collected_at": row.created_at if row.collect_task_id else None,
+                    #
+                    # **判据不能只看 ``collect_task_id``**：那一列是 1.x 采集批次的 int id，
+                    # 而自研采集用的是内存 UUID 任务号、只能传 None——只看它会让自研采集的
+                    # 岗位整列显示「手动添加」（2026-11-13 用户反馈的现象）。
+                    # `is_collected_candidate` 按 `source` 补上那部分，见它的 docstring。
+                    "collected_at": (
+                        row.created_at
+                        if row.collect_task_id or is_collected_candidate(row.source)
+                        else None
+                    ),
                 }
             )
         )

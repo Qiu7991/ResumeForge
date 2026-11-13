@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 from app.models.job import JOB_STATUS_OPEN, Job
 

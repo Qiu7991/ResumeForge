@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from app.models.job import Job
 
 
 def _stub_dict(title="AI 工程师", company="某公司", url="https://example.com/j1", salary="8-12K"):

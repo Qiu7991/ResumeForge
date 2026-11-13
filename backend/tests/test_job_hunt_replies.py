@@ -2,7 +2,6 @@
 """回复监测测试：意向分类 + 汇总（全假数据，红线：只读不发送）。"""
 from __future__ import annotations
 
-import pytest
 
 from app.services.job_hunt.replies import (
     ChatMessage,

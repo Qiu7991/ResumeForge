@@ -8,7 +8,6 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
 
 from app.services.job_hunt.collect_task import (
     TASK_COMPLETED,
@@ -179,7 +178,7 @@ def test_full_result_includes_stubs():
 
 def test_stop_reports_stopped_status_not_completed():
     """用户主动停止必须标为 stopped（不是 completed）——两者对用户意义完全不同。"""
-    from app.services.job_hunt.collect_task import TASK_COMPLETED, TASK_STOPPED
+    from app.services.job_hunt.collect_task import TASK_COMPLETED
 
     # 模拟 worker 结束时的判定（与 api/job_hunt.py 的 worker 同一段逻辑）
     def finalize(reason: str) -> str:
@@ -196,7 +195,6 @@ def test_stop_during_fetch_error_is_reported_as_stopped():
     实测踩到过：暂停中点停止 → 底层 fetch 抛错 → 任务被标 failed，
     而用户明明是自己停的。判定依据是 ``task._stop`` 已置位。
     """
-    from app.services.job_hunt.collect_task import TASK_STOPPED, TASK_FAILED
 
     def classify(task) -> str:
         # 与 api/job_hunt.py worker 的 except 分支同一段逻辑

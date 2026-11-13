@@ -7,7 +7,6 @@
 精确判重抓不到，于是在岗位广场里多出一条看着一样的记录。
 """
 
-import pytest
 
 from app.models.job import Job
 from app.services.job.job_title_match import (
