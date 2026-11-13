@@ -5,7 +5,6 @@
 执行采用**轮询模型**（前端按 1–2s 轮询任务详情），不用 SSE。
 """
 
-import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request

@@ -102,3 +102,29 @@ def test_migration_runner_refuses_unversioned_database_with_tables(tmp_path):
             run_database_migrations(engine)
     finally:
         engine.dispose()
+
+
+def test_migration_runner_repairs_schema_when_revision_says_head(tmp_path):
+    """版本号等于 head 但结构缺表缺列时，仍然执行迁移补齐。
+
+    2026-11-13 合并上游 2.1.0 的真实事故：二开的迁移从 0002/0003 重编号成 0018/0019，
+    但 revision **内部标识**沿用了旧值，老库里记着的字符串恰好等于新 head，执行器在前面
+    直接 return，上游 0002–0017 一条都没跑。启动是通的，首页一请求就 500
+    （`no such column: job.favorited_at`）。
+
+    这里构造的就是那个状态：迁移到 head 之后**手工删掉**一列，再跑一次执行器。
+    版本号没变，只有结构被破坏——修复必须来自结构自检，而不是版本号比较。
+    """
+    engine = _empty_engine(tmp_path, "runner-head-but-broken.db")
+    try:
+        assert run_database_migrations(engine) is None
+        _assert_head_schema(engine)
+
+        # 造出「版本号已是 head、结构却缺东西」的状态（与事故现场同形）。
+        with engine.begin() as connection:
+            connection.exec_driver_sql("ALTER TABLE job DROP COLUMN favorited_at")
+
+        assert run_database_migrations(engine) is None
+        _assert_head_schema(engine)
+    finally:
+        engine.dispose()

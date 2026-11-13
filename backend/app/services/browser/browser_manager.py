@@ -33,7 +33,14 @@ import httpx
 
 from ...config import DATA_DIR, DEFAULT_BROWSER_PORT
 from ...schemas.apply.base import BrowserState
-from .browser_discovery import _CHROME_RELATIVE, _EDGE_RELATIVE, browser_display_name
+from .browser_discovery import (
+    _CHROME_RELATIVE,
+    _EDGE_RELATIVE,
+    # 二开：Ego Lite（投递专用浏览器）。合并上游 2.1.0 时这行漏了，
+    # 后果是点「启动浏览器」直接 `NameError: _EGO_RELATIVE`。
+    _EGO_RELATIVE,
+    browser_display_name,
+)
 from .browser_inputs import BrowserError, validated_browser_url
 from .browser_manager_i18n import LOGIN_HINT as _LOGIN_HINT
 from .browser_manager_i18n import login_hint

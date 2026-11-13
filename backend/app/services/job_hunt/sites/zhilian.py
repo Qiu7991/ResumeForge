@@ -169,6 +169,3 @@ class ZhilianAdapter(JobSiteAdapter):
             requirements="",  # 智联 JD 职责/要求混排在同一段文本里
             posted_at=str(record.get("publishTime") or "").strip(),
         )
-
-    def supports(self, url: str) -> bool:
-        return "zhaopin.com" in (url or "").lower()

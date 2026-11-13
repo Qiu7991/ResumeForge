@@ -15,7 +15,6 @@ BOSS 聊天页的**抓取**侧（DOM → ``Conversation``）需要聊天页夹�
 """
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
