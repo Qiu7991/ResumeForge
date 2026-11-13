@@ -14,21 +14,7 @@
  * - no delivery execution (the apply desk owns batches, breakers, failure classes);
  * - no scoring UI (the job library's match analysis is the same result set).
  */
-import {
-  Alert,
-  Button,
-  Card,
-  Checkbox,
-  Empty,
-  Input,
-  InputNumber,
-  Select,
-  Space,
-  Table,
-  Tag,
-  Tooltip,
-  Typography,
-} from "antd";
+import { Alert, Button, Card, Empty, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -43,10 +29,22 @@ import type { JobHuntStatus } from "../../types/jobHunt";
 import type { JobList } from "../../types/job";
 import { useCandidates } from "../../hooks/useCandidates";
 import { usePersistentNumber } from "../../hooks/usePersistentNumber";
+import { usePersistentValue } from "../../hooks/usePersistentValue";
 import CollectResultPanel from "../../features/apply/CollectResultPanel";
 import { startBrowser } from "../../api/apply";
 import CollectProgressPanel from "./CollectProgressPanel";
 import HuntFilterForm, { DEFAULT_FILTERS, DEFAULT_KEYWORDS } from "./HuntFilterForm";
+import HuntSourceRow from "./HuntSourceRow";
+import {
+  HUNT_STORAGE_KEYS,
+  normalizeBoolean,
+  normalizeCity,
+  normalizeFilters,
+  normalizeKeywords,
+  normalizeMaxPages,
+  normalizeSalary,
+  normalizeSiteKey,
+} from "./huntFilterStorage";
 import CompanyName from "../common/CompanyName";
 
 const { Text, Title } = Typography;
@@ -65,22 +63,66 @@ export default function NativeJobHuntView({ status }: Props) {
   const collecting = task?.status === "running" || task?.status === "paused";
   const result = state.lastResult;
 
-  const [siteKey, setSiteKey] = useState(status.platforms[0]?.key ?? "boss");
-  // 多关键词（默认预填 4 个）：单关键词翻到底就那十几条，第二轮开始全是重复。
-  const [keywords, setKeywords] = useState<string[]>(DEFAULT_KEYWORDS);
-  const [filters, setFilters] = useState<Record<string, string[]>>(DEFAULT_FILTERS);
+  // ---- 搜索条件全部持久化 ----
+  //
+  // 这些都是**用户填过的判断**（搜什么词、卡哪档经验、什么薪资区间），不是页面临时状态：
+  // 采集本来就是反复微调的过程（收紧一次、放宽一次再看），每次刷新都回到出厂值等于
+  // 把上一轮的判断作废。所以全部走 localStorage，打开页面就是上次的条件。
+  //
+  // 归一化函数与存储键集中在 `huntFilterStorage`：存进去的东西会被旧版本形状/手改/
+  // 另一个标签页弄脏，而渲染处直接 `.map()`，不校验就是白屏。
+  const [siteKey, setSiteKey] = usePersistentValue(
+    HUNT_STORAGE_KEYS.siteKey,
+    status.platforms[0]?.key ?? "boss",
+    (raw) => normalizeSiteKey(raw, status.platforms[0]?.key ?? "boss"),
+  );
+  // 多关键词（出厂预填 4 个）：单关键词翻到底就那十几条，第二轮开始全是重复。
+  const [keywords, setKeywords] = usePersistentValue<string[]>(
+    HUNT_STORAGE_KEYS.keywords,
+    DEFAULT_KEYWORDS,
+    normalizeKeywords,
+  );
+  const [filters, setFilters] = usePersistentValue<Record<string, string[]>>(
+    HUNT_STORAGE_KEYS.filters,
+    DEFAULT_FILTERS,
+    normalizeFilters,
+  );
   // 最新优先（BOSS 的 sortType=2）：不勾的话每次翻到的都是默认排序里的同一批。
-  const [newestFirst, setNewestFirst] = useState(true);
+  const [newestFirst, setNewestFirst] = usePersistentValue<boolean>(
+    HUNT_STORAGE_KEYS.newestFirst,
+    true,
+    (raw) => normalizeBoolean(raw, true),
+  );
   // 薪资区间（K）；0 = 不限。BOSS 没有自定义区间参数，后端会先拉覆盖区间的档位并集、
-  // 采回来再本地精筛到这个区间。
-  const [salaryMinK, setSalaryMinK] = useState(0);
-  const [salaryMaxK, setSalaryMaxK] = useState(0);
-  const [city, setCity] = useState(t("aiJobs.native.defaultCity"));
-  const [maxPages, setMaxPages] = useState(1);
+  // 采回来再本地精筛到这个区间。**两个输入框共用一条存储记录**：分成两个键的话，
+  // 用户先改 min 再改 max 的中间态会被当成"min > max"。
+  const [salary, setSalary] = usePersistentValue<{ min: number; max: number }>(
+    HUNT_STORAGE_KEYS.salary,
+    { min: 0, max: 0 },
+    normalizeSalary,
+  );
+  const salaryMinK = salary.min;
+  const salaryMaxK = salary.max;
+  const setSalaryRange = (min: number, max: number) => setSalary({ min, max });
+  const [city, setCity] = usePersistentValue<string>(
+    HUNT_STORAGE_KEYS.city,
+    t("aiJobs.native.defaultCity"),
+    (raw) => normalizeCity(raw, t("aiJobs.native.defaultCity")),
+  );
+  const [maxPages, setMaxPages] = usePersistentValue<number>(
+    HUNT_STORAGE_KEYS.maxPages,
+    1,
+    normalizeMaxPages,
+  );
   const [selected, setSelected] = useState<number[]>([]);
   const [queued, setQueued] = useState(0);
   // 采集即评分（默认开）。关掉 = 只落备选区不评分，分数列显示「未评分」。
-  const [autoScore, setAutoScore] = useState(true);
+  // 同样持久化：这是用户对流程的选择，不是临时开关。
+  const [autoScore, setAutoScore] = usePersistentValue<boolean>(
+    HUNT_STORAGE_KEYS.autoScore,
+    true,
+    (raw) => normalizeBoolean(raw, true),
+  );
   // 分数线（分水岭）：不低于它的排上面。**持久化**——这是用户的筛选偏好，
   // 刷新一次就回到 70 会让人以为设置没生效。
   const [threshold, setThreshold] = usePersistentNumber("aiJobs.scoreThreshold", 70);
@@ -257,118 +299,34 @@ export default function NativeJobHuntView({ status }: Props) {
             onNewestFirstChange={setNewestFirst}
             salaryMinK={salaryMinK}
             salaryMaxK={salaryMaxK}
-            onSalaryRangeChange={(min, max) => {
-              setSalaryMinK(min);
-              setSalaryMaxK(max);
-            }}
+            onSalaryRangeChange={setSalaryRange}
             unapplied={task?.unapplied_filters ?? []}
           />
         </div>
 
-        {/* ---------- 分区二：数据源与动作（去哪搜、搜多少、开始）----------
-            与上面分开：这一组是"这次跑哪儿、跑多久"，改得没那么频繁。 */}
-        <div className="hunt-section">
-          <div className="hunt-section-title">
-            <Text strong>{t("aiJobs.hunt.sectionSource")}</Text>
-          </div>
-          <div className="hunt-source-row">
-            <div className="hunt-field">
-              <span className="hunt-field-label">{t("aiJobs.hunt.platform")}</span>
-              <div className="hunt-field-control">
-                <Select
-                  value={siteKey}
-                  onChange={setSiteKey}
-                  style={{ width: "100%" }}
-                  options={status.platforms.map((platform) => ({
-                    value: platform.key,
-                    label: platform.name,
-                  }))}
-                  aria-label={t("aiJobs.hunt.platform")}
-                />
-              </div>
-            </div>
-            <div className="hunt-field">
-              <span className="hunt-field-label">{t("aiJobs.native.city")}</span>
-              <div className="hunt-field-control">
-                <Input
-                  value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  aria-label={t("aiJobs.native.city")}
-                />
-              </div>
-            </div>
-            <div className="hunt-field">
-              <span className="hunt-field-label">{t("aiJobs.hunt.pagesLabel")}</span>
-              <div className="hunt-field-control">
-                <Select
-                  value={maxPages}
-                  onChange={setMaxPages}
-                  style={{ width: "100%" }}
-                  options={[1, 2, 3, 5].map((n) => ({
-                    value: n,
-                    label: t("aiJobs.native.pages", { n }),
-                  }))}
-                  aria-label={t("aiJobs.hunt.pagesLabel")}
-                />
-              </div>
-            </div>
-            <div className="hunt-field hunt-field--narrow">
-              <Tooltip title={t("aiJobs.hunt.thresholdHint")}>
-                <span className="hunt-field-label">{t("aiJobs.hunt.threshold")}</span>
-              </Tooltip>
-              <div className="hunt-field-control">
-                <InputNumber
-                  value={threshold}
-                  onChange={(value) => setThreshold(typeof value === "number" ? value : 70)}
-                  min={0}
-                  max={100}
-                  step={5}
-                  style={{ width: "100%" }}
-                  aria-label={t("aiJobs.hunt.threshold")}
-                />
-              </div>
-            </div>
-          </div>
+        <HuntSourceRow
+          status={status}
+          siteKey={siteKey}
+          onSiteKeyChange={setSiteKey}
+          city={city}
+          onCityChange={setCity}
+          maxPages={maxPages}
+          onMaxPagesChange={setMaxPages}
+          threshold={threshold}
+          onThresholdChange={setThreshold}
+          autoScore={autoScore}
+          onAutoScoreChange={setAutoScore}
+          keywords={keywords.length}
+          collecting={collecting}
+          starting={collectTask.state.starting}
+          onCollect={() => void onCollect()}
+          paused={task?.status === "paused"}
+          onPause={() => void collectTask.control("pause")}
+          onResume={() => void collectTask.control("resume")}
+          onStop={() => void collectTask.control("stop")}
+        />
 
-          <Space wrap size={12} style={{ marginTop: 12 }}>
-            <Tooltip title={t("aiJobs.native.autoScoreHint")}>
-              <Checkbox checked={autoScore} onChange={(e) => setAutoScore(e.target.checked)}>
-                {t("aiJobs.native.autoScore")}
-              </Checkbox>
-            </Tooltip>
-            <Button
-              type="primary"
-              loading={collectTask.state.starting || collecting}
-              disabled={collecting}
-              onClick={() => void onCollect()}
-            >
-              {t("aiJobs.native.collect")}
-            </Button>
-            {collecting && (
-              <>
-                {task?.status === "paused" ? (
-                  <Button onClick={() => void collectTask.control("resume")}>
-                    {t("aiJobs.pipeline.resume")}
-                  </Button>
-                ) : (
-                  <Button onClick={() => void collectTask.control("pause")}>
-                    {t("aiJobs.pipeline.pause")}
-                  </Button>
-                )}
-                <Button danger onClick={() => void collectTask.control("stop")}>
-                  {t("aiJobs.pipeline.stop")}
-                </Button>
-              </>
-            )}
-            {/* 组合数提示：4 词 × 3 页 = 12 次翻页，点之前先让人知道要跑多久。 */}
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {t("aiJobs.hunt.comboHint", {
-                keywords: keywords.length || 1,
-                pages: maxPages,
-                total: (keywords.length || 1) * maxPages,
-              })}
-            </Text>
-          </Space>
+        {/* 黑名单折叠          </Space>
         </div>
 
         {/* 黑名单折叠：长效配置，不该占首屏。展开后才渲染（省一次接口调用）。 */}
