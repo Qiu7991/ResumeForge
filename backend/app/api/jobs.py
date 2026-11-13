@@ -4,17 +4,13 @@
 import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
 
 from ..database import get_db
 from ..models.job import JOB_STATUSES, Job
-from ..schemas.common import Page
 from ..schemas.job import (
-    RECOGNITION_SOURCE_AUTO,
-    RECOGNITION_SOURCE_OFFICIAL,
     JobBatchDeleteResult,
     JobBatchRequest,
     JobBatchStatusRequest,
@@ -24,14 +20,14 @@ from ..schemas.job import (
     JobImportRequest,
     JobImportResult,
     JobImportRow,
-    JobListOut,
     JobMultiTextParseResult,
-    JobOut,
     JobTextParseRequest,
     JobTextParseResult,
-    JobUpdate,
 )
 from ..services import trash
+from ..services.actions import add_action_route
+from ..services.actions.domains.jobs import job_actions
+from ..services.actions.pilots import pilot_actions
 from ..services.attachments import (
     assert_attachment_budget,
     image_data_urls,
@@ -47,7 +43,9 @@ from ..services.job.job_csv import (
     row_to_payload,
 )
 from ..services.job.job_multi_parser import extract_multiple_jobs, local_multi_drafts
-from ..services.job.job_service import create_job_record, find_job_by_identity, update_job_record
+from ..services.job.job_queries import filtered_query as _filtered_query
+from ..services.job.job_queries import jobs_by_ids
+from ..services.job.job_service import create_job_record, find_job_by_identity
 from ..services.job.job_sorting import JobSort, JobSortOrder, job_order_by
 from ..services.job_text_parser import parse_job_text
 from ..services.llm import create_provider
@@ -61,42 +59,13 @@ from ..services.text_extraction import (
     mark_local_fallback,
     no_model_warning,
 )
-from ..services.user_files import save_from_data_url
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 logger = logging.getLogger(__name__)
 
 
-def _save_note_image_copies(db: Session, job_id: int, note_images: list[str]) -> None:
-    """best-effort：把岗位备注图 data URL 落一份磁盘副本（失败只记日志）。"""
-    for index, data_url in enumerate(note_images or []):
-        if not data_url:
-            continue
-        try:
-            save_from_data_url(
-                db,
-                str(data_url),
-                source_type="job_note",
-                source_ref=f"job:{job_id}",
-                fallback_name=f"job-{job_id}-note-{index + 1}",
-            )
-        except Exception:  # noqa: BLE001 - 副本是锦上添花，绝不能挡住岗位保存
-            logger.warning("岗位备注图磁盘副本保存失败 job:%s", job_id, exc_info=True)
-
-
-def _to_out(job: Job) -> JobOut:
-    return JobOut.model_validate(job)
-
-
-def _to_list_out(job: Job) -> JobListOut:
-    # 列表响应不带 JD 全文（体积审计 PR-17）；详情仍走 _to_out，JD 全文可达。
-    return JobListOut.model_validate(job)
-
-
 def _get_jobs_or_404(db: Session, job_ids: list[int]) -> list[Job]:
-    jobs = db.query(Job).filter(trash.live_only(Job), Job.id.in_(job_ids)).all()
-    found_ids = {job.id for job in jobs}
-    missing_ids = [job_id for job_id in job_ids if job_id not in found_ids]
+    jobs, missing_ids = jobs_by_ids(db, job_ids)
     if missing_ids:
         missing = "、".join(str(job_id) for job_id in missing_ids)
         raise HTTPException(status_code=404, detail=f"以下岗位不存在或已被删除：{missing}")
@@ -111,83 +80,7 @@ def _commit_batch(db: Session) -> None:
         raise
 
 
-def _filtered_query(
-    db: Session,
-    keyword: str,
-    job_type: str,
-    status: str,
-    favorite: bool | None,
-    source_kind: str,
-):
-    """列表页的共用筛选器：``/jobs``（分页列表）与 ``/jobs/ids``（跨页全选）同吃这一份，
-    保证"看到的筛选结果"和"一键全选拿到的 id"永远是对同一批岗位的两种视图。"""
-    query = db.query(Job).filter(trash.live_only(Job))
-    if keyword:
-        like = f"%{keyword}%"
-        query = query.filter(
-            or_(
-                Job.title.like(like),
-                Job.company.like(like),
-                Job.location.like(like),
-                Job.description.like(like),
-                Job.additional_info.like(like),
-                Job.note.like(like),
-            )
-        )
-    if job_type:
-        query = query.filter(Job.job_type == job_type)
-    if status:
-        query = query.filter(Job.status == status)
-    if favorite is not None:
-        query = query.filter(Job.favorite == favorite)
-    if source_kind == "collected":
-        query = query.filter(
-            or_(
-                Job.recognition_source.in_(RECOGNITION_SOURCE_AUTO),
-                Job.source == RECOGNITION_SOURCE_OFFICIAL,
-            )
-        )
-    elif source_kind == "manual":
-        query = query.filter(
-            or_(
-                Job.recognition_source.is_(None),
-                ~Job.recognition_source.in_(RECOGNITION_SOURCE_AUTO),
-            )
-        ).filter(Job.source != RECOGNITION_SOURCE_OFFICIAL)
-    return query
-
-
-@router.get("", response_model=Page[JobListOut])
-def list_jobs(
-    db: Session = Depends(get_db),
-    keyword: str = Query(default="", description="按标题/公司/城市/描述/其他信息/备注模糊匹配"),
-    job_type: str = Query(default=""),
-    status: str = Query(default=""),
-    favorite: bool | None = Query(default=None),
-    # 按录入方式粗筛：collected=任一自动采集链路，manual=其余（手动填写/粘贴/截图/文档/助手等）。
-    # 兼容历史库里的两种来源值，也兼容旧官网导入把 `官网采集` 写进 source、但没有写入
-    # recognition_source 的记录。
-    source_kind: str = Query(default=""),
-    # 排序（R14）：键自带方向（created_desc / title_asc…），``order`` 只用于覆盖方向。
-    # 非法值由 Literal 拦成 422（不静默回落默认值——"改了参数却毫无变化"更难排查）。
-    sort: JobSort = Query(
-        default="created_desc", description="排序键：最近导入/最近修改/标题/公司"
-    ),
-    order: JobSortOrder | None = Query(
-        default=None, description="方向覆盖：asc / desc；不传则用 sort 自带方向"
-    ),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
-):
-    query = _filtered_query(db, keyword, job_type, status, favorite, source_kind)
-    total = query.count()
-    jobs = (
-        query.order_by(*job_order_by(sort, order))
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
-    return Page(items=[_to_list_out(job) for job in jobs], total=total)
+add_action_route(router, job_actions()["list_jobs"])
 
 
 @router.get("/ids", response_model=list[int])
@@ -218,11 +111,7 @@ def list_job_ids(
     ]
 
 
-@router.post("", response_model=JobOut, status_code=201)
-def create_job(payload: JobCreate, db: Session = Depends(get_db)):
-    job = create_job_record(db, payload)
-    _save_note_image_copies(db, job.id, payload.note_images)
-    return _to_out(job)
+add_action_route(router, job_actions()["create_job"])
 
 
 @router.post("/parse-text", response_model=JobTextParseResult)
@@ -430,23 +319,12 @@ def import_jobs_csv(payload: JobImportRequest, db: Session = Depends(get_db)):
     return JobImportResult(imported=imported, failed=failed)
 
 
-@router.get("/{job_id}", response_model=JobOut)
-def get_job(job_id: int, db: Session = Depends(get_db)):
-    job = db.get(Job, job_id)
-    if job is None or trash.is_deleted(job):
-        raise HTTPException(status_code=404, detail="岗位不存在或已被删除")
-    return _to_out(job)
+# T28 首批：GET /api/jobs/{job_id} 由契约层生成（ActionSpec 是参数/权限唯一真源）。
+# 注册位置仍由本文件里的调用点显式决定（原来的装饰器位置，保持注册顺序）。
+add_action_route(router, pilot_actions()["get_job"])
 
 
-@router.put("/{job_id}", response_model=JobOut)
-def update_job(job_id: int, payload: JobUpdate, db: Session = Depends(get_db)):
-    job = db.get(Job, job_id)
-    if job is None or trash.is_deleted(job):
-        raise HTTPException(status_code=404, detail="岗位不存在或已被删除")
-    updated = update_job_record(db, job, payload)
-    if "note_images" in payload.model_fields_set:
-        _save_note_image_copies(db, job.id, payload.note_images)
-    return _to_out(updated)
+add_action_route(router, job_actions()["update_job"])
 
 
 @router.delete("/{job_id}", status_code=204)

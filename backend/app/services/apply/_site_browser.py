@@ -19,6 +19,7 @@ from ...schemas.apply import (
     CollectFilterOptionsOut,
     CollectFilterTestItemOut,
     CollectFilterTestResultOut,
+    CollectFilterVisibleWhenOut,
     SiteListOut,
     SiteOptionOut,
 )
@@ -27,10 +28,12 @@ from ..browser.browser_manager import (
     BrowserError,
     BrowserManager,
     BrowserStatus,
+    login_hint,
 )
 from ..browser.cdp_client import CdpError
 from ..sites.base import SOURCE_SESSION, SiteAdapter
 from ..sites.registry import get_registry
+from ..ui_locale import get_ui_locale
 from ._base import ApplyConflict
 from ._config import get_apply_config
 
@@ -48,6 +51,20 @@ def _as_browser_state(value: str) -> BrowserState:
     if value not in _BROWSER_STATE_VALUES:
         raise ValueError(f"未知的浏览器状态：{value!r}")
     return value
+
+
+def _display_name(adapter: SiteAdapter, locale: str | None) -> str:
+    """取**展示用**站点名。
+
+    ``display_name_for`` 是站点适配器上的可选扩展点（默认继承自 ``SiteAdapter``，
+    多语言站点覆盖它）。这里用 ``getattr`` 兜一层：测试替身与将来第三方注册的轻量适配器
+    可能只声明了 ``display_name``，不该因为缺一个展示方法就让整个接口 500。
+    """
+    getter = getattr(adapter, "display_name_for", None)
+    if callable(getter):
+        # getattr 探测得到的可调用对象在类型上只保证返回 ``object``，出口处收口成 ``str``。
+        return str(getter(locale))
+    return adapter.display_name
 
 
 def collect_filter_options(db: Session) -> CollectFilterOptionsOut:
@@ -85,13 +102,14 @@ def collect_filter_options(db: Session) -> CollectFilterOptionsOut:
 
     return CollectFilterOptionsOut(
         site_key=adapter.key,
-        display_name=adapter.display_name,
+        display_name=_display_name(adapter, get_ui_locale(db)),
         groups=[_filter_group_out(group) for group in groups],
         session_read=any(getattr(group, "source", "") == SOURCE_SESSION for group in groups),
     )
 
 
 def _filter_group_out(group: Any) -> CollectFilterGroupOut:
+    visible_when = getattr(group, "visible_when", None)
     return CollectFilterGroupOut(
         key=group.key,
         param=group.param,
@@ -102,6 +120,12 @@ def _filter_group_out(group: Any) -> CollectFilterGroupOut:
         ],
         source=group.source,
         note=group.note,
+        multi=bool(getattr(group, "multi", True)),
+        visible_when=(
+            CollectFilterVisibleWhenOut(key=visible_when[0], values=list(visible_when[1]))
+            if visible_when
+            else None
+        ),
     )
 
 
@@ -125,10 +149,11 @@ def current_site_key(db: Session) -> str:
     return adapter.key if adapter is not None else ""
 
 
-def _site_option_out(adapter: SiteAdapter) -> SiteOptionOut:
+def _site_option_out(adapter: SiteAdapter, locale: str | None = None) -> SiteOptionOut:
     return SiteOptionOut(
         key=adapter.key,
-        display_name=adapter.display_name,
+        # 只取"展示用"名字：``display_name`` 是站点识别用的协议值（见 SiteAdapter）。
+        display_name=_display_name(adapter, locale),
         host=adapter.hosts[0] if adapter.hosts else "",
         entry_url=adapter.entry_url,
         supports_collect=adapter.supports_collect,
@@ -143,9 +168,10 @@ def list_sites(db: Session) -> SiteListOut:
     界面自动多出一个站点可选。
     """
     registry = get_registry()
+    locale = get_ui_locale(db)
     return SiteListOut(
         current=current_site_key(db),
-        sites=[_site_option_out(adapter) for adapter in registry.all()],
+        sites=[_site_option_out(adapter, locale) for adapter in registry.all()],
     )
 
 
@@ -209,7 +235,7 @@ def _browser_status_out(status: BrowserStatus, db: Session) -> BrowserStatusOut:
         browser_path=status.browser_path,
         browser_name=status.browser_name,
         entry_url=default_entry_url(db),
-        logged_in_hint=status.logged_in_hint,
+        logged_in_hint=login_hint(get_ui_locale(db)),
         owned=status.owned,
     )
 
@@ -365,7 +391,25 @@ def detach_browser_manager() -> None:
         _browser_manager_key = None
 
 
-def test_collect_filters(db: Session, selected: dict[str, str]) -> CollectFilterTestResultOut:
+def _as_code_list(value: Any) -> list[str]:
+    """请求体里的编码：新前端给数组，旧客户端给单个字符串——统一成数组。"""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items: list[Any] = [value]
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        items = [value]
+    codes: list[str] = []
+    for item in items:
+        code = "" if item is None else str(item).strip()
+        if code and code not in codes:
+            codes.append(code)
+    return codes
+
+
+def test_collect_filters(db: Session, selected: Any) -> CollectFilterTestResultOut:
     """在真实站点页面上逐项校验用户选的站点筛选条件是否真的能选到。
 
     复用采集开始前的同一套解析（``prepare_collect_filters``）：选项编码对不上站点当前
@@ -388,20 +432,25 @@ def test_collect_filters(db: Session, selected: dict[str, str]) -> CollectFilter
         raise ApplyConflict(str(exc) or "无法连接投递专用浏览器") from exc
     try:
         groups = adapter.fetch_filter_options(client)
+        # 整组只解析**一次**：联动规则（visible_when）需要看到控制组（求职类型）的值，
+        # 逐组单独解析会丢掉上下文——兼职模式下残留的 salary 会被误判成"已生效"。
+        resolution = adapter.prepare_collect_filters(selected, client)
         applied: list[CollectFilterTestItemOut] = []
         unapplied: list[CollectFilterTestItemOut] = []
         unlimited: list[CollectFilterTestItemOut] = []
-        for key, code in selected.items():
-            resolution = adapter.prepare_collect_filters({key: code}, client)
-            label, value = _describe_selection(groups, key, code)
+        for key in sorted(selected):
+            codes = _as_code_list(selected.get(key))
+            label, value = _describe_selection(groups, key, codes)
             item = CollectFilterTestItemOut(key=key, label=label, value=value, detail="")
-            if resolution.applied:
-                item.detail = resolution.applied[0]
+            applied_reason = _reason_for(resolution.applied, label)
+            unapplied_reasons = _reasons_for(resolution.unapplied, label, key)
+            if applied_reason is not None and not unapplied_reasons:
+                item.detail = applied_reason
                 applied.append(item)
-            elif resolution.unapplied:
-                item.detail = (
-                    "这个选项不在站点当前提供的清单里（站点可能改版，或它只对部分账号可见）"
-                )
+            elif unapplied_reasons:
+                # 多选组可能同时报"部分码失效"与"只支持单选"：优先显示后者（更可操作）。
+                single_only = [reason for reason in unapplied_reasons if "只支持单选" in reason]
+                item.detail = single_only[-1] if single_only else unapplied_reasons[-1]
                 unapplied.append(item)
             else:
                 item.detail = "选择的是「不限」或未选择，不会向站点发送这个筛选参数"
@@ -413,13 +462,41 @@ def test_collect_filters(db: Session, selected: dict[str, str]) -> CollectFilter
         client.close()
 
 
-def _describe_selection(groups: Any, key: str, code: str) -> tuple[str, str]:
-    """从站点清单里找出分组名与用户所选选项的文案；找不到就回退到原始 key/编码。"""
+def _reason_for(reasons: list[str], label: str) -> str | None:
+    """从聚合结论里挑出属于某一组的那一条（文案以「组名：」开头）。"""
+    prefix = label + "："
+    for reason in reasons:
+        if reason.startswith(prefix):
+            return reason
+    return None
+
+
+def _reasons_for(reasons: list[str], label: str, key: str) -> list[str]:
+    """某一组的未生效原因；分组本身读不到时只有裸组名/key，交给界面展示通用说明。"""
+    matched: list[str] = []
+    for reason in reasons:
+        if reason.startswith(label + "：") or reason.startswith(label + "（"):
+            matched.append(reason)
+        elif reason in (label, key):
+            matched.append("这个选项不在站点当前提供的清单里（站点可能改版，或它只对部分账号可见）")
+    return matched
+
+
+def _describe_selection(groups: Any, key: str, codes: list[str]) -> tuple[str, str]:
+    """从站点清单里找出分组名与用户所选选项的文案；找不到就回退到原始 key/编码。
+
+    多选组按「、」连接（与 applied 文案同一套写法），让"本科、大专"一眼可读。
+    """
     for group in groups or ():
         if getattr(group, "key", "") != key:
             continue
-        for option in getattr(group, "options", ()) or ():
-            if str(getattr(option, "code", "")) == str(code):
-                return str(getattr(group, "label", key)), str(getattr(option, "label", code))
-        return str(getattr(group, "label", key)), code
-    return key, code
+        labels: list[str] = []
+        for code in codes:
+            matched: str | None = None
+            for option in getattr(group, "options", ()) or ():
+                if str(getattr(option, "code", "")) == str(code):
+                    matched = str(getattr(option, "label", code))
+                    break
+            labels.append(matched if matched is not None else str(code))
+        return str(getattr(group, "label", key)), "、".join(labels)
+    return key, "、".join(codes)

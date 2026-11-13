@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""简历生成后台任务运行器：进程内单例线程 + 状态落库 + 前端轮询。
+"""简历生成后台任务 worker：一个任务一个线程 + 状态落库 + 前端轮询。
 
-不自建任务队列：单用户本地应用，生成是"几秒到几分钟的阻塞工艺"，一个 Thread 足够。
-纪律：线程自建自关 SessionLocal；每块事件后查停止信号；异常兜底 failed + 中文 error；完成才落库。
+调度（并发上限 / 排队 / 取消路由）在 resume_generate_manager；本模块只负责单任务执行：
+线程自建自关 SessionLocal；异常兜底 failed + 中文 error；完成才落库。
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from sqlalchemy.orm import sessionmaker
 
 from ...config import get_settings
 from ...database import SessionLocal
-from ...models.job import Job
 from ...models.profile import utcnow
 from ...models.resume import (
     GENERATE_STATUS_CANCELLED,
@@ -29,21 +28,18 @@ from ...runtime import dataset_scope
 from ...runtime.dataset_scope import DatasetLease, DatasetScopeError
 from ...runtime.log_context import run_with_bound_context
 from ...runtime.operation_budget import OperationBudget, OperationCancelled
-from ...schemas.job import JobOut
-from ...schemas.profile_projection import ConsumedProfile
 from ...schemas.resume import GenerateOptions
-from ...services import trash
 from ...services.claims import build_baseline
 from ...services.llm import create_provider
 from ...services.llm.base import LLMError
 from ...services.llm.client_pool import aclose_clients_for_current_loop
-from ...services.profile.profile_service import get_profile_detail, to_profile_out
+from ...services.rag.rag_receipt import append_rag_note, record_retrieval
+from ...services.rag.rag_service import generate_with_scope, prepare_selection_boost
 from ...services.resume.generate_snapshot import (
     GenerationSnapshot,
     attach_snapshot_resume,
-    consumed_has_content,
-    snapshot_entry_ids,
 )
+from ...services.resume.resume_generate_inputs import prepare_generate_inputs
 from ...services.resume.resume_generator import ResumeGenerator
 from ...services.resume.resume_task_state import (
     claim_completed,
@@ -54,7 +50,6 @@ from ...services.resume.scenario_context import (
     build_scenario_prompt_block,
     merge_scenario_order,
 )
-from ...services.settings_service import get_llm_config
 from .resume_generate_support import (
     log_generation_usage,
     material_only_echo_error,
@@ -63,9 +58,9 @@ from .resume_runner_loop import RunnerEventLoopHandle
 
 logger = logging.getLogger(__name__)
 
-# 已接收字数写库的粒度：没必要每个 chunk 都 commit 一次，但要让前端 1.5s 轮询能看到
-# 进展，所以每累计 200 字符落一次。
-_CHAR_COMMIT_STEP = 200
+# 已接收字数写库的粒度：4 个并发 worker 争同一个 SQLite 单写者，粒度 400 字以减少提交
+# 次数（并发冲突用"少写"缓解，不靠降并发）；前端 1.5s 轮询仍能跟上进度。
+_CHAR_COMMIT_STEP = 400
 
 
 class ResumeGenerateRunnerError(Exception):
@@ -73,7 +68,7 @@ class ResumeGenerateRunnerError(Exception):
 
 
 class ResumeGenerateRunner:
-    """单例运行器：同一时刻只跑一个生成任务。"""
+    """单任务 worker：一个实例只跑一条生成任务；并发/排队由 resume_generate_manager 管。"""
 
     def __init__(self, *, session_factory: Callable[[], Any] | None = None) -> None:
         # session_factory 默认 None：启动时按值冻结 engine（RF-03，rebind 仍写旧库）；显式传入（测试注入）优先。
@@ -89,6 +84,7 @@ class ResumeGenerateRunner:
         self._loop_handle = RunnerEventLoopHandle(self._stop)
         self._generation_snapshot: GenerationSnapshot | None = None
         self._snapshot_id: int | None = None
+        self._on_finished: Callable[[int], None] | None = None  # 收尾回调，只消费一次
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -102,8 +98,9 @@ class ResumeGenerateRunner:
         *,
         generation_snapshot: GenerationSnapshot | None = None,
         snapshot_id: int | None = None,
+        on_finished: Callable[[int], None] | None = None,
     ) -> None:
-        """启动后台生成任务；generation_snapshot=创建时冻结的消费快照（F3 §1）。"""
+        """启动后台生成任务；generation_snapshot=创建时冻结的快照；on_finished 在租约归还后回调。"""
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise ResumeGenerateRunnerError("已有简历生成任务正在进行中")
@@ -124,6 +121,7 @@ class ResumeGenerateRunner:
             self._current_task_id = task_id
             self._generation_snapshot = generation_snapshot
             self._snapshot_id = snapshot_id
+            self._on_finished = on_finished
             self._thread = threading.Thread(
                 # RF-20：复制启动方 contextvars 并绑定 task_id/dataset_id（同 apply 运行器）。
                 target=run_with_bound_context(
@@ -139,11 +137,17 @@ class ResumeGenerateRunner:
             self._thread.start()
 
     def _run_releasing_lease(self, task_id: int, lease: DatasetLease) -> None:
-        """线程入口：保证无论任务怎么收尾，租约都会归还（切换不再被永久挡住）。"""
+        """线程入口：保证租约归还；收尾回调在归还后触发（排队任务才能立刻拿到租约）。"""
         try:
             self._run(task_id)
         finally:
             lease.release()
+            callback, self._on_finished = self._on_finished, None
+            if callback is not None:
+                try:
+                    callback(task_id)
+                except Exception:  # noqa: BLE001 - 调度回调失败不得掩盖任务真实结果
+                    logger.exception("生成任务完成回调失败 task_id=%s", task_id)
 
     def cancel(self, task_id: int) -> None:
         # 先落"取消"信号：若线程已跑完并提交终态，终态守卫会拒绝改写（apply 同款纪律）。
@@ -240,17 +244,34 @@ class ResumeGenerateRunner:
                 async def consume() -> None:
                     nonlocal resume, warnings, coverage_notes, rationale, fact_annotations
                     nonlocal last_char_commit, received_chars_total, estimated_prompt_tokens
+                    # RAG（默认关闭）：在**本任务线程的事件循环**里算 boost/扩展词。
+                    # ContextVar 不跨线程传播，所以作用域必须在消费协程内部打开，
+                    # 不能在 handler/请求线程设置。失败一律空作用域（rag_service 承诺不抛）。
+                    selection = await prepare_selection_boost(
+                        consumed,
+                        job_out,
+                        config=provider.config,
+                        db=session,
+                        dataset_id=(
+                            self._lease.identity.dataset_id if self._lease is not None else ""
+                        ),
+                        # #30：检索一结束就写回执与进度行，用户不必等整篇生成完才知道结果。
+                        on_retrieval=lambda p: record_retrieval(task, session, p),
+                    )
                     # aclosing 纪律（PR-07-4）：取消/超时/异常路径也显式关闭生成器，让
                     # GeneratorExit 逐层展开、各层 finally（段复位/usage/response）执行。
-                    stream = generator.generate(
-                        profile_out,
-                        job_out,
-                        options,
-                        baseline=baseline,
-                        budget=budget,
-                        career_context_block=career_block,
-                        fact_sections=fact_sections,
-                        consumed=consumed,
+                    stream = generate_with_scope(
+                        generator.generate(
+                            profile_out,
+                            job_out,
+                            options,
+                            baseline=baseline,
+                            budget=budget,
+                            career_context_block=career_block,
+                            fact_sections=fact_sections,
+                            consumed=consumed,
+                        ),
+                        selection,
                     )
                     try:
                         async for event in stream:
@@ -382,7 +403,7 @@ class ResumeGenerateRunner:
                     format_config=save_format_config,
                     custom_instruction=options.custom_instruction,
                     coverage_notes=coverage_notes,
-                    rationale=rationale,
+                    rationale=append_rag_note(rationale, task_id=task.id),
                     fact_annotations=fact_annotations,
                     document_mode=options.document_mode,
                     context_snapshot=task.context_snapshot,
@@ -421,30 +442,15 @@ class ResumeGenerateRunner:
                 self._snapshot_id = None
             self._stop.clear()
 
-    def _snapshot(
-        self, session: Any, task: ResumeGenerateTask
-    ) -> tuple[JobOut | None, Any, Any, Any, dict[str, Any] | None, ConsumedProfile | None]:
-        """重建生成输入；有冻结快照时只消费它（F3 §1：worker 不再解析当前组）。"""
-        job = session.get(Job, task.job_id) if task.job_id is not None else None
-        if task.job_id is not None and (job is None or trash.is_deleted(job)):
-            raise ResumeGenerateRunnerError("岗位不存在或已被删除")
-        job_out = JobOut.model_validate(job) if job is not None else None
-        config = get_llm_config(session)
-        if not config.base_url or not config.model:
-            raise ResumeGenerateRunnerError("尚未配置大模型 API")
-        provider = create_provider(config)
-        frozen = self._generation_snapshot
-        if frozen is not None:
-            if not consumed_has_content(frozen.consumed):
-                raise ResumeGenerateRunnerError("个人资料为空，无法生成简历")
-            # F3 契约 §4：台账基线只带入能关联本次快照条目的正向事实。
-            baseline = build_baseline(session, source_entry_ids=snapshot_entry_ids(frozen.consumed))
-            return job_out, None, baseline, provider, None, frozen.consumed
-        # 旧 ProfileOut 路径（legacy 兼容；生产链路始终有冻结快照）。
-        # 补充事实已在 2.0 删除，fact_sections 恒为 None。
-        baseline = build_baseline(session)
-        profile_out = to_profile_out(get_profile_detail(session))
-        return job_out, profile_out, baseline, provider, None, None
+    def _snapshot(self, session: Any, task: ResumeGenerateTask) -> Any:
+        """重建生成输入（实现搬在 resume_generate_inputs；create_provider 锚点留在本模块）。"""
+        return prepare_generate_inputs(
+            session,
+            task,
+            generation_snapshot=self._generation_snapshot,
+            provider_factory=create_provider,
+            baseline_builder=build_baseline,
+        )
 
     # ===== 状态写入 =====
     # 终态仲裁三件套拆在 resume_task_state.py；这里保留薄委托（测试 monkeypatch 锚点）。
@@ -467,33 +473,26 @@ class ResumeGenerateRunner:
         set_cancelled(task_id, open_session=self._open_session)
 
 
-_RUNNER: ResumeGenerateRunner | None = None
-_RUNNER_LOCK = threading.Lock()
+# 单例在管理器模块；这里保留同名薄封装，既有调用点/测试的导入路径不变。
+# 函数内导入：管理器模块顶部会 import 本模块的 worker 类，模块级互导会成环。
+def get_resume_generate_runner() -> Any:
+    """进程内共享的生成管理器单例（单任务 worker + 排队，问题清单 §9）。"""
+    from .resume_generate_manager import get_resume_generate_runner as _get_manager
 
-
-def get_resume_generate_runner() -> ResumeGenerateRunner:
-    """进程内共享的生成运行器单例。"""
-    global _RUNNER
-    with _RUNNER_LOCK:
-        if _RUNNER is None:
-            _RUNNER = ResumeGenerateRunner()
-        return _RUNNER
+    return _get_manager()
 
 
 def reset_resume_generate_runner() -> None:
-    """测试用：释放单例，避免用例之间共享线程状态。"""
-    global _RUNNER
-    with _RUNNER_LOCK:
-        if _RUNNER is not None:
-            _RUNNER.shutdown()
-        _RUNNER = None
+    """测试用：停止所有 worker 并释放单例，避免用例之间共享线程状态。"""
+    from .resume_generate_manager import reset_resume_generate_runner as _reset_manager
 
+    _reset_manager()
 
-from .generate_recovery import fail_orphaned_generate_tasks  # noqa: E402, F401 - 兼容再导出
 
 __all__ = [
     "ResumeGenerateRunner",
     "ResumeGenerateRunnerError",
     "get_resume_generate_runner",
+    "prepare_generate_inputs",
     "reset_resume_generate_runner",
 ]

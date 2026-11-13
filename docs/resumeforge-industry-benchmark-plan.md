@@ -1,5 +1,7 @@
 # 简历通跨行业与专业工作台优化计划
 
+> **历史文档（2.0 已复核）**：这是 A0–A8 的规划档案（2026-10-25，代码基线 `bc62f339`），记录当时的方案与验收口径，**不代表 2.0 的现状**。文中的 `ProfileFact` / 补充事实设计已在 2.0 被「资料板块」取代（模型、表、路由、服务、前端模块整套删除），迁移号也都是 1.x 历史号。
+
 > 日期：2026-10-25  
 > 依据：D:\ResumeForge，代码基线 `bc62f339`；实际实施前重新核对 HEAD、工作区和 AGENTS.md  
 > 文档性质：产品方案 + 技术设计 + 分阶段执行合同 + 验收清单  
@@ -30,7 +32,7 @@
 | 领域 | 已有能力及依据 | 本次处理 |
 | --- | --- | --- |
 | 产品基础 | README：本地优先、无注册、SQLite、可使用本地模型 | 保持定位，新增能力不依赖账号与云服务 |
-| 岗位生成 | `frontend/src/pages/JobsPage.tsx` → `components/GenerateResumeModal.tsx` → 后台任务 | 原入口和关联关系保留，场景是可选附加上下文 |
+| 岗位生成 | `frontend/src/pages/JobsPage.tsx` → `features/resume/generate/GenerateResumeModal.tsx` → 后台任务 | 原入口和关联关系保留，场景是可选附加上下文 |
 | 两种生成语义 | `backend/app/services/profile/profile_relevance.py` 中 targeted/general 两套上下文构造 | 保留分支；通用简历不能用“空岗位”冒充 |
 | 两种生成传输 | `backend/app/api/resumes/generate_routes.py` 的 SSE 与后台任务端点 | 两条都接入相同的场景解析与快照逻辑 |
 | 通用 AI | 后端支持 `job_id=null`，生成弹窗也支持 `job=null`；`ResumesPage.tsx` 当前新建主要进入手写 | 补可发现的通用 AI 入口，同步文档 |
@@ -38,8 +40,8 @@
 | 修订与匹配 | `prompts/resume_revise.md`、`prompts/job_match.md` 已规定局部保留、证据不足与五类结论 | 保持约束；场景不成为能力证明或准入条件 |
 | 科研内容 | `schemas/resume_research.py`、`ResumeContent`、PDF/Word 等已有科研呈现 | 补资料来源和 AI 全链路；先验证修订保留风险 |
 | 普通生成页数 | `GenerateOptions.page_limit` 当前最大 3；制作台已有 `document_mode=long_cv` | 显式支持生成长 CV，沿用统一模式上限；不自动切换 |
-| 专业制作台 | `components/resume/Workbench*.tsx`、`features/resume-proview/` 已有工作区、缩放、命令面板等 | 整合入口和上下文，不再造画布引擎 |
-| 文档操作 | `features/resume-document/`、`resume-outline/`、来源、历史、局部排版 | 复用稳定 ID、命令与撤销，扩展新栏目 |
+| 专业制作台 | `features/resume/editor/Workbench*.tsx`、`features/resume/preview` 已有工作区、缩放、命令面板等 | 整合入口和上下文，不再造画布引擎 |
+| 文档操作 | `features/resume/document`、`resume-outline/`、来源、历史、局部排版 | 复用稳定 ID、命令与撤销，扩展新栏目 |
 | 版本与变体 | `models/versions.py`、`document_versions.py`、`document_variants.py` | 命名版本不可变；变体独立可编辑；补场景继承规则 |
 | 输出与交付 | 多格式导出、预检、导出配置、交付原件与哈希 | 新栏目逐格式验证，继承已有质量与备份体系 |
 | 模板推荐 | `resume_template_market.py` 的预设混合行业/雇主类型/人群 | 作为排版建议来源；不能当职业角色模型 |
@@ -913,7 +915,7 @@ $env:COVERAGE_FILE = Join-Path $rfCoverageDir ".coverage"
 在 frontend 目录：
 
 ```powershell
-npx vitest run src/components/GenerateResumeModal.test.tsx src/components/GenerateResumeModal.layout.test.tsx src/pages/ResumesPage.test.tsx
+npx vitest run src/features/resume/generate/GenerateResumeModal.test.tsx src/features/resume/generate/GenerateResumeModal.layout.test.tsx src/pages/ResumesPage.test.tsx
 npm run format:check
 npm run lint
 npm run typecheck

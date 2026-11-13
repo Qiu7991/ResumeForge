@@ -78,17 +78,23 @@ const interviewPage = {
   "interviewPage.setup.typeLabel": "Interview type",
   "interviewPage.setup.difficultyLabel": "Difficulty",
   "interviewPage.setup.styleLabel": "Interviewer style",
+  "interviewPage.setup.styleExtraIgnored":
+    "A custom persona is filled in, so this item does not take effect.",
   "interviewPage.setup.roundsLabel": "Rounds",
-  "interviewPage.setup.roundsAuto": "Auto (AI decides when to finish)",
+  "interviewPage.setup.roundsAuto": "Auto",
+  "interviewPage.setup.roundsModeCustom": "Set rounds",
   "interviewPage.setup.roundsOption": "{round} rounds",
+  "interviewPage.setup.roundsUnit": "rounds",
+  "interviewPage.setup.roundsRequired": "Rounds must be between 3 and 12",
   "interviewPage.setup.roundsExtra":
-    "Auto sets no fixed round count: the interviewer decides when to wrap up based on your answers, which is closer to a real interview.",
+    "Auto lets the interviewer decide when to wrap up; Set rounds runs exactly the number you pick (3-12).",
   "interviewPage.setup.focusLabel": "Focus areas (optional)",
   "interviewPage.setup.focusExtra": "e.g. user growth, cross-team collaboration, cost control",
   "interviewPage.setup.focusPlaceholder": "Leave blank for general questions for this type",
-  "interviewPage.setup.personaLabel": "Custom interviewer persona (optional)",
+  "interviewPage.setup.personaLabel": "a custom persona (optional)",
+  "interviewPage.setup.personaOverrideHint": "Overrides the style when filled in",
   "interviewPage.setup.personaExtra":
-    "e.g. a business lead at a company who digs into concrete numbers and how things shipped. Takes priority over the default style above.",
+    "e.g. a business lead at a company who digs into concrete numbers and how things shipped. Once filled in, it overrides the interviewer style.",
   "interviewPage.setup.start": "Start interview",
   "interviewPage.setup.confidenceTip":
     "The interviewer asks from your materials and the job requirements; the more specific your answer (what you did, what the result was), the more useful the feedback.",
@@ -164,6 +170,29 @@ const interviewPage = {
   "interviewPage.setup.style.gentle": "Warm and guiding",
   "interviewPage.setup.style.probing": "Persistent follow-ups",
   "interviewPage.setup.style.pressure": "Pressure questioning",
+
+  // Resume-material dropdown, two groups (item 25).
+  "interviewPage.setup.resumeGroup.internal": "Resumes in this app",
+  "interviewPage.setup.resumeGroup.external": "External resumes (uploaded)",
+  // External resumes without text are disabled in the dropdown (plan 25C).
+  "interviewPage.setup.resumeNoTextBadge": "no text",
+  "interviewPage.setup.resumeNoText":
+    "No text could be extracted from this resume - upload the original file",
+  // Job link is a label only, never a filter (plan 25D).
+  "interviewPage.setup.resumeJobTag": "linked to this job",
+  // "Current material": after picking an external resume the select is empty (the text lives
+  // on the "import a file" side), so the applied material has to be spelled out.
+  "interviewPage.setup.currentMaterial.record": "Current material: in-app resume “{name}”",
+  "interviewPage.setup.currentMaterial.external": "Current material: external resume “{name}”",
+  "interviewPage.setup.currentMaterial.file": "Current material: imported file “{name}”",
+  "interviewPage.setup.currentMaterial.empty": "Current material: nothing selected yet",
+
+  // External-resume prefill from the resume center (item 21).
+  "interviewPage.setup.external.prefilled": "Loaded external resume “{name}”",
+  "interviewPage.setup.external.loadFailed":
+    "Could not read that external resume; choose or upload one manually",
+  "interviewPage.setup.external.noText":
+    "That external resume has no extracted text; upload the original as the resume material",
 } as const;
 
 export default interviewPage;

@@ -35,24 +35,31 @@ vi.mock("../api/interview", async (importOriginal) => ({
   ...apiMocks,
 }));
 vi.mock("../api/stream", () => streamMocks);
-vi.mock("../components/QuestionBankPanel", () => ({ default: () => <div>题库面板</div> }));
-vi.mock("../components/InterviewExperiencePanel", () => ({ default: () => <div>面经面板</div> }));
-vi.mock("../components/InterviewReviewPanel", () => ({ default: () => <div>复盘面板</div> }));
+vi.mock("../features/questionbank/QuestionBankPanel", () => ({
+  default: () => <div>题库面板</div>,
+}));
+vi.mock("../features/interview/InterviewExperiencePanel", () => ({
+  default: () => <div>面经面板</div>,
+}));
+vi.mock("../features/interview/InterviewReviewPanel", () => ({
+  default: () => <div>复盘面板</div>,
+}));
 vi.mock("./interview/ReportCard", () => ({ ReportCard: () => <div>评分报告</div> }));
 vi.mock("./interview/SetupTab", () => ({
-  AUTO_ROUNDS_OPTION: "auto",
   SetupTab: ({ onStart }: { onStart: (values: Record<string, unknown>) => void }) => (
     <button
       type="button"
       onClick={() =>
         onStart({
           jobId: 3,
-          resumeId: 5,
+          resumeId: "r:5",
           interviewType: "综合面",
           difficulty: "中级",
           interviewerStyle: "严谨专业",
           focus: "",
           persona: "",
+          // roundsMode: "custom" —— 本文件断言的是固定 6 轮下的中断/重答。
+          roundsMode: "custom",
           rounds: 6,
         })
       }

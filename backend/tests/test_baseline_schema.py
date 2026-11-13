@@ -52,10 +52,6 @@ def test_upgrade_downgrade_upgrade_round_trip_rebuilds_the_same_schema(tmp_path)
     try:
         command.upgrade(config, "head")
         first_tables = _table_names(engine)
-        # 断言"库是由**当前迁移链**建出来的"，所以取实际 head 而不是基线常量：
-        # 二开分支在 0001 之后合法地追加了 0002（招呼语确认 / 生成计划 / AI 求职链表）。
-        # 把 head 钉死在 BASELINE_REVISION 等于断言"整条链只有一条迁移"——那不是本用例
-        # 要守的性质（往返可用 + 版本号证明真的重跑），二开一加迁移就会假红。
         assert alembic_version_of(engine) == head_revision()
         assert _epoch_rows(engine) == [2]
 

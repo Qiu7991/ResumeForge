@@ -13,7 +13,6 @@ import {
   Card,
   Empty,
   Space,
-  Switch,
   Table,
   Tabs,
   Tag,
@@ -27,10 +26,11 @@ import type { HTMLAttributes } from "react";
 import { useState } from "react";
 import { useApi } from "../hooks/useApi";
 import ErrorState from "../components/common/ErrorState";
-import { deleteSkill, importSkill, listSkills, setSkillEnabled } from "../api/skill";
+import { deleteSkill, importSkill, listSkills, validateSkill } from "../api/skill";
 import { RowActions, RowContextMenu } from "../components/common/RowActions";
-import SkillEditorModal, { type SkillDraft } from "../components/skills/SkillEditorModal";
-import TemplateWorkbench from "../components/templates/TemplateWorkbench";
+import SkillEditorModal, { type SkillDraft } from "../features/skills/SkillEditorModal";
+import SkillLearningPanel from "../features/skills/SkillLearningPanel";
+import TemplateWorkbench from "../features/templates/TemplateWorkbench";
 import { t, type MessageKey } from "../i18n";
 import { useLocale } from "../i18n/i18nContext";
 import type { AssistantSkill } from "../types";
@@ -107,28 +107,12 @@ export default function SkillsPage() {
   useLocale();
   const { message } = App.useApp();
   const [tab, setTab] = useState<"skills" | "templates">("skills");
-  const { data, loading, error, reload: load, setData: setSkills } = useApi(listSkills);
+  const { data, loading, error, reload: load } = useApi(listSkills);
   const skills = data ?? [];
   const [importing, setImporting] = useState(false);
-  const [togglingId, setTogglingId] = useState<number | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorSkillId, setEditorSkillId] = useState<number | null>(null);
   const [editorDraft, setEditorDraft] = useState<SkillDraft | null>(null);
-
-  const toggle = async (skill: AssistantSkill, enabled: boolean) => {
-    if (togglingId !== null) return;
-    setTogglingId(skill.id);
-    try {
-      const updated = await setSkillEnabled(skill.id, enabled);
-      setSkills((current) =>
-        (current ?? []).map((item) => (item.id === updated.id ? updated : item)),
-      );
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : t("skills.toast.toggleFailed"));
-    } finally {
-      setTogglingId(null);
-    }
-  };
 
   const remove = async (skill: AssistantSkill) => {
     try {
@@ -137,6 +121,17 @@ export default function SkillsPage() {
       await load();
     } catch (error) {
       message.error(error instanceof Error ? error.message : t("skills.toast.deleteFailed"));
+    }
+  };
+
+  /** #31F 验证闭环：用户确认技能确实用过且效果正确 → 标记已验证。 */
+  const validateOne = async (skill: AssistantSkill) => {
+    try {
+      await validateSkill(skill.id);
+      message.success(t("skills.learning.validated"));
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : t("skills.learning.validateFailed"));
     }
   };
 
@@ -173,6 +168,16 @@ export default function SkillsPage() {
       icon: <EditOutlined />,
       onClick: () => openEditor(skill),
     },
+    ...(skill.validation_status === "pending"
+      ? [
+          {
+            key: "validate",
+            label: t("skills.learning.action.validate"),
+            confirm: t("skills.learning.validateConfirm"),
+            onClick: () => void validateOne(skill),
+          },
+        ]
+      : []),
     {
       key: "delete",
       label: t("skills.action.delete"),
@@ -189,33 +194,21 @@ export default function SkillsPage() {
       dataIndex: "name",
       render: (_, skill) => (
         <Space orientation="vertical" size={0}>
-          <Button type="link" className="table-text-link" onClick={() => openEditor(skill)}>
-            {skill.name}
-          </Button>
+          <Space size={6} wrap>
+            <Button type="link" className="table-text-link" onClick={() => openEditor(skill)}>
+              {skill.name}
+            </Button>
+            {/* #31D：自动生成的技能默认「待验证」，不自动生效；点行内「标为已验证」收尾。 */}
+            {skill.validation_status === "pending" && (
+              <Tag color="orange">{t("skills.learning.pendingBadge")}</Tag>
+            )}
+          </Space>
           {skill.description && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {skill.description}
             </Typography.Text>
           )}
         </Space>
-      ),
-    },
-    {
-      title: t("skills.column.enabled"),
-      key: "enabled",
-      width: 90,
-      render: (_, skill) => (
-        <Switch
-          aria-label={
-            skill.enabled
-              ? t("skills.aria.disable", { name: skill.name })
-              : t("skills.aria.enable", { name: skill.name })
-          }
-          size="small"
-          checked={skill.enabled}
-          loading={togglingId === skill.id}
-          onChange={(checked) => void toggle(skill, checked)}
-        />
       ),
     },
     {
@@ -265,6 +258,10 @@ export default function SkillsPage() {
             {t("skills.breadcrumb")}
           </Typography.Title>
           <Typography.Text type="secondary">{t("skills.page.subtitle")}</Typography.Text>
+          {/* T14：启用入口搬进对话，技能库不再有全局开关——这句要写在页头，否则用户会找「启用」。 */}
+          <Typography.Paragraph type="secondary" style={{ margin: "4px 0 0" }}>
+            {t("conversationSkills.page.intro")}
+          </Typography.Paragraph>
         </div>
         {tab === "skills" && (
           <Space>
@@ -327,6 +324,9 @@ export default function SkillsPage() {
               ))}
             </Space>
           </Card>
+
+          {/* #31D/E/F：从对话检测 → 四段草稿确认 → 待验证；以及 90 天未加载归档提示。 */}
+          <SkillLearningPanel onChanged={() => void load()} />
 
           <Alert
             type="info"

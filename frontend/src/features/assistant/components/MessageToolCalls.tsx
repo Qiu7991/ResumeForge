@@ -14,6 +14,7 @@ import { t } from "../../../i18n";
 import type { MessageKey } from "../../../i18n";
 import { useLocale } from "../../../i18n/i18nContext";
 import ActionProposalCard from "./ActionProposalCard";
+import MessageToolCallDetails from "./MessageToolCallDetails";
 
 /**
  * 工具名的中文说法；没列到的直接显示原名。
@@ -59,6 +60,9 @@ const TOOL_LABELS: Record<string, MessageKey> = {
   get_skill: "toolLabel.get_skill",
   create_skill: "toolLabel.create_skill",
   update_skill: "toolLabel.update_skill",
+  get_job_preferences: "toolLabel.get_job_preferences",
+  create_job_preference: "toolLabel.create_job_preference",
+  update_job_preference: "toolLabel.update_job_preference",
   read_skill_knowledge: "toolLabel.read_skill_knowledge",
   update_resume_layout: "toolLabel.update_resume_layout",
   update_resume: "toolLabel.update_resume",
@@ -70,6 +74,9 @@ const TOOL_LABELS: Record<string, MessageKey> = {
   list_referrals: "toolLabel.list_referrals",
   list_apply_queue: "toolLabel.list_apply_queue",
   list_apply_records: "toolLabel.list_apply_records",
+  queue_list: "toolLabel.queue_list",
+  queue_update_priority: "toolLabel.queue_update_priority",
+  apply_start: "toolLabel.apply_start",
   list_interview_experiences: "toolLabel.list_interview_experiences",
   list_question_banks: "toolLabel.list_question_banks",
   list_reviews: "toolLabel.list_reviews",
@@ -97,7 +104,27 @@ const TOOL_LABELS: Record<string, MessageKey> = {
   add_resume_entry: "toolLabel.add_resume_entry",
   reorder_sections: "toolLabel.reorder_sections",
   set_entry_layout: "toolLabel.set_entry_layout",
+  run_resume_quality_check: "toolLabel.run_resume_quality_check",
+  check_ats_match: "toolLabel.check_ats_match",
+  get_resume_preflight: "toolLabel.get_resume_preflight",
+  compare_resume_versions: "toolLabel.compare_resume_versions",
+  diagnose_recent_errors: "toolLabel.diagnose_recent_errors",
+  // #16 链接抓取/导入
+  web_extract: "toolLabel.web_extract",
+  import_jobs_from_url: "toolLabel.import_jobs_from_url",
+  // 18A 长任务
+  task_create: "toolLabel.task_create",
+  task_status: "toolLabel.task_status",
+  task_cancel: "toolLabel.task_cancel",
+  // #29A 知识库检索
+  search_knowledge: "toolLabel.search_knowledge",
 };
+
+/** 工具名的本地化说法（步骤视图等处复用）；没登记的工具返回原名。 */
+export function toolLabel(name: string): string {
+  const key = TOOL_LABELS[name];
+  return key ? t(key) : name;
+}
 
 export function MessageToolCalls({ calls }: { calls: AssistantToolCall[] }) {
   useLocale();
@@ -159,7 +186,7 @@ export function MessageToolCalls({ calls }: { calls: AssistantToolCall[] }) {
                   <li key={`${call.name}-${index}`}>
                     {call.ok ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
                     <Typography.Text strong style={{ marginLeft: 6 }}>
-                      {TOOL_LABELS[call.name] ? t(TOOL_LABELS[call.name]) : call.name}
+                      {toolLabel(call.name)}
                     </Typography.Text>
                     {call.ok ? (
                       <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
@@ -176,6 +203,8 @@ export function MessageToolCalls({ calls }: { calls: AssistantToolCall[] }) {
                         {t("toolCalls.view")}
                       </Typography.Link>
                     )}
+                    {/* #13C 参数 / #13D 写操作 diff + 撤销：只在展开的工具卡里出现。 */}
+                    <MessageToolCallDetails call={call} />
                   </li>
                 ))}
               </ul>

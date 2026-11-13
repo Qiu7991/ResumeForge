@@ -219,9 +219,11 @@ def _start_jd_backfill(
     调用方必须保证串行——见 ``refetch_jd`` 里把多个平台合成一串。
     """
     try:
-        from ..database import SessionLocal
+        # 会话策略的唯一落点是 services/session_scope（架构守卫 api-no-session-factory）：
+        # 路由只交出「怎么开一条会话」的工厂，不自己 import SessionLocal。
         from ..services.job_hunt.detail_backfill import start_backfill_in_background
         from ..services.job_hunt.runner import cdp_fetcher
+        from ..services.session_scope import open_session
 
         def _fetch_factory(db: Session) -> Any:
             client = acquire_client(db)
@@ -230,7 +232,7 @@ def _start_jd_backfill(
             return cdp_fetcher(client, adapter, page_kind="detail")
 
         start_backfill_in_background(
-            SessionLocal, job_ids, fetch_factory=_fetch_factory, adapter=adapter,
+            open_session, job_ids, fetch_factory=_fetch_factory, adapter=adapter,
             overwrite=overwrite, limit=limit,
         )
     except Exception as exc:  # noqa: BLE001 — 补抓是增强项，失败不该连累采集
@@ -436,9 +438,9 @@ def _start_serial_backfill(plan: list[tuple[int, Any]], *, job_ids_total: int) -
     """
     import threading
 
-    from ..database import SessionLocal
     from ..services.job_hunt.detail_backfill import backfill_details
     from ..services.job_hunt.runner import cdp_fetcher
+    from ..services.session_scope import open_session
 
     grouped: list[tuple[Any, list[int]]] = []
     for job_id, adapter in plan:
@@ -448,7 +450,7 @@ def _start_serial_backfill(plan: list[tuple[int, Any]], *, job_ids_total: int) -
             grouped.append((adapter, [job_id]))
 
     def _run() -> None:
-        db = SessionLocal()
+        db = open_session()
         try:
             for adapter, ids in grouped:
                 client = acquire_client(db)

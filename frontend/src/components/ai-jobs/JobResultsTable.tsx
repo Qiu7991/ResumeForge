@@ -106,7 +106,7 @@ export default function JobResultsTable({
 
 function TypographyError({ text, onRetry }: { text: string; onRetry: () => void }) {
   return (
-    <div role="alert" style={{ color: "var(--rf-color-error, #ff4d4f)" }}>
+    <div role="alert" style={{ color: "var(--rf-error-text)" }}>
       {text}
       <Button type="link" size="small" onClick={onRetry}>
         {t("aiJobs.preflight.rerun")}

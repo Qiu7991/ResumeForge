@@ -1,8 +1,10 @@
 # 架构设计
 
+> **迁移号说明**：本文出现的 `00XX_*` 迁移号（如 `0003`–`0075`）均为 **1.x 历史号**；2.0 起迁移链只有一条基线 `0001_baseline_v2`，新增迁移接在它之后。
+
 ## 总体架构
 
-前后端分离：React（Vite + TypeScript + Ant Design）+ FastAPI（Python），本地 SQLite 存储，单用户本地部署。除用户主动配置的大模型 API 外，不依赖额外的数据库或业务服务。自动投递链路额外通过**浏览器桥接层**驱动一个由应用自己拉起的「投递专用浏览器」访问招聘网站——这是项目里唯一会主动访问外部站点的地方，且只在用户显式触发时运行。
+前后端分离：React（Vite + TypeScript + Ant Design）+ FastAPI（Python），本地 SQLite 存储，单用户本地部署。除用户主动配置的大模型 API 外，不依赖额外的数据库或业务服务。自动投递链路与网申填表链路额外通过**浏览器桥接层**驱动一个由应用自己拉起的专用浏览器访问招聘网站——**投递台（采集 / 投递）与网申填表是项目里仅有的两条会主动访问外部站点的链路**，两者都只在用户显式触发时运行。
 
 ```mermaid
 flowchart LR
@@ -40,6 +42,26 @@ flowchart LR
     SVC --> PROMPTS
     ROUTES --> DB
 ```
+
+### 部署拓扑与工程约束
+
+前后端分离，但**前端统一走同源 `/api`**，三种形态的接法不同：
+
+- **开发**：Vite dev server（5173）把 `/api` 代理到 FastAPI（默认 8000）；
+- **生产**：由 Web 服务器托管 `frontend/dist`，把 `/api` 反向代理到 FastAPI，并把非静态文件的前端路由回退到 `index.html`（SPA 回退）；
+- **发布包 / 桌面版**：后端同源托管 `frontend/dist`，运行期不再需要 Node。
+
+![架构与数据边界：React 前端 → 同源 /api → FastAPI 后端 → 本地 SQLite / 你配置的模型服务商 / 本机浏览器](images/architecture.png)
+
+一张图看清数据边界：绿色那块「默认不出网」，橙色的两块（你配置的模型服务商、本机 Chrome / Edge）是**唯一**可能出网的位置，且都必须由用户显式配置并显式触发。
+
+几条贯穿全项目的工程约束，读代码前先知道可以少走弯路：
+
+- **一个逻辑只有一份实现**：投递准入只有 `models/apply.py::admission_of`（见下文「关键设计决策」），行操作菜单只有 `components/common/RowActions`，卡片详情只有 `RecordDetail`；助手的能力地图由 `services/feature_catalog.py` 门面在运行时渲染（功能数据按原始顺序拆在 `feature_catalog_{profile,resume,workflow}.py`，守卫测试保证与 README 功能表双向对齐）。
+- **并发守卫下沉到 SQL**：批次状态用条件 `UPDATE ... WHERE status = ?` 原子推进，不用「先读后判再写」。
+- **外部输入一律不可信**：岗位描述、粘贴文本与上传文件都按不可信输入处理，不做系统指令执行；解析侧对页数 / 字符数 / 像素数封顶，DOCX 只读白名单成员。
+- **不用 `create_all` 掩盖迁移问题**：数据库由 Alembic revision 管理，新增表 / 列必须写迁移与降级脚本。
+
 
 ## 目录结构
 
@@ -100,7 +122,7 @@ backend/app/
 
 入口层只负责装配，不承载业务规则：`app/application.py` 提供 `create_app()`、生命周期、路由注册和统一异常响应，`app/main.py` 保留原有 `app.main:app` 启动路径及历史导出符号。早期 SQLite 兼容列集中在 `database_compat.py`，正式结构仍以 Alembic 为唯一来源。这样可以在测试中独立创建应用，同时避免路由、迁移和兼容逻辑互相耦合。
 
-前端页面按领域组件拆分：资料、设置、岗位和简历编辑器的字段编辑器位于各自 `components/*` 目录，共享类型位于 `types/`，样式按视觉域位于 `styles/`；全局投投悬浮球作为独立的 `features/tou-tou/*` 功能模块挂在 `MainLayout`，浮窗直接复用 `AssistantPage` / `AssistantComposer` / `AssistantMessageList` 与助手流式 hook，只在界面层隐藏附件、技能、岗位 / 简历关联等复杂控件，不复制助手业务逻辑；`types/index.ts` 继续 re-export 旧路径，避免外部组件一次性迁移。助手会话通过 `chat_conversation.surface` 区分 `page` 与 `floating`，两种入口共用工具、权限和系统提示，但历史查询、读写、删除、导出和发送接口都按作用域过滤。
+前端页面按领域组件拆分：资料、设置、岗位和简历编辑器的字段编辑器位于各自 `features/<领域>/` 目录（`components/` 只保留 `common/` 通用交互原语），共享类型位于 `types/`，样式按视觉域位于 `styles/`；全局投投悬浮球作为独立的 `features/tou-tou/*` 功能模块挂在 `MainLayout`，浮窗直接复用 `AssistantPage` / `AssistantComposer` / `AssistantMessageList` 与助手流式 hook，只在界面层隐藏附件、技能、岗位 / 简历关联等复杂控件，不复制助手业务逻辑；`types/index.ts` 继续 re-export 旧路径，避免外部组件一次性迁移。助手会话通过 `chat_conversation.surface` 区分 `page` 与 `floating`，两种入口共用工具、权限和系统提示，但历史查询、读写、删除、导出和发送接口都按作用域过滤。
 
 ## 岗位管理与个人资料
 
@@ -116,13 +138,21 @@ backend/app/
 
 个人资料粘贴解析采用 `profile_text_parser.py` 兼容门面，具体规则按常量、规范化、分区识别、基本字段、条目头部、技能字段和结果边界拆分到 `services/profile_parser/`。岗位文本规则同样由 `job_text_parser.py` 门面和 `services/job_parser/` 组成。两个粘贴接口会先运行本地规则，再在已配置模型时调用 `text_extraction.py` 的结构化 Prompt 纠正字段分类；模型失败、超时或输出非法 JSON 时自动返回本地草稿，并通过 `recognition_source` 和 warnings 告知前端。门面继续导出原有符号，因此 API 层和外部调用方无需改变导入路径；内部模块不反向依赖门面。
 
-SQLite 启动升级以 Alembic 为唯一结构来源：空库执行完整 revision 链，已版本化数据库只执行待应用 revision。仅当检测到早期未版本化业务表时，才先执行 `create_all` 和 `ensure_sqlite_columns` 补齐历史兼容结构，再标记为基线并交给 `run_database_migrations`。有用户数据且存在待执行 revision 时，使用 SQLite backup API 在数据库同级 `backups/` 目录创建一致性备份，然后升级到 `head`。`0003_job_additional_info`、`0004_resume_favorite`、`0005_chat_assistant`、`0006_chat_conversation_flags`、`0007_assistant_skills` 依次增加岗位其他信息、简历收藏状态、助手会话/消息表、会话置顶和收藏字段以及助手技能表；`0006` 使用原生新增列操作，避免 SQLite 重建会话父表时触发外键级联并删除消息。升级保留既有业务记录并为新增字段提供默认值。降级会按 revision 移除对应的新字段或表，因此执行降级前必须另外备份。后续新增/删除列、改类型、约束变化和数据回填都必须新增 revision，不再扩大临时兼容层。
+SQLite 启动升级以 Alembic 为唯一结构来源，但 2.0 把「版本闸门」从 revision 换成 **epoch**。2.0 的迁移链只有一条基线 `0001_baseline_v2`：空库执行一次 `upgrade head` 即建全 2.0 的表 / 列 / 索引，不再有"逐版本演进"的兼容分支。基线迁移同时创建单行表 `app_schema_epoch` 并写入唯一一行 `epoch=2`，启动顺序因此是：
 
-## 核心数据流：职业场景与补充事实（A1–A5）
+1. **先读 epoch**（不先看 revision）：`app_schema_epoch` 缺表且库里存在业务表 → 判为 pre-2.0 库，走「整包归档 → 校验 → 移走旧库 → 建空库 → 迁移」；`epoch > 2` → 拒绝启动（库来自更高版本）；`epoch == 2` → 进入第 2 步。
+2. **epoch==2 时才用 revision 判断"在不在链上"**：`current` 与 `head` 不一致就执行待应用的 revision。这样"老库的 revision 不在新链上"不会再被误判成库损坏。
+3. **升级前仍走一致性备份**：有用户数据且存在待执行 revision 时，用 SQLite backup API 在数据库同级 `backups/` 目录创建备份，然后升级到 `head`。
 
-> **2026-10-25 更新**：补充事实（`profile_fact` / `profile_fact_field_pref`）已按 v3 裁决**从界面下线**
-> （R-54）。旧表与旧数据继续保留、继续进备份、回收站里仍可见历史条目，但新的资料页不再读取它们；
-> 论文/科研/专利/证照/语言等改由「资料板块」录入，培训不再提供内置入口。本节的映射描述只作为历史实现记录。
+pre-2.0 库的归档落在数据目录的 `legacy-archive/<时间戳>/`（`package/` 内是与「导出全部数据集」同格式的 zip，`files/` 内是原库与数据集文件，另附 `ARCHIVE-README.txt`）；归档校验通过才移走旧库并建空库，任一步失败都中止启动、原库原样保留。**1.x → 2.0 不搬数据**：1.0 系列只提示、不回填，新库从空白开始。库结构后续发生变化仍必须新增 revision，不能改写已发布的基线。
+
+## 核心数据流：职业场景（A1–A5）
+
+> **1.x 历史实现（2.0 已下线）**：补充事实（`profile_fact` / `profile_fact_field_pref`）在 2.0 已整套删除——
+> 模型、表、路由、服务与前端模块全部移除，2.0 基线不再创建这两张表，回收站里也没有这一类。
+> 论文 / 科研 / 专利 / 证照 / 语言等改由「资料板块」录入（见下节 F1–F3），培训不再提供内置入口。
+> 本节以下关于 `fact_context.py` / `fact_mapping.py` / `services/webform/facts.py` 的映射描述只作为
+> 1.x 的历史记录，**不代表当前代码**。
 
 职业场景（`career_scenario`）与简历排版对象的 `ROLES`（姓名/正文/元信息等渲染分区）、面试 persona、
 工作区预设、数据集是**五个互不相干的层**。场景只回答"本窗口给什么引导与可选表达建议"，不能写简历正文；
@@ -161,20 +191,9 @@ flowchart LR
 以「变体内容指纹 + 场景上下文哈希」双条件写只改变体。改动基准是这条变体的旧内容（不是母版），
 `lock_content` 违规 409 且一个字段都不写；源简历的内容、revision、锁与来源标注全程不变。
 实现见 `services/resume/scenario_variant.py`、`api/resumes/scenario_variant_routes.py`，
-前端 `components/resume/versions/ScenarioVariantSection.tsx`。
+前端 `features/resume/versions/ScenarioVariantSection.tsx`。
 
-补充事实（`profile_fact`，0062；2026-10-25 灵活化）是**九类补充资料容器**，与旧资料表隔离：旧
-`PUT /api/profile` 是"整体替换"，新事实只由 `/api/profile/facts` 写入，因此旧客户端保存资料不会清空它们。
-每条事实有稳定 `fact_id` 与 `revision`（条件写），`deleted_at` 软删并登记回收站。
-
-**字段设置（`profile_fact_field_pref`，0063）**：每类事实可隐藏默认字段、增加自定义字段定义；事实 payload
-里保存 `custom_fields` 值快照（key+label+value）。隐藏字段只在读写/导出层剔除，旧值保留在 payload，
-恢复默认后重新出现。生成入口用 `fact_context.py` 读快照 + `fact_field_schema.mapping_payload` 剔除隐藏/未定义
-自定义字段；`fact_mapping.py` 纯映射：论文/科研项目/专利/资格证照独立栏目，作品项目并入 `projects`、实践
-并入 `experiences`，荣誉并入 `awards`、语言并入 `skills`、培训并入 `projects`（artifact_type=培训）；
-资格证照编号永不进候选，链接只留 http(s)。网申侧 `services/webform/facts.py` 把可见字段作为
-`CUSTOM_FACT_` 条目并入 catalog/data/custom_labels（私密与隐藏字段排除，已有资料优先），供人工挑选、
-批量预填与放宽匹配使用。
+**补充事实容器（1.x 历史，2.0 已下线）**：1.x 曾用 `profile_fact`（九类补充资料容器）与 `profile_fact_field_pref`（字段设置：隐藏默认字段、自定义字段定义）承载论文 / 科研 / 专利 / 证照 / 语言 / 培训等资料，并由 `fact_context.py` / `fact_mapping.py` 把它们映射进生成候选、由 `services/webform/facts.py` 以 `CUSTOM_FACT_` 条目并入网申候选。2.0 已把这条链整套删除（模型 / 表 / 路由 / 服务 / 前端模块），能力由「资料板块」承担（见下节）。本节不再描述其当前行为。
 
 **跨行业筛选兜底（A4/§8.5）**：非技术岗位（DOMAIN_SIGNALS 未识别）且没有任何条目直接命中时，
 `profile_matching` 会按资料顺序保留少量真实经历/项目/技能作为候选，并在生成说明里如实标注
@@ -245,10 +264,13 @@ C1 空字段不产生 item；自建板块**独立成 section**（排在系统板
 HTML / PDF / Word / Markdown / TXT 五条产物都渲染独立「语言能力」小节。证书编号等私密字段在投影前
 就被跳过；`material_only` 字段投影成 hidden item，资料页与制作台都标注「不上纸面，仅生成素材」。
 
-**升级与旧数据**：旧六表 / `profile_fact` / `profile_fact_field_pref` 不删、不迁、也不再被新界面读取
-（R-46）；`services/profile/legacy_status.py` 用 `SELECT 1 ... LIMIT 1` 只探测「旧表里是否还有实际内容」，
-`GET /api/profile/upgrade-status` 与 `GET /api/profile/workspace` 的 `upgrade` 槽位据此提示「旧资料不再显示、
-可从备份取出后手动重填」（R-47）；表存在性按进程缓存，读取异常如实报错而不是冒充「没有旧资料」。
+**升级与旧数据**：2.0 基线**仍创建旧六表**（`user_profile` / `education` / `experience` / `project` /
+`skill` / `award` / `campus_experience` / `profile_photo`，因为 `models/profile.py` 还在），但新库里它们是
+**空表、不被新界面读取**，仍随备份导出；**`profile_fact` / `profile_fact_field_pref` 不再创建**
+（补充事实整套下线）。1.x → 2.0 时旧库整包归档到 `legacy-archive/<时间戳>/`、**不原地迁移**，所以这些旧表里
+不会有 1.x 的数据。`GET /api/profile/upgrade-status` 仍保留，但
+`load_workspace_upgrade_status()` 在 2.0 **已不再探测旧表**，直接返回 `has_legacy_data=False`
+（字段只为前端契约保留）；`new_profile_has_entries` 照实报告新资料模型有没有内容。
 
 API 增量：`/api/profile/workspace`（编辑视图）、`/api/profile/sections[...]`（自建板块/字段/条目光标）、
 `/api/profile/section-order`、`/api/profile/groups` + `/api/profile/current-group`、`/api/profile/field-preferences`、
@@ -367,6 +389,192 @@ placement / format 由字段目录补；**渲染与导出链路不再有「承�
 辅助函数（`ensure_custom_field_lines_in_resume` 等）仍服务生成中间态并按 T5 审计保留；
 已存 v2 文档的分析、修订与来源采纳不经过该中间态。
 
+## 核心数据流：RAG 语义补召回（RAG v2/v3，默认关闭）
+
+RAG 是**候选选择层**的可选增强，不是把生成链改成向量问答：它只决定「哪些资料条目进入候选」，
+不改变候选的字段形状 / 键序 / 文本内容（`build_llm_profile_prompt_data()` 的逐字节历史约束），
+也仍要经过既有的分区名额、预算、grounding 与一致性检查。两个开关**默认 `false`**且相互独立：
+`rag_retrieval_enabled`（向量补召回 + 加权融合，**开发 / 评测总闸**）与
+`rag_query_expansion_enabled`（Phase 0 查询扩展）。**产品形态下语义检索由设置页启用的 provider 驱动**：
+在设置页启用本地 / 远程 provider 即等于启用语义检索（不需要改环境变量），`rag_retrieval_enabled`
+只是开发 / 评测总闸——两者**任一为真即生效**（`_retrieval_enabled()`，见「真实 provider 接入」）。
+两者都未启用时（默认）`prepare_selection_boost()` 返回空作用域，`_select_entries()` /
+`build_job_focus()` 走与改造前一致的路径——**生成链行为与改造前逐字节一致**。
+
+v3 起 embedding provider 有真实实现（本地 `local-onnx` / 远程 `openai-http`），由设置页持久化配置驱动；
+配置与资产全部按需获取，默认不下载任何东西（见「真实 provider 接入」）。
+
+```mermaid
+flowchart LR
+    CP["冻结的 ConsumedProfile"] --> CH["rag_chunking.build_chunks<br/>chunk + canonical_item_hash 桥接表"]
+    CH --> IX["rag_index<br/>进程内 LRU 向量缓存"]
+    CH --> HY["rag_hybrid<br/>关键词分 + 10×cosine 加权融合"]
+    IX --> HY
+    JOB["JobOut"] --> QE["rag_query_expansion<br/>Phase 0 扩展词"]
+    QE --> FOCUS["build_job_focus<br/>扩展词只并入 terms"]
+    JOB --> FOCUS
+    CH --> RS["rag_service.prepare_selection_boost<br/>请求级编排，失败即空作用域"]
+    HY --> RS
+    RS --> SEAM["rag_seam.selection_scope<br/>请求内 ContextVar"]
+    SEAM --> FOCUS
+    SEAM --> SEL["_select_entries(boost)<br/>内置四分区 + filter_by_job=True 自建板块"]
+    FOCUS --> SEL
+    SEL --> OUT["既有分区名额 / 预算 / grounding / 一致性检查"]
+```
+
+一条请求内的数据流：① `generate_routes.generate_resume` 在冻结 `ConsumedProfile` 之后调用
+`prepare_selection_boost()`；② `rag_service` 用快照构造 chunk（`display_text` 只来自
+`build_consumed_data()` → `build_llm_profile_prompt_data()` 的白名单投影），逐条查 / 填
+`rag_index`（未命中时 `embed_documents()`，文本只来自投影），再 `embed_query(JD)` 并交给
+`rag_hybrid` 做关键词 + 向量加权融合（向量分量 `10×cosine`）；③ 结果装进 `SelectionBoost`，由 `rag_seam.selection_scope`
+在「构造候选」的生成迭代外层激活；④ `profile_matching._select_entries(..., boost)` 把 boost
+加进 `_score_item()` 分数（先 `round(..., 4)` 再比较），`build_job_focus()` 把扩展词并入
+`terms`；⑤ 之后仍按既有分区名额截断、走预算压缩、grounding 与一致性检查。
+
+| 模块 | 职责 |
+|---|---|
+| `rag_types.py` / `rag_chunking.py` | 由冻结消费快照构造稳定 chunk 与 `(section_key, entry_id) ⇄ canonical_item_hash` 双向桥接表；`canonical_item_hash` 取**下游实际 item** 的 `canonical_json`（不是 `display_text`），主字段为空的条目按下游口径过滤，避免下标错位；自建板块主文本只认 `paper_policy.custom_section_text_field()` |
+| `llm/embeddings.py` | embedding 能力与工厂（复用 `llm/` 的 retry / net_policy / operation_budget / usage）；`EmbeddingModelSpec` 携带 provider / model / dim / pooling / query_prefix / doc_prefix / normalize 与指纹，任一项变化即视为新索引；`resolve_embedding_spec()` 持久化配置优先，`create_embedding_provider()` 按 provider 派发 fake / local-onnx / openai-http，构造失败统一收敛为可回退的 `EmbeddingError` |
+| `rag_policy.py` | 数据范围与白名单：`llm_allowed` / `private` 字段过滤、`filter_by_job` 规则、boost 分区白名单（与 `profile_relevance._CONSUMED_VALUE_SECTIONS` 逐字一致）、`(dataset_id, group_id)` 精确同域 |
+| `rag_index.py` | 按 entry 粒度的有界 LRU 向量缓存（默认 4096 条）；缓存键含 `content_hash`，改一条只失效那条；`workspace_revision` 不进键（只作诊断 / 整库重建判断） |
+| `rag_hybrid.py` | 纯 Python cosine（语料上限约 320 条，检索不是瓶颈）+ 加权融合（`boost=VECTOR_WEIGHT(10)×cosine`，10 < 技能权重 12 以保留硬优先级；RRF `K=60` 作为免调权基线保留）；分先定点化，平局回落原顺序；同一 entry 跨 chunk 去重 |
+| `rag_seam.py` | RAG → 生成链的唯一适配层：`selection_scope` / `active_boost` / `active_extra_terms`；空作用域 = 完全回退 |
+| `rag_service.py` | 请求级编排：读冻结快照 → 查询扩展 → 编码 / 索引 → 融合 → `SelectionBoost`；**永不抛异常**，任何失败返回可用空作用域。受 `rag_request_budget_seconds` 硬墙钟约束，超预算回退并登记 `rag_index_warmup` 后台预热；`generate_with_scope()` 只覆盖候选构造段（以 `mark_selection_done()` 为界） |
+| `rag_query_expansion.py` | Phase 0：用已配置 LLM 把 JD 提炼成 10–20 个中文近义 / 上位词，只并进 `JobFocus.terms`；缓存复用 `job_analysis_cache` 的同一列与同一 fingerprint |
+| `rag_observability.py` | 日志唯一出口：`RagEvent` 只有 provider / 模型 / 候选数 / 命中来源 / 耗时 / 回退原因 / 哈希前缀 7 个字段（结构上放不下正文），字符串统一过 `runtime/log_redact.py` |
+
+**数据边界**：索引输入只能是生成请求已经冻结的 `ConsumedProfile`（`sections[key].entries`
+带 `entry_id`）；不读 `profile_entry` 全表、不调用 `load_all_consumed_profile()`、不在生成中途
+重读数据库；只使用模型输入白名单投影，`private` / `llm_allowed=False` 的字段值不会进入 chunk、
+embedding 或日志。
+
+**不新增数据库表 / 迁移 / 数据目录**：向量只存在有上限的进程内缓存，重启后允许重算，属于
+**可重建派生数据、不进备份**；备份导入后没有索引也能正常生成（回退关键词链）。Phase 0 的扩展词
+写回岗位已有的 `analysis_cache` 列，同样不新增表或迁移。
+
+### 配置项
+
+环境变量名为字段名的大写形式（pydantic-settings 大小写不敏感），也可写进 `backend/.env`；
+业务代码只读配置，不出现具体模型字符串。默认值按 `backend/app/config.py` 的字面量填写（字符串带引号）。
+
+| 配置项（环境变量） | 默认值 | 说明 |
+|---|---|---|
+| `RAG_RETRIEVAL_ENABLED`（`rag_retrieval_enabled`） | `False` | **开发 / 评测总闸**（产品形态由设置页启用的 provider 驱动，任一为真即生效）；未启用时生成链与改造前逐字节一致 |
+| `RAG_QUERY_EXPANSION_ENABLED`（`rag_query_expansion_enabled`） | `False` | Phase 0 查询扩展开关，与总开关相互独立 |
+| `RAG_QUERY_EXPANSION_TIMEOUT_SECONDS`（`rag_query_expansion_timeout_seconds`） | `8.0` | 扩展调用超时（秒，1–60） |
+| `RAG_EMBEDDING_PROVIDER`（`rag_embedding_provider`） | `"fake"` | 环境变量配置只接 `fake`（测试 / 老路径）；真实 provider 由设置页持久化配置驱动（见「真实 provider 接入」） |
+| `RAG_EMBEDDING_MODEL`（`rag_embedding_model`） | `"fake-embedding-v1"` | 模型名；换模型必须同时改 dim / pooling / 前缀并重跑离线评测 |
+| `RAG_EMBEDDING_DIM`（`rag_embedding_dim`） | `64` | 向量维度（8–8192） |
+| `RAG_EMBEDDING_POOLING`（`rag_embedding_pooling`） | `"mean"` | `cls` / `mean` / `last-token`，由模型决定，换模型必须一起改 |
+| `RAG_EMBEDDING_QUERY_PREFIX`（`rag_embedding_query_prefix`） | `""` | 查询侧指令前缀 |
+| `RAG_EMBEDDING_DOC_PREFIX`（`rag_embedding_doc_prefix`） | `""` | 文档侧指令前缀 |
+| `RAG_EMBEDDING_NORMALIZE`（`rag_embedding_normalize`） | `True` | 输出是否已 L2 归一（cosine 下只影响分数尺度，不影响排序） |
+| `RAG_EMBEDDING_TIMEOUT_SECONDS`（`rag_embedding_timeout_seconds`） | `10.0` | **远程 HTTP 单次请求超时上限**（秒，1–120），构造 `OpenAIHttpEmbeddingProvider` 时传入；每次生成请求另有 `rag_request_budget_seconds`（默认 1.5s）硬闸。本地 provider 不用该字段 |
+| `RAG_EMBEDDING_MAX_CANDIDATES`（`rag_embedding_max_candidates`） | `40` | 进入融合的向量候选上限（1–500），防止失败时把整库塞进融合 |
+| `RAG_EMBEDDING_ALLOW_FAKE`（`rag_embedding_allow_fake`） | `False` | 是否允许 fake provider（确定性 hash 向量，与语义无关）参与排序；默认 false 时打开总开关也只回退（`fallback=fake_provider`） |
+| `RAG_REQUEST_BUDGET_SECONDS`（`rag_request_budget_seconds`） | `1.5` | 单次生成请求内算 boost 的墙钟预算（0.1–30 秒）；超预算立即回退（`fallback=budget_exceeded`）并登记后台 `rag_index_warmup` 预热 |
+| `RAG_ASSET_BASE_URL`（`rag_asset_base_url`） | `"https://github.com/magicapple123/ResumeForge/releases/download/rag-assets-v1"` | 本地权重 / 运行时 zip 的第一下载源（可整体替换成镜像 / 自托管） |
+| `RAG_ASSET_HF_BASE_URL`（`rag_asset_hf_base_url`） | `"https://huggingface.co/ibm-granite/granite-embedding-97m-multilingual-r2/resolve/main"` | 备用下载源；每个源都各自校验 sha256，不用第一个源的校验结果替代 |
+| `RAG_LOCAL_MODEL_DIRNAME`（`rag_local_model_dirname`） | `"rag-model"` | 数据目录下本地权重的版本化子目录名（测试可覆盖） |
+| `RAG_LOCAL_RUNTIME_DIRNAME`（`rag_local_runtime_dirname`） | `"rag-runtime"` | 数据目录下隔离运行时的版本化子目录名（测试可覆盖） |
+| `RAG_EMBEDDING_ALLOW_PRIVATE_ENDPOINT`（`rag_embedding_allow_private_endpoint`） | `False` | 是否允许回环 / RFC1918 端点（本机 Ollama / LM Studio）；默认拒绝，公网端点不受影响 |
+
+### 真实 provider 接入（本地 + 远程，RAG v3）
+
+embedding provider 只允许三个值（`embedding_settings.EMBEDDING_PROVIDERS`）：
+
+- `fake`：确定性 hash 向量，**只供测试 / 链路对比**，默认被 `rag_embedding_allow_fake` 守卫（打开总开关也只回退 `fake_provider`）；
+- `local-onnx`：本地权重 + 隔离 onnxruntime 运行时，数据不出本机；
+- `openai-http`：任意 OpenAI 兼容 `/embeddings`（云端厂商、自建网关、本机 Ollama / LM Studio），以及「高级」自定义端点模板。
+
+**启用语义**：设置页**启用**一个真实 provider（打开 `enabled` 且 provider 为 `local-onnx` / `openai-http`）就等价于启用语义检索；`RAG_RETRIEVAL_ENABLED` 保留为开发 / 评测总闸，两者任一为真即生效（`rag_service._retrieval_enabled()`）。**生效顺序**（`resolve_embedding_spec()`）：设置页持久化配置（`DATA_DIR/global_settings.json` 的 `embedding` 段，`enabled` 且 `provider` / `model` / `dim` 齐备）优先；没有时才回退环境变量配置（测试 / 老路径，只支持 `fake`）。持久化字段：`provider / enabled / model / dim / pooling / query_prefix / doc_prefix / normalize / variant / base_url / api_key / batch_size / endpoint_mode / request_url / headers / body_template / response_path / allow_private / confirmed_hosts / last_error / updated_at`。`api_key` **按机加密保存**，HTTP 响应一律掩码（`********`），清除后立即停用；明文只在进程内构造 provider 时短暂存在。
+
+**本地路（`local-onnx`）**
+
+| 组件 | 职责 |
+|---|---|
+| `backend/app/data/rag-assets.json` | 资产清单（唯一事实源）：文件名、字节数、sha256、适用平台、onnxruntime 精确版本、模型 id 与上游 revision |
+| `rag_asset_manifest.py` | 读清单、按平台 / 架构选资产（`windows-x64` / `macos-arm64` / `linux-x64` / `linux-arm64`；macOS x64 无资产 → 本地不可用）、`verify_file()` 校验 |
+| `rag_model_download.py` | 下载状态机：状态 / 已下载字节 / 错误 / 取消；字节数与 sha256 双校验；先 GitHub Releases 再 HuggingFace，**每个源各自校验** |
+| `rag_runtime_loader.py` | 解包、`sys.path` 注入、`import onnxruntime` 版本探测、卸载回退 |
+| `rag_local_setup.py` | 设置页本地状态的唯一入口（下载 / 取消 / 删除 / 激活自检） |
+| `llm/embeddings_local.py` | `LocalOnnxEmbeddingProvider`：tokenizers + onnxruntime 推理（pooling / 前缀 / 归一化沿用 spec），沿用 `EmbeddingModelSpec.fingerprint()`；模型为 granite-embedding-97m-multilingual-r2 的 `int8_avx2` ONNX（dim 384 / pooling cls / normalize true，上游 revision 记在资产清单） |
+
+- **目录与备份**：权重在 `DATA_DIR/rag-model/<model-id>-<variant>/`、运行时在 `DATA_DIR/rag-runtime/ort-<version>/`，都带版本子目录（升 ORT / 换模型自动切目录，旧目录可清理）；两者登记进 `data_backup/coverage.py` 的 `RUNTIME_ONLY`——**不进备份、不触发 uncovered 告警**。
+- **不成为全局依赖**：`import onnxruntime / tokenizers / numpy` 只出现在 `ensure_runtime()` 成功后的函数体内；模块顶层导入即违反红线。`requirements.txt` 不变。
+- **平台矩阵**（onnxruntime 1.31.1）：Windows x64 / macOS 14+ arm64 / Linux x86_64 / Linux aarch64 可用本地；**Intel Mac（macOS x64）与 Windows arm64 没有对应资产，本地不可用、只能用远程**（Intel Mac 应用本身仍可运行，dmg 仍出双架构）。首次下载（zip 传输体积）Windows 约 111MB / macOS 约 110MB / Linux 约 122–126MB，解压后合计约 237–280MB；设置页按清单显示本机实际值。
+
+**远程路（`openai-http`）**
+
+- `POST {base_url}/embeddings`，`{"model":..., "input":[...]}`，读 `data[].embedding`；**按 `batch_size`（默认 25）切片**（厂商相关值、配置化，不硬编码；该实测模型 30 条会 HTTP 400）。切片失败只重试该片，不重发整批。
+- **维度自动探测**：首次「测试连接」发一条短文本、读回向量长度并落库，界面**不出现 dim 字段**；首次调用时维度不符即停用该 provider 并回退，不允许脏索引继续用。
+- 预设（`REMOTE_PRESETS`：百炼 / OpenAI / 智谱 / SiliconFlow / 本机 Ollama）**只提供默认值、不新增代码路径**；启用仍走真实探测（HTTP 200 + 维度自检）。已知无 `/embeddings` 的 host（DeepSeek / Groq / OpenRouter / Together / xAI 等）映射成「该服务商不提供 embeddings 接口」的可读文案，而不是裸 404——名单有时效性，不写成不可配置的白名单。
+- **自定义端点模板**：`request_url`、`headers`（值可用 `{api_key}` 占位）、`body_template`（只允许 `{texts}` / `{model}`）、`response_path`（极简 `a.b[*].c` 子集，自写解析，不引入 jsonpath）、`batch_size`。模板只做**字面量替换**，禁止 `eval` / `exec` / 任何表达式；模板 ≤ 8KB、响应体 ≤ 16MB、返回条数必须与请求一致；渲染后的 header 与完整 URL 不进日志 / 异常 / 报告。
+- **私网与回环**：`net_policy` 默认拒绝 IP 字面量的非公网地址；`RAG_EMBEDDING_ALLOW_PRIVATE_ENDPOINT`（或设置页 `allow_private`）显式开启后放行 RFC1918 / loopback，日志记 `endpoint_class=private`。主机名与 IP 字面量走同一判定函数。
+- **隐私确认**：按 host 记录（`confirmed_hosts`），首次为某 host 启用弹一次确认（「将把资料条目文本发送到 <host>」），**换 host 重新确认**、可撤销；撤销 / 关闭 / 清 Key 后立即回退关键词链。请求体仍只含 chunk 的白名单投影（姓名 / 电话 / 邮箱 / 私密链接不出现）。
+
+**请求预算、预热与索引清理**
+
+- 单次请求的 boost 计算受 `rag_request_budget_seconds`（默认 1.5s）硬墙钟约束：超预算立即回退 `budget_exceeded`，缺失向量交给后台 `ai_task` 的 `rag_index_warmup` kind 预热（复用现成执行器，不自己起线程）；暖缓存后第二次生成命中。首次远程请求因分批可能正好卡在预算边缘，**这是预期行为**，不靠调大预算掩盖。
+- 作用域只覆盖「构造候选」段（`generate_with_scope()` + `mark_selection_done()`），不覆盖整条流式生成。
+- 切换 provider / 模型 / 维度：设置页端点主动 `get_rag_index().clear()` 并记 `rag_event provider_switched`；`rag_service` 另按 spec 指纹变化兜底清一次（旧向量既不会被命中、又会占着有界 LRU）。
+
+**备份 / 安装包 / 密钥**：权重与运行时按需下载，**不进安装包、不进发布压缩包、不进备份**；`global_settings.json` 不在备份成员里（`KNOWN_FILES`），所以 provider 配置与加密后的 key 也不随备份走。只用远程的用户不产生任何下载。日志只记 provider / host / 候选数 / 耗时 / 回退原因 / 哈希前缀，不记正文、key 与完整 URL。
+
+### 回退与可观测性
+
+| 情况 | 行为 |
+|---|---|
+| 未启用（无环境总闸且无已启用 provider）/ 无冻结快照 / 无岗位 | 空作用域；不写 RAG 主链路日志（关闭是常态，不产生噪音） |
+| provider 未配置 / 持久化配置未启用 / host 未确认 / 本地运行时未下载 | 空作用域 + 回退原因 `not_configured`；错误短句不含 key 与完整 URL |
+| 总开关打开但 provider=`fake`（默认守卫） | 空作用域 + `fake_provider`；不会用噪声向量改写候选顺序 |
+| 单次请求超过 `rag_request_budget_seconds` | 空作用域 + `budget_exceeded`；登记后台 `rag_index_warmup` 预热，第二次生成命中 |
+| 本地下载失败 / sha256 不符 / 解包损坏 / 运行时导入失败 | 下载状态机记录原因（设置页可见）；provider 构造失败回退关键词链，**不显示为已启用** |
+| 远程超时 / 401 / 429 / 5xx / 坏 JSON / 维度不符 / 不兼容厂商 404 | 空作用域 + `timeout` / `provider_error` / 可读文案；生成链继续走关键词链 |
+| 索引为空（没有 chunk） | 空作用域；不影响生成 |
+| 查询扩展失败（未配置 LLM / 超时 / 坏 JSON / 空结果） | 返回空扩展词，`JobFocus` 保持原样 |
+
+RAG 主链路日志只允许 7 类元数据（provider / 模型 / 候选数 / 命中来源 / 耗时 / 回退原因 /
+哈希前缀）：`RagEvent` 没有自由文本字段，传 dict 时未知键被丢弃，字符串先脱敏再截断、哈希只
+保留前缀；**不含 JD 原文、简历条目正文、embedding 数组与密钥**。查询扩展日志同样只记类别 /
+词数 / 模型 / 指纹前缀。
+
+### 已知偏差与工程边界（以代码为准，详见交付报告）
+
+- **接缝用请求内 ContextVar 作用域，而不是给 `build_targeted_consumed_profile_context()`
+  加透传参数**：`profile_relevance.py` 与 `resume_generator.py` 已分别到约 490 / 500 行
+  （按 `test_file_size_budget.py` 的 LF 计数口径），且都被测试用 `monkeypatch` 钉死模块
+  命名空间（`test_profile_group_budget` 直接 patch `profile_relevance._select_entries` 等
+  符号），拆分或加参数都会改变既有契约。显式入口仍是 `_select_entries(..., boost=...)`；
+  作用域只在「构造候选」的同步代码里打开，不跨 `await`、不跨请求。
+- **两条生成入口都已接 RAG**（2026-11-08 返工 P0）：SSE 入口在请求线程算 scope 后由
+  `rag_service.generate_with_scope()` 包住消费；后台任务入口在 `resume_generate_runner`
+  自己的事件循环/消费协程内算 scope（ContextVar 不跨线程，不能放到 handler 线程）。
+  `resume_generate_runner.py` 曾 499/500 行，因此把输入重建搬到 `resume_generate_inputs.py`
+  （纯搬家，原模块 re-export 且把 `create_provider` 作为注入参数，保住既有
+  `monkeypatch.setattr("…resume_generate_runner.create_provider")` 锚点）。
+- **fake provider 默认被守卫**：`FakeEmbeddingProvider` 的向量是确定性 hash、与语义无关，
+  默认配置下打开 `RAG_RETRIEVAL_ENABLED` 只回退（`fallback=fake_provider`），不会用噪声改写
+  候选顺序；只有显式 `RAG_EMBEDDING_ALLOW_FAKE=true`（测试/链路对比）才生效。
+- **请求预算与后台预热**：编码不在请求路径上硬等——单次请求受 `RAG_REQUEST_BUDGET_SECONDS`
+  （默认 1.5s）限制，超预算回退并在 `db` 可达时登记 `ai_task` 的 `rag_index_warmup` kind
+  补齐缺失向量（复用现成执行器，不自己起线程）。作用域只覆盖生成器**首个事件**
+  （候选构造段），第二事件起 ContextVar 必须为 None（有单测钉住）。
+- **本地 provider 已接产品运行时，但验证边界要说清**：本地 `local-onnx` 走真实
+  granite-embedding-97m-multilingual-r2 int8 ONNX（离线 60 组实测 Recall@10 0.4056 → 0.6361，
+  详见交付报告）；**真实远程端点未做端到端验证**——本机没有 `EMBEDDING_API_KEY`，只有
+  mock transport 的协议证据，报告按「未验证（缺 key）」记录并给出将来验证命令；
+  **ARM 平台（Linux aarch64 / macOS arm64）的 int8 变体未真机验证**，若只能退到 fp32
+  必须停下来上报，不自行接受体积变化。`FakeEmbeddingProvider` 仍不得用于质量指标
+  （评测脚本会拒绝拿它算 Recall / nDCG）。Qwen3-Embedding-0.6B / harrier-oss-v1-270m
+  未下载未验证（报告 §8）。
+- **方案模块表之外的文件**：v2 的 `rag_service.py`（请求级编排）与 `rag_query_expansion.py`
+  （Phase 0）不在方案 §3.4 的模块表里；v3 另新增 `embedding_settings.py` / `embeddings_local.py` /
+  `embeddings_http.py` / `rag_asset_manifest.py` / `rag_model_download.py` /
+  `rag_runtime_loader.py` / `rag_local_setup.py` / `rag_remote_setup.py` /
+  `rag_embedding_endpoint.py` 与 `api/settings_embedding.py`（职责见「真实 provider 接入」）。
+  `rag_hybrid.py` 在表内，但实际职责扩展为含 `build_boost()` 的完整融合入口。
+
 ## 核心数据流：用户编写简历
 
 ```mermaid
@@ -423,14 +631,14 @@ sequenceDiagram
 - 当前消息可带最多 4 个附件。后端按扩展名、MIME、文件头签名、UTF-8 编码和体积再次校验；单个不超过 2 MB、合计不超过 5 MB。图片以 OpenAI `image_url` 消息格式发送，仅在所选模型支持多模态时可用。BMP/TIFF 先经 `image_conversion` 转成 PNG/JPEG（服务商普遍不接受这两种格式，直接放行等于必然报错）；PDF/DOCX 则由 `document_text` 在**本机**提取文字后按文本附件进入上下文——原始文件不外发，也不需要多模态模型。
 - 会话列表支持置顶、收藏、归档与分组标记（`pinned` / `favorite` / `archived` / `group_name`），置顶会话自动优先显示且归档时会自动取消置顶；前端提供“全部/收藏/已归档”筛选，状态通过会话 PATCH 接口持久化。「在新对话中继续」由 `POST /api/assistant/conversations/{id}/fork` 实现：把原会话最近若干条已完成消息复制成一段新会话，附件只留文件名提示（避免同一份大文件在库里存两份）。聊天中的图片使用受限尺寸缩略图展示，点击后由 Ant Design 图片预览查看大图；发送中的图片先在本地消息气泡中乐观显示，再等待模型流式响应。
 - 模型只接收最近 20 条已完成历史并受 40,000 字符预算限制；历史文本附件只取受限节选，**图片只在紧邻的上一轮里回灌一次**（贴着截图追问的那一步还看得见图，再往后不再重复发送以控制用量），图片不计入字符预算——它本来就是 data URL，体积上限在入库时已卡过。待处理、错误和取消消息不进入后续模型历史。
-- 联网搜索默认使用 Bing RSS 与 DuckDuckGo 两个来源（Bing 走 `https://cn.bing.com/search`，该域不可用时回退 `https://www.bing.com/search`），用户还可以自行配置 SearXNG 实例作为第三个来源；默认只读取受限大小的标题、URL 与摘要，不跟随结果链接、不打开结果页面、不抓取正文（**默认口径**：`fetch_pages=0`）。用户在设置里把「抓取正文条数」调到 1–3 后，才对排序靠前的少数结果主动取正文，且逐跳校验 http/https、拒绝非标准端口与私网/回环/链路本地地址（解析后的全部 IPv4/IPv6）、限制响应体与超时；解析检查与实际建连之间仍有 TOCTOU 时间窗，不能宣称完全防御 DNS rebinding。可识别的求职问题会先压缩为具体求职词；“寻找互联网企业招聘”等发现型问题使用稳定的短查询，并在招聘语义过滤时保留官网常见的 `Careers` / `Jobs` 链接，同时过滤词典、百科、诗歌等无关结果。无直接相关来源时返回明确提示而不展示凑数链接。系统提示要求招聘查询优先参考用人单位官网并标注第三方来源；RSS 摘要可能没有发布日期，搜索结果的时效和官方性质仍需用户核验。开启联网时搜索以**工具**形式下发给模型（`web_search`，未开启则不下发），由模型自行决定查询词并可换词重试；结果按主机名与路径去重、官网与招聘页优先排序，命中来源累积到同一条消息的 sources 里展示。
+- 联网搜索默认使用 Bing 与 DuckDuckGo 两个来源（Bing 走 `https://cn.bing.com/search`，该域不可用时回退 `https://www.bing.com/search`），还可以自行配置 SearXNG 实例，或填 DeepSeek API Key 启用第四个来源（DeepSeek 勾选后查询发往 `api.deepseek.com`，抓正文时页面地址也发给它）；默认只读取受限大小的标题、URL 与摘要，不跟随结果链接、不打开结果页面、不抓取正文（**默认口径**：`fetch_pages=0`）。用户在设置里把「抓取正文条数」调到 1–3 后，才对排序靠前的少数结果主动取正文，且逐跳校验 http/https、拒绝非标准端口与私网/回环/链路本地地址（解析后的全部 IPv4/IPv6）、限制响应体与超时；解析检查与实际建连之间仍有 TOCTOU 时间窗，不能宣称完全防御 DNS rebinding。可识别的求职问题会先压缩为具体求职词；“寻找互联网企业招聘”等发现型问题使用稳定的短查询，并在招聘语义过滤时保留官网常见的 `Careers` / `Jobs` 链接，同时过滤词典、百科、诗歌等无关结果。无直接相关来源时返回明确提示而不展示凑数链接。系统提示要求招聘查询优先参考用人单位官网并标注第三方来源；摘要可能没有发布日期，搜索结果的时效和官方性质仍需用户核验。开启联网时搜索以**工具**形式下发给模型（`web_search`，未开启则不下发），由模型自行决定查询词并可换词重试；结果按主机名与路径去重、官网与招聘页优先排序，命中来源累积到同一条消息的 sources 里展示。
 - 助手通过工具调用读写项目数据：读工具直接执行，写工具覆盖「新增/修改岗位」「更新个人资料基础字段」「资料箱条目」「备选岗位及其导入」「助手技能」「简历版式参数」「知识库增改」「新增提醒」，**不提供任何删除类工具**，也没有任意 URL 抓取或执行代码的能力。读侧除上述写对象的查询外，还覆盖**提醒 / 内推 / 面经 / 题库历史 / 复盘历史 / 求职统计看板 / 分享包列表**（一律 `live_only`、软删不进结果）。工具参数一律走与 HTTP 接口相同的 Pydantic 校验；`execute_tool` 是同步入口（测试与无网络场景），聊天流走 `execute_tool_async` 以便 await 联网搜索。`Tool` 用 `writes: bool` 标记写工具，系统提示词里的「写入类工具」清单与之**双向一致**（`test_assistant_knowledge_audit.py` 双向比对，漏标任何一边都变红）。
 - 助手「能力地图」的单一事实来源是 `services/feature_catalog.py` 门面（`FUNCTIONAL_DOMAINS` / `FEATURES`）：功能数据按拆分前的原始顺序存在 `feature_catalog_{profile,resume,workflow}.py` 三个数据段里，门面拼回并 re-export；能力地图在运行时渲染进系统提示词，并与前端导航 label、应用内使用指南、README 功能表双向对齐（守卫测试钉住），取代手写静态清单以避免"新增功能漏登记"。
 - 助手可导入**技能**（`assistant_skill` / `assistant_skill_file`）：`.md` 只有提示词，`.zip` 是提示词加一包知识文件。**一个技能包里有两个信任级别**——提示词是用户主动导入的指令，拼进系统提示；知识文件与岗位描述同级，属于不可信资料，只能经清洗后作为参考呈现。知识不预加载，由模型经 `read_skill_knowledge` 工具按需读取，检索直接复用经历参考文件的「清洗注入 → 分块 → 关键词打分 → 按预算选片」流水线，不另建一层。所有启用技能拼进系统提示时有总长度预算，被截断或跳过的技能会在提示里点名，不做静默丢弃。导入链路把 zip bomb、路径穿越、加密成员和非法扩展名都挡在 `services/skill_archive.py` 里，且不使用 `extractall`。技能现在也可以在「技能工作台」里手工新建与编辑（`GET / POST / PUT /api/assistant/skills`）：详情接口会带回知识文件正文供编辑，超出总量上限时置 `files_truncated`，前端据此不覆盖式提交 `files`，避免把没加载到的内容写空。
 
 ## 核心数据流：采集、匹配分析与自动投递
 
-自动投递是项目里**唯一会主动访问外部招聘网站**的链路，且**只在用户显式触发时**运行（默认不访问，见「关键设计决策」）。它把最不可控的两件事——驱动真实浏览器、理解陌生表单——封在**浏览器桥接层**与**站点适配器层**之后，业务层只调用「站点无关」的接口，两层都能用假传输层离线测试。
+自动投递与网申填表是项目里**仅有的两条会主动访问外部招聘网站**的链路，且都**只在用户显式触发时**运行（默认不访问，见「关键设计决策」）。它们把最不可控的两件事——驱动真实浏览器、理解陌生表单——封在**浏览器桥接层**与**站点适配器层**之后，业务层只调用「站点无关」的接口，两层都能用假传输层离线测试。
 
 ```mermaid
 sequenceDiagram
@@ -646,6 +854,9 @@ flowchart LR
   ——`document_html.coerce_document()`（v1 → v2，读时转换）与 `document_html.paper_document()`
   （剔除 hidden 条目 / 文本块 / placement=hidden，纸面视角的唯一过滤点）——然后消费同一份
   `DocumentPlan`；纯文本走 `txt_exporter`（由 Markdown 展平），JSON 直接输出 v2 document + layout。
+  用户可见的导出还有第 7 种「图片（PNG）」：前端用 pdfjs 把精确 PDF 逐页光栅化
+  （`frontend/src/utils/pdfToPng.ts` + `pngExport.ts`），单页出 `.png`、多页用 jszip 打 `.zip`；
+  它不新增后端 `ExportFormat` 枚举，页数上限继承 PDF 的截断结果。
 - **字段拼装只发生在 planner**：日期范围 / 枚举 / 作者 / 列表 / 标签都在 planner 格式化好，渲染器只画
   `Inline` 段；模板只负责外壳与 CSS。四格式「同字段、同顺序」由文本对拍测试守住。
 - **水印是后处理**（`services/watermark.py`）：输入已经是渲染好的字节，输出加水印后的字节；
@@ -715,7 +926,7 @@ flowchart LR
   仍是无条件写并推进一版——于是旧客户端写完后，新客户端下一次条件写必然 409，用户**看见**
   "别处改过"而不是被静默覆盖。冲突响应为 `409 + {"detail","code":"resume_revision_conflict","revision"}`
   （与既有 `dataset_scope_changed` 同一形状，前端 `ApiError.businessCode` 已能读取）。
-- **前端**：`features/resume-document/useDocumentSave.ts` 是唯一保存状态机（单飞、token 丢弃过时
+- **前端**：`features/resume/document/useDocumentSave.ts` 是唯一保存状态机（单飞、token 丢弃过时
   回包、失败保留草稿、`conflict` 态不自动重试）；`ResumeWorkbenchConflict` 提供"用最新的 / 比较 /
   另存副本"三选一——不允许"再点一次保存硬覆盖"。`useResumeDocument` 收敛唯一 dirty。
 - **迁移与备份**：0052 与后续 0053（来源/事实锁/用量）、0054（长 CV 文档模式）都是"只加表/只加列、
@@ -796,7 +1007,7 @@ flowchart LR
 | **读接口的返回值不得整份回传写端点**（同一类错误的第二次发生） | `POST /api/interview` 收 `InterviewMaterialIn`（`extra="forbid"`，只有 `name`/`text`），而 `POST /api/interview/materials` 返回的读取结果还带 `warnings`（给界面警告条用）。前端把读取结果整份存进表单、整份塞进写请求体时，两侧各报一条「包含不支持的字段」，面试直接开不起来；TypeScript 也拦不住——变量赋值不做多余属性检查，"带 `warnings` 的对象"在结构上可赋给 `{name, text}`。改为在「表单值 → 请求体」的边界上走唯一投影函数（`frontend/src/features/interview/materialPayload.ts`），state 继续保留 `warnings` 供展示，只在提交时丢弃。**不放宽后端 `extra="forbid"`**：那会让"客户端字段拼错"一律静默吞掉，正是全仓 175 处 `extra="forbid"` 要防的事。判据：单测断言 `Object.keys(job_material)` 恰好是 `["name","text"]`，而不是只断言某个字段的值 |
 | 「网申资料」独立成表，不并进 `UserProfile` | 用户要求"生成简历模块默认不读这里的信息"。独立一张表（`web_form_profile_entry`）让这条**由结构保证**：简历生成读 `UserProfile`，网申填表读 `build_form_data()`（它才合并）。并进 `UserProfile` 的话简历生成会**自动**带上身高、父母工作单位、紧急联系人——那正好是用户要挡住的，而失败方式**不报错**。键值对形状（而非固定列）则让"字段越多越好"不必每加一个发一次迁移 |
 | 网申页的读取状态放 URL，不放组件内 state | 「去我的资料补上」跳转再回来是这个功能的正常路径，而组件会被卸载。后端快照仍有效（900s TTL）、预览是纯计算，所以只需把 `snapshot_id` 放进查询参数就能完整恢复。URL 而非 `sessionStorage`：可分享、可刷新、可前进后退 |
-| 受限搜索摘要而非网页抓取       | 固定 Bing RSS、限制响应体和结果数，不跟随页面；来源可追溯但完整性、时效和官方性质仍需人工核验       |
+| 受限搜索摘要而非网页抓取       | 固定来源端点（默认 Bing 与 DuckDuckGo）、限制响应体和结果数，不跟随页面；来源可追溯但完整性、时效和官方性质仍需人工核验       |
 | 照片在模型调用后注入           | 避免把无意义的 base64 内容发送给模型，同时保证预览与导出使用已校验的本地照片                        |
 | 旧 SQLite 库补齐已知列         | 只对未版本化旧库运行兼容建表与幂等补列；空库和已版本化数据库由 Alembic 独立管理                     |
 | Alembic revision + 升级前备份  | 早期数据库平滑进入正式迁移链；有用户数据时先备份，再执行可审查、可测试的版本化变更                  |
@@ -817,16 +1028,17 @@ flowchart LR
 | 离线分享包不带敏感信息         | 分享包由脱敏 HTML/PDF + 只读快照 + 评论回传文件 + 本地 token 组成，token 仅离线校验、不做在线鉴权；删除走回收站软删除、磁盘产物不清理 |
 | ATS 检测带免责                 | `ats_check` 只做格式 / JD 关键词覆盖 / 信息位置三类静态规则检查，**不连接、不模拟真实招聘系统**，结果仅供参考、不构成通过保证 |
 | 内推转化口径派生               | `referral.converted` 是迁移 0018 的历史占位列；真实口径由关联 `ApplicationTrack` 后置位派生（进入面试及以上才算转化），写入侧不接受 `converted`、读取侧覆盖，避免表里手算第二份口径 |
-| 回收站覆盖二十三类内容         | 岗位 / 备选岗位 / 简历 / 投递 / 台账 / 资料 / 会话 + 内推 / 提醒 / 面经 / 分享包 / 题库 / 复盘 / 知识库 / 网申填充 / 表达资产 / 术语表 / 补充事实历史，以及 0064 起新增的方案 / 自建板块 / 自建字段 / 资料条目，全部由 `trash.TRASH_SPECS` 注册表描述；新增一类只加一行，注册表驱动的 `live_only` / `trash_only` 让"哪张表用哪个列名"只写一次 |
+| 回收站覆盖二十三类内容         | 岗位 / 备选岗位 / 简历 / 投递 / 台账 / 资料 / 会话 + 内推 / 提醒 / 面经 / 分享包 / 题库 / 复盘 / 知识库 / 网申填充 / 表达资产 / 术语表，以及 0064 起新增的方案 / 自建板块 / 自建字段 / 资料条目、0008 起新增的求职偏好，全部由 `trash.TRASH_SPECS` 注册表描述；新增一类只加一行，注册表驱动的 `live_only` / `trash_only` 让"哪张表用哪个列名"只写一次。**2.0 + 期二起是 23 类**：补充事实（`profile_fact`）这一类随整套模块下线一并移除，基线也不再创建对应表 |
 | 方案不拥有数据 / 当前方案唯一       | 方案只记「名称 + 板块清单」，共享同一份 `profile_entry`；当前方案是单行状态表 + `CHECK(id = 1)`，默认方案由 CHECK 保证不可软删。这样"每个方案一份副本"与"无当前方案"在结构上就写不进库，不靠调用方自觉（R-17/R-24/R-25） |
 | 消费 DTO 与折叠态物理隔离       | 资料页编辑 DTO 含 hidden / collapsed_override；投影、生成、网申只吃 `ConsumedProfile`（类型里没有 collapsed）。否则"收起"迟早被某条取数链当成"不参与"，而它只该影响输入框展不展示（R-66/R-67） |
-| 旧资料不迁移、不删除           | 迁移 0064 只加表；旧六表与旧事实表继续存在并进备份，新界面不读；资料页用"旧表有内容且新模型为空"的探测给出重填说明。迁移工具看起来省事，但会改写用户历史且无法回退（R-46/R-47/R-49） |
+| 1.x 资料不原地迁移、整包归档 | 1.x 旧库在首次启动时整包归档到 `legacy-archive/<时间戳>/`，2.0 用空库，**不搬数据、不回填**；2.0 基线仍建旧六表（空表、新界面不读、仍进备份），但**不建 `profile_fact` / `profile_fact_field_pref`**。不原地迁移是为了不改写用户历史，并且保住"回到 1.0.2 还能打开"的路（R-46/R-47/R-49） |
 | 字段默认位置只有一份定义       | 字段目录 `document_catalog.py` 是标签、format、默认位置、仅素材标志的唯一来源；`paper_projection.py` 与生成链路共用它。第二份映射必然漂移成"生成有、填充没有"（R-37/R-42/R-77） |
 | 字段位置是数据                 | v2 把 title / meta / lead / trail / body / hidden 存在 item 上，拖拽 = 改顺序 + 改 placement；「看起来都能调、实际很多调不了」从模型层消失（D1–D5） |
 | 唯一 planner / 四出口同源      | `document_plan.py` 产出 `DocumentPlan`，HTML / PDF / Word / Markdown 只消费它；模板只负责外壳与 CSS。字段拼装与列装箱只写一次（D10） |
 | 旧简历读取时转换、保存写 v2    | `ensure_document_version` 在内存里把 v1 转 v2、不写库；转换规则只在 converter 里，文字不丢、条目数不丢、顺序可解释（D11/D12） |
 | 六个位置是产品边界             | 不做自由画布 / 任意嵌套 / 逐字符排版；位置只有六个抽屉，装不下就换行 + 按页数上限截断，不自动缩字号 |
 | 库版本闸门按 epoch 判，不按 revision 判 | epoch 表（`app_schema_epoch`，单行 `epoch=2`）由基线迁移创建；启动时先读 epoch 决定「升级 / 归档重置 / 拒绝」，只在 epoch==2 时才用 revision 判断是否在迁移链上。按 revision 判会把"老库 revision 不在新链上"误判成库损坏，也会让每次新增迁移天然变成一次不可升级变更 |
+| RAG 默认关闭、只在候选选择层加 boost | 生成链的 prompt 字节、候选字段形状与分区名额都有逐字节 / 逐条历史约束，RAG 若参与其中就等于同时改质量口径与事实边界。收敛成「可空作用域 + 回退关键词链」后：关闭时行为与改造前逐字节一致；评测不合格可整体停用而不回滚数据；排序可复现（融合分定点化、平局回落原顺序） |
 
 ## 部署与安全边界
 
@@ -834,10 +1046,10 @@ flowchart LR
 - 默认定位是本机单用户应用，后端只应监听回环地址。CORS 只限制浏览器跨域读取，不提供身份认证；没有额外认证和 TLS 时不得直接暴露到公网。
 - 请求上下文中间件同时校验声明长度和流式读取的实际长度，超限返回 413；每个响应携带 `X-Request-ID`，日志使用同一 ID 关联排查。
 - API Key 在 Windows 上用系统 DPAPI 加密后保存在本地 SQLite 中（`services/api_key_crypto.py`，密文绑定当前用户与机器），非 Windows 平台保持明文。照片不进入模型上下文，但岗位、资料以及被选中的总结片段会发送给用户选择的大模型服务商。
-- 设置页只在用户点击眼睛时调用 `POST /api/settings/llm/api-key/reveal`；接口校验直接连接来源为回环地址并设置 `no-store`，前端只在临时显示状态保存明文，表单提交继续使用绑定 Base URL 的脱敏引用。
+- `POST /api/settings/llm/api-key/reveal` 只对直连回环的客户端开放并设置 `no-store`；**当前界面不提供该入口**（前端只有 `api/settings.ts` 里的定义、没有生产调用点），它服务于本机直接调用 API 的客户端。表单提交继续使用绑定 Base URL 的脱敏引用。
 - 助手会话、附件和来源摘要保存在本地 SQLite；当前消息中的附件、显式选择的岗位/简历/脱敏资料会发送给模型。资料上下文移除身份字段；关联简历只移除照片，其正文中的姓名和联系方式仍可能发送。助手图片附件与资料照片是不同数据路径：资料照片始终留在本地，用户主动添加到助手的图片会发送给支持图片输入的模型。
 - 上传的 PDF/DOCX 是**不可信文件**，解析在本机进行并各自设限：PDF 最多读 30 页、DOCX 只读白名单成员 `word/document.xml` 而不解压整包、提取文字总量封顶（超出时截断并提示）、图片解码像素封顶。文字提取结果只作为文本进入模型上下文，原始文件不落库也不外发；扫描件没有文字层时把页面转为图片走 AI 视觉识别（与截图上传同路径，单份最多 8 页），而不是静默返回空结果。
-- 开启助手联网搜索会把规范化后的当前问题（或附件名兜底）发送给 Bing。RSS 响应按 2 MB 上限读取并拒绝 DTD/实体声明，URL 仅接受无凭据的 HTTP/HTTPS；摘要仍作为不可信外部数据隔离。
+- 开启助手联网搜索会把规范化后的当前问题（或附件名兜底）发送给**已启用的搜索来源**——默认为 Bing 与 DuckDuckGo，可另选自建 SearXNG 或 DeepSeek（DeepSeek 需自填 Key，抓正文时页面地址也会发给 `api.deepseek.com`）。响应按 2 MB 上限读取并拒绝 DTD/实体声明，URL 仅接受无凭据的 HTTP/HTTPS；摘要仍作为不可信外部数据隔离。
 - 采集与投递会**主动访问招聘网站**，但仅限用户显式触发的那一次，不会在后台自动运行。投递专用浏览器使用独立 `user-data-dir` 与日常浏览器隔离；应用不保存招聘网站的账号密码或 Cookie，投递 / 采集日志对凭据脱敏；遇到验证码或安全验证时不尝试绕过。
 - 网申填表的 AI 兜底**只发送页面上本来就有的控件文字**（label / placeholder / aria / autocomplete / name / 选项文本 / 邻近文字）与字段目录的 `key + 标签`，**不发用户的任何资料值**——取值一律在本地完成，模型只回一个字段名。`identify_fields()` 的签名不接受 `data`，测试逐值断言提示词里搜不到资料值。这与"网申专用资料不进 `_LLM_PROFILE_FIELDS` 白名单"是同一条纪律的两个方向。
 - 敏感数据处理和漏洞报告方式见 [SECURITY.md](../SECURITY.md)。
@@ -1000,7 +1212,9 @@ flowchart LR
     与界面，粘贴识别一直认不出来。
 
 25. **新增/调整厂商的「思考」写法**：形态判定与档位候选集中在
-    `services/llm/thinking.py` 顶部的 `_TABLE`（按主机 + 模型名正则匹配，先匹配先赢）；
+    `services/llm/thinking_vendor_table.py` 的规则表（数据分 `thinking_vendor_rules_cn.py` /
+    `thinking_vendor_rules_global.py`，结构在 `thinking_vendors.py`；`thinking.py` 只留判定与
+    关闭片段生成；规则按主机 + 模型名正则匹配，先匹配先赢）；
     翻译成请求体的只有 `thinking_payload`（OpenAI 兼容）与 `thinking_budget`（原生 Messages），
     所以**改表不需要动 provider、也不需要动前端**。`thinking_style` 的取值同时定义在
     `schemas/setting.py` 的 `THINKING_STYLES`，加一种写法要两处一起加。
@@ -1053,7 +1267,7 @@ flowchart LR
     （见 `tests/fixtures/webform/README.md`）。
     改这条边界要同时动：`skip_reason`、`test_webform_engine_*` 的边界用例、语料里
     `forbidden` 的期待、`docs/user-guide.md` 的「它不会做什么」与
-    `frontend/src/components/userGuideSteps.ts`。
+    `frontend/src/features/user-guide/userGuideSteps.ts`。
 
 28. **放宽模式——「只填不点」唯一的受控例外**（默认关闭；开关存在 `settings_service` 的
     `webform_relaxed_mode`，`/api/webform/preview` 与实时两条路读同一个开关值）：开启后
@@ -1097,13 +1311,14 @@ flowchart LR
 - 文档与新增图片格式另有三层测试：`test_document_text.py` 钉住提取行为与失败形态（扫描件、加密 PDF、损坏文件、超长截断、预算耗尽后仍校验后续文件），测试用的 PDF/DOCX 由测试自己拼字节——生成库造出来的 PDF 往往没有文字层，恰好测不到提取逻辑；`test_attachment_formats.py` 钉住转码与拒绝文案（bmp/tiff 转 PNG、照片型内容退到 JPEG 且不超限、HEIC/旧版 `.doc` 给可执行的提示）；`test_extraction_documents.py` 钉住接口面（无模型时文档仍能被本地规则解析、文档与文本合并、图片与文档共享 4 个/5 MB 额度、损坏文档在模型调用之前就失败）。
 - API 层有冒烟测试（TestClient），覆盖岗位文本草稿、岗位备注与其他信息搜索、收藏过滤、批量操作原子性、简历收藏、岗位分析、助手会话/SSE、照片往返与其他核心链路。
 - 自动投递链路按层拆测试且**不真的连网或驱动真实浏览器**：`test_apply_cdp_client.py` 用假传输层钉住 CDP 请求 / 响应与超时错误；`test_apply_browser_manager.py` 用假 `subprocess` 钉住拉起 / 关闭 / 健康检查、「只关闭自己拉起的那个进程」与「指定浏览器不静默回退」；`test_apply_boss_adapter.py` 喂脚本化假客户端钉住采集解析、就绪等待、「页面已加载但匹配 0 个必须失败」与「真的没结果才返回空」；`test_boss_network.py` 钉住「网络优先、DOM 兜底」这条链路的两个方向——**走得通时必须用网络结果**（DOM 脚本故意返回另一份数据，用到它说明走错了路）、**走不通时必须安静退回 DOM**，外加只取目标接口的响应体、订阅透传不被包装层吞掉；`test_page_ready.py` 直接驱动等待原语（就绪 / 拦截 / 超时 / 可中断）；`test_apply_collect_guard.py` 钉住「采集抓不到要让任务失败」「真没搜到才完成」与「采集遵循当前站点」；`test_apply_queue_and_api.py` 钉住 HTTP 面（准入冲突 409、入队去重、错误码、显式开始的强制校验、记录与单条重投、站点列表与配置往返）。
-- SQLite 升级测试使用临时旧库验证兼容补列、`0003` 至 `0007` revision 链、索引/外键迁移、幂等执行、备份和原数据保留，不接触真实用户数据库。
+- SQLite 升级测试使用临时库验证 2.0 基线的往返（`upgrade head` → `downgrade base` → `upgrade head` 均可用）、表集合与模型注册表一致、`app_schema_epoch` 恰好单行且 `epoch=2`、幂等执行，以及 pre-2.0 库的「整包归档 → 建空库」分支；不接触真实用户数据库。
 - 备份测试里有一条**旧备份回归闸门**（`test_inspect_accepts_a_backup_exported_before_the_skill_tables`）：伪造一份"技能表出现之前"的备份（少两张表、revision 与清单一起退回旧版），断言它仍能通过校验。新增数据表会静默拒收所有旧备份，只有这条测试能拦住它。
 - 面试深挖按层拆测试：`test_drill.py` 钉住核心规则（状态只能凭新证据前进、矛盾可覆盖、"没有证据的通过"在任何起点都不成立、契约与复盘解析的兜底），`test_drill_api.py` 钉住 HTTP 面（**契约在返回问题之前落库**、状态不能由调用方指定、真实模拟模式不在每题后念判定、下一题失败时提前收尾且保留已有判定、复练不落库），`test_migration_0014.py` 钉住迁移的建表 / 级联 / "主张删了契约仍可读"。前端 `DrillPage.test.tsx` 钉住三条信任基础：契约对用户可见、真实模拟模式不念判定、**界面里不出现任何分数**。
 - 版面诊断按层拆测试：`test_resume_layout.py` 钉住规则（状态边界、建议顺序、字号下限按绝对像素、阶梯只收紧不反弹、**版式默认值与模板文件逐项一致**），`test_resume_layout_api.py` 钉住接口面（溢出才给方案、`PATCH` 的三态语义、**导出与预览用同一份版式配置**），前端 `resumeLayoutMeasure.test.ts` 钉住测量（元素筛选、减去 padding、除以页数、测量期间摘掉 transform），`ResumeLayoutDiagnosisCard.test.tsx` 钉住「够放下就停」与「保存时原样回传版式参数」。
 - 求职进度按层拆测试：`test_tracker.py` 钉住核心规则（归一只做不会误合并的事、状态只能前进、拒信覆盖、同批折叠、合并不抹掉用户填过的字段、投递台回写不把进度打回去），`test_tracker_extract.py` 钉住解析与本地降级（缺公司或岗位就丢掉、「感谢投递」不会被读成面试、公司名取更完整的那一个），`test_tracker_api.py` 钉住 HTTP 面（固定路径不被 `/{id}` 吃掉、**预览不写库**、预览与执行一致、导出与筛选），`test_migration_0012.py` 钉住迁移的建表 / 唯一约束 / 幂等 / downgrade，`test_apply_task_runner.py` 里有一条钉住"投递成功会落一条进度记录"。
 - 事实台账按层拆测试：`test_claims.py` 钉住校验规则（已确认不得含占位符、枚举、日历日、建议规则的"该报才报"），`test_claims_api.py` 钉住 HTTP 面（固定路径不被 `/{id}` 吃掉、422/502、草拟的两条路径与"模型给未知承担程度时退回最保守取值"），`test_migration_0011.py` 钉住迁移的建表 / 幂等 / downgrade / 与模型常量的默认值一致，`test_resume_completeness.py` 钉住每个区块都被扫到与"不误报"，`test_claim_integration.py` 钉住两个接合点（台账为空时提示词逐字节不变、导出闸门与它的显式出路），`test_assistant_claim_tools.py` 钉住"助手改不了核实状态"。
 - 本批新增模块同样按层拆测试：`test_resume_writing.py` 钉住写作增强（STAR 改写注入 claim 事实边界、纯空白在 schema 层 422、未配置模型降级、提示词登记）；`test_match_scoring.py` 钉住参考分（五维加权、中性分、**不改变准入结论**）；`test_resume_diff.py` 钉住版本对比三态；`test_resume_risk.py` / `test_ats.py` 钉住质量合规与 ATS 免责；`test_watermark.py` 钉住水印后处理（HTML 转义、PDF 页数不变、空文本透传、不支持格式报错）；`test_share_package.py` 钉住离线分享包（脱敏快照、文件清单、token 校验、删除→回收站→恢复→再删→彻底删除闭环）；`test_referral.py` 钉住内推转化派生口径；`test_migration_0018.py` 钉住四张新表的建表 / 幂等 / downgrade。
+- RAG（默认关闭；v2 检索链路 + v3 真实 provider）按层拆测试：`test_rag_chunking.py` 钉住 chunk 身份与桥接（`canonical_item_hash` 对下游 item 的键序 / JSON 空白稳定、改值必变，主字段为空被过滤后 boost 仍命中正确条目，同条目跨 chunk 去重，自建板块主文本单源）；`test_rag_policy.py` 钉住白名单与 boost 范围（`llm_allowed` / private 过滤、`filter_by_job` 规则、boost 分区名单与 `profile_relevance._CONSUMED_VALUE_SECTIONS` 逐字一致、数据集 / 资料组同域、日志 7 字段白名单与脱敏）；`test_rag_hybrid.py` 钉住融合与作用域（融合分定点化与平局回落原顺序、加权向量分量截断负相似度、跨 chunk 去重、只改可 boost 分区、`selection_scope` 只在作用域内生效、关闭时 `prepare_selection_boost` 是 no-op、同输入两次融合一致）；`test_rag_query_expansion.py` 钉住 Phase 0（扩展词只进 `terms`、坏 JSON / 超时 / 空结果静默回退、缓存指纹失效）；`test_rag_guards.py` 钉住 2026-11-08 返工的关键性质（fake provider 默认被守卫且候选与关闭态逐字节相同、显式允许时才生效；请求预算超时回退并登记后台预热、预热幂等且第二次命中缓存；作用域只在候选构造段有效、`mark_selection_done()` 作用域外 no-op；两条入口的 runner 搬移不破坏 `create_provider` monkeypatch 锚点；SSE 入口首字节与 budget 证据）；`test_llm_embeddings.py` 钉住 provider 契约（前缀 / 归一化 / 维度 / 指纹、429 / 5xx / 坏 JSON / 超时 / 取消、fake 确定性）；v3 新增：`test_rag_embedding_settings.py`（持久化配置 / 掩码 / host 确认 / 清除后的停用语义）、`test_rag_settings_api.py`（`/status` 状态机、回环写保护、启用 / 关闭 / 清除时清索引）、`test_rag_local_assets.py`（清单与平台选择、sha256、下载状态机 / 取消、解包安全、运行时注入）、`test_rag_local_provider.py`（本地 provider 编码契约）、`test_rag_remote_provider.py`（25 条切片 / 401·429·5xx / 维度校验 / 404 文案）、`test_rag_endpoint_template.py`（模板字面替换、`response_path` 极简子集、8KB 模板 / 16MB 响应上限、渲染后 header 不泄漏）、`test_rag_remote_setup.py`（探测 / 模型列表 / 私网开关 / host 确认）、`test_rag_v3_backup.py`（权重运行时 `RUNTIME_ONLY` 不进备份）。集成与备份用例（冻结快照后切组不漂移、数据集 A 不命中 B、只失效改动的那条、`filter_by_job=True` 自建板块可被 boost 召回而 `False` 顺序不变、`selected_counts` / `entry_names` / `fallback_sections` 语义不失真、无向量结构时仍可导出 / 导入 / 启动）见 T3-D 交付的 `test_rag_integration.py` / `test_rag_backup.py`。
 - 网申填表按层拆测试，**并且刻意补上旧实现缺失的那类覆盖**：`test_webform_matching.py` 穷举取值决策（占位项永不选、别名、多候选判 `ambiguous` 不猜、日期只有年份时拒绝、`至今` 不算日期），`test_webform_engine.py` 钉住控件识别、负向词挡住"紧急联系人姓名"、`file` 控件永不被映射，以及**对着真实缺陷的回归守卫**（`select` 必须用 `HTMLSelectElement` 的 setter 而不是 `HTMLInputElement` 的；`test_webform_engine_*` 另外钉住「只填不点」——下拉 / 单选 / 复选 / 日期控件一律进 `skipped`、显式填充那条路照常能写），`test_webform_data.py` 钉住"取最高学历而不是第一条"，`test_webform_service.py` 钉住冲突项默认不勾选与快照过期语义，`test_webform_api.py` 钉住 HTTP 面。另有两条**机械守卫**把产品边界变成不变量：`test_webform_no_submit.py`（源码里出现 `.submit(` / `requestSubmit` 即红；快照脚本必须跳过提交类控件）与 `test_stop_aware_client_forwarding.py`（反射 `CdpClient` 与 `WindowAwareMixin` 的每个公开方法，断言包装层都转发了——漏转发不报错，只会让该能力在生产里静默失效）。前端 `WebFormPage.test.tsx` 钉住「界面上不存在文案含『提交』的按钮」与「冲突行默认不勾选」。AI 兜底另有四层：`test_webform_ai.py` 钉住**提示词里不含任何资料值**、目录外的字段名被丢弃、`__none__` 与自相矛盾的答案怎么收敛、模型挂了要降级、语义缓存与配额、**一次抖动要重试而"都不像"不重试**；`test_webform_ai_guard.py` 钉住采纳前的共用否决（亲属 / 跨族）；`test_webform_live.py` 钉住触发条件（**只对真正认不出的问**）、**不阻塞轮询**、过期答案丢弃、`skip_reason` 优先于模型；`test_webform_js_canary.py` 在真浏览器里钉住面板**不盖住输入框、离它够近、跟得住页面重排**、拖动保留的是相对偏移、备选逐条可点，以及卸载要停掉重排定时器。另有**离线评测语料**把准确率变成数字：`tests/fixtures/webform/pages/*.json`（一 incident 一文件：真实页面的控件清单 + 人工确认的期望映射，`scripts/collect_webform_sample.py` 从真机采样并自动剥值），`test_webform_match_corpus.py` 跑分回归（**错填为零**、基线单调不可回退——只许变好），`scripts/webform_match_report.py` 出人读报告；执行侧对应 `fixtures/webform/execution/*.json` + `test_webform_execution_corpus.py` 与 `test_webform_engine_recovery.py`（按调用顺序应答的 `ScriptedCdpClient` 钉住重试阶梯：写几次、回读几次、有没有多余的点击）。新增真机 incident 的流程是**先落语料、再补单测**：没有 case 背书的规则不加。
 - 思考模式按层拆测试：`test_llm_thinking.py` 钉住形态解析、档位归一化（换模型后残留的档位不照发）、请求体片段与探测的四种判定（真的生效 / 被静默忽略 / 被上游拒绝 / 压根没跑起来）；`test_openai_compat.py` 与 `test_llm_anthropic.py` 各自钉住**默认关闭时请求体逐字节不变**与 400 降级重试；`test_api_settings.py` 钉住 `/llm/thinking/check` 的两种模式以及"测试连接不受思考设置影响"；`test_assistant.py` 钉住助手不继承设置页的开关；`test_custom_settings_actually_apply.py` 从保存配置一路断到真实请求体。
 - 前端使用 Vitest 覆盖关键请求封装和核心交互（含投递台的队列准入拦截、暂停 / 停止、采集条件「未生效」、空态与错误态，以及匹配分析的五类结论展示（结论区不带百分比）与匹配度参考分区块（总分 + 分项 + 免责文案）），TypeScript strict、ESLint、Prettier 与生产构建提供静态门禁；复杂用户链路仍需按风险逐步补齐组件或端到端测试。

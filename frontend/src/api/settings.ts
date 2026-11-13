@@ -6,11 +6,12 @@ import type {
   AutoBackupIntervalSetting,
   DatasetImportResult,
   DatasetInfo,
+  AssistantCompactionSetting,
+  AssistantLimitSetting,
   AssistantOrbSetting,
   AssistantRelaxedModeSetting,
   ExportSaveLocation,
   GenerationPreferences,
-  LLMApiKeyRevealResult,
   LLMConfig,
   LLMConfigRecord,
   LLMModelsResult,
@@ -29,10 +30,6 @@ import type { RequestBudgetKind } from "./client";
 
 export function getLLMConfig(): Promise<LLMConfig> {
   return request("/settings/llm");
-}
-
-export function saveLLMConfig(config: LLMConfig): Promise<LLMConfig> {
-  return request("/settings/llm", { method: "PUT", body: JSON.stringify(config) });
 }
 
 /**
@@ -108,30 +105,6 @@ export function acknowledgeUpdateInstallResult(): Promise<void> {
   return request("/update/install-result", { method: "DELETE" });
 }
 
-export function revealLLMApiKey(): Promise<LLMApiKeyRevealResult> {
-  return request("/settings/llm/api-key/reveal", { method: "POST" });
-}
-
-/**
- * 「仅本会话使用」的临时密钥通道（RF-24）：密钥只进后端进程内存，
- * 进程重启即失，不写数据库、不进日志与备份。状态接口只回是否已设置，
- * 密钥本体永不回传。
- */
-export function getLLMSessionKeyStatus(): Promise<{ configured: boolean }> {
-  return request("/settings/llm/session-key");
-}
-
-export function setLLMSessionKey(apiKey: string): Promise<{ configured: boolean }> {
-  return request("/settings/llm/session-key", {
-    method: "PUT",
-    body: JSON.stringify({ api_key: apiKey }),
-  });
-}
-
-export function clearLLMSessionKey(): Promise<void> {
-  return request("/settings/llm/session-key", { method: "DELETE" });
-}
-
 /**
  * 测一次连接（T8）。
  *
@@ -147,6 +120,17 @@ export function testLLM(
 
 export function listLLMConfigRecords(): Promise<LLMConfigRecord[]> {
   return request("/settings/llm/records");
+}
+
+/**
+ * 保存为**当前生效**的模型配置（`PUT /settings/llm`：全局记录 + 数据集快照双写）。
+ *
+ * 与 `saveLLMConfigRecord`（按名称 upsert 一条记录，不切换生效项）不同：这里改的就是
+ * 「现在正在用的这份」。用户没填过窗口的旧配置保存一次即升级为全局记录——这是后端
+ * 既定语义，不是本函数引入的。助手「上下文用量」弹层改窗口走这里。
+ */
+export function saveLLMConfig(config: LLMConfig): Promise<LLMConfig> {
+  return request("/settings/llm", { method: "PUT", body: JSON.stringify(config) });
 }
 
 export function saveLLMConfigRecord(
@@ -228,6 +212,75 @@ export function saveAssistantRelaxedMode(
   setting: AssistantRelaxedModeSetting,
 ): Promise<AssistantRelaxedModeSetting> {
   return request("/settings/assistant-relaxed-mode", {
+    method: "PUT",
+    body: JSON.stringify(setting),
+  });
+}
+
+/** 求职助手的两条运行上限（轮次上限 / 整链时间预算）；缺省时后端给默认值。 */
+export function getAssistantLimitSetting(): Promise<AssistantLimitSetting> {
+  return request("/settings/assistant-limits");
+}
+
+/**
+ * 保存运行上限。**整对象 PUT**：两项一起提交，只带一项会把另一项打回默认。
+ * 越界值由后端直接拒绝（422），前端不做静默夹取。
+ */
+export function saveAssistantLimitSetting(
+  setting: AssistantLimitSetting,
+): Promise<AssistantLimitSetting> {
+  return request("/settings/assistant-limits", {
+    method: "PUT",
+    body: JSON.stringify(setting),
+  });
+}
+
+/*
+ * 上下文自动压缩（需求 #10）的三个设置项。
+ *
+ * 只有 `GET/PUT /settings/assistant-compaction` 一对接口：读到的就是整份当前值，保存也
+ * 整份提交。默认值（空模型 / 60 / 75）由后端给，前端不重复硬编码一份"真相"——读失败时
+ * 才用同值占位，避免输入框空着。
+ */
+
+/** 读上下文压缩设置：摘要模型（空串 = 跟随当前对话模型）+ 两个百分比阈值。 */
+export function getAssistantCompactionSetting(): Promise<AssistantCompactionSetting> {
+  return request("/settings/assistant-compaction");
+}
+
+/**
+ * 保存上下文压缩设置。**整对象 PUT**：三项一起提交，只带一项会把另两项打回默认。
+ *
+ * 阈值越界、或 `summary_percent <= mask_percent` 时后端返回 422——前端已有同口径的
+ * 禁用 + inline 提示，这里不做静默夹取（夹取会悄悄改掉用户填的数字）。
+ */
+export function saveAssistantCompactionSetting(
+  setting: AssistantCompactionSetting,
+): Promise<AssistantCompactionSetting> {
+  return request("/settings/assistant-compaction", {
+    method: "PUT",
+    body: JSON.stringify(setting),
+  });
+}
+
+/**
+ * 提醒到期时自动生成任务卡的开关（T26）。
+ *
+ * 默认关。开启后后台扫描会为 24 小时内到期的提醒生成一张「准备：<提醒标题>」任务卡；
+ * 只建卡、不执行任何写操作，也不发消息或弹窗。关闭后不再生成，已生成的卡保留。
+ */
+export interface AgentTaskEventsSetting {
+  enabled: boolean;
+}
+
+export function getAgentTaskEvents(): Promise<AgentTaskEventsSetting> {
+  return request("/settings/agent-task-events");
+}
+
+export function setAgentTaskEvents(
+  setting: AgentTaskEventsSetting,
+): Promise<AgentTaskEventsSetting> {
+  return request("/settings/agent-task-events", {
     method: "PUT",
     body: JSON.stringify(setting),
   });
@@ -330,11 +383,6 @@ export function getBackupStatus(signal?: AbortSignal): Promise<BackupStatus> {
   return request<BackupStatus>("/settings/backup-status", { signal });
 }
 
-/** 自动备份间隔（天）：用户保存的运行时值，缺失时后端回退环境配置默认。 */
-export function getAutoBackupInterval(): Promise<AutoBackupIntervalSetting> {
-  return request("/settings/auto-backup-interval");
-}
-
 /** 保存自动备份间隔（1..365 天）；调度线程下次到期检查时读取，无需重启。 */
 export function saveAutoBackupInterval(intervalDays: number): Promise<AutoBackupIntervalSetting> {
   return request("/settings/auto-backup-interval", {
@@ -391,3 +439,42 @@ export {
   uploadResumeFont,
 } from "./fonts";
 export type { BuiltinFontStatus, ResumeFont, ResumeFonts } from "./fonts";
+
+// 语义检索（RAG v3）的请求层单独成模块：本文件已 360+ 行，整组接口加进来会顶到 500 行
+// 零豁免预算。按上面 fonts.ts 的既有做法只做转发，调用点仍从 "../api/settings" 取。
+export {
+  activateEmbeddingProfile,
+  cancelEmbeddingLocalDownload,
+  clearEmbedding,
+  clearEmbeddingProfileKey,
+  deleteEmbeddingProfile,
+  confirmEmbeddingHost,
+  disableEmbedding,
+  embeddingProgressPercent,
+  enableEmbeddingLocal,
+  enableEmbeddingRemote,
+  fetchEmbeddingModels,
+  getEmbeddingStatus,
+  removeEmbeddingLocalAssets,
+  revokeEmbeddingHost,
+  saveEmbeddingProfile,
+  startEmbeddingLocalDownload,
+  testEmbeddingProfile,
+  testEmbeddingRemote,
+} from "./embeddingSettings";
+export type {
+  EmbeddingEndpointMode,
+  EmbeddingHeaderRow,
+  EmbeddingMaskedConfig,
+  EmbeddingLocalState,
+  EmbeddingLocalStatus,
+  EmbeddingModelsResult,
+  EmbeddingProfile,
+  EmbeddingProfilePayload,
+  EmbeddingProbeResult,
+  EmbeddingProviderId,
+  EmbeddingRemoteConfig,
+  EmbeddingRemoteStatus,
+  EmbeddingState,
+  EmbeddingStatus,
+} from "./embeddingSettings";

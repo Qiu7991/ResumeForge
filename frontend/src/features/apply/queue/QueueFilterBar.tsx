@@ -1,0 +1,314 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * 投递队列的筛选与工具栏：状态/准入两个筛选、只看收藏、计数、全选、批量移出、
+ * 投递前检查、来源不支持的清理入口、刷新，以及右侧的说明入口与批量套话术。
+ * （自 ApplyQueuePanel 拆出：DOM、类名、Tooltip/Popconfirm 文案逐字随迁，
+ * 状态仍由面板持有，这里只受控展示并回调。）
+ *
+ * #14 的三处改动：
+ * - 「开始投递」搬去吸底条（`ApplyQueueStartBar`）——滚到下面还想投时工具栏已在视口外；
+ * - 「来源不支持 N」从一条 58px 的黄色横幅变成工具栏 chip，点开就地确认后批量移出；
+ * - 新增「投递前检查」（14A）与「只看收藏」（14B）。
+ *
+ * #14G/H 第二版（实测首屏只剩 2 行）：
+ * - 工具栏**收成一行**（`flex-wrap: nowrap` + 横向滚动兜底）：原先把「全选队列」的跨页
+ *   说明、「清空选择」、四个按钮排成第二行，白吃 44px；说明改挂 Tooltip，「清空选择」
+ *   收进「⋯」——它只在勾选后才有意义，常驻是浪费；
+ * - 队列标题行（「投递队列 ?」40px）整行删掉，说明 `?` 与「批量套用」并入本行右侧；
+ * - 「投递前检查」与「刷新」改**图标按钮**（aria-label 保留，可被读屏找到）。
+ */
+import {
+  FileTextOutlined,
+  MoreOutlined,
+  ReloadOutlined,
+  SafetyCertificateOutlined,
+  SnippetsOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
+import {
+  Button,
+  Dropdown,
+  Popconfirm,
+  Progress,
+  Select,
+  Space,
+  Switch,
+  Tooltip,
+  Typography,
+} from "antd";
+import type { ReactNode } from "react";
+import { t } from "../../../i18n";
+import { useLocale } from "../../../i18n/i18nContext";
+import type { GreetingBatchState } from "../greetingBatchRunner";
+import type { QueueStatus } from "../../../types";
+import {
+  admissionFilterOptions,
+  statusFilterOptions,
+  type AdmissionFilterValue,
+} from "./filterOptions";
+
+export function QueueFilterBar({
+  statusFilter,
+  onStatusChange,
+  admissionFilter,
+  onAdmissionChange,
+  favoriteOnly,
+  onFavoriteOnlyChange,
+  queueTotal,
+  filteredCount,
+  filterActive,
+  selectedCount,
+  selectableCount,
+  unsupportedCount,
+  busy,
+  batchRemoving,
+  loading,
+  onSelectAll,
+  onClearSelection,
+  onRemoveSelected,
+  onRemoveUnsupported,
+  onPreflight,
+  preflightLoading,
+  onReload,
+  onBatchTemplate,
+  onResumeFit,
+  guide,
+  greetingBatch,
+  onStartGreetings,
+  onStopGreetings,
+}: {
+  statusFilter: QueueStatus | undefined;
+  onStatusChange: (value: QueueStatus | undefined) => void;
+  admissionFilter: AdmissionFilterValue | undefined;
+  onAdmissionChange: (value: AdmissionFilterValue | undefined) => void;
+  /** #14B 只看收藏。 */
+  favoriteOnly: boolean;
+  onFavoriteOnlyChange: (value: boolean) => void;
+  queueTotal: number;
+  /** 筛选生效时表格里实际显示多少条。 */
+  filteredCount: number;
+  filterActive: boolean;
+  selectedCount: number;
+  /** 「全选队列」会勾上的条数（当前筛选结果里可投的那些）。 */
+  selectableCount: number;
+  /** 待投条目里来源不支持的条数（0 = 不显示清理 chip）。 */
+  unsupportedCount: number;
+  busy: boolean;
+  batchRemoving: boolean;
+  loading: boolean;
+  onSelectAll: () => void;
+  onClearSelection: () => void;
+  onRemoveSelected: () => void;
+  /** #14I 把来源不支持的待投条目一次移出。 */
+  onRemoveUnsupported: () => void;
+  /** #14A 打开体检抽屉（并跑一次检查）。 */
+  onPreflight: () => void;
+  preflightLoading: boolean;
+  onReload: () => void;
+  /** #14D 勾选后批量套用话术模板；未勾选时不显示。 */
+  onBatchTemplate: () => void;
+  /** #15D 勾选后批量看简历指派建议；未勾选时不显示（没有对象可优化）。 */
+  onResumeFit: () => void;
+  /** 队列说明入口（`?`）：由面板注入 `ApplyQueueGuide`，避免本组件依赖它。 */
+  guide?: ReactNode;
+  /**
+   * 「批量生成招呼语」的运行状态（2026-11-10 用户要求：勾选后一键生成，
+   * 别一条条点）。跑起来时工具栏换成进度条 + 停止。
+   */
+  greetingBatch: GreetingBatchState;
+  /** 对勾选的岗位逐个生成；宿主负责挑出"还没有招呼语"的那些。 */
+  onStartGreetings: () => void;
+  onStopGreetings: () => void;
+}) {
+  // 本组件用模块级 t()：必须订阅语言变化，否则切语言后工具栏停在旧文案。
+  useLocale();
+  /** 低频动作收进「⋯」：清空选择（只在勾选后有意义）。 */
+  const moreItems = [
+    {
+      key: "clear",
+      label: t("applyQueue.filter.clearSelection"),
+      disabled: busy || selectedCount === 0,
+      onClick: onClearSelection,
+    },
+  ];
+
+  return (
+    <div className="apply-queue-head">
+      {/* 只有**筛选**这一半进横向滚动容器：右侧那组（批量动作 + 使用说明）必须常驻。
+          两者同在一个滚动容器里时，内容比容器宽 50px（1200×900 实测），最右的「?」
+          会被裁掉一截；而它 402px 的说明气泡会按被裁后的坐标定位，document 因此多出
+          16px 横向滚动（CI 的 ui-quality 在 /apply 判 document overflow）。 */}
+      <div className="apply-queue-head-scroll">
+        <Space wrap={false} size={8} align="center" className="apply-queue-head-main">
+          <Select
+            allowClear
+            placeholder={t("applyQueue.filter.byStatus")}
+            style={{ width: 116 }}
+            value={statusFilter}
+            onChange={(value) => onStatusChange(value as QueueStatus | undefined)}
+            options={statusFilterOptions()}
+            aria-label={t("applyQueue.filter.byStatus")}
+          />
+          <Select
+            allowClear
+            placeholder={t("applyQueue.filter.byAdmission")}
+            style={{ width: 116 }}
+            value={admissionFilter}
+            onChange={(value) => onAdmissionChange(value as AdmissionFilterValue | undefined)}
+            options={admissionFilterOptions()}
+            aria-label={t("applyQueue.filter.byAdmission")}
+          />
+          {/* 收藏是用户的强意图信号，做成独立开关而不是第三个下拉（只有开/关两态）。 */}
+          <Space size={6}>
+            <Switch
+              size="small"
+              checked={favoriteOnly}
+              onChange={onFavoriteOnlyChange}
+              aria-label={t("applyQueue.filter.favoriteOnly")}
+            />
+            <Typography.Text>{t("applyQueue.filter.favoriteOnly")}</Typography.Text>
+          </Space>
+          <Typography.Text type="secondary">
+            {filterActive
+              ? t("applyQueue.filter.countFiltered", {
+                  total: queueTotal,
+                  shown: filteredCount,
+                  selected: selectedCount,
+                })
+              : t("applyQueue.filter.count", { total: queueTotal, selected: selectedCount })}
+          </Typography.Text>
+          {/* 「跨页」属于条件信息：只在悬停里等于大多数人永远看不到（#35E）——挂 Tooltip 后
+            不再占一整行文字（#14G 第二版）。 */}
+          <Tooltip title={t("applyQueue.filter.selectAllHint")}>
+            <Button disabled={busy || selectableCount === 0} onClick={onSelectAll}>
+              {t("applyQueue.filter.selectAll")}
+            </Button>
+          </Tooltip>
+          <Popconfirm
+            // 标题只留动作 + 对象：加数量会顶到「弹窗标题 ≤12 字」上限（§1.5），而选中几条
+            // 在工具栏「已选 N 个」里就写着；后果与可逆性进正文（§4.4 三段式）。
+            title={t("applyQueue.confirm.removeSelectedTitle")}
+            description={t("applyQueue.confirm.removeBody")}
+            okText={t("applyQueue.action.removeShort")}
+            cancelText={t("common.action.cancel")}
+            okButtonProps={{ danger: true }}
+            disabled={busy || selectedCount === 0 || batchRemoving}
+            onConfirm={onRemoveSelected}
+          >
+            <Button danger disabled={busy || selectedCount === 0} loading={batchRemoving}>
+              {t("applyQueue.action.removeSelected")}
+            </Button>
+          </Popconfirm>
+          {/* #14I：来源不支持的清理入口。它是"一条就会卡住整队列投递"的硬问题，
+            所以常驻工具栏（而不是藏在行菜单里），但只在真的有这类条目时出现。 */}
+          {unsupportedCount > 0 && (
+            <Tooltip title={t("applyQueue.unsupported.chipHint")}>
+              <Popconfirm
+                title={t("applyQueue.unsupported.chipTitle", { count: unsupportedCount })}
+                description={t("applyQueue.unsupported.chipBody")}
+                okText={t("applyQueue.action.removeShort")}
+                cancelText={t("common.action.cancel")}
+                okButtonProps={{ danger: true }}
+                disabled={busy}
+                onConfirm={onRemoveUnsupported}
+              >
+                <Button size="small" danger className="apply-queue-chip" disabled={busy}>
+                  {t("applyQueue.unsupported.chip", { count: unsupportedCount })}
+                </Button>
+              </Popconfirm>
+            </Tooltip>
+          )}
+          {/* #14A：体检是只读的，随时可点；不阻塞开始投递（blocking 只在开始时确认一次）。
+            图标按钮 + aria-label：文字按钮比图标宽 ~60px，第二行就是这么被挤出来的。 */}
+          <Tooltip title={t("applyQueue.action.preflight")}>
+            <Button
+              icon={<SafetyCertificateOutlined />}
+              aria-label={t("applyQueue.action.preflight")}
+              loading={preflightLoading}
+              disabled={busy}
+              onClick={onPreflight}
+            />
+          </Tooltip>
+          {/* loading 直接挂 reload 的请求态：本地接口虽快，转圈一闪也是「点到了」的确认
+            （此前点击毫无反馈，用户会以为没点上而连点好几次）。 */}
+          <Tooltip title={t("common.action.refresh")}>
+            <Button
+              icon={<ReloadOutlined />}
+              aria-label={t("common.action.refresh")}
+              loading={loading}
+              onClick={onReload}
+            />
+          </Tooltip>
+          <Dropdown menu={{ items: moreItems }} trigger={["click"]} placement="bottomRight">
+            <Button icon={<MoreOutlined />} aria-label={t("applyQueue.more.aria")} />
+          </Dropdown>
+        </Space>
+      </div>
+      <Space size={4} align="center" wrap={false}>
+        {selectedCount > 0 && (
+          <>
+            {/* #15D：勾选后才出现的第二个批量动作——「优化指派」要给谁优化，得先有对象。 */}
+            <Tooltip title={t("applyQueue.insights.fit.action")}>
+              <Button
+                icon={<FileTextOutlined />}
+                aria-label={t("applyQueue.insights.fit.action")}
+                onClick={onResumeFit}
+              />
+            </Tooltip>
+            <Tooltip title={t("applyQueue.template.batch")}>
+              <Button
+                icon={<SnippetsOutlined />}
+                aria-label={t("applyQueue.template.batch")}
+                onClick={onBatchTemplate}
+              />
+            </Tooltip>
+          </>
+        )}
+        {/* 批量生成招呼语（2026-11-10 用户要求）：勾选后一键生成，不用一条条打开编辑弹窗。
+            跑起来时这一颗换成进度 + 停止——同一位置表达"这件事正在进行及其进度"，
+            不要把进度条塞到别处让人两头看。 */}
+        {greetingBatch.running ? (
+          <>
+            <Progress
+              percent={
+                greetingBatch.total > 0
+                  ? Math.round((greetingBatch.done / greetingBatch.total) * 100)
+                  : 0
+              }
+              size="small"
+              style={{ width: 160 }}
+            />
+            <Typography.Text type="secondary">
+              {t("applyQueue.greeting.batchProgress", {
+                done: greetingBatch.done,
+                total: greetingBatch.total,
+                current: greetingBatch.currentTitle,
+              })}
+            </Typography.Text>
+            <Button
+              size="small"
+              disabled={greetingBatch.stopRequested}
+              onClick={onStopGreetings}
+            >
+              {t("applyQueue.greeting.batchStop")}
+            </Button>
+          </>
+        ) : (
+          <Tooltip title={t("applyQueue.action.batchGreetingTooltip")}>
+            <Button
+              icon={<ThunderboltOutlined />}
+              disabled={busy || selectedCount === 0}
+              // 显式 aria-label：antd 会把图标名（"thunderbolt"）并进无障碍名称，
+              // 纯文案查询会匹配不到（仓库里多个按钮踩过同一坑）。
+              aria-label={t("applyQueue.action.batchGreeting")}
+              onClick={onStartGreetings}
+            >
+              {t("applyQueue.action.batchGreeting")}
+            </Button>
+          </Tooltip>
+        )}
+        {guide}
+      </Space>
+    </div>
+  );
+}

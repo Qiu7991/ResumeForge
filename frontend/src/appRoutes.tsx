@@ -12,7 +12,7 @@
  */
 import type { ReactElement } from "react";
 import { Navigate, Route } from "react-router-dom";
-import AppShell from "./components/shell/AppShell";
+import AppShell from "./features/shell/AppShell";
 import {
   AnalyticsPage,
   ApplyPage,
@@ -20,6 +20,7 @@ import {
   AssistantPage,
   ClaimsPage,
   DrillPage,
+  ExternalResumesPage,
   FavoritesPage,
   HomePage,
   InterviewPage,
@@ -46,6 +47,8 @@ export const APP_ROOT_ROUTE: ReactElement = (
     <Route path="/" element={<HomePage />} />
     <Route path="/jobs" element={<JobsPage />} />
     <Route path="/resumes" element={<ResumesPage />} />
+    {/* 第 1 条：外部简历独立页（只读快照，与简历表格不是同一类对象）。 */}
+    <Route path="/resumes/external" element={<ExternalResumesPage />} />
     <Route path="/apply" element={<ApplyPage />} />
     <Route path="/webform" element={<WebFormPage />} />
     <Route path="/tracker" element={<TrackerPage />} />

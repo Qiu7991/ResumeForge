@@ -7,8 +7,9 @@
 # Flow after a release is created (see docs/mac-build-handoff.md):
 #   1. bump versions / push / tag / `gh release create <tag>` with notes
 #   2. run this workflow with `tag=<tag>` and `dry_run=false`
-#   3. the run attaches ResumeForge-Setup-<ver>.exe (+.sha256) and
-#      ResumeForge-<ver>-{x64,arm64}.dmg (+.sha256) to the release
+#   3. the run attaches ResumeForge-Setup-<ver>.exe (+.sha256),
+#      ResumeForge-<ver>-{x64,arm64}.dmg (+.sha256) and
+#      ResumeForge-<ver>-linux-{x64,arm64}.AppImage (+.sha256) to the release
 #
 # The build source defaults to the tag itself, so the artifacts correspond
 # exactly to what was released. `source_ref` exists for rehearsal runs
@@ -72,6 +73,12 @@ jobs:
     needs: target
     runs-on: windows-latest
     timeout-minutes: 60
+    # 顶层只写了 contents: write，GitHub 会把没列出来的权限一律清零。SignPath 的
+    # action 要通过 GitHub API 回读本次 run 的 artifact（origin verification 的
+    # 依据），所以这里必须显式补上 actions: read，否则运行时 403。
+    permissions:
+      contents: write
+      actions: read
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,7 +118,9 @@ jobs:
         # scripts/PythonRuntimeManifest.ps1) -- exactly the CI case here.
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\Build-Desktop.ps1 -Target win
 
-      - name: Verify packaging outputs and write checksum sidecar
+      # 这里只做断言与「打出来给人看」，不写 .sha256——安装包马上要送去签名，
+      # 签名会改变文件字节，哈希必须对签名后的文件算（见下面的 Write checksum sidecar）。
+      - name: Verify packaging outputs
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -121,8 +130,206 @@ jobs:
                            "desktop\out\win-unpacked\resources\payload\python-runtime.zip")) {
             if (-not (Test-Path $f)) { throw "packaging output missing: $f" }
           }
-          $setup = Get-ChildItem "desktop\out\ResumeForge-Setup-*.exe" | Select-Object -First 1
-          if (-not $setup) { throw "installer artifact not found in desktop/out" }
+          # 计数断言而不是「取第一个」：有第二个安装包时，后面按名字覆盖 / 通配上传
+          # 都可能作用在错的那个上，而这条早期哨兵是唯一能提前喊出来的地方。
+          $setups = @(Get-ChildItem "desktop\out\ResumeForge-Setup-*.exe")
+          if ($setups.Count -ne 1) {
+            throw "desktop\out 顶层应恰好有 1 个安装包，实际 $($setups.Count) 个：$($setups.Name -join ', ')。"
+          }
+          $setup = $setups[0]
+          Write-Host "installer: $($setup.Name) ($([math]::Round($setup.Length / 1MB, 1)) MB)"
+
+      # 配置检查排在上传之前：它只是表达式 + bash 判空，不依赖任何前置产物；
+      # 放在上传之后意味着「配错了」也会先留下一个 7 天的 artifact 才失败。
+      # 开关只由 SIGNPATH_ORGANIZATION_ID 决定；配了它但其余必需项不全时这里硬失败，
+      # 不做静默降级。注意 secrets 在 if 里不可用，所以 token 只能进 env、在 bash 里判空。
+      - name: Check SignPath configuration
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        shell: bash
+        env:
+          ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${ORGANIZATION_ID}" ] || missing+=("Repository Variable SIGNPATH_ORGANIZATION_ID")
+          [ -n "${PROJECT_SLUG}" ] || missing+=("Repository Variable SIGNPATH_PROJECT_SLUG")
+          [ -n "${ARTIFACT_CONFIGURATION_SLUG}" ] || missing+=("Repository Variable SIGNPATH_ARTIFACT_CONFIGURATION_SLUG")
+          [ -n "${API_TOKEN}" ] || missing+=("Repository Secret SIGNPATH_API_TOKEN")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::SignPath 已启用（SIGNPATH_ORGANIZATION_ID 非空）但配置不全，缺少：$(IFS='、'; echo "${missing[*]}")。请到 Settings → Secrets and variables → Actions 补齐；临时不需要签名时把 SIGNPATH_ORGANIZATION_ID 清空即可整体跳过签名。"
+            exit 1
+          fi
+
+      # SignPath 只接受「同一次 workflow run 上传的 artifact」，所以未签名的安装包
+      # 必须先作为 artifact 落盘，而不是直接从磁盘递给签名服务。
+      # 与签名各步同款条件：开关关掉时连这个中间 artifact 也不上传，否则每次发布
+      # 都会多挂一个没人用的 windows-installer-unsigned，与「跳过时与接入前完全
+      # 一致」的承诺矛盾，还白占 7 天 artifact 存储。
+      - name: Upload unsigned installer for signing
+        id: upload-unsigned
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-installer-unsigned
+          path: desktop/out/ResumeForge-Setup-*.exe
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Submit SignPath signing request
+        id: signpath
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'test-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          # 默认等待上限是 600 秒（10 分钟），从请求提交起算。但 SignPath Foundation
+          # 要求每一次签名请求都由 Approver 在后台手工批准，人还没来得及点就已经超时，
+          # 表现是「莫名其妙的超时」而不是可操作的错误。放到 1800 秒（仍在 job 的
+          # 60 分钟 timeout 之内），留出足够的人工批准窗口。
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: desktop/out/signed
+
+      # 这一步产出的正是要回信给 SignPath 的两个链接，所以紧跟在提交之后：
+      # 放到 job 末尾的话，后面任何一步失败（比如 release 附件上传），Step Summary
+      # 里就一个字都没有，还得回 SignPath 后台翻。
+      - name: Record signing request link
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        shell: bash
+        env:
+          REQUEST_URL: ${{ steps.signpath.outputs.signing-request-web-url }}
+          REQUEST_ID: ${{ steps.signpath.outputs.signing-request-id }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### SignPath signing request"
+            echo ""
+            echo "- Signing request: ${REQUEST_URL:-（未返回）}"
+            echo "- Request id: ${REQUEST_ID:-（未返回）}"
+            echo "- Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # SignPath 回传的是重签后的产物压缩包，解压保留构建时的相对路径
+      # （desktop/out/ResumeForge-Setup-*.exe），所以递归找，不能假设平铺。
+      #
+      # 这一步是签名的门禁，严格度必须随「演练」还是「真发版」变化。
+      # 当前项目用的是 test-signing 策略：证书是 SignPath 的**测试证书**，根证书
+      # 不在 Windows 信任列表里，于是 Get-AuthenticodeSignature 在干净的 runner 上
+      # 报 UnknownError（消息为 "A certificate chain processed, but terminated in a
+      # root certificate which is not trusted..."）。这是 test-signing 的**预期形态**，
+      # 不是签名失败：文件里确实有签名块，主体也对，只是这条链在别处无法被信任到根。
+      # 所以白名单只认 Valid 的老写法会把合法的测试签名也拦下，把演练彻底卡死。
+      #
+      # 分层的依据是「这个错误是否说明产物本身是废的」：
+      #   * 结构性错误——没签上（NotSigned）、签完内容被改（HashMismatch）、主体
+      #     不在白名单里——产物在任何模式下都是废的，演练也必须当场失败，否则演练
+      #     会得出「签名链路通了」的错误结论。主体白名单本身按模式分两种形态（生产
+      #     证书的 SignPath Foundation / 测试证书的 Test certificate for ...），见 ③；
+      #   * 仅仅是「这条链在本机不被信任」（UnknownError / NotTrusted /
+      #     Incompatible）——演练放行但必须留痕；真发版仍然只认 Valid，因为那时
+      #     用的是生产证书，用户拿到手必须能验成 Valid，否则官网 #verify 页教用户
+      #     核对的那一行就成了空话。
+      - name: Apply signed installer
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # workflow_dispatch 的 boolean 输入在 pwsh 里渲染成字符串 'true'/'false'，
+          # 直接写 if ($x) 会因为非空字符串恒为真而永远走进「放行」分支。必须显式
+          # 和 'true' 比较一次，再把结论当布尔用。
+          $isDryRun = ('${{ inputs.dry_run }}' -eq 'true')
+          $signed = Get-ChildItem "desktop/out/signed" -Recurse -Filter "ResumeForge-Setup-*.exe" |
+            Select-Object -First 1
+          if (-not $signed) { throw "签名没回传安装包：desktop\out\signed 下递归找不到 ResumeForge-Setup-*.exe" }
+          $sig = Get-AuthenticodeSignature $signed.FullName
+          Write-Host "signature status: $($sig.Status)"
+          Write-Host "status message  : $($sig.StatusMessage)"
+          # 时间戳证书只打印、不判定。官网政策页向用户承诺了 RFC 3161 时间戳，而
+          # 签名参数由 SignPath 侧的签名策略附加（工作流不传），这里是我们唯一能
+          # 亲眼看到它的地方——把它打出来，下一次 CI 日志就是可引用的证据。
+          # 缺失时**不** throw：时间戳决定的是「签名证书过期之后签名是否仍然有效」，
+          # 不影响本次构建能不能发布，不该让一条信息性输出阻断整条流水线。
+          if ($sig.TimeStamperCertificate) {
+            Write-Host "timestamper     : $($sig.TimeStamperCertificate.Subject)"
+          } else {
+            Write-Host "timestamper     : (no timestamp certificate)"
+          }
+
+          # ① 签名根本没进文件：任何模式都硬失败。演练放行的只是「链不受信任」，
+          #    不是「压根没签」——判定必须排在下面的 dry_run 放行之前。
+          if ($sig.Status -eq 'NotSigned') {
+            throw "签名未写入文件：$($signed.Name) 的 Authenticode 状态为 NotSigned（$($sig.StatusMessage)），拒绝继续。"
+          }
+          # ② 签名后文件被改过（在签名覆盖的区间里翻一个字节就是这个状态）：
+          #    同样任何模式都硬失败，同样排在 dry_run 放行之前。
+          if ($sig.Status -eq 'HashMismatch') {
+            throw "签名与文件内容不符：$($signed.Name) 的 Authenticode 状态为 HashMismatch（$($sig.StatusMessage)），签名后被修改过，拒绝继续。"
+          }
+          # ③ 主体必须先对上，再谈状态是否可放行（这一顺序不变）：状态不可信时
+          #    SignerCertificate 可能是 null，所以先把 null 归一成空串，避免在 null
+          #    上抛出含糊的成员访问错误。
+          #    白名单分两条，因为两类证书签发给完全不同的主体：
+          #      * 生产证书签发给基金会——SignPath 后台 Release certificate 2026 的
+          #        Subject 是 CN=SignPath Foundation, O=SignPath Foundation, ...；
+          #      * test-signing 用的是按**项目名**签发的测试证书，Subject 形如
+          #        CN=Test certificate for '<项目名>'，压根不含 "SignPath Foundation"
+          #        （run 42076202085 的 CI 日志实测就是这个形态）。
+          #    所以生产规则不能套到演练上，否则合法的测试签名永远过不了主体这一关。
+          #    但测试主体**只在演练里认**：真发版必须见到生产主体，否则等于允许拿
+          #    测试证书去发布——用户那边验不过，而官网 #verify 又教他们查 Valid，
+          #    等于自己打自己。
+          $subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '' }
+          Write-Host "signer subject  : $subject"
+          $isProdSubject = $subject -like '*SignPath Foundation*'
+          $isTestSubject = $subject -like '*Test certificate for*'
+          if (-not ($isProdSubject -or ($isDryRun -and $isTestSubject))) {
+            throw "签的不是预期主体：$($signed.Name) 的签名主体为 '$subject'。期望包含 'SignPath Foundation'（生产证书）；演练模式（dry_run=true）下也接受 'Test certificate for ...'（test-signing 测试证书）。"
+          }
+          # ④ Valid：干净通过。这也是真发版唯一接受的状态。
+          if ($sig.Status -eq 'Valid') {
+            Write-Host "signature verified: Valid"
+          }
+          elseif ($isDryRun) {
+            # ⑤ 其他状态（UnknownError / NotTrusted / Incompatible …）且是演练：
+            #    test-signing 的测试证书根不在 runner 的信任列表里，本机必然报
+            #    UnknownError，属预期行为，放行。但必须留下醒目痕迹——只在日志里
+            #    滚过去的话，下次真发版忘了把 dry_run 关掉，就会把演练口径当成发版口径。
+            Write-Warning "演练模式放行：$($signed.Name) 的 Authenticode 状态为 $($sig.Status)（$($sig.StatusMessage)）。test-signing 的测试证书根不在本机信任列表，属预期行为；正式发版要求 Valid。"
+            if ($env:GITHUB_STEP_SUMMARY) {
+              # 用 AppendAllText + 无 BOM 的 UTF8，而不是 Add-Content：这份 summary
+              # 由多个 step 依次追加，中途插入 BOM 会让后面的中文渲染成乱码。
+              $line = "- 演练模式：签名链不受信任（test-signing 测试证书，预期行为），正式发版要求 Valid。状态：$($sig.Status)；StatusMessage：$($sig.StatusMessage)"
+              [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, "$line`n", [System.Text.UTF8Encoding]::new($false))
+            }
+          }
+          else {
+            # ⑥ 其他状态且不是演练：真发版只接受 Valid。消息里必须带上当前状态与
+            #    StatusMessage，否则维护者只能回 SignPath 后台翻才知道为什么被拦。
+            throw "签名不可信，拒绝发版：$($signed.Name) 的 Authenticode 状态为 $($sig.Status)（$($sig.StatusMessage)）。dry_run=false 时只接受 Valid；若这是 test-signing 的测试证书，请改用 dry_run=true 演练。"
+          }
+          Copy-Item -LiteralPath $signed.FullName -Destination "desktop\out\$($signed.Name)" -Force
+          Write-Host "signed installer applied: $($signed.Name)"
+
+      # 逐字沿用接入签名前的写法（含 LF 的 WriteAllText）：.sha256 与安装包同处
+      # desktop/out，`sha256sum -c` 依赖那一个换行。
+      - name: Write checksum sidecar
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # 必须恰好一个：回签文件名若与未签名不同，顶层会并存两个 exe，「取第一个」
+          # 可能拿到未签名那个——哈希就算错了文件，而 Attach 又用 *.exe 把两个都传上去。
+          $setups = @(Get-ChildItem "desktop\out\ResumeForge-Setup-*.exe")
+          if ($setups.Count -ne 1) {
+            throw "desktop\out 顶层应恰好有 1 个安装包，实际 $($setups.Count) 个：$($setups.Name -join ', ')。可能存在回签文件名不一致，请人工确认后再发布。"
+          }
+          $setup = $setups[0]
           $sha = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           # LF line ending so `sha256sum -c` works on macOS/Linux (Set-Content
           # would append CRLF and break the cross-platform check).
@@ -231,8 +438,168 @@ jobs:
             desktop/out/ResumeForge-*.dmg.sha256 \
             --repo "$GITHUB_REPOSITORY" --clobber
 
+  linux-appimage:
+    name: Linux AppImage (x64 + arm64)
+    needs: target
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # 与 Windows 作业的分工差异：Linux 产物**不签名**（AppImage 没有 Authenticode
+    # 那一套，Linux 侧的信任链是发行方给的 sha256 + 包管理器），所以这里不需要
+    # SignPath 那几步，也就不需要额外的 actions: read 权限——顶层 contents: write 够用。
+    #
+    # 两个架构都在 x86_64 runner 上打，走 electron-builder 的交叉构建路径：
+    #   * 优先方案本该是 `ubuntu-24.04-arm`（真 arm64 runner，能真跑产物）。但这个
+    #     标签在本仓库**没有任何先例**（见其它 workflow 全是 *-latest），能不能命中
+    #     取决于仓库可见性与账户套餐；命中不了时 job 会卡在排队阶段报
+    #     "no runner matching labels"，而发版是人工触发、容错窗口极小的一次性操作，
+    #     不该把自己的成败押在一个没验证过的标签上。
+    #   * 所以退到交叉构建：AppImage 的打包不需要执行目标架构的二进制（app-builder
+    #     只是把目标架构的运行时与 squashfs 拼装起来，产物本身就是数据），x86_64
+    #     宿主可以产出 arm64 的 AppImage。
+    #   * 交叉构建的验证盲区必须说清楚：这里**不能**证明 arm64 的 AppImage 在真 arm64
+    #     机器上能启动（没有 qemu 执行）。为了不"假装成功"，Verify 步骤会从产物里读
+    #     ELF 的 e_machine，确认真的是 AArch64——若哪天 electron-builder 静默回退到
+    #     宿主架构，那一步会当场失败，而不是把一个 x64 包挂上 arm64 的名字发出去。
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.target.outputs.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - name: Check the Linux build script exists at this ref
+        # 老 tag 上没有这个脚本，从工作流里直接调只会得到一句 127。这里提前给出
+        # 可操作的错误（和 macOS 作业对 build-desktop-mac.sh 的处理一致）。
+        run: |
+          set -euo pipefail
+          if [ ! -f scripts/build-desktop-linux.sh ]; then
+            echo "::error::scripts/build-desktop-linux.sh missing at ref '${{ needs.target.outputs.ref }}'. 用 source_ref 指向一个带该脚本的 ref 做演练，或在 Linux 上手工打包。"
+            exit 1
+          fi
+
+      - name: Build frontend production assets
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund --registry=https://registry.npmjs.org
+          npm run build
+
+      - name: Install desktop shell dependencies
+        working-directory: desktop
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        run: npm ci --no-audit --no-fund --registry=https://registry.npmjs.org
+
+      - name: Build the AppImages (x64 + arm64)
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        # 分两次调用而不是一次 `--arch both`：一个架构失败时，日志里能一眼看出是哪
+        # 一个，产物的失败归因不会被另一个架构的构建输出淹掉。
+        # 不传任何签名相关变量——Linux 侧当前没有签名方案（见 job 头注释）。
+        run: |
+          set -euo pipefail
+          bash scripts/build-desktop-linux.sh --arch x64
+          bash scripts/build-desktop-linux.sh --arch arm64
+
+      - name: Verify the artifacts (naming shape + target architecture)
+        # 两条断言，都刻意不用通配符：
+        #   1) 产物名必须**恰好**是 artifactName 的形状
+        #      ResumeForge-<ver>-linux-<arch>.AppImage（版本取自 desktop/package.json）。
+        #      写通配符的话，命名漂移（linux-x86_64、linux-amd64……）会被 *.AppImage
+        #      静默吞下，最后上传一个名字对不上的包，而官网下载按钮按名字取，直接 404。
+        #   2) 文件头里的 ELF e_machine 必须等于目标架构：AppImage 是"目标架构的运行时
+        #      ELF + 追加的 squashfs"，所以读偏移 18 的两个字节就能判断这个包到底是给
+        #      谁的。这是交叉构建唯一的防"静默回退宿主架构"手段。
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./desktop/package.json').version")"
+          echo "desktop/package.json version: $version"
+
+          check_elf_machine() {
+            file="$1"
+            want="$2"
+            label="$3"
+            # e_machine 是 2 字节小端：x86-64 = 0x3e → "3e00"；AArch64 = 0xb7 → "b700"。
+            machine="$(od -An -tx1 -j18 -N2 "$file" | tr -d ' \n')"
+            case "${want}:${machine}" in
+              x64:3e00|arm64:b700) ;;
+              *)
+                echo "::error::${label} 的 ELF e_machine=${machine}，与目标架构 ${want} 不符（x64 应为 3e00，arm64 应为 b700）。electron-builder 可能静默回退到了宿主架构。"
+                return 1
+                ;;
+            esac
+            echo "${label}：ELF e_machine=${machine}（${want}）✓"
+          }
+
+          # 产物名里的架构词来自 electron-builder 的 `${arch}` 宏，**Linux 上 x64 会展开成
+          # x86_64**（arm64 仍是 arm64）——这是 electron-builder 自己的映射，不是我们的选择。
+          # 所以「ELF 判据（x64/arm64）」与「文件名里的架构词（x86_64/arm64）」是两个 token：
+          # 前者喂 check_elf_machine，后者拼路径。混用会让首跑直接红在一个不存在的文件名上
+          # （2026-11-10 实测：构建成功、产物叫 -linux-x86_64.AppImage，断言却在找 -linux-x64）。
+          for pair in x64:x86_64 arm64:arm64; do
+            want="${pair%%:*}"
+            arch="${pair##*:}"
+            artifact="desktop/out/ResumeForge-${version}-linux-${arch}.AppImage"
+            if [ ! -f "$artifact" ]; then
+              echo "::error::缺少产物 $artifact（期望 electron-builder.yml 的 artifactName 形状 ResumeForge-${version}-linux-${arch}.AppImage，x64 在 Linux 上展开为 x86_64）。"
+              ls -la desktop/out >&2 || true
+              exit 1
+            fi
+            check_elf_machine "$artifact" "$want" "$(basename "$artifact")"
+            # 只是留证据、不做断言：AppImage 里应该带着 backend 与前端 dist 的 payload，
+            # 但 payload 的内部布局由并行的打包实现决定，CI 不替它定死路径。
+            if command -v unsquashfs >/dev/null 2>&1; then
+              echo "----- $(basename "$artifact") 的根目录（前 15 项）-----"
+              unsquashfs -l "$artifact" 2>/dev/null | head -n 15 || true
+            fi
+          done
+
+      - name: Write checksum sidecars
+        # 与 Windows/macOS 作业同款写法：`cd` 到产物目录后 sha256sum 只写文件名，
+        # 这样用户在任何目录下 `sha256sum -c <file>.sha256` 都能验（写进相对路径
+        # 就会因为路径前缀不同而失败）。sha256sum 的输出本来就是 LF。
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./desktop/package.json').version")"
+          cd desktop/out
+          # 同上面：文件名里的架构词是 x86_64 / arm64（electron-builder 的 Linux 映射）。
+          for arch in x86_64 arm64; do
+            f="ResumeForge-${version}-linux-${arch}.AppImage"
+            sha256sum "$f" >"$f.sha256"
+            cat "$f.sha256"
+          done
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-appimages
+          path: |
+            desktop/out/ResumeForge-*-linux-*.AppImage
+            desktop/out/ResumeForge-*-linux-*.AppImage.sha256
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Attach AppImages to the release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" \
+            desktop/out/ResumeForge-*-linux-*.AppImage \
+            desktop/out/ResumeForge-*-linux-*.AppImage.sha256 \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
   source-zips:
-    name: Source zips (all / windows / macos)
+    name: Source zips (all / windows / macos / linux)
     needs: target
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -252,12 +619,16 @@ jobs:
       # 纯源码发行包（git archive + 内置前端产物 + 逐平台启动器裁剪与校验）。
       # v1.0.2 起回归此处：流程迁移到 CI 安装包时这一环曾被漏掉，Release 只挂
       # 安装包、网站下载按钮拿到 404。脚本自带缺文件/泄漏文件校验，失败即中止。
-      - name: Build the three source archives
+      # 四个平台包：all（两平台合集 + Linux 启动器）、windows、macos、linux。
+      # Linux 源码包此前缺失，用户只能拿 -all.zip（含三套启动器、要自己挑 start.sh）；
+      # 补上 -linux.zip 后与 windows/macos 对称，且 in-app 更新的平台挑选会优先命中它
+      # （`update_check._PLATFORM_TOKENS` 里有 linux 词，无专属包时回落到 -all.zip）。
+      - name: Build the four source archives
         env:
           REF: ${{ needs.target.outputs.ref }}
         run: |
           set -euo pipefail
-          for platform in all windows macos; do
+          for platform in all windows macos linux; do
             pwsh -NoProfile -File scripts/Build-Release.ps1 -Ref "$REF" -Platform "$platform" -OutputDirectory dist
           done
 

@@ -308,7 +308,10 @@ def test_masked_api_key_cannot_be_reused_for_another_base_url(client, db_session
     assert get_llm_config(db_session).base_url == config.base_url
 
 
-def test_masked_api_key_url_binding_normalizes_host_but_preserves_path_case(client):
+def test_masked_api_key_url_binding_normalizes_host_but_ignores_path(client):
+    """绑定身份是 origin（2026-11 修正）：主机大小写/默认端口/尾斜杠不算差异，
+    path 也不再参与比较——切协议只改 path，用户的 Key 必须还能用。
+    详见 tests/test_llm_protocol_switch_compat.py。"""
     config = LLMConfig(
         base_url="https://api.example.com/v1",
         api_key="secret-for-test",
@@ -319,8 +322,13 @@ def test_masked_api_key_url_binding_normalizes_host_but_preserves_path_case(clie
     equivalent = {**masked, "base_url": "HTTPS://API.EXAMPLE.COM/v1/"}
     assert client.put("/api/settings/llm", json=equivalent).status_code == 200
 
-    changed_path = {**masked, "base_url": "https://api.example.com/V1"}
-    response = client.put("/api/settings/llm", json=changed_path)
+    # path 变化（切协议会这么做）不再作废密钥。
+    switched_path = {**masked, "base_url": "https://api.example.com/V1"}
+    assert client.put("/api/settings/llm", json=switched_path).status_code == 200
+
+    # 换主机仍然报错：这是这条底线的唯一判据。
+    other_host = {**masked, "base_url": "https://attacker.example/v1"}
+    response = client.put("/api/settings/llm", json=other_host)
     assert response.status_code == 400
     assert "重新填写 API Key" in response.json()["detail"]
 
@@ -367,16 +375,18 @@ def test_the_thinking_check_reads_the_table_without_calling_the_vendor(client, m
         raise AssertionError("probe=false 不该创建 provider")
 
     monkeypatch.setattr("app.services.llm.create_provider", exploding_factory)
+    # 用 gpt-5.2 而不是 5.1：5.1 没有 none 档、属于"不可关闭"（supported=False），
+    # 那是另一条语义（见 test_llm_thinking_disable.py），这里只验"读表不出网"。
     response = client.post(
         "/api/settings/llm/thinking/check",
-        json={"base_url": "https://api.openai.com/v1", "model": "gpt-5.1", "api_key": "k"},
+        json={"base_url": "https://api.openai.com/v1", "model": "gpt-5.2", "api_key": "k"},
     )
 
     assert response.status_code == 200
     body = response.json()
     assert body["probed"] is False
     assert body["style"] == "reasoning_effort"
-    assert body["efforts"] == ["minimal", "low", "medium", "high"]
+    assert body["efforts"] == ["none", "low", "medium", "high", "xhigh"]
     assert body["supported"] is True
     assert body["note"]
 

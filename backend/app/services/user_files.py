@@ -22,7 +22,7 @@ import re
 import threading
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..config import DATA_DIR
@@ -97,24 +97,26 @@ def save_from_bytes(
     mime: str,
     source_type: str,
     source_ref: str,
-) -> None:
-    """把一份字节内容登记为用户文件副本。
+) -> int | None:
+    """把一份字节内容登记为用户文件副本，返回 user_file 行 id（空内容返回 None）。
 
     同 ``sha256`` 已有行：把新来源并入 ``sources_json``，并**校验磁盘副本**
     （P5：缺失、大小不符或哈希不符就按这份原件补写）——此前命中即直接返回，于是
     "行在、文件没了"永远补不回来，「我的文件」预览永久 404、导出永久报缺失。
     否则写盘（磁盘上已有同 sha 文件时不重写）并插入一行。``original_name`` 会做
     服务端安全化，客户端给的任何路径成分都不会进落盘名。
+
+    调用方通常忽略返回值；资料箱附件上传要拿 id 存进 ``material.files[].file_id``。
     """
     if not content:
-        return
+        return None
     sha = hashlib.sha256(content).hexdigest()
     existing = db.execute(select(UserFile).where(UserFile.sha256 == sha)).scalar_one_or_none()
     if existing is not None:
         _merge_source(existing, source_type, source_ref)
         ensure_copy(user_files_dir(db.get_bind()), existing, content)
         db.commit()
-        return
+        return int(existing.id)
 
     safe_name = _safe_original_name(original_name)
     disk_name = _stored_name(sha, safe_name)
@@ -137,6 +139,7 @@ def save_from_bytes(
     db.add(row)
     db.commit()
     logger.info("已保存用户文件副本 id=%s name=%s size=%s", row.id, row.original_name, row.size)
+    return int(row.id)
 
 
 def _decode_data_url(data_url: str) -> tuple[bytes, str]:
@@ -189,6 +192,98 @@ def save_from_data_url(
 def sha_prefix(content: bytes) -> str:
     """没有原名时给副本起名的短指纹（仅用于展示，判重仍靠完整 sha256）。"""
     return hashlib.sha256(content).hexdigest()[:8]
+
+
+def find_material_file(db: Session, material_id: int, name: str) -> UserFile | None:
+    """反查某条资料的某个附件对应的副本行（只读；用于给历史附件补 file_id）。
+
+    历史数据里 ``material.files`` 没有 ``file_id``，但图片的 data_url 早被
+    ``_save_file_copies`` 落过副本。读取详情时按来源 + 安全化后的原名反查，命中就
+    在**响应里**补上 id（不写库）——老图片因此也能用「另存为」，不必重新上传。
+
+    判据与 ``GET /api/user-files/lookup`` 同源（source_ref 同时匹配首次来源列与
+    ``sources_json``）；原名比较用落盘安全化后的形态（``save_from_bytes`` 存的就是它）。
+    只有一个候选且名字对不上时也认它：历史入口改造过原名，但这份资料确实只有一份副本。
+    """
+    ref = f"material:{int(material_id)}"
+    rows = (
+        db.query(UserFile)
+        .filter(UserFile.source_type == "material")
+        .filter(
+            or_(
+                UserFile.source_ref == ref,
+                UserFile.sources_json.contains(f'"{ref}"'),
+            )
+        )
+        .order_by(UserFile.id.asc())
+        .all()
+    )
+    safe_name = _safe_original_name(name)
+    for row in rows:
+        if row.original_name == safe_name:
+            return row
+    return rows[0] if len(rows) == 1 else None
+
+def _file_out(row: UserFile) -> dict:
+    """回显结构：刻意不含 sha256 与 disk_name——它们是实现细节，不是给界面的。"""
+    return {
+        "id": row.id,
+        "original_name": row.original_name,
+        "mime": row.mime,
+        "size": row.size,
+        "source_type": row.source_type,
+        "source_ref": row.source_ref,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def list_file_copies(
+    db: Session,
+    *,
+    page: int,
+    page_size: int,
+    source_type: str = "",
+    keyword: str = "",
+) -> dict:
+    """文件副本库的分页列表（分页 / 来源过滤 / 原名模糊匹配 / 视图组装都在这里）。
+
+    为什么放服务层：GET /api/user-files 只该做参数校验，而"分页 + 过滤"的口径
+    与副本域其他读取入口是同一份，放在路由里等于让服务层再写一遍。
+    """
+    query = db.query(UserFile)
+    if source_type.strip():
+        query = query.filter(UserFile.source_type == source_type.strip())
+    if keyword.strip():
+        query = query.filter(UserFile.original_name.like(f"%{keyword.strip()}%"))
+    total = query.count()
+    rows = (
+        query.order_by(UserFile.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    )
+    return {"items": [_file_out(row) for row in rows], "total": total}
+
+
+def lookup_file_copies(
+    db: Session,
+    *,
+    source_type: str,
+    source_ref: str = "",
+    name: str = "",
+) -> dict:
+    """按来源精确反查文件副本（供岗位备注图等原入口直接取 raw 链接）。
+
+    为什么放服务层：source_ref 同时匹配首次来源列与 sources_json 是副本表的唯一
+    反查口径，路由只该把查询参数原样交下来。
+    """
+    query = db.query(UserFile).filter(UserFile.source_type == source_type.strip())
+    if source_ref.strip():
+        ref = source_ref.strip()
+        query = query.filter(
+            or_(UserFile.source_ref == ref, UserFile.sources_json.contains(f'"{ref}"'))
+        )
+    if name.strip():
+        query = query.filter(UserFile.original_name == name.strip())
+    rows = query.order_by(UserFile.id.asc()).all()
+    return {"items": [{"id": row.id, "original_name": row.original_name} for row in rows]}
 
 
 def backfill_missing_copies(db: Session) -> int:

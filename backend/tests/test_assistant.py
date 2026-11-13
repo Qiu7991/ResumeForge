@@ -3,8 +3,8 @@
 
 拆分说明：工具调用回路用例已迁至 test_assistant_tool_calls.py；提示表面
 （思考开关隔离 / 技能注入 / 联网承诺 / 提示守卫）已迁至 test_assistant_prompt_surface.py。
-跨文件共用的 helper（_FakeProvider / _ScriptedProvider / _tool_call / _empty_search /
-_import_skill 等）按契约留在本文件，新文件单向导入。
+跨文件共用的 helper（_FakeProvider / _ScriptedProvider / _tool_call / _import_skill 等）
+按契约留在本文件，新文件单向导入。
 """
 
 import io
@@ -94,11 +94,6 @@ class _ScriptedProvider(_FakeProvider):
                 yield delta.text
 
 
-async def _empty_search(_query: str, _config) -> list[dict[str, str]]:
-    """自动预搜的空替身：只为让预搜别去打真实网络，不关心它返回什么。"""
-    return []
-
-
 def _tool_call(name, arguments, call_id="call_1"):
     return LLMDelta(
         tool_calls=[
@@ -144,7 +139,14 @@ def test_conversation_crud_and_soft_delete(client, db_session, monkeypatch):
         f"/api/assistant/conversations/{conversation['id']}/messages",
         json={"content": "帮我准备面试"},
     )
-    assert [event["type"] for event in _events(sent)] == ["start", "delta", "delta", "done"]
+    # context_usage 在第一轮拼装完就下发（需求 #6），早于正文 delta。
+    assert [event["type"] for event in _events(sent)] == [
+        "start",
+        "context_usage",
+        "delta",
+        "delta",
+        "done",
+    ]
 
     detail = client.get(f"/api/assistant/conversations/{conversation['id']}").json()
     assert [item["role"] for item in detail["messages"]] == ["user", "assistant"]

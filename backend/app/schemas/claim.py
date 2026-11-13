@@ -34,6 +34,8 @@ MAX_CLAIM_SUBJECT_CHARS = 200
 MAX_CLAIM_TEXT_CHARS = 8_000
 MAX_CLAIM_BOUNDARY_CHARS = 1_000
 MAX_CLAIM_SOURCES = 10
+# 一条主张最多关联多少条资料条目：绝大多数主张只对应一条经历/项目，20 条已是上限。
+MAX_CLAIM_ENTRY_IDS = 20
 MAX_CLAIM_ALLOWED_USES = 20
 MAX_CLAIM_RISK_NOTES = 20
 MAX_SOURCE_NOTE_CHARS = 500
@@ -66,6 +68,9 @@ SOURCE_TYPE_LABELS = {
 }
 
 _DATE_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
+# 资料条目的外部稳定 id（profile_entry.entry_id）：uuid4().hex[:24]。
+# **不是**数据库自增主键——两者在 profile_entry 里是两列，存错等于没关联（清单 §20.9 第 2 步）。
+_ENTRY_ID_RE = re.compile(r"\A[0-9a-f]{24}\Z")
 
 
 def _valid_calendar_date(value: str) -> bool:
@@ -119,6 +124,9 @@ class ClaimBase(BaseModel):
     source_fact: str = Field(default="", max_length=MAX_CLAIM_TEXT_CHARS)
     candidate_wording: str = Field(default="", max_length=MAX_CLAIM_TEXT_CHARS)
     sources: list[ClaimSource] = Field(default_factory=list, max_length=MAX_CLAIM_SOURCES)
+    # 关联的资料条目（profile_entry.entry_id）。生成时只有与本次快照求交集非空的
+    # 已确认主张才会进入事实基线；空列表 = 未关联（旧数据没有这一列时为 NULL，读取侧等价）。
+    entry_ids: list[str] = Field(default_factory=list, max_length=MAX_CLAIM_ENTRY_IDS)
     responsibility_level: str = Field(default=RESPONSIBILITY_LEVELS[0], max_length=32)
     verification_status: str = Field(default=VERIFICATION_STATUSES[1], max_length=16)
     allowed_uses: list[str] = Field(default_factory=list, max_length=MAX_CLAIM_ALLOWED_USES)
@@ -160,6 +168,30 @@ class ClaimBase(BaseModel):
         if not _valid_calendar_date(cleaned):
             raise ValueError("最近核实日期要写成 2026-09-18 这样的真实日期，或留空")
         return cleaned
+
+    @field_validator("entry_ids")
+    @classmethod
+    def clean_entry_ids(cls, value: list[str]) -> list[str]:
+        """去空白、去重、保序，并挡住"存成自增 id"这个最危险的错误。
+
+        判据是 24 位十六进制（profile_entry.entry_id）：存成 profile_entry.id 时
+        生成口径永远是 0 条，而且不会报错——清单 §20.9 明确点名过这个坑，所以在
+        保存这一步就拦下，而不是等用户疑惑"为什么台账没生效"。
+        """
+        result: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            if not _ENTRY_ID_RE.match(text):
+                raise ValueError(
+                    "关联资料条目要用资料库条目的 entry_id（24 位十六进制），不是数据库自增 id"
+                )
+            if text not in result:
+                result.append(text)
+        if len(result) > MAX_CLAIM_ENTRY_IDS:
+            raise ValueError(f"关联资料条目最多 {MAX_CLAIM_ENTRY_IDS} 条")
+        return result
 
     @field_validator("allowed_uses")
     @classmethod
@@ -246,8 +278,35 @@ class ClaimOut(ClaimBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    # 关联是否来自迁移 0009 的一次性自动回填（按 subject 与资料主字段匹配）。
+    # 只读：界面据此显示「已自动关联，请核对」；用户保存后服务层清掉。
+    entry_ids_auto: bool = False
     # 服务端算出的改进建议（不是保存失败）：例如强主张缺面试细节、已确认但没写个人边界。
     warnings: list[str] = Field(default_factory=list)
+
+    # ===== 读取边界：给 0009 加列时留下的 NULL 一个确定的语义 =====
+    #
+    # 迁移 0009 只做**保守**回填（能按主体名匹配上的那部分），其余旧行保持 NULL——
+    # 这是有意为之，不能让"猜"写进历史数据。但 NULL 必须有个确定的读法，否则
+    # ``ClaimOut.model_validate`` 对 ``None`` 校验 ``list[str]`` / ``bool`` 直接失败，
+    # 列表里只要有一条旧行就整页 500、旧行单条详情也 500。
+    #
+    # 语义定在**读取边界**而不是每个路由里 ``or []`` 撒一遍：ORM 列是可空的（``None``），
+    # 对外结构不可空（``[]`` / ``False``），这一处收敛之后所有出口自动一致。
+    # 只放在 ``ClaimOut`` 上——``ClaimCreate`` / ``ClaimUpdate`` 的入参校验一个字不动，
+    # 用户显式传非法值仍然 400。
+
+    @field_validator("entry_ids", mode="before")
+    @classmethod
+    def missing_entry_ids_mean_unlinked(cls, value: Any) -> Any:
+        """NULL / 缺失 = 从未关联，与 ``[]`` 等价（用户主动清空关联也是 ``[]``，两者同义）。"""
+        return [] if value is None else value
+
+    @field_validator("entry_ids_auto", mode="before")
+    @classmethod
+    def missing_auto_flag_means_false(cls, value: Any) -> Any:
+        """NULL = 这条关联不是迁移回填出来的；``True`` 的行必须原样读出来。"""
+        return False if value is None else value
 
 
 class ClaimListOut(BaseModel):
@@ -283,6 +342,11 @@ class ClaimSummary(BaseModel):
     verification_status: str = ""
     last_verified: str = ""
     warnings: list[str] = Field(default_factory=list)
+    # 是否已关联到当前数据集的资料条目（列表卡片上要标「不会进入生成」）。
+    # 摘要行没有 sources / entry_ids 全文，所以由服务端算好一个布尔值下发。
+    linked: bool = False
+    # 这条关联是否来自迁移期的一次性自动回填（界面据此提示「已自动关联，请核对」）。
+    linked_auto: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -306,6 +370,14 @@ class ClaimDigestOut(BaseModel):
     # 不可用主张的表述清单：生成时要显式避开这些说法。
     blocked_wording: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # 被本次基线覆盖的经历 / 项目（台账主张的主体名），供提示词生成「覆盖清单」：
+    # 只有这些条目的对外表述受基线约束，未覆盖的条目仍按候选资料如实写（清单 §20 D3）。
+    covered_entries: list[str] = Field(default_factory=list)
+    # 页面口径两段读数（清单 §20.5-4）：「全量 M 条已确认，其中 K 条已关联资料」。
+    # total_confirmed_count 不受快照过滤影响；linked_confirmed_count 只数与**当前数据集**
+    # 的资料条目关联上的已确认主张（迁移回填 / 用户手选都会计入，旧 sources.location 也认）。
+    total_confirmed_count: int = 0
+    linked_confirmed_count: int = 0
 
 
 class ClaimDraftRequest(BaseModel):
@@ -371,6 +443,7 @@ __all__ = [
     "ClaimSource",
     "ClaimSummary",
     "ClaimUpdate",
+    "MAX_CLAIM_ENTRY_IDS",
     "MAX_CLAIM_TITLE_CHARS",
     "SOURCE_TYPES",
     "SOURCE_TYPE_LABELS",

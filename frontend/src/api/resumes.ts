@@ -3,9 +3,7 @@
 import { t } from "../i18n";
 import type { ResumeFormatConfig } from "../types/resumeFormat";
 import type {
-  DeliveryDetail,
   DeliverySummary,
-  ExportFormat,
   ExportRequest,
   Page,
   RedactionOptions,
@@ -13,9 +11,7 @@ import type {
   ResumeDocument,
   ResumeDetail,
   ResumeFontScale,
-  ResumePendingChange,
   ResumeProfileUsage,
-  ResumeReviewResult,
   ResumeSuggestions,
   ResumeSort,
   ResumeTemplateCatalog,
@@ -169,28 +165,6 @@ export function reviseResume(id: number, instructions: string): Promise<ResumeDe
   });
 }
 
-/**
- * 待审变更预检（RF-13）：编辑器的 AI 改写 / 手填在落表单前过三把闸门。
- * 纯审阅预检——不落库、不改简历内容。
- */
-export function prepareResumeReview(
-  id: number,
-  changes: ResumePendingChange[],
-): Promise<ResumeReviewResult[]> {
-  return request(`/resumes/${id}/review/prepare`, {
-    method: "POST",
-    body: JSON.stringify({
-      changes: changes.map(({ path, before, after, origin, instruction }) => ({
-        path,
-        before,
-        after,
-        origin,
-        instruction: instruction ?? "",
-      })),
-    }),
-  }).then((payload) => (payload as { results: ResumeReviewResult[] }).results);
-}
-
 /** 可选的简历模板与字号档位；顺带告诉前端服务端能否直接生成 PDF。 */
 export function fetchResumeTemplates(): Promise<ResumeTemplateCatalog> {
   return request("/resumes/templates");
@@ -245,46 +219,10 @@ function readSavedToHeader(value: string | null): string | undefined {
   }
 }
 
-/** 导出为文件（html/md/json/pdf），返回 blob 与服务端建议的文件名 */
-export async function exportResume(
-  id: number,
-  format: ExportFormat,
-  /** 为真时跳过"正文还有未完成标记"的拦截，导出一份草稿自查。 */
-  allowIncomplete = false,
-  /** 【deprecated，ADR-0002】仅为兼容保留；「导出并记录交付」请走
-   *  exportResumeWithOptions（POST），把 record_delivery 放进请求体。 */
-  recordDelivery = false,
-): Promise<{
-  blob: Blob;
-  filename: string;
-  pages: number | null;
-  pageLimit: number | null;
-  savedTo?: string;
-}> {
-  const suffix =
-    (allowIncomplete ? "&allow_incomplete=true" : "") +
-    (recordDelivery ? "&record_delivery=true" : "");
-  // 导出响应是文件流：走 requestRaw（错误分类与 request() 一致），PDF 渲染可能较慢，
-  // 走 export 预算（10 分钟），不吃 15s 的默认超时。
-  const resp = await requestRaw(`/resumes/${id}/export?format=${format}${suffix}`, {
-    budget: "export",
-  });
-  return {
-    blob: await resp.blob(),
-    filename:
-      getFilenameFromDisposition(resp.headers.get("Content-Disposition")) ?? `resume.${format}`,
-    // 只有服务端 PDF 会带这两个头：它用的是自己那套排版，页数可能多于用户选的上限。
-    pages: readCountHeader(resp.headers.get("X-Resume-Pages")),
-    pageLimit: readCountHeader(resp.headers.get("X-Resume-Page-Limit")),
-    // 设置里指定了「生成内容保存位置」时，后端已把同一份产物落盘一份，路径随头带回。
-    savedTo: readSavedToHeader(resp.headers.get("X-Saved-To")),
-  };
-}
-
 /**
  * 全参数导出（POST 管线）：格式、水印、脱敏、页边距、字号、页数、照片。
  *
- * 与旧 `exportResume` 的 GET 兼容路径不同，这里支持 docx/txt 与全部后处理参数；
+ * 已下线的 GET 兼容导出只支持 html/md/json/pdf；这里支持 docx/txt 与全部后处理参数；
  * 「统一导出选项」弹窗走这一条。
  */
 export async function exportResumeWithOptions(
@@ -416,17 +354,31 @@ function readCountHeader(value: string | null): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-/** 读取导出 HTML 文本（用于打开打印窗口生成 PDF） */
-export async function fetchResumeHtml(id: number, allowIncomplete = false): Promise<string> {
-  // 走 POST 的 `preview: true`（2026-10-24）：它不落盘副本、结果进服务端预览缓存。
-  // 从前这里用的是 GET 导出——每次点开一份简历都写一份文件、且每次都要重排一遍，
-  // 这是"简历中心点开预览要等很久"的直接原因（同一条管线，只是多了两件不必做的事）。
-  // 产物字节与 GET 完全一致（同一条 `_export_record`），所以显示口径没有任何变化。
+/**
+ * 读取导出 HTML 文本，供**草稿预览**使用（弹窗/制作台画布）。
+ *
+ * 走 POST 的 preview: true（2026-10-24）：不落盘副本、结果进服务端预览缓存。
+ *
+ * includeOverflowPages（问题清单 §7）：草稿预览要看到**超额页的正文**（第 N 页起照样
+ * 画出来、只是标红不计入导出），所以详情预览传 true——服务端据此不在 HTML 里截断。
+ * 边界：**任何"打印 / 下载 HTML"的调用必须显式传 false（或省略）**，否则会把超额页
+ * 一起打出来；目前只有简历详情预览一个调用点传 true。
+ */
+export async function fetchResumeHtml(
+  id: number,
+  allowIncomplete = false,
+  options: { includeOverflowPages?: boolean } = {},
+): Promise<string> {
   const resp = await requestRaw(`/resumes/${id}/export`, {
     method: "POST",
     budget: "export",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ format: "html", allow_incomplete: allowIncomplete, preview: true }),
+    body: JSON.stringify({
+      format: "html",
+      allow_incomplete: allowIncomplete,
+      preview: true,
+      include_overflow_pages: options.includeOverflowPages === true,
+    }),
   });
   return resp.text();
 }
@@ -443,23 +395,6 @@ export function listDeliveryArchive(
   params: { page?: number; page_size?: number; keyword?: string; source?: string } = {},
 ): Promise<{ items: DeliverySummary[]; total: number }> {
   return request(`/resumes/deliveries${buildQuery(params)}`);
-}
-
-/**
- * 一条进度记录的交付快照（PR-09）：从岗位/进度进入对应 delivery 的入口。
- * 原简历被删后这里的摘要仍然可读（快照外键 SET NULL、冗余目的地列自持）。
- */
-export function listTrackDeliveries(trackId: number): Promise<DeliverySummary[]> {
-  return request(`/tracker/${trackId}/deliveries`);
-}
-
-/**
- * 一条交付记录的详情（PR-09）：不依赖原简历存活的独立访问入口。
- * 旧快照缺新列时 request_params 为 null、replayable/destination_recorded 为
- * false——UI 据此标注「不可还原」，不编造数据。
- */
-export function getDeliveryDetail(deliveryId: number): Promise<DeliveryDetail> {
-  return request(`/resumes/deliveries/${deliveryId}`);
 }
 
 export interface DeliveryDownload {

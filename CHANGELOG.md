@@ -2,11 +2,393 @@
 
 所有值得关注的项目变化都会记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## Unreleased
+
+### Added
+
+- **助手记忆与技能的两处行为收紧（#31）。** ① 自动抽取的「执行体复查」：如果任务入队后你又关掉了自动抽取开关，后台任务醒来会**直接跳过、不调模型、不新增记忆**（此前只在入队时检查一次）；② **「待验证」技能在确认通过前不能启用**：挂到对话 / 新建会话带技能 / 直接改启用状态三处都会返回 409「技能『X』待验证：先在技能页确认通过后再启用」，技能菜单里对这类技能禁用勾选并标〔待验证〕；已通过验证的技能与手工技能不受影响。
+- **助手长任务现在真的会后台执行（#18A 补执行器）。** 新增迁移 0017（`agent_task.params`，只存执行所需最小输入）+ 进程内单例执行器：任务卡点「开始/继续」后**逐步骤自动推进**（暂停立即停、取消保留已完成步骤、重启后恢复继续、并发时排队逐个跑（不丢任务）、失败写可读原因）；四类任务都有真实副作用——批量改写简历内容（写回文档并留命名版本，可恢复）/ 从链接导入岗位（只进岗位广场，**不入队、不自动投递**）/ 批量匹配（落 JobMatch 分析）/ 批量生成招呼语（写进队列，**不自动发送**）。前端任务卡显示「进行中」禁用、失败原因行内展开、取消确认写明已完成保留、其余不执行。
+- **按页抓取岗位链接（#16 分页）。** 从链接导入新增「抓取页数」（1–10）：只认页面自己声明的下一页（`rel=next`、「下一页 / Next」、常见分页容器、JSON next 字段），**不猜 URL 模板**；每页都重新做 SSRF 逐跳校验与同域限速，跨页去重。结果如实返回 `pages_fetched / truncated / stop_reason`（无下一页 / 达到上限 / 第 2 页失败保留第 1 页 / 被拒），浏览器引擎补首屏静置 2 秒避免拿到空壳。
+- **知识回流多出三个入口（#29B）。** 除了助手长回答，现在还能：**面试复盘 → 面经**（自动带公司 / 岗位 / 轮次 / 问题清单与报告正文）、**投递失败 → 求职策略**（带失败分类与诊断）、**简历诊断 → 求职策略**（服务端重跑本地规则扫描）。三处都是服务端按 `source + source_id` 取源生成，前端不拼正文；同一来源同一内容重复点击不会产生重复条目。
+- **知识库升级为「可被全站引用的底座」（#29）。** 迁移 0014 一次加五列：**为什么记这条**（≤120 字，卡片直接显示）、公司（可空索引）、关联岗位、**摘要**（≤300）与**要点列表**。页面新增：按公司筛选、只看未分类、分类可留空（内置 7 类只是建议，不再兜「其他」）、**语义检索**开关（混合关键词 + 向量，命中优先返回摘要并显示来源与回退原因）、每周复习提示（最近 30 天未打开但收藏/标星的条目，不做 SRS）、**导出 Markdown 目录 zip**（桌面版「文件 → 导出」同源）。全站引用：助手新增 `search_knowledge`（只返回 id/标题/摘要/分数，正文仍用 get_knowledge）、助手长回答可一键**存为知识条目**、面试页显示「这家公司面经 N 条」、岗位详情显示「相关知识 N 条」并可按公司/标题跳转知识库。
+- **助手记忆与技能学习（#31）。** 迁移 0015 新建 `assistant_memory`（七类求职事实：目标岗位族 / 城市 / 薪资底线 / 不去公司 / 工作方式 / 技能标签 / 其他约束），迁移 0016 给技能加四段内容 / 版本 / 验证状态。设置 →「助手与 AI 行为」新增**助手记忆**卡：逐条编辑 / 删除 / 永不使用、来源可点回原对话、**自动抽取默认关闭**（会话空闲 5 分钟才登记一次抽取，冲突旧条标 superseded 不删）、清空全部二次确认；**手填画像**（source=manual）与自动抽取（source=extracted）共用同一张表，不存身份证与薪资流水。技能工作台新增「检测最近一次对话」：证据不足不提议，四段草稿（何时用 / 步骤 / 坑）经用户确认后保存为**「待验证」**（不自动启用），标为已验证才生效；90 天未加载只提示归档、不自动删；不从失败轨迹生成技能。
+- **投投悬浮球从「聊天第二入口」改为「就地上下文助手」（#27）。** 选中文字即出现划词动作（简历经历：改写 / 加 STAR / 找数字 / 查重复条目；JD：够不够 / 提关键词；任意文本：解释 / 复制 / 存资料库；剪贴板：识别填资料），定位按选区并集、距选区 8px、不抢右键菜单；**长按 400ms** 打开动作面板（本页前 5 个动作 + 搜索，键盘可达、焦点不逃出）；**选中文字后按 Ctrl/Cmd+K** 打开划词动作（无选区时该快捷键仍归全站搜索）；**Alt+Enter** 发一次性「侧问」——不进会话、不写库、不调工具。页面感知改为**状态驱动 pulse**（制作台溢出 / 队列来源不支持 / 资料缺字段 / 简历未保存，复用制作台同一次本地测量），**删除 8 条轮播标语与 120s 定时器**；每条建议带「这类别再提示」，同类每周 ≤2、连续忽略 3 次降级为只 pulse。写操作先提案卡、执行后可撤销（复用 #13D 的 before/after/version_id）。
+- **桌面标题栏菜单补强（#34）。** 视图菜单新增**重新加载**（Ctrl+R，刷新不丢当前路由）与**开发者工具**（F12）；窗口菜单新增**窗口置顶**（勾选态与实态一致）与**关闭窗口**的 Alt+F4；文件菜单新增**从链接导入岗位**（复用岗位广场同一个导入弹窗）；帮助菜单新增**复制诊断信息**（版本/平台/数据目录/最近 WARN·ERROR/模型配置开关，**密钥只显示是否配置、不含明文**）；撤销/重做在焦点不在可编辑区时置灰；「检查更新」移入「关于」弹窗，关于改为下拉一项。
+- **模拟面试实时语音（P0，#26）。** 作答区新增实时语音：常开麦克风 + 实时波形 + 一键关闭（AEC / 降噪 / AGC、16 kHz 20ms 分段）；**保守断句**（静音 <700ms 继续、语气词延长 1.2–1.5s、语义完整立即提交、按住说话松开即发、「让我想一下」进入最多 5 秒的思考模式）；**可插话**（开口 ≥300ms 先降面试官音量 −24dB，200ms 内仍在说则硬停并取消本轮生成，短反馈词只恢复音量）；服务端新增「打断回滚」（轮次标记不完整、记录已播出字数、下一轮只带已播出文本、`client_turn_id` 幂等防重复计轮）。**TTS 本轮未接**（用户明确延后），保留 `InterviewVoiceOutput` no-op 接口位；ASR 仍走现有分段上传。
+- **收藏夹升级为「待投清单」（#28）。** 收藏夹新增关键词搜索、状态筛选（在招 / 已关闭 / 已投递 / 未投递）与排序（收藏时间 / 发布时间 / 匹配度）；每行带生命周期徽标（在招 / 已关闭 / 已投递 / 在队列，「已投递」与投递台同源）、备注就地编辑与关键词标签；行内可「加入队列 / 立即投递」（走投递前体检）；支持批量取消收藏 / 批量入队与 **CSV（UTF-8 BOM，Excel 不乱码）/ Markdown 导出**。数据库新增可空的收藏时间戳（迁移 0013）并给旧收藏行按最后更新时间回填、标「时间不详」——**不再拿入库时间冒充收藏时间**。
+- **求职助手消息级操作（#13）。** 每条助手回复底部新增操作条：复制 / 引用 / 重新生成 / 删除（悬停或键盘聚焦时出现，≤767px 触屏常显），**复制始终取完整正文**（不是折叠后可见部分）。**重新生成**只允许最后一条助手回复：复用同一条用户消息生成新回复，旧回复标 superseded 并从消息列表隐藏（数据库保留，可审计）。长回答超过 480px 自动折叠为「展开全文（还有 N 行）」，表格可横向滚动。工具卡展开后显示**参数**（白名单键，长值截断 120 字符，其余键只显示名字）与「已执行 N 步 · 当前 …」（不造假进度分母）；简历文档类写工具显示 **旧值 → 新值** 与「撤销」——撤销会**整份简历恢复到版本 X，不是只撤这个字段**，确认文案已写明；其他写工具注明「该操作暂不支持撤销」。
+- **从链接导入岗位（#16/#17）。** 岗位广场新增「从链接导入」：粘贴岗位列表页 / 详情页 / 公司主页地址 → 预览（每行来源 URL + ≤120 字原文摘要，可编辑、可取消勾选）→ 导入到岗位广场，**不自动入队、不自动投递**。抓取用 HTTP + 内置浏览器双引擎（静态页不启动浏览器；正文过短或带 `__NEXT_DATA__`/`__NUXT__` 时自动升级）——SSRF **逐跳**校验（拒回环 / 私有 / 链路本地 / 云元数据）、同域 ≥2 秒一次、单任务 ≤10 页 / 硬上限 200 条。字段分四态：**已填充 / 页面未提供 / 待补详情 / 抓取失败**，只有「已填充」写库；发布时间归一成 `YYYY-MM-DD`（相对日期按抓取日换算并标「按抓取日推算」）；JD 只在页面有明确小标题时切分，否则整段进描述、任职要求留空；已在库的岗位可「跳过」或「仅补空字段」，不覆盖备注 / 备注图片 / 收藏与用户已填内容。**助手也能用**：`web_extract`（只读）与 `import_jobs_from_url`（写，必须先出提案卡，写明将导入 N 条与每条标题/公司/摘要）；抓不到就如实说明，不退回联网搜索猜测、不编造页面没有的岗位/薪资/届别。
+- **求职助手拓宽：长任务 / 今日简报 / 多视角（#18）。** 新增 `task_create` / `task_status` / `task_cancel` 三个任务工具与助手消息里的**任务卡**（进度 / 暂停 / 详情），跨轮批量活（批量改写简历、多页导入岗位、批量匹配、批量打招呼）走任务；规则：一轮内能做完直接做、>20 次工具调用才建任务、只改一个字段不建任务。启动时距上次简报 >24h（或跨过设置时刻）自动生成**今日简报**：值得投的新岗位、7 天无回音、面试倒计时、已过期 / 下架、本周漏斗，卡上可「重新生成」。新增三个**回答视角**：HR 6 秒扫描 / 面试官追问（10 个必问 + 3 个大概率答不上来 + 考察点）/ 猎头判断（该投别投 + 投入产出），只换系统提示词与输出结构、工具集不变，**结论必须引用简历字段 / JD 原文 / 匹配分**。另加 20+ 条离线黄金用例（`pytest -m assistant_eval`，固定数据集 + 假 provider）。
+- **简历生成时的语义检索可见性（#30）。** 生成弹窗新增三处指示：检索一结束（约 1 秒内）就在进度区显示回执——绿色「语义检索 已参与 · 命中 N 条」、黄色「已启用 · 本次无命中」/「已启用 · 索引为空」、橙色「超时回退关键词 · X ms」、灰色「未启用 · 仅按关键词匹配」（带「去开启」）；结果卡底部给出「本次使用语义检索 · 命中 N 条，影响 M 个条目」，可展开列出条目名、提升幅度与「去资料页查看」。**计数按条目不按切片**，五态严格区分「配置开着」与「本次用上」；命中/超时回退的结论还会写进这份简历的「生成说明」，结构化明细只随本次生成展示、导出件不含。实现为**零数据库迁移**（进程内回执经任务轮询透传，不加列）。
+- **联网搜索三档深度（P4-08）。** 设置里的「抓取正文条数」（0–3 条 checkbox）改为「搜索深度」单选三档：**摘要**（0 页）、**标准**（默认，2 页 / 单源 2 页 / 上下文 1800 字符）、**深入**（5 页 / 单源 3 页 / 上下文 4000 字符）。旧的 `fetch_pages` 仍可读（3 → 深入），但**不再写盘**，`depth` 是唯一真值。助手工具的 `depth` 参数可覆盖设置页。
+- **两个可选搜索来源（P4-09 / P4-10）。** Tavily（结果自带 `raw_content`，直接过选段，不再二次抓取）与 Jina Reader（只在前 5 条、且本机抽取正文为空时才调 `r.jina.ai`，成功时零调用）。未填 Key 时该来源不参与搜索、不发请求。两个 Key 已加入备份「不含 API Key」的剥离名单。
+- **搜索结果统一带日期（P4-04）。** Bing RSS 的 `pubDate` 解析为 `published_at`，上下文首行变成 `[来源1] 2025-11-02 · 标题`，无日期显式标「日期未知」；「最新 / 最近」类查询按时间排序且一条不丢。顺带修掉 `_child_text` 只归一化一侧大小写、导致 `pubDate` 永远取不到的隐含 bug。
+- **精确预览改为逐页位图（P3-2）。** 新增 `POST /api/resumes/{id}/preview-pages` 与 `GET …/{token}/{index}.webp`、`…/{token}/document.pdf`；位图按 `宽 × dpr × 2` 渲染（A4 900px → 1824×2580，长边封顶 3000）、WebP q90，token = `sha256(PDF 字节 + 宽高桶)`。**「在新标签打开」拿到的是与导出逐字节相同的 PDF**（复用 `/preview-pdf` 的装配，不另拼参数）。
+- **品牌图标手势与快捷键（P5-1 / P5-2 / P5-3）。** 单击回顶部（原有）、双击刷新当前页数据、三击回首页；新增 `Alt+R` 刷新、`Alt+Home` 回首页。刷新走视图内广播，**不整页 `location.reload()`**，滚动位置与页面状态保留。
+- **启动器自动识别过期后端（P2-3）。** 复用已运行后端前先比对「运行中进程自报的 `version`」与磁盘 `backend/app/config.py` 的 `app_version`、以及 `backend/app/**` 的 mtime；不一致就停旧起新，并在日志里写明原因。
+- **求职助手「上下文用量」面板（#6）。** 输入区工具栏新增 `上下文 26%` chip：点开按**构造**拆成五个桶（系统提示词 / 工具及子智能体 / 对话消息 / 连接器及 MCP / 技能），五段条与图例的百分比都以**上下文窗口**为分母（五行相加 = 顶部占比）；标题标「估算」，底栏单独显示服务商上一轮**实测**输入 token，两者不合并、不换算。窗口未设置（0）时不显示 0%，而是给「未设置上下文窗口」+「去设置」。窗口可在弹层里直接改（32K/64K/128K/200K/1M/自定义），写回当前模型配置；≤520px 容器只留细环 + 百分比。旧对话没有落库用量时显示「部分数据」（只估算系统提示与对话两桶）。
+
+- **求职助手上下文自动压缩与手动压缩（#10）。** 上下文到 60% 先遮蔽旧工具结果（保留调用结构，最近 3 轮不动），到 75% 再把「最近 6 轮之前」的历史压成结构化摘要（目标/约束/事实/决定/待办），摘要落库、**原文永不删除**；面板里可随时手动压缩（先出预估再确认）或一键还原。摘要模型可配（空 = 跟随当前对话），两个阈值可在设置页「助手运行上限」卡里改。压缩失败不阻断发送，只提示一次。
+
+- **投递台对照 BOSS 真实功能补强（#14）。** 首屏三块提示（浏览器说明/四步引导/「N 个不能自动投递」）收进 Popover 与 `?`，1366×768 下队列可视行数从约 3 行回到 7 行以上；队列新增「参考分」列（<60 灰 / 60–79 蓝 / ≥80 绿，tooltip 原样保留「不参与准入」免责）、按参考分或入队时间排序、只看收藏；「开始投递」改为吸底条（已选 N / 可投 M）。新增**投递前体检**（来源不支持 / 简历缺失 / 未分析 / 参考分偏低 / 招呼语过短，blocking 只确认不硬拦）、近 7 天漏斗、7 天无回音提醒、一键写求职进度（按 `job_id` 查重）、话术库（模板 + `{company}/{job_title}/{name}` 变量、批量套用）、公司/关键词屏蔽（采集入库/入队/投递前**三道**过滤，关键词需 ≥2 字且不认「北京」这类通用词）。
+
+- **投递台五个本地洞察（#15 的 15A–15E）。** 队列行新增「体检」：同城同职族薪资中位对比（**样本少于 8 条只说「样本不足」，不给百分比**）、同司多投、该公司/HR 的历史结果；「优化指派」按岗位关键词与简历文本算**关键词覆盖**（与「参考分」分开展示，避免两个分数打架），贪心推荐且每份简历最多服务 6 条；投递记录页新增**边际收益停止线**（近 28 天周桶，少于 10 条投递不结论，连续两周边际面试率低于历史均值一半时提示「过拐点」并给跟进/改简历两个动作）。新增 **僵尸岗雷达**：采集时把每次出现的「岗位快照」记进 `job_seen`（迁移 0012，首次采集也记，暂存候选按 URL/公司回填），队列行按「首见天数 / 复采次数 / 薪资是否变过 / HR 是否长期不活跃」给出 0–100 的僵尸分和逐条证据；**少于 2 次采集只说「历史不足」**，>70 才在投递前体检里降级为提示，可对单条岗位「忽略」。同时新增 **JD 变更**：重采时对比描述哈希，记录行显示「岗位有 N 处变更」，可看上次/本次全文；**被动式，不主动重抓，界面写明「下次采集时更新」**。新增 **对话式投递军师**：助手可以查投递队列、按你的意思调整优先级；也能在你明确要求「投这几条」时发起投递。**「开始投递」是全项目唯一会向外部平台提交的助手工具**，必须先出提案卡（列出岗位、简历、不可撤销），确认后才真正开始；开始后不能撤回，失败不自动重试。
+### Changed
+
+- **前端目录合并补完：`components/` 根级 108 个散文件也按域归位。** 49 个组件 + 59 个测试/工具文件从 `frontend/src/components/` 根目录搬进 17 个目标目录（`features/shell` 21、`features/resume/preview` 16、`features/jobs` 13、`features/resume/delivery` 9、`features/resume/generate` 7、`features/interview` 5、`features/resume/list` 5、`features/resume/layout` 5、`features/user-guide` 5、`features/profile/fields` 4、`features/theme` 3、`features/settings` 3、`features/questionbank` 3、`features/resume/versions` 3、`features/referral` 2、`features/tracker` 2、`features/resume/writing` 2）；`git mv` 108 文件、codemod 改写 177 文件 / 773 处相对导入，`components/` 下现在只剩 `common/`（39 文件）。同步：`docs/**` 与 `AGENTS.md` 里 59 处旧路径引用改为新落位，`docs/PROJECT_MAP.md` / `docs/architecture.md` 的前端目录说明改为「业务组件在 `features/<领域>/`，`components/` 只留 `common/`」（`docs/system_design.md`、`docs/verification/responsive-20261023/PLAN.md` 属历史快照，保持原样；`docs/ui-copy-guide.md` 里 3 处早已删除的历史组件仍原样保留）。行为不变：`tsc` / `prettier` / `eslint` / 全量 vitest 全绿，`vite build` 产物 192 文件仍与旧包逐字节一致。
+
+- **后端补完：`settings_embedding` 与 `settings_embedding_profiles` 的兄弟环消除。** 把两个模块共享的取数/组装逻辑（状态载荷、模板校验、切换日志）下沉到新服务 `services/llm/embedding_status.py`（只依赖 services 层），`api/settings_embedding.py` 保留同名薄壳并在调用期注入 `_local_status` / `_runtime_available` / `get_rag_index`——既有 `monkeypatch` 落点全部保留（`_is_loopback_request` 仍由 `app.api.settings` 解析）；命名配置路由改由装配层 `application_routers.py` 直接挂载（同前缀 / 同 tag，OpenAPI 里 6 条 profiles 路径与改前一致）。效果：含 `app.api` 的模块级环 **1 → 0**（module SCCs>1 21→20、3-seg SCCs 8→7，「跨层大环」最大环仍 84 个纯服务模块、api 节点 0），api→models 66 条/48 文件不变。验证：ruff 0、pyright 0 error/3 存量 warning、全量 `pytest -n 8` 9280 passed、串行覆盖率 TOTAL 88%（`--fail-under=80` exit 0）。
+
+- **读路径第三批：接口层不再自己写查询。** `app/api/**` 的 `db.query(` 从 22 处、`select(` 从 1 处**清零**：列表 / 详情 / 导出 / 存在性校验的取数全部搬进服务层——`services/user_files`（`list_file_copies` / `lookup_file_copies`）、`services/job_preference_service.find_proposal`、`services/tracker_query.existing_track_ids`、`services/claims.live_claim_records`、`services/knowledge_service.export_entries`、`services/interview/interview_read.list_sessions`、`services/drill/session.list_sessions`、`services/candidate_jobs_read.candidates_by_ids`、`services/job/job_queries.jobs_by_ids`（岗位详情与批量匹配两处共用同一份实现）、`services/apply/apply_service.list_apply_tasks`、`services/ai_task_read.list_active_tasks`、`services/resume/resume_read_service`（简历列表 / 批量导出 / 交付归档）、`services/resume/resume_delivery.list_delivery_archive`、`services/resume/resume_task_state.active_task_for_job`、`services/assistant/assistant_persistence.latest_assistant_message`。路由只剩参数校验、依赖注入与错误映射；新增函数各带一句中文 docstring 说明为何放服务层。指标：api→models 导入 **71 条 / 50 文件 → 66 条 / 48 文件**；`SessionLocal` 保持 0；`session_engine(db)` 保持 5（那是把请求会话的引擎交给按引擎定位数据库文件的备份/统计服务，不是另开会话）；`ALLOW_SERVICES_API` / `ALLOW_API_SESSION_FACTORY` 仍为空表。三个钉住前端文件路径的后端用例（`test_embedding_profiles_write_paths` / `test_usage_task_labels` / `test_assistant_knowledge_audit`）同批更新路径常量，断言未放宽。
+
+- **前端目录合并收尾：16 个叶子组、settings / profile 两个中域与整个 resume 家族并入 `features/`。** `components/` 从 25 个目录降到只剩 `common/`（根级 108 个跨域散文件保持原状，不在本批目录范围内）；`features/` 从 43 个目录变为 38 个，全仓 **1043 个文件**（584 tsx / 437 ts / 21 css / 1 json）走 `git mv` 并入 `features/<领域>/`。分组：knowledge / templates / materials / referral / questionbank / skills / favorites / writing / batch / user-guide / desktop / analytics / tracker 各自成域；interview、voice、navigation+shell 分别并入已有的 `features/{interview,interview-voice,shell}`；settings 102 个文件并入已有 `features/settings`（17 → 119）；profile 四处落点合并为 `features/profile/{library,groups,fields}` + 根级共享（121 文件）；resume 家族按映射表落成 `features/resume/` 下 16 个簇（708 文件 = `components/resume` 318 + 既有 resume 系 390），映射表见 `deliverables/software-company/resume-dir-mapping-2026-11-12.md`。搬动用统一 codemod（`move_plan.py`，全局锁串行）先按旧位置解出目标、再按新位置重算相对路径，覆盖 `from` / 动态 `import()` / `vi.mock` / CSS `@import`（resume 两批就改写 2063 处）；`i18nBaseline.json` 三个 section 的 `files` 键同批**保序**改名（各 section 的 `total` 与文件数不变）。两条前端守卫（`workbenchRenameGuard` 的画廊路径、`formatPainterRemoved` 的源码扫描路径、`exportIsolation` 的 SCAN_DIRS 与 `frontend/tests/smoke/dragSelection.spec.ts`）跟随新路径更新，断言未放宽。行为不变：`tsc` / `eslint` / `prettier` / 全量 vitest 全绿，`vite build` 产物与旧包逐字节一致。
+
+- **读路径第二批：统计、全局搜索、助手会话的查询搬进服务层。** `/api/stats` 的整段取数（4 条 SQL：一条聚合计数 + 两条最近列表 + 一条 UNION ALL）搬进 `services/stats.dashboard_stats`，路由只剩依赖注入与 `response_model`；`/api/search` 的八个域检索、FTS trigram 回退与「我的资料」可见性判据搬进 `services/global_search` ；`api/assistant_conversations.py` 整模块（12 处 ORM 读写 + 视图组装，本来就没有路由）搬到 `services/assistant/assistant_conversations.py`，api 侧留再导出壳，五处取用点改从服务层导入。效果：`app/api/**` 的 `db.query(` 从 46 处降到 22 处、`select(` 从 10 处降到 1 处、api→models 导入从 88 条/53 文件降到 71 条/50 文件；`api-cross` 豁免表同批删掉 5 条（会话读写不再是 api 之间的耦合）。行为不变：`/api/stats` 仍是 4 条 SQL（`test_stats_query_budget` 钉住），`STALLED_DAYS` 的打桩点随实现移到 `services.stats`（用例断言不变）。
+- **路由不再自己开数据库会话（读路径第一批）。** `SessionLocal` 从 `app/api/**` 清零。原先五处"模型调用期间关掉请求会话、回来再开一条"的逻辑按性质拆开：drill 的空会话清理、模型调用期间保持打开的读取、会话响应视图搬进 `services/drill`（`drop_empty_session` / `loaded_for_model` / `session_out`）；批量匹配与单岗位匹配的落库搬进 `job_match_batch.persist_batch_in_new_session` 与 `apply_service.persist_match_in_new_session`；webform 实时会话的 7 个取数回调与 tracker 的合并预览改用 `services/session_scope` 的会话策略（`fresh_session` / `open_session`），回调位置保持不变——它们经 `webform_service.*` 取数，挪进包内会让 19 个用例的打桩静默失效。新增守卫 `api-no-session-factory`（空表：任何路由再直接开会话立刻变红）。`session_engine(db)` 保持原样——那是把请求会话的引擎交给按引擎定位数据库文件的备份/统计服务，不是另开一条会话。
+- **服务层不再反向依赖接口层，依赖方向守卫同时修好并补了第五条规则。** `backend/tests/test_import_direction.py` 原先把相对导入（`from ..x import y`）按 `path.parent.parts` 拼成盘符绝对路径，`startswith("app.")` 把它们全部滤掉——四条规则连同整张 ALLOWLIST 一直在空转（用恒真匹配器反证：全仓 9041 条 import 只有 6 条可见）。修好解析后把暴出来的存量耦合逐条登记，并新增 `services-no-api` 规则；为了让它从空表起步，20 处反向依赖真正下沉到了服务层：岗位筛选器 / 岗位视图 / 备注图落盘（`services/job/`）、技能视图（`services/assistant/skill_views.py`）、模板视图与「只能创建版式」文案（`services/resume/resume_template_views.py`）、资料附件落盘与详情补链（`services/material_files.py`）、备选岗位截图（`services/candidate_job_media.py`）、进度记录整份替换（`services/tracker.save_track_record`）、知识条目摘要（`services/knowledge_service`）、照片解析器（`services/profile/profile_photos`）。接口层保留同名别名，调用点、路由形状与错误文案一字不变。效果：跨层强连通分量从 95 个模块（含 12 个 `app.api.*`）降到 84 个纯服务模块，`app.api` 不再出现在任何环里。
+- **搜索默认档位从「只取摘要」变为「标准」（抓 2 页）。** 这是**用户可见的行为变化**：默认每次搜索会多读 2 个网页，首屏更慢、网络请求更多，换来更完整的正文上下文。想回到旧行为就到设置里选「摘要」。
+- **搜索的整体超时与状态（P4-02）。** 每次搜索 7 秒总预算，超时的来源直接丢弃并记状态；各来源结果统一带 `source_status`（`ok` / `config` / `rate` / `network` / `parse`），失败原因回写给模型，不再只报「没搜到」。
+- **多源融合改 RRF（P4-03）。** 直接复用语义检索的 `rag_hybrid.fuse_rrf`（k=60，没有第二份实现）；`official_like_score` 从主排序降为同分时的 tie-break。同一 URL 在多个来源出现只保留一条、分数相加。
+- **搜索缓存 8 分钟（P4-05）。** 进程内、键为 `query + sources + depth + limit`；失败不缓存。反爬站点（知乎 / 微信公众号 / 小红书）只取摘要、不发请求（P4-06），名单可用 `RF_SEARCH_SUMMARY_ONLY_HOSTS` 追加。
+- **投投悬浮球贴边距离 24px → 2px（P1-4）。** 球与四边的间距、以及助手卡片的首帧几何（`bottom` / `right` / 左贴边的 `left`）全部由同一个数推导；窗口缩放、`devicePixelRatio` 变化、显示器切换后会重新钉回原来那条边，不再跑到视口外。
+- **未收录条目的省略阈值 48 → 30 字符（P3-1）。** 更长的条目才开始省略并挂 tooltip，弹层本身不再横向溢出（实测 `scrollWidth == clientWidth`）。
+- **助手数据权限卡改 2×2 网格（P3-6）。** 四个选项等宽铺满内容区（`620px` 以下塌单列），右缘与内容区对齐；键盘行为与改前一帧不差。
+- **桌面窗口的内容区高度由 `--rf-viewport-h` 统一（P1-3）。** 有 32px 标题栏时该令牌是 `calc(100dvh - 32px)`，全屏时自动回到 `100dvh`（用 `:not([data-hidden="true"])` 排除，不维护第二条规则）。弹层、右键菜单、助手页等 6 处探针在桌面形态各让出 32px。
+- **精确预览删除内嵌 PDF 查看器（P3-2）。** 随之删除 `ExactPreviewPaper`、`useExactPreviewFrameHeight`、`useZoomedPdfUrl`、`useFrameLoadStall`、`pdfViewerSupport` 与 `INLINE_PDF_OK` 分流；`resume-canvas.css` 去掉 4px 白内描边。
+- **精确预览重渲从秒级降到亚秒（#23）。** WebP 质量 90→82、编码 method 4→2、超采样 2→1.5、逐页并发（每页独立打开 PDF）；宽度桶 16→64 且前后端同值。同机同稿实测：全冷 **1004→267ms**、纯光栅化 **920→145ms**；宽度 +1px 不再换 token（改前要整版重渲 1007ms）。**副作用**：桶宽变化会让旧位图 token 全部失效，升级后首次打开精确预览会重渲一次。
+
+### Fixed
+
+- **助手页空库首屏纵向溢出（响应式门禁 R4-a 在 1280/1366/1440/1536 判红）。** #18 的拓宽面板（今日简报 / 任务条 / 视角）在高度链路上是第三个固定块，空库实测 277px，而 768 高的视口里 header(67) + 消息区下限(320) + 输入区(198) 已占 585，整页因此溢出 183px。它属于增强信息，改为 `min-height: 0` 的**可压缩**块，压到装不下时自己滚。
+- **投递台在 375 / 768 / 1200 下的横向溢出（CI 的 ui-quality 判 document / clipped overflow）。** 三处根因：① 浏览器状态卡那一行的 `.ant-space-item` 是 `min-width: auto`，604px 的扫码提示拒绝收缩，整行把 `main` 撑到 805px——给子项 0 并给提示 `max-width: 100%`，省略号才真的出现；② 队列工具栏的筛选区与右侧批量动作同处一个滚动容器，1200 下内容比容器宽 50px，最右的「?」被裁一截，它 402px 的说明气泡按被裁坐标定位，document 因此多出 16px——筛选区单独成滚动容器，右侧常驻；③ 375 下的页头右侧那组按内容定宽（489px），窄屏改为 `max-width: 100%` 并允许换行。
+- **队列使用说明气泡会顶出视口。** 首次进 /apply 默认展开，`bottomLeft` + 402px 宽让右缘落在视口外（1200 下 +16px、375 下 +8px）。改为右对齐并把外层盒子夹到 `calc(100vw - 32px)`。
+- **投递台扫码提示的对比度不够（axe serious）。** 内层是 antd `Typography type="warning"`（#faad14，白底 ~1.9:1），外层早就用站内 warning 文字 token，但被内层自带 color 盖掉；压回 `--rf-warning-text`（#875300，≥6:1）。
+- **从链接导入的提交失败会回传异常原文（CodeQL `py/stack-trace-exposure`）。** `commit_rows` 自己不抛可读的 `ValueError`，能到那里的都是 pydantic / SQLAlchemy 内部错误，原文会带出表名与路径；改为固定文案 + 日志留详情。
+- **精确预览的取图 / 取 PDF 端点按请求参数拼路径（CodeQL `py/path-injection` ×4）。** 改成白名单查找：先从缓存根枚举目录名（只有十几个）匹配 token，命中的 `Path` 不来自输入；形状校验同时收紧到 `[0-9a-f]{32}`（token 本就是 `sha256[:32]`）。
+- **桌面形态出现两条滚动条（P1-2）。** 有公告条时 `.app-main` 的 `scrollHeight` 比 `clientHeight` 多 31px；现在外层不滚、只留 `.app-content` 一条，滚到底页头位移 0px。
+- **精确预览放大后多一条纵向滚动条、纸边有深色描边（P3-2 / P3-3）。** 相框高度与画出来的页改用同一套「宽度 / 间距 / 取整」函数后，11 档缩放全部 `scrollHeight == clientHeight`；`::after` 的 4px 白内描边删除（`content` 现为 `none`）。
+- **无头浏览器截不到精确预览（P3-2）。** 旧实现依赖 `iframe.onload`，在 headless 下**永远不触发**（实测 `-1`），截图是空白；改逐页 `<img>` 后可整页截图，3 页 A4 首屏 101ms（旧 PDF 路径 193ms，且那还是下界）。
+- **外部简历页副标题与首行间距过大（P3-4）。** 77px → 24px（620px 窄档 85 → 24），上传按钮与标题中心线差 85.39 → 0；空态重复的两颗上传按钮合成一颗。
+- **求职进度的分组分隔线是 3px 两段色（P3-5）。** 线落在上一条底边，现在边界 1px 单色（`--rf-border-strong`），分段行行高 70.19 → 68.19，其余行与相邻边界未变。
+- **未收录条目把弹层撑出横向滚动（P3-1）。** `scrollWidth 742 → 560`，14 组按钮右缘与弹层右缘对齐。
+- **搜索的几处老毛病（P4-01 / P4-07）。** URL 去重改用 canonical 键（`?id=1` 与 `?id=2` 仍是不同页面，`2025-11-02-post` 一个字符不动）；整页正文改为按键词分块选段（0 命中的页不产出正文，跨页按 80 字指纹去重）。
+- **更新检查失败时界面没有任何提示（P2-2）。** 发布附件缺失时不再静默 `return`：手动检查会弹「这个版本的安装包还没传全」，自动检查留 warning 日志；桌面壳新增 `desktop:check-update` IPC 通道，由主进程走带安装包的完整更新流程。
+- **桌面标题栏在异常渲染下不占位（P1-1）。** 渲染层两层兜底之外，主进程在 `did-finish-load` 后探测 `.app-titlebar`，缺失时注入 `TITLEBAR_HEIGHT` 的 `body` padding 并记 warning——兜底值由 `desktop/lib/titlebar.js` 的常量拼出，不写字面量。
+- **语音输入恒返回「嗯。」（#8）。** 根因是申请麦克风期间按钮没有反馈，用户再点一下把录音停在 **0.1–0.3 秒**。现在点下即进入「正在打开麦克风…」并禁用，`startingRef` 同步防并发；录音短于 0.5 秒或全程峰值 <1% 时**不再上传**并提示实测峰值；设备可在设置页改选，新增「测试麦克风」（只显示电平/峰值，不上传）；短录音里只有语气词（嗯/啊/哦…）时提示「没有听清」而不插入。后端转写日志补 `duration_ms`。
+- **粘贴资料/招聘信息识别会出现重复条目、漏字段（#19/#20/#21）。** 资料侧：同分区按锚点合并前缀变体（长锚点字段优先），并加**日期/角色保护**——同一公司两段不连续任职、角色不同时保留为两条；剥装饰符号（`*清华大学**`）、表头词/指代词整串拦截、制表符分列、括号内日期回填、四六级分数归位、指令注入句剔除；被忽略的行数写进警告。岗位侧：福利/待遇句只落「其他信息」，不再同时出现在职责里；整段未切分时按行首「任职要求 / Qualifications」切出任职要求，漏掉的福利/流程行补回并提示核对。
+
+### Security
+
+- **备份「不含 API Key」的剥离名单补齐两个搜索密钥：** `search_tavily_api_key`、`search_jina_api_key` 现已登记（此前只有 ASR 与 DeepSeek 搜索的两个 Key）。
+
+## 2.1.0 - 2026-11-10
+
+### Added
+
+- **实施批次（2026-11-10）：问题清单 24 条落地（1–13、15–24 共 23 条实施，第 14 条仅存档）。** 无新增依赖；数据库迁移两条（`0009`、`0010`，head `0010_external_resume`）；真实数据集与模型链路均做过实机验证。分域摘要：
+  - **语义检索（第 1、16 条）**：远程服务由「单份扁平配置 + 6 张厂商卡」改为**命名配置列表**（新建/编辑/复制/删除、重名 409、上限 20），存储走 `data/global_settings.json` 顶层 `embedding_profiles`（旧 `embedding` 段保留为当前生效镜像，**未升 GLOBAL_SETTINGS_VERSION**）；支持**本地 ↔ 远程一键切换**（ready 态切换只改 `active_profile_id`，失败不污染当前生效项）；空密钥只沿用同一条 profile、绝不跨 profile 继承；「清除密钥」语义收窄为只清当前生效项并保留命名配置。API 新增 `POST /api/settings/embedding/profiles*`，`GET /status` 增加 `profiles` / `active_profile_id` / `local_profile_id`（向后兼容新增）。
+  - **语音转写（第 2 条）**：改为**命名配置列表 + 使用/复制/删除**，「使用」不探测；配置从「每个数据集一份」改为**全局一份**（`global_settings.json` 顶层 `asr_profiles`），首次打开设置页时把当前数据集的旧 `asr_config` 幂等迁移成一条「默认配置」；旧配置行保留作回滚面包屑（其它数据集旧配置留在原库但不再生效）。新增 6 个 `/api/settings/asr/profiles*` 接口，旧接口保留。**安全修复**：备份勾选「不包含 API Key」时，此前仍会把 `app_setting.asr_api_key` 与 `app_setting.search_deepseek_api_key` 带进包（macOS/Linux 上是明文）；现已收集并剥离，并补反证测试。
+  - **联网搜索（第 3、4、5 条）**：搜索来源/地址/Key 改为**全局一份配置**（`global_settings.json` 顶层 `web_search`，旧 `app_setting.search_config` 懒迁移一次、旧行保留不删、不随数据集备份恢复）；来源卡网格改 `alignItems: start`、卡片去掉 `height:100%`，DeepSeek 计费/隐私提示移到网格下方全宽常驻 Alert（卡内不再留白）；「每次最多返回的结果条数」上限 **15 → 50**、语义改为「最多返回」，`web_search` 助手工具新增可选 `limit`（模型可指定更少），「通用参数」由多选改单选 Radio，提示写明「实际条数受来源限制（Bing 最多 8 条）」。
+  - **示例数据（第 6 条）**：欢迎向导「载入示例数据体验」改为载入**随包发布的完整演示数据集**（内置 `backend/app/assets/sample/sample_dataset.zip`，由 `scripts/seed_test_dataset.py` 生成并 `--check` 自检）：14 岗位 / 6 简历 / 52 资料 / 8 资料箱 / 8 知识库 / 4 面经 / 10 台账 / 12 进度 / 60 网申资料 / 10 附件；再次点击复用同一份（`reused:true`），旧示例保留不删、主数据零字节影响。
+  - **超额页预览（第 7 条）**：简历草稿预览超出「最大篇幅」的页现在**照常显示正文**并保留红框与「超出上限，不计入导出」标注（导出请求新增 `include_overflow_pages`，仅 `preview=true && format=html` 跳过截断，`render_config_fingerprint` 同批计入防缓存串号）；普通导出 / PDF / Word / HTML 仍按上限截断。
+  - **面试设定（第 8 条）**：「面试官设定」由网格改纵向堆叠 + 字段 4 等列（宽屏填满整行、`@container` 768px 两列、440px 单列），右侧不再出现空列；轮数说明移出格子放字段下方全宽，点「指定轮数」只增高输入框那一档；数据/校验/提交协议未变。
+  - **并发生成（第 9 条）**：支持后台同时生成多份简历——API 由「任何活动任务都 409」改为**同岗位去重**；Runner 改为「管理器 + 每任务 worker」，`RESUME_GENERATE_MAX_CONCURRENT`（1–8，默认 4）限制同时运行、`RESUME_GENERATE_MAX_PENDING`（默认 50）超出排队、有空位自动开始、排满才 429；取消只影响选中的那一份；进度提交粒度 200 → 400 字缓解 SQLite 单写争用；前端弹窗关闭即回配置态（后台继续），任务条支持多条滚动展示。
+  - **思考参数（第 10、11 条）**：修复 Responses 链路「设置页写着思考关闭、实际一直在思考」——关闭时显式发 `reasoning: {"effort": "none"}`（DeepSeek `/responses` 实测唯一有效写法；`thinking:{type:disabled}` 在该端点无效）；实测同一岗位生成 **148.6s → 27.5s（−81.5%）、输出 tokens 25,149 → 6,118（−75.7%）**。思考规则表拆为 `thinking_vendor_table / thinking_vendors / thinking_vendor_rules_{cn,global}` 四模块（30 条规则覆盖 22 个预设、按 chat/responses 区分关闭形态）；强制思考型号（GPT-6 Astra / GPT-6.1 Sol / GLM-5.3 / Kimi K3 / MiniMax M3.1-Flash）一个关闭参数都不发、设置页置灰并说明原因；前端协议矩阵 4 处修正（豆包/xAI 的 Anthropic 入口、Spark/MiniMax 域名）+ 预设 `config.ts` 同步，表尾补思考开关说明。
+  - **首页与求职进度（第 12.1、12.2、13 条）**：首页任务卡 `.home-tasks-card` 标题留白与副标题下留白相等（不再贴顶）；求职进度页顶部统计改为**指标带 + 一条 100% 堆叠构成条**（五段按「进行中总数」`flex:{count} 0 0` 切分、图例最大余数法百分比合计 100、0 段不画、图例可点筛选），记录列表**去卡片化**（容器 + 分隔线行、`.is-active` 只留一条竖条、状态改圆点、元信息压一行、每 10 行细分隔），`TrackerPage.tsx` 467 → 377 行。
+  - **采集筛选（第 15 条）**：投递台「自动采集」筛选项按站点真实能力区分——多选 `experience/degree/industry/scale/payType/partTime/stage`、单选 `jobType/salary`；兼职（`jobType=1903`）时「薪资待遇」整组消失、换结算方式 + 兼职时间（反向不成立）；`GROUP_SPECS` 新增 `multi` / `visible_when` 由后端随选项下发，前端不写死；切换求职类型时前后端都清残留值。
+  - **求职统计（第 17 条）**：时间线空态改「还没有状态变化记录，改一次状态就会开始累积」（**不伪造事件**）；补「进行中不含 Offer」说明；区间选择器归位到趋势图卡头；新增渠道转化率（招聘平台 7 / 内推 2 / 官网 1 / 猎头 1 / 其他 1）、投递→当前阶段耗时中位数、同公司多投与止损清单、简历版本效果（带样本量/小样本徽标、不做归因）、周投递目标（`PUT /api/analytics/weekly-goal`）、生成成本（只报 token 与耗时，不报金额）；停滞口径改为「最后一次状态变化（事件 > status_date > updated_at）」，`/api/stats` 与首页提示同批对齐。
+  - **桌面版（第 18、19 条）**：窗口 × 改为「最小化到托盘 / 退出应用」二选一，可勾「记住我的选择」（存 `userData/close-behavior.json`，删掉恢复询问；记住退出有二次确认；托盘提供「关闭窗口时询问」）；桌面版隐藏页内「退出」（浏览器发行版保留）；新增**自绘 32px 标题栏** + 文件/编辑/视图/窗口/帮助/关于六菜单（无字母跳转；Alt→方向键→Enter 键盘可达；菜单/下拉全部 `no-drag`；Win11 贴靠与双击最大化；深浅色覆盖层按钮颜色跟随；净增 0px）。
+  - **事实台账（第 20 条）**：`claim_record` 新增 `entry_ids`（JSON，存 24 位 `entry_id`）与 `entry_ids_auto`（迁移 `0009`），一次性保守回填（按主体名去空白双向包含；技能/语言分区不参与；学历同校用专业名消歧）；生成判据改为 `entry_ids ∩ 快照` 或 `sources[].location` 命中；表单新增「关联资料条目」多选、「证据来源」只做定位、列表对未关联条目标「不会进入生成」、对自动关联标「已自动关联，请核对」、页面读数拆「全量 M 条已确认 / 其中 K 条已关联资料」；提示词把「基线没提到的一律不得出现」限定到台账覆盖的条目并渲染覆盖清单，`blocked_wording` 独立于基线渲染；「从资料生成」支持从资料库选条目预填。真实数据集 **10/10 已确认全部回填成功**，页面口径 == 生成口径。
+  - **外部简历（第 21 条）**：简历中心新增「外部简历」区块（只读快照），新表 `external_resume`（迁移 `0010`，引用 `user_file` + 提取文本 + 软删）；上传 pdf/docx/txt/md 时本地提取文本（扫描件不识别视觉、返回 warning 并标注「未提取到文字」）；提供原件预览、文本、条目化文本检查（占位符/量化/联系方式/长度/弱表述/有 JD 才出关键词覆盖，**无总分**）、软删进回收站可恢复（不删物理文件）、「用于面试」跳转并预填面试材料；与 `resume_record` 完全隔离，不进制作台/导出。备份表清单 76 → 77、回收站 23 → 24 类（含外部简历）。
+  - **资料箱附件（第 23+24 条）**：附件支持图片 / PDF / Word(.docx) / txt / md / json / csv 上传并**保存原件**（`material.files` 增 `file_id`，引用 `user_file`），新增 `POST /api/materials/attachments`；附件行提供「预览 / 复制 / 另存为」（图片复制写真实剪贴板 `image/png`、PDF 复制文本、另存为下载原件）；历史无原件附件只显示「复制」；扫描件 PDF 不识别只给 warning；「添加图片 / 添加文本文件」两个按钮合并为唯一「添加附件」（`Upload` 与 `FileDropZone` 共用同一 `accept` 常量），`.doc` 选文件即拒并提示另存为 `.docx`，多选时上限检查按串行队列累加；删除「PDF/Word 请把文字粘贴到正文，程序不保存原始文件」等已失效文案。
+
+### Changed
+
+- **第二轮复核与补完（2026-11-10）的口径与交互修正：** 资料箱附件上传的请求体上限**单独放宽到 12 MB**（新增配置 `MAX_ATTACHMENT_UPLOAD_MB`，默认 12；端点自身仍按 10 MB 校验单个文件）——此前的全局 8 MB 默认会让 8–10 MB 的 PDF/Word 在进入端点前就被中间件以「请求体过大，最大允许 8 MB」拦下，界面写着支持却没真正可用；只放宽 `POST /api/materials/attachments`，其余接口（含同前缀的 `/api/materials`）仍受全局上限。语义检索的命名配置卡不再「点整卡打开编辑弹窗」（卡根去掉 `role="button"` / `tabIndex`），键盘等价入口是「⋮ → 编辑」，鼠标仍可整卡点击。求职助手的两处能力描述纠正为事实：渠道字段存在（`channel_stats` 可答各渠道投递/面试/Offer 数与转化率，与「内推」模块是两套口径、不可相加）、进度记录可显式关联简历（`resume_effects` 带样本量），不再回答「本库没有渠道字段」「关联入口还没有」。README 功能表补「外部简历」「附件多格式」两行（中英各 82 项）并登记进助手能力地图。
+- **实施批次（2026-11-10）的行为变化（需要用户知道的口径变更）：** 语义检索/语音转写/联网搜索三类设置由「每个数据集一份」改为**全局一份**（切数据集不再变化；旧数据集配置迁移一次，回退旧版只能看到升级前配置）；联网搜索「每次返回条数」上限 15 → 50、分类由多选改单选；求职进度「停滞」口径改为最后一次状态变化；简历生成同时运行默认 4 条、同岗位去重；采集筛选接口 `GET /api/collect/filters` 的分组新增 `multi` / `visible_when` 字段，`PUT /api/collect/config` 与 `POST /api/collect/filters/test` 的 `filters` 由 `Record<string, string>` 改为 `Record<string, string[]>`（旧单字符串仍可读、自动归一；求职类型/薪资待遇单选，其余多选，兼职联动换组）；资料箱附件图片仍最多 4 张（文档 4 份，多格式共用上限）；备份包新增 `external_resume` 表（表清单 77），回收站 24 类。
+
+### Fixed
+
+- **第二轮复核与补完（2026-11-10）修复的无障碍问题（都会让 `ui-quality` / `a11y` 冒烟在真实数据下变红）：**首页提醒弹窗的链接色字面量 `#5b8ff9` 在白底只有 **3.11:1** → 改用 `--rf-info-strong`（7.26:1），弹窗另外三处硬编码色（标题图标、分隔线、hover）一并换成语义 token；岗位卡技能标签的 antd cyan `#08979c` 在 `#e6fffb` 底上只有 **3.39:1** → 复用 `--rf-info-strong`（6.94:1）；求职进度构成条的 `aria-label` 含「条，占」导致可见文本不在可访问名内（WCAG 2.5.3）→ 改为可见文本充当名称、完整口语版放 `title`；语义检索命名配置卡的 `role="button"` 套着三个按钮（`nested-interactive`）→ 卡根降级为普通容器。
+- **实施批次（2026-11-10）修复的问题（对应问题清单）：** Responses 链路思考未真正关闭导致生成慢一倍（第 10 条）；事实台账「已确认事实基线」在真实生成中恒为空（第 20 条）；草稿预览超额页只有红框没有正文（第 7 条）；搜索来源卡勾选后卡内大片留白（第 4 条）；资料箱卡片同行高矮不齐（第 22 条，同行底边差 22.39px → 0）；首页任务卡标题贴顶（第 12.1 条）；面试设定右侧空列与「指定轮数」撑高整行（第 8 条）；桌面版「页内退出 + × 直接退出」双入口冲突（第 18 条）；事实台账关联判据与界面提示永远对不上（第 20 条）；思考参数对不可关闭型号会发出去导致 400（第 11 条）。
+
+### Security
+
+- **备份密钥剥离补齐（2026-11-10）：** 「不包含 API Key」导出此前仍会带出 `app_setting.asr_api_key` 与 `app_setting.search_deepseek_api_key`（非 Windows 平台为明文）；现已加入收集与剥离名单，并补反证测试（导出包内搜不到明文、`include_api_keys=true` 时保留）。
+- **求职 Agent 三步落地：跟进巡检 ·「我已提交」+ 投递交付单 · 求职偏好档（2026-11，迁移 `0006`–`0008`）。** 把「投出去之后」这一段接上，全部本地运行、不新增账号/云依赖，**不自动提交、不自动发消息、不读邮箱、不保存招聘网站凭据**。
+  - **跟进巡检（期一）**：复用「任务卡」总开关与同一后台节拍，扫描「进行中且超过 7 天没有任何更新」的投递——>7 天且 ≤21 天生成**跟进清单卡**，>21 天生成**确认状态卡**（两桶互斥）；每桶最多 5 家、按最久未更新优先，同一桶同一 ISO 周只生成一张卡（`agent_task` 新增 `source_ref` / `occurrence_key` + 唯一索引，旧提醒卡去重语义不变）；「投出后 7 天」提醒 7 天内出过卡的让位，近期已决策（`contacted`/`replied`）与 `stopped`（永久）不再入选；文案只由确定性模板产出、不调模型，禁词 + 必备要素双向守卫。新增 `POST /api/followups/decisions`（整卡一事务、乱序可提交、幂等；**只记录决策，不改投递记录的状态与更新时间**）与新表 `application_follow_up`。
+  - **「我已提交」+ 交付单（期一）**：`POST /api/apply/records/{id}/submitted` 把成功的投递记录补成一条「已投递」进度（合并键去重、已到更后阶段不降级）、挂一条 +7 天的 `hr_reply` 提醒（同 track 待办提醒复用，幂等）、冻结投递快照（复用既有 `freeze_delivery` 与幂等键 `apply_task_item:{id}`），并维护一次性引导键；`apply_task_item` 新增 `receipt_acked_at`（迁移 `0007`）。`GET /api/apply/records/{id}/receipt` 把既有快照读成可验收单据：投递版本/目的地/导出产物/填充字段统计/事实台账疑点/待人工步骤/跟进计划，三态优先级 **卡在人手上 > 有疑点 > 可验收**；「投出后简历又改过」只展示、不参与三态；填充记录按 URL 精确匹配、匹配不上标「未知」而不是缺件。`POST .../receipt/ack` 只写验收时间（幂等、不碰漏斗状态）。
+  - **求职偏好档（期二，迁移 `0008`）**：新表 `job_preference` 存 13 类闭集偏好（城市 / 行业与公司排除 / 薪资底线 / 工作方式 / 用工形式（正职 / 实习 / 外包 / 兼职 / 劳务派遣）/ 写作红线 / 可到岗时间 / 仅本次对话等），一行 = 一次确认的完整取值；版本状态 `state`（active/superseded/undone）与 `deleted_at`（只表示用户删除）分离，活动行唯一用条件索引 `(dataset_key, kind) WHERE state='active' AND deleted_at IS NULL`。写入必须经用户确认的提案（`create_job_preference` / `update_job_preference` 登记为永远走提案的写工具；绕过提案直写会被服务层拒绝）；「以后都这样」落长期偏好，「只在这次对话」落 `session_note`。偏好块以「不是发生过的事实」的显式格式注入系统提示（24 条 / 单值 120 字符 / 列表 8 项 / 整块 900 字符，先省来源时间再按优先级裁尾；四档数据权限全注入），**永不进入简历生成、纸面渲染、网申取数与事实台账**（有隔离反证测试）。设置页新增偏好管理：编辑 / 撤销到上一版 / 删除进回收站 / 恢复；恢复撞同 kind 活动行返回 409 `trash_restore_conflict`。
+  - **回收站 22 → 23 类**（新增「求职偏好」）：`TRASH_SPECS` 仍为唯一注册表（拆到 `services/trash_registry.py` 以守住 500 行预算，`trash.py` 原样重导出全部符号）；能力地图、README 与用户指南同步为 23 类。
+  - **接口与迁移**：新增 `POST /api/followups/decisions`、`POST /api/apply/records/{id}/submitted`、`GET /api/apply/records/{id}/receipt`、`POST /api/apply/records/{id}/receipt/ack`、`GET/POST/PATCH/DELETE /api/job-preferences[/{pref_id}]`、`POST /api/job-preferences/{pref_id}/undo`、`POST /api/job-preferences/proposals/{id}/session`；迁移链保持单线 `0005 → 0006 → 0007 → 0008`，旧数据零破坏（`agent_task` 旧行 NULL 不受新唯一约束影响、`receipt_acked_at` 旧行 NULL = 未验收、`job_preference` 空表起步不回填）。
+
+### Changed
+
+- **可用性收口 8 项：列表行「···」、设置页三张 AI 卡对齐、面试轮数与人设互斥、更新公告渲染、清理文件定位（2026-11-09）。** 无数据库迁移、无新增依赖；旧配置与旧数据零破坏。
+  - **列表行操作**：岗位广场与简历中心每行最右侧新增「···」，内容与该行右键菜单一致（不含已平铺的「详情/生成简历」「预览/导出」，也不含右键独有的「复制」子菜单）。**进入选择模式（勾选）后，三点与所有单行操作一并禁用**（含表格收藏星标、窄档卡片的预览、星标与标题），批量勾选框保持可用；窄档卡片补上「批量选择」入口（此前 ≤1092 宽度下进不了选择模式）。岗位广场操作列 170 → 190、`scroll.x` 1330 → 1350。
+  - **设置页三张卡向「大模型 API 配置」看齐**（LLM 卡与其弹窗一行未改）：卡头统一「标题 + 唯一主操作」、说明统一 `Alert info`、字段统一 `SettingsField`、状态统一 `Tag`（蓝=生效中 / 绿=已配置 / 灰=未配置）、测试结果统一 `Alert`。语义检索远程服务由下拉改为厂商卡片网格（6 家，选中态浅色底 + 主色边框，下方展开字段）；语音转写新增 OpenAI / Groq / 硅基流动 / 阿里云百炼 / 自定义预设；联网搜索改为 4 张可多选来源卡 + 下方「通用参数」，**保留 400ms 自动保存与三态提示**；语义检索三处裸的红按钮（删除已下载文件 / 删除本地模型文件 / 清除已保存的密钥）收进「···」并沿用列表同款二次确认。
+  - **语音转写新增调用协议**：`AsrSettings.protocol`（`openai` | `dashscope`，默认 `openai`），配置仍存 `AppSetting.asr_config` JSON，**无需迁移**；`dashscope` 走 `POST {base}/chat/completions` + `messages[0].content=[{type:"input_audio",...}]`（Base64 Data URI、`stream:false`、可选 `asr_options.language`），响应兼容字符串与分段数组，400 时提取上游 `error.message`。新增 `POST /api/settings/asr/models`（`GET {base}/models`，上限 100，失败返回 `[]`），前端「拉取模型列表」按 `whisper|transcribe|asr|audio|speech|sensevoice` 分组、默认只显示疑似转写模型。**旧配置无 `protocol` 时按 `openai` 处理，行为不变。**
+  - **面试设定**：轮数改为「自动 / 指定轮数」两档（**默认自动**，此前默认固定 6 轮），指定时手输 3–12；面试官风格与自定义人设合并为同一分组并纵向排列，**填了人设即禁用风格**且 `extra` 明示原因（值不清空、后端 Literal 仍必填）。
+  - **行为变化（进行中的会话也生效）**：后端提示词从「风格 + 人设叠加」改为**人设优先**——`persona` 非空时 `interviewer_style` 传入占位文案、`behavior_directives_for(..., None)` 跳过风格行为指令，收尾提示词同样不注入具体风格名。老会话下一轮即走新逻辑。
+  - **更新公告渲染**：补齐 `#{1,4}` 标题、表格（首行进 `thead`、列数不齐补空）、`---/***/___` 分隔线、行内代码、`* ` 与 `1. ` 列表、`[文字](地址)` 链接（**只放行 http/https**，其余降级为纯文字）；全程 React 文本节点，不引入 `dangerouslySetInnerHTML` 与 markdown 依赖。容器 `maxHeight` 200 → `min(40vh, 420px)`（1440×900 下实测 360px），保持内部滚动。后端公告截断由「硬切 4000 字符」改为**按行回退**（预算 3986，回退点不早于 60%，末尾追加「……（完整说明见发布页）」），不再把表格或句子从中间切断。
+  - **清理旧文件可定位**：新增 `POST /api/stats/storage/cleanup-reveal`，请求体为清单里的**相对路径**（不下发绝对路径）；拒绝绝对路径与 `..`、`resolve()` 后必须仍在数据目录内、首段白名单 `backups`/`auto-backups`/`logs`、文件不存在返回 404。前端文件行末尾加「打开文件夹」图标按钮（`preventDefault` + `stopPropagation`，点它不会切换勾选）。`reveal_path()` 抽到 `services/system_reveal.py`，与「我的文件」的行内定位共用一份实现（Windows `explorer /select,`、macOS `open -R`、Linux `xdg-open` 目录）。
+
+- **设置页「各服务商协议支持」按 2026-11-09 官方文档复核并重排（热门优先）。** 修正 Qwen / StepFun 的 Responses 判定为部分支持（前者仅基础兼容、后者仅两款模型），xAI 的 Anthropic 判定改为部分支持（官方 OpenAPI 已定义 `/v1/messages`）；Perplexity 的 Anthropic 改为部分支持（Orchestrator 私有预览，需申请）。Groq 预设模型改为 `openai/gpt-oss-120b`（`llama-3.3-70b-versatile` 已于 2026-08-16 对自助层关停），Perplexity 改为 `perplexity/sonar`。23 行按热门度重排，表尾仍标核对日期。
+
+- **助手提示词预算守卫阈值显式调整（2026-11）**：`test_assistant_prompt_budget` 的系统提示固定成本上限 23,800 → 24,100。原因是工作树里**既有**（非本批）的助手装配 / 平台事实改动已把基线推到约 23,824（本批之前即已超 23,800 共 24 字符），本批偏好能力点名再 +174 字符（`test_assistant_prompt_surface` 要求每个写工具名出现在静态提示里）；真正的成本闸门 `MAX_PROMPT_TOKENS_ESTIMATE = 60,000` 未动，测试注释记录了实测数字与"既有基线"归属。
+
+- **新增 RAG 语义补召回（默认关闭；v2 检索链路 + v3 真实本地 / 远程 provider）。** 给简历生成链加一条**候选选择层的可选增强**，两个开关**默认都是 `false`**：`rag_retrieval_enabled`（向量补召回 + 加权融合）与 `rag_query_expansion_enabled`（Phase 0 查询扩展）。**都关闭时（默认）** `prepare_selection_boost()` 返回空作用域，生成链行为与改造前逐字节一致——RAG 只决定「哪些条目进入候选」，**不碰 prompt 字节**（候选的字段形状、键序与文本不变）。**不新增数据库表 / 迁移 / 数据目录**：向量索引是进程内 LRU 缓存（可重建派生数据，重启重算、不进备份，备份导入后没有索引也能正常生成）。
+  - **链路**：冻结的 `ConsumedProfile` → 模型输入白名单投影出的 chunk（`canonical_item_hash` 桥接回下游候选字典，下游候选里已经没有 `entry_id`）→ 进程内向量索引 → 关键词分 + `10 × cosine` 加权融合（向量权值 10 < 技能命中权重 12，保留精确命中的硬优先级；融合分先 `round(4)` 再比较、平局回落原顺序）→ `rag_seam.selection_scope` 作用域 → `_select_entries()` 的 boost / `build_job_focus()` 的扩展词。boost 只对教育 / 工作 / 校园 / 项目四个内置分区与 `filter_by_job=True` 的自建板块改变顺序；`skills` 走独立硬优先级路径，`awards` 与其它分区不受影响。SSE 与后台任务两个生成入口都已接入。
+  - **Phase 0 查询扩展**复用已配置的大模型与岗位已有的 `analysis_cache` 列做缓存（岗位内容一改指纹即失效，不需要第二张缓存表），扩展词**只进 `JobFocus.terms`、不进 `skills`**；未配置模型 / 超时 / 坏 JSON / 空结果一律静默回退。
+  - **fake provider 守卫**：`FakeEmbeddingProvider` 是确定性 hash 向量、与语义无关；默认配置下即使打开 `RAG_RETRIEVAL_ENABLED` 也只回退（`fallback=fake_provider`），只有显式 `RAG_EMBEDDING_ALLOW_FAKE=true`（测试/链路对比）才参与排序。
+  - **请求预算与后台预热**：单次请求最多花 `RAG_REQUEST_BUDGET_SECONDS`（默认 1.5s）算 boost；冷缓存超预算立即回退（`fallback=budget_exceeded`），缺失向量由 `ai_task` 的 `rag_index_warmup` kind 在后台补齐（复用现成执行器，不阻塞首字节）。作用域只覆盖**候选构造段**（以 `mark_selection_done()` 为界），不再覆盖整条流。
+  - **真实 provider（v3）**：设置页「AI 模型 → 语义检索」二选一——**本地模型**（按需下载约 110–126MB（按平台 zip 传输体积：Windows 111MB / macOS 110MB / Linux 122–126MB；打包模型约 74.6MB + 运行时按平台约 35–51MB，解压后合计约 237–280MB；设置页显示本机实际值）；按平台选资产、每个下载源各自 sha256 校验、目录带版本；数据不出本机）与**远程服务**（任意 OpenAI 兼容 `/embeddings`，0 下载；首次按 host 弹隐私确认、维度自动探测、按 `batch_size=25` 切片；内置百炼 / OpenAI / 智谱 / SiliconFlow / 本机 Ollama 预设与自定义端点模板）。**在设置页启用任一真实 provider 即等于启用语义检索**（无需改环境变量；`RAG_RETRIEVAL_ENABLED` 保留为开发 / 评测总闸）。配置持久化在 `global_settings.json` 的 `embedding` 段（不进备份），切换 provider / 模型 / 维度会清空索引并记 `provider_switched`；请求体只含 chunk 的白名单投影，姓名 / 电话 / 邮箱 / 私密链接不出现。
+  - **回退语义**：未配置 provider / fake 未允许 / 超预算 / 超时 / 坏响应 / 空索引 / 本地下载或校验失败 / 运行时不可用 / 远程 401·429·维度不符 → 一律空作用域并回退关键词链；设置页如实显示失败原因，**不伪装成已启用**。日志只记 provider、host、候选数、命中来源、耗时、回退原因、哈希前缀 7 类元数据，**不含 JD / 简历正文、向量、密钥或完整 URL**。
+  - **配置项**：v2 的开关与模型属性继续可用（`RAG_RETRIEVAL_ENABLED=false`、`RAG_QUERY_EXPANSION_ENABLED=false`、`RAG_EMBEDDING_PROVIDER=fake`、`RAG_EMBEDDING_*` 等，见 `backend/app/config.py`）；v3 新增 `RAG_ASSET_BASE_URL`（默认 `https://github.com/magicapple123/ResumeForge/releases/download/rag-assets-v1`）、`RAG_ASSET_HF_BASE_URL`（HuggingFace 备用源）、`RAG_LOCAL_MODEL_DIRNAME=rag-model`、`RAG_LOCAL_RUNTIME_DIRNAME=rag-runtime`、`RAG_EMBEDDING_ALLOW_PRIVATE_ENDPOINT=false`（本机 Ollama / LM Studio 等回环 / 内网地址默认拒绝，需在「高级」显式允许）。
+  - **平台矩阵与体积**：本地模型统一 onnxruntime **1.31.1**，支持 Windows x64 / macOS **14+** arm64 / Linux x86_64 / Linux aarch64；**Intel Mac 没有 onnxruntime macOS x86_64 wheel，本地模型不可用，只能用远程**（应用本身仍可运行，dmg 仍出 x64 / arm64）。权重与运行时按需下载，**不进安装包、发布压缩包与备份**（登记为 `RUNTIME_ONLY`）；只用远程的用户 0 下载。因此备份包与安装包体积不变；`global_settings.json` 不在备份成员里，provider 配置与加密密钥不随备份走。
+  - **未验证项（如实记录）**：真实远程端点**未做端到端验证**——本机没有 `EMBEDDING_API_KEY`，只有 mock transport 的协议证据，报告给出将来验证命令；**ARM 平台（macOS arm64 / Linux aarch64）的本地量化变体未真机验证**（若只能退到 fp32 必须回给用户决策）；Qwen3-Embedding / harrier 等其它模型未下载未验证；`FakeEmbeddingProvider` 不得用于质量指标。
+  - **已知边界**：接缝用请求内 ContextVar 作用域而不是给 `build_targeted_consumed_profile_context()` 加透传参数（两个候选接入文件已贴 500 行硬闸门且被 `monkeypatch` 钉死模块命名空间，详见交付报告）；本机 / 内网地址需显式允许；不兼容厂商（DeepSeek / Groq / OpenRouter / Together / xAI 等）没有 `/embeddings`，界面给可读提示而不是裸 404（名单有时效性，不写成不可配置的白名单）。
+  - **离线评测**：`scripts/rag_eval_dataset.py` 生成 60 组「同义改写型 JD × 种子条目」评测集；`scripts/rag_eval_run.py --mode keyword|expanded` 量 baseline / Phase 0，`scripts/rag_eval_embedding_spike.py` 用隔离 venv 的真实 ONNX 量 Phase 3（v2 实测 Recall@10 0.4056 → 0.6361）；v3 接入产品路径后的本地 / 远程 60 组对照、平台矩阵与失败矩阵数据见交付报告。
+
+- **新增 Linux 发行版（x86_64 / aarch64）。** 三种形态并存：`start.sh` / `stop.sh` / `update.sh`
+  一键脚本（零依赖，首次启动自备便携运行时）、`ResumeForge-<版本>-linux.zip` 便携包、
+  `ResumeForge-<版本>-linux-<arch>.AppImage` 单文件。验收基线 **glibc ≥ 2.31**
+  （Ubuntu 22.04+ / Debian 12+ / Fedora 38+ 一类），更老的发行版与其它架构未经验证。
+  - **便携 Python 换成 `install_only_stripped`**：默认的 `install_only` 包 106MB，精简包
+    x86_64 34MB / aarch64 29MB，与 macOS 的 25MB 同一量级。摘要钉在仓库里，镜像只能加速。
+    Linux 上运行期**不需要 Node**——发布包自带 `frontend/dist`，页面由后端同源提供。
+  - **多一道 venv 预检**：Debian/Ubuntu 把 `venv` 与 `ensurepip` 拆进了单独的 `python3-venv`
+    包，系统里有 `python3` 也照样建不出虚拟环境，而报错指向 `ensurepip` 完全不解释原因。
+    启动器会实测这两者可用性，缺了先给 `sudo apt install python3-venv` 提示，再回落便携版。
+  - **修复退出时在 Linux 上跑错停止脚本**：`_stop_command()` 此前把所有非 Windows 平台一律
+    指向 `scripts/macos/stop.sh`，而那个脚本把状态目录写死成 `~/Library/Application Support`，
+    于是 Linux 上「点退出」会去一个不存在的路径找记录、静默地什么都不停。现在按
+    `sys.platform` 分流到 `scripts/linux/stop.sh`，并让「脚本存在性守卫」与「实际执行」
+    从同一个函数取路径（此前两处各写一份 `if`，守卫看 A、执行 B）。
+  - **修复 Electron 壳在 Linux 上调用 macOS 启动器**：`backend-manager.js` 的
+    `launcherCommand()` 同样只判了 `win32`，其余平台一律走 `scripts/macos/start.sh`；
+    现在按平台在 `macos` / `linux` 之间选择。
+  - **PDF 中文字体补上兜底**：`_FONT_CANDIDATES` 里的 Linux 条目（Noto CJK / 文泉驿 /
+    arphic）没有任何主流发行版默认安装，此前 Linux 上探测必然返回空、导出直接 409。
+    现在系统字体缺失时回落到**已下载的内置思源黑体**（`resume_font_builtin` 按需下载的
+    那两个字重）；两边都没有时仍如实返回 409 并保留浏览器打印，界面给出下载入口。
+    兜底**排在系统字体之后**，Windows/macOS 上「用系统字体」的语义不变。
+  - **测试隔离补齐**：`conftest.py` 此前只把 `user_fonts.DATA_DIR` 指到测试目录，没有隔离
+    `resume_font_builtin.DATA_DIR`。字体兜底上线后，开发机上真下载过 33MB 字体就会让
+    「缺字体」类断言随机器状态漂移，所以同批隔离并纳入每个用例的清空夹具。
+  - **`update.sh` 支持「下载新包 → 校验 `.sha256` → 只覆盖程序文件」**：`backend/data/`、
+    `backend/.env`、`runtime/`、`desktop/` 一律不动；覆盖前把将被替换的内容复制到
+    `runtime/backup-<时间戳>/`（本机没有回收站，禁止硬删），失败可回滚；`--check` 只检查。
+  - **新增 CI 三道 Linux 把关**：`linux-launcher-guards`（跑守卫测试，并断言输出里确有
+    `ok` 行，防止脚本空转而"绿得没有内容"）、`linux-runtimes`（真下载两架构运行时、验
+    sha256 与字节数，并实际验证 `venv` + `ensurepip` 可用）、`linux-end-to-end`（干净检出
+    走完整启动链、浏览器冒烟、只读安装根状态外落、停止脚本）；`release-assets` 新增
+    `linux-appimage` 作业产出双架构 AppImage 并附 `.sha256`。
+  - **已知边界**：`scripts/tests/Test-Build-Release.ps1` 的平台清单仍是 `windows|macos`，
+    `-Platform linux` 要等根目录启动脚本进 git（`git archive` 只打包已跟踪文件）之后才能加上；
+    `desktop/main.js` 与 `desktop/backend-manager.js` 现为**恰好 500 行**，再到这两个文件里
+    加代码必须先外移一段。
+
+- **求职助手输入区重做：四档数据权限 + 只读模型 chip（T11）。** 输入框旁新增四档权限——
+  **仅查看 / 放宽读取 / 可修改 / 完全权限**，一档同时决定「读」（是否看姓名、电话等真实资料）与「写」
+  （是否直接改数据）。设置页「求职助手 · 数据权限」存全局默认；输入框下拉只覆盖**当前对话**
+  （本机 localStorage、按会话保存，刷新/切页保留、**换设备不同步**）；选放宽读取 / 完全权限时输入框上方
+  出现可关闭的琥珀色提示，**首次**切到写档位有一次确认。请求体发送解算后的两轴值
+  （新可选字段 `relaxed_mode`，缺省沿用全局，旧客户端零改动）。输入框发送键左侧新增**只读模型 chip**
+  （显示模型名，悬停「记录名 · 模型名 / 在顶部切换」，无记录不显示、<480px 隐藏；顶栏切模型后跟随更新）。
+  **安全边界**：完全权限下写操作不再逐条出提案、直接执行；**技能的新建与修改仍永远走确认**。
+- **接口：`GET/PUT /api/assistant/permission`。** 读写全局默认档位；写入时同步写旧键
+  `assistant_relaxed_mode`（兼容其它读取点），旧键不删。
+- **设置页新增第三种接口协议 OpenAI Responses（实验性，T09/T09.1）。** 默认仍是 Chat Completions，
+  **已保存配置零影响**——只有用户主动切到 Responses 才走新链路；Claude / Gemini / 硅基流动 不支持该协议
+  （MiniMax 自 2026-11 起已支持，见下方 Fixed）。切换协议时只有声明支持 Responses 的预设才改 `Base URL`
+  （智谱→`https://open.bigmodel.cn/api/v1`，其余在预设地址后追加 `/responses`；DeepSeek 实测可用）。
+  设置页「模型配置」区新增可展开的**「各服务商协议支持矩阵」**（23 行，含核对日期列；表尾
+  「核对日期 2026-11-08」，2026-11-08 逐家复核后重写；2026-11-09 再次复核，见本段 Changed 顶部），并新增 6 家预设（腾讯混元 / 百度千帆 /
+  讯飞星火 / 阶跃星辰 / Together AI /
+  Perplexity），**预设总数 16 → 22**。同时修正 MiniMax 域名（`api.minimaxi.com/v1` + MiniMax-M3.1-Flash）、
+  Gemini（`gemini-3.8-flash`）、xAI（`grok-4.7`）等预设，标签缩短为「Claude（Anthropic 原生）」
+  「Google Gemini」。**没有各厂商的真实 Key，新协议与预设按接口文档实现，未逐家真机验证。**
+- **助手输入框、模拟面试答题框与面试复盘「追问」支持语音听写（T12/T13）。** 说话→文字先填进输入框，
+  由用户确认后提交，**不自动发送**；面试追问同样只填入、不触发发送。设置页新增「语音转写」卡
+  （OpenAI 兼容 `/audio/transcriptions`：base_url / model / Key，Key 掩码回读，可测试连接）。
+  单段上限：助手与答题框 **3 分钟**、复盘追问 **1 分钟**（音频超过 10 MB 也会被拒）；音频会发送到
+  用户配置的语音服务商，本应用不保存音频。**真实识别质量未验证（无 ASR 服务商 Key，本地假 ASR
+  服务器只验证了管道与交互）。**
+
+- **首页新增「任务」卡，任务卡从助手页搬来（T02/T03）。** 待确认在前、进行中在后，两者合计最多 3 条
+  （超出收成「还有 N 条」，点一下就地展开）；「已结束（N）」默认收起，展开先看最近 5 条 + 「查看全部」；
+  折叠状态不记忆（D4）。不按会话过滤（提醒到期生成的卡没有会话归属）；没有可显示任务时整卡不渲染，
+  空壳任务（无步骤的草稿 / 已取消）不显示也不计入任何计数；轮询仍为 5s，页面隐藏时暂停。查看步骤改成
+  手风琴（同一时间只展开一条），展开后第一个未完成的步骤加粗并标「当前」。
+- **提醒列表新增逾期红标与「时间范围」筛选（T06）。** 列表接口在原有字段外补 `urgency` / `days_until`
+  （复用 `reminder_service` 的唯一实现，前端不按小时重算）；pending 且 `days_until < 0` 的行显示红色
+  「已逾期 N 天」标签。新增「全部 / 已逾期 / 今天 / 以后」筛选，筛选后回到第 1 页并重算总数。
+- **提醒新建弹层 5 处改进（T05）。** 默认时间改为「1 小时后」；新建时校验「提醒时间需要晚于当前时间」
+  （编辑时放行，只改备注不被旧时间卡住）；时间只显示到分钟；时间字段下方按「任务卡」开关状态提示到期
+  会不会生成卡片；进度 / 岗位 / 简历三个关联字段收进「关联（选填）」折叠区，默认收起并显示「已关联 N 项」。
+- **求职助手写操作状态可跨轮、跨重启如实回答（P0）。** 写入提案从进程内存改为数据库单一事实源
+  （新表 `assistant_write_proposal`，迁移 `0002`）：新增 `pending/approved/executed/failed/unknown/rejected/expired`
+  状态机（TTL 30 分钟）、创建时记录目标版本指纹并在批准前重查（目标被改过返回 409，不用旧快照写库）、
+  终态写一条 `kind=proposal_result` 的派生消息（幂等、写失败不影响状态）、下一轮系统提示注入本会话最近 10 条
+  写操作状态（以此为准）。启动时把上一次进程遗留的 pending/approved 置为失效并清理 24 小时前过期提案的参数与预览。
+- **助手页新增「任务」区块与任务层（`agent_task` / `agent_task_step`）。** 任务支持
+  `draft/running/paused/waiting_approval/done/failed/cancelled` 跨轮推进、等待人工确认不自动放行、
+  重启后变「已暂停」可继续、同一步幂等重试只产生一次副作用；新增 `/api/agent-tasks` REST 与助手页任务区。
+- **设置 →「助手与 AI 行为」新增「提醒到期生成任务卡」开关（默认关闭）。** 打开后到期的日历提醒自动生成
+  「准备：<提醒标题>」任务卡；去重键为 `(reminder_id, occurrence_due_at)`，只补最近 24 小时，关闭后不再生成、
+  已生成的卡保留；不自动执行任何写操作、不发消息、不弹窗。
+- **助手可感知当前界面上下文（shared application state）。** 聊天请求新增可选 `client_context`
+  （route/view + 选中对象 type/id）；后端按当前数据集重查对象并取服务端标题（截断 40 字），查不到时如实
+  注入「选中项已失效」，前端输入一律视为不可信线索。
+- **助手新增 4 个只读工具 + 1 个错误诊断工具。** 简历质量检测（只跑本地规则，不触发远端增强）、
+  岗位 ATS 匹配估计（强制免责文案）、导出预检、简历版本对比，以及 `diagnose_recent_errors`
+  （只回白名单结构化字段：时间/级别/logger/异常类/HTTP 状态/路由模板/request_id，日志原文不出进程）。
+- **文档检索质量重做。** 切块从 `##` 降到 `###`（保留父级面包屑），打分改为「标题命中 > 正文密度 > 次数」，
+  步骤类片段上限 1500 字，返回结构新增 `source`（相对路径 + 标题路径）；20 问标注集 top1 命中率 1/20 → 20/20。
+- **action 契约层内核与 3 个试点。** 新增 `services/actions/`（ActionSpec/Registry/tool_adapter/route_adapter）：
+  参数 schema、权限级别、确认预览与实现收成一份定义；路由注册顺序仍由 `application_routers.ROUTERS` 显式决定。
+- **action 契约层按域迁移（T28）完成：64/79 个助手工具收成一份 ActionSpec。** 覆盖 jobs / materials /
+  claims / profile / tracker / referrals / reminders / knowledge / interview-experiences / candidate jobs /
+  skills / format templates / resumes（列表与版本/版式）/ interview / drill / apply / analytics / share
+  packages / chat / webform / match analyses / ATS / 版本对比等域的读写动作（新增
+  services/actions/domains/ 与自动聚合的 actions/catalog.py；路由 path/method/响应模型/状态码与工具
+  name/description/permission/preview 保持不变）。新增五个兼容机制：tool_defaults（仅工具侧默认值）、
+  ignore_unknown_arguments（旧路由忽略未知字段）、run_tool（路由与工具既有写语义不同时让工具侧复用旧
+  read-modify-write 实现）、tool_fields（工具侧字段投影，路由专属字段不暴露给模型）、
+  tool_argument_aliases（旧工具参数名与路由路径参数名不同时对齐）。路由与工具统一由「旧实现委托」kit
+  （actions/legacy.py）生成，零业务逻辑复制；工具 schema 增加 compact 模式，去掉
+  default/maxLength/additionalProperties 等模型侧装饰，prompt 固定成本从 46k 降到约 41k 字符。
+  剩余 15 个静态声明逐个登记在 backend/tests/fixtures/actions_legacy_allowlist.json（含 reason 与
+  review_after；删除/新增都会让守卫变红），新增工具一律必须走 define_action + as_tool。
+- **工具权限四级化。** `Tool.permission` 取代单一 `writes` 布尔：read_only / reversible_write / irreversible_write /
+  external_side_effect（当前无 external_side_effect 工具），守卫要求每个工具显式声明。
+- **安全验收清单。** 新增 `docs/security-agent-checklist.md`（OWASP Agentic / NIST AI RMF / OTel GenAI 落点）。
+- **开发者文档新增四篇方法论，并与「提交前检查」串起来。** [验证手册](docs/verification-playbook.md) 给出证据六级阶梯、反证三件套与四类假绿判据；[协作规程](docs/ai-collaboration-sop.md) 固化任务书九节、按文件所有权的并行边界、脏工作区纪律与交付报告结构；[缺陷模式](docs/defect-patterns.md) 归纳 31 类高频缺陷的判据与守卫方式；[环境排查](docs/troubleshooting-stale-build.md) 给出「改了没用」的固定判定链。另附[任务书与交付报告模板](docs/templates/)。README 文档表与 CONTRIBUTING 已同步索引。
+- **文档 PII 巡检进 CI（`docs-guards` 作业）。** 新增 `scripts/check_docs_pii.py`，扫描 `docs/`、README、CONTRIBUTING 与 `.github/`，拦下密钥、私钥块、平台令牌、手机号、邮箱与带用户名的家目录路径（含中文用户名）；占位符与带 `pii-ok` 注释的行自动放过。配套 `backend/tests/test_docs_pii_guard.py` 用正例/反例/空目录/打码四组用例做反证，避免"正则失效→恒绿"。
+- **Bug 反馈模板升级为七字段。** `.github/ISSUE_TEMPLATE/bug_report.yml` 增加版本号、期望行为、证据与「怎样算修好」，并在提交前自查里要求先升级到最新版本、先搜重复 issue。
+- **Windows 安装包接入 SignPath Foundation 的免费代码签名计划（test-signing 已跑通，生产证书待签发）。** `release-assets.yml` 的 `windows-installer` 作业在打包后把安装包作为本次 run 的 artifact 上传，经 SignPath 校验来源（origin verification）后签名并取回，再用**签名后**的文件写 `.sha256`——先算哈希会与发布文件对不上，所以写哈希的步骤整体后移。`SIGNPATH_ORGANIZATION_ID` 未配置时整段跳过，产物、哈希与 Release 附件与接入前完全一致；配了它但其余必需项（Variable `SIGNPATH_PROJECT_SLUG` / `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`、Secret `SIGNPATH_API_TOKEN`）不全则直接报错终止，不做静默降级。官网新增中英《代码签名策略》页（签名覆盖范围、签名请求来源、Authors / Reviewers / Approvers 角色与隐私说明）。2026-11-06 的演练（run 42077336929）走通全链路，签名请求 `ec1837db-…` 状态 Completed，实测附带 DigiCert 的 RFC 3161 时间戳。
+
+### Changed
+
+- **macOS 兼容性地板从 13 抬到 14（行为变更）。** 官方支持改为 **macOS 14+**，**macOS 13 及更早不再获得官方支持**（应用可能仍能启动，但不再测试、也不提供支持）。原因：本地语义检索的隔离运行时 onnxruntime 1.31.1 只发布 `macosx_14_0_arm64` 等 wheel，**没有 macOS x86_64 wheel**。README（中英）、`docs/upgrading.md`、`docs/user-guide.md`、`docs/mac-build-handoff.md` 同批更新；**启动链没有版本闸门、脚本不改**。Intel Mac 可运行应用并使用远程语义检索，但不能用本地模型。
+- **README 删除过期说法「Apple Silicon via Rosetta 2」。** 启动链按 `uname -m` 下载原生 `aarch64-apple-darwin` 的 python-build-standalone，Apple Silicon 一直是原生 arm64；dmg 也提供 x64 / arm64 两份（见 README 中英与使用指南）。
+
+- **打开联网搜索不再先自动搜一次（R08，行为变更）。** 打开输入框下方的「联网搜索」现在只等于
+  **允许联网**：`web_search` 工具随之下发，搜不搜、搜什么、换几次关键词都由模型自己判断；**开箱不再有
+  「开场资料」**——此前每条消息都会先用用户原话自动搜一遍，模型还没看到问题、网络请求就已经发出去了，
+  看到"帮我把某项目整理成条目"这类问题时还会被带偏成查某个字的字典解释。搜索次数上限仍是 **3 次**，现在
+  这 3 次**全部由工具发起**（此前那次自动预搜也占一次额度，所以模型自己实际只剩 2 次）。系统提示里随附的
+  「这次回答已经自动搜过一次……你自己最多还能搜 2 次」整段删除：联网工具的完整度口径（只看摘要 / 会抓正文）
+  本来就写在工具描述里，跟设置里的「抓取正文条数」走，不需要在系统提示里重复一份会漂移的副本。
+  「简历通自身的使用问题不搜公开网页」这条保留，拦截改由工具完成（工具直接回本地指引、不打网络）。
+  使用指南与助手页内嵌引导的联网搜索一节同步改写（含英文文案）。
+
+- **技能由「全局启用」改为「按对话启用」（T14，行为变更）。** 新增表 `assistant_conversation_skill`
+  （迁移 `0005`，含完整 downgrade；备份表快照 73→74）：一段对话启用哪些技能成为唯一真源。
+  **新对话默认不启用任何技能**，在助手输入区用 chip /「+ 技能」菜单勾选，**只对当前对话生效、换对话各有一套**；
+  空态可以先勾，发第一条消息时随创建会话一次写入；fork 对话时技能一并复制。单个对话**最多 8 个技能**，
+  注入预算仍是 12,000 字，靠后技能超预算会被截断并在菜单 / chip 上提示（不再悄悄少加载）。
+  **技能库（工作台 → 技能）里的「启用」列与开关已移除**，技能只在对话里启用；旧 `AssistantSkill.enabled`
+  列保留但不再参与注入（数据不迁移、不回填）。新增对话技能接口
+  `GET/PUT /api/assistant/conversations/{id}/skills`（整体替换，最多 8 个）与创建会话时的可选 `skill_ids`。
+- **技能上限统一并收紧（T14）。** 提示词 4,000 字 / 最多 10 个知识文件 / 单文件 20,000 字 / 合计 60,000 字
+  （此前后端校验口径是 200,000 字、50 个文件，与工具描述、注入预算三处打架）；新建/编辑弹层去掉「启用」开关，
+  提示词输入框带 4,000 字上限与字数反馈，知识文件区显示个数与合计字数。
+- **技能的新建与修改永远走确认（T14）。** 即使把数据权限切到「完全权限」，`create_skill` / `update_skill`
+  仍逐次出提案（提示词下一轮就进系统提示，不能让模型自己放开）；助手消息 context 记录本轮用到的技能名
+  （只记名字、不记正文），运行轨迹显示「本轮技能」。
+- **助手的数据权限从「放宽模式」改为四档控件（T11，行为变更）。** 设置页「助手放宽模式」卡片升级为
+  「求职助手 · 数据权限」四档（仅查看 / 放宽读取 / 可修改 / 完全权限），**「放宽模式」在助手侧成为历史名**；
+  网申填表页的「放宽模式」是另一个开关，仍按原样工作，两者不再混用。旧键 `assistant_relaxed_mode` 保留且
+  与新键同步写，不做迁移。
+- **Anthropic 协议升级到 2026-10-21（T10）。** 官方 Claude 4.7 及以后改用自适应思考
+  （`thinking: adaptive` + `output_config.effort`），不再发送 `temperature` / `top_p` / `top_k`；
+  思考强度 minimal→low、high 档 `max_tokens` 至少 16k。**更早的 Claude 模型与第三方 Anthropic 兼容
+  网关保持 2023-06-01 行为不变**。没有官方 Anthropic Key，本轮以假服务器验证请求体与分支，**未真机验证**
+  上游真实响应。
+- **任务卡位置与开关语义变化（行为变更，T01/T04）。** 助手页的任务区整块移除——它原本是
+  `.assistant-workspace` 的第 4 个直接子元素，会把消息区那一行顶替成 320px 高，表现为标题下方一大片
+  空白、消息区失去滚动；工作区同时改成 flex 布局加固，以后再加直接子元素不会再错位。任务统一在首页
+  「任务」卡查看。设置里「提醒到期 · 生成任务卡」更名为「任务卡」并升级为**总开关**：**关闭 = 不再生成 +
+  首页不再显示**（旧版关闭只停止生成，已生成的卡仍显示），数据保留、重新打开即恢复；关闭前若还有未完成
+  任务（未开始 / 进行中 / 已暂停 / 待确认）会先弹确认。配置键 `agent_task_events` 不变、不做迁移；
+  后端列表接口不按开关返回空数组（显示层由前端 gate）。
+- **术语「绑定漏斗」改为「关联求职进度」。** 提醒表单与详情抽屉统一为「关联求职进度 / 关联岗位 /
+  关联简历」，动作统一叫「关联」；`docs/ui-copy-guide.md` 新增术语 #66，并停用「绑定漏斗」。
+- **能力地图（助手功能目录）纠偏 8 处。** 简历照片上限改为 5MB；回收站类别改为 22 类并注明「求职进度」与
+  「投递记录」在回收站里同名；全局搜索第 8 域改为「我的资料」（技能域已下线）；面试深挖补第 5 档「未覆盖」；
+  日历提醒补第 4 档「稍后（later）」；快捷入口改为「默认 7 个，可自定义」；知识库入口改「新建知识」；
+  「导入参考模板」补「当前界面不可达（已下线）」前缀。新增内容护栏（文案里的 N 类/N 套/N 个/N 档必须能从
+  同句清单数出来）。
+- **写操作提案有效期从 5 分钟改为 30 分钟**；token 仍只在服务端内存流转、同一请求内核销。
+- **助手运行轨迹进入消息 context。** run id/step/tool/起止时间/状态/模型与用量/授权决策/脱敏摘要随助手消息
+  `context.run_trace` 落库，不含简历正文、附件、Key、思维链与提示词原文。
+- **新增「路由+工具」对必须走 define_action**，存量在 allowlist 登记、只减不增（T28 已迁移 64/79，
+  静态声明剩 15 个、逐名登记 reason 与 review_after）；路由注册顺序仍由 application_routers.ROUTERS
+  显式决定。
+- **多代理/多会话协作纪律。** AGENTS.md 补充文件所有权、禁止回滚命令、改前快照与反证要求等规则。
+- **运营手册补充「凭据泄露的处置顺序」。** 明确"先吊销再清理"、历史与产物一起查、替换为占位符而不是部分打码，并指向新增的扫描守卫。
+- **`AGENTS.md` 校正 2.0 后的过期口径，并补四条规则。** 迁移章节从"grep 旧 head revision"改为"单基线 `0001_baseline_v2` + `app_schema_epoch` 闸门 + 测试统一从 `migration_refs` 取常量"；用例规模与耗时改为不写精确数字；`-n auto` 补"内存受限用 `-n 4`"。新增「多会话/多代理并行」（文件所有权、禁 `checkout`/`stash`/`restore`、改前快照、基线三件套、回报格式）、「规模约束（500/800 行预算与豁免规则）」、「文档与个人信息」（PII 巡检与事故处置）、以及"新增守卫必须反证"一条；并把"并行/覆盖率/构建"的历史叙事下沉到 `docs/maintenance.md` §5.1，同步写清两边的权威分工（**红线看 AGENTS.md，执行看 maintenance.md**）。
+
+### Removed
+
+- **清理 20 个零引用源码文件（1,945 行），全部为重构或功能下线后的残留。** 判定方式不是"看着像没用"，而是建立导入图逐条验证：前端 18 个 TS/TSX + 1 个 CSS 在整仓（含测试）0 处真实 import，后端 1 个 API 模块在自身文件头就写着"已下线、不再注册路由"。具体为：`StyleTemplateEditorModal.tsx`、`ReferenceFileField.tsx`、`useWorkbenchInlineMarks.ts`、`entryReorder.ts`、`RiskScanWatcher.tsx`、`SuggestionScanWatcher.tsx`、`UpdateCheckButton.tsx`、`WebFormTargetFloatingBalls.tsx`、`CurrentGroupSummary.tsx`、`paginationDomain.ts`（re-export 兼容层，实现在 `features/resume-pagination/`）、单数版 `utils/backgroundTask.ts`（现役是 `backgroundTasks.ts`）、`api/resumeRisk.ts`、`styles/resume-structure-example.css`，以及被通用板块渲染器取代的 7 个资料页组件（`AwardSection` / `SkillSection` / `ProjectSection` / `ExperienceSection` / `CampusExperienceSection` / `SectionVisibilitySwitch` / 见上 `CurrentGroupSummary`）；后端为 `app/api/resume_template_import.py`。**这与 1.0 时"文件保留、只在文件头标注已下线"的口径相反**——2.0 换了全新基线，回滚价值已由 git 历史承担，留着只会让导入图和代码搜索持续失真。同时删掉 `AppShell.test.tsx` 与 `ResumeRiskPanel.test.tsx` 中三行指向这些模块的 `vi.mock`（模块不存在时它们会直接报解析失败）。
+- **`docs/ui-copy-guide.md` 标记对应条目的定位失效。** 映射表第 7 / 8 / 23 条以 `StyleTemplateEditorModal.tsx` 的行号定位，组件删除后不再可查，就地加注说明作废，保留编号以免破坏历史索引。
+
+### Fixed
+
+- **本地语义检索资产下载的失败原因被混为一谈：`rag-assets-v1` 还没发布时，404 被报成「网络不可用」。**
+  两个整包 URL 都返回 HTTP 404，设置页却提示检查网络，用户只能一直等一个不会出现的包。现在
+  4xx/5xx 与连接失败分开归类（可判定关键词「下载源不可用」/「网络不可用」）。同时修正
+  HuggingFace 备用源的语义：它是**一组必须全部到位的文件**，不是另一个整包——任一文件失败即
+  整体判失败并清掉 `*.tmp*`，不再把「第一个文件下载成功」当成整个资产就绪（否则磁盘上留下
+  一份 88% 的残缺目录，而 `assets_present()` 会把它认作可用）；逐文件下载的进度分母随文件数
+  抬高，不倒退、不中途假到 100%。
+- **切到 Responses / Anthropic 协议后被判「Base URL 与配置记录不一致」，且 Anthropic 入口此前根本走不通（用户反馈）。**
+  两处根因：① 密钥引用与 Base URL 的绑定用的是**完整地址（含 path）**——切协议时前端把
+  `https://api.deepseek.com` 改写成 `https://api.deepseek.com/responses`，path 变了就判「不一致」，
+  用户手里没有第二个 Key，只能卡死。现在按 **origin（scheme + host + port，默认端口归一）** 绑定：
+  同一主机上换 path（`/responses`、`/anthropic/v1`、`/v1`）照常解析已保存的密钥；**换主机仍旧拒绝**
+  （含 `api.deepseek.com.evil.example.com` 这类子域伪装），安全底线不变。② 「获取可用模型」只剥离
+  `/chat/completions`，切到协议专用地址后请求打到 `.../responses/models`、`.../messages/models`
+  返回 404；现已一并剥离 `/responses` 与 `/messages`。
+- **「各服务商协议支持」矩阵与预设逐家重核（首次核对 2026-11-08；2026-11-09 复核见本段 Changed 顶部），并让协议切换真正落到可用地址。**
+  原表把 DeepSeek、豆包、通义千问、百度千帆、讯飞星火、阶跃星辰、OpenRouter、Together、Ollama
+  （≥ 0.14.0）、LM Studio（≥ 0.4.1）的 Anthropic Messages 入口全标成「不支持」，MiniMax 的
+  Responses 也标成不支持——后者还被 `responses_unsupported_hint` **硬拦截**（连接测试直接返回失败、
+  一个请求都不发），用户永远测不通。现在：矩阵按官方文档重写 23 行；预设新增
+  `supports_anthropic` / `anthropic_base_url`，切协议时按预设自动改写为该服务商的专用地址
+  （DeepSeek → `.../anthropic/v1`、豆包 → `.../api/compatible/v1`、Kimi → `.../anthropic/v1`、
+  通义千问 → `.../apps/anthropic/v1`、智谱 → `.../api/anthropic/v1`、MiniMax → `.../anthropic/v1`、
+  千帆 → `.../anthropic/v1`、星火 → `.../anthropic/v1`；硅基流动 / OpenRouter / 混元 / 阶跃 /
+  Together / Ollama / LM Studio 与 chat 同址），切回 Chat Completions 自动还原；`matchingPreset`
+  也认这三条地址，编辑已切过协议的记录不会掉成「自定义」。预设同步更新：豆包
+  `doubao-seed-2-1-pro-260915`、混元 `hy3`、星火 `spark-x2.6`（换到新 MaaS 域名
+  `maas-api.cn-huabei-1.xf-yun.com`）、阶跃 `step-5-preview`、Together `zai-org/GLM-5.3`、
+  Mistral `mistral-large-4`、硅基流动 `deepseek-ai/DeepSeek-V4-Pro-0813`、OpenAI `gpt-6-astra`
+  （模型名一以各家控制台为准）。**DeepSeek Responses（`POST /responses`）与 Anthropic
+  （`POST /anthropic/v1/messages`）已用真实 Key 各发一次最小请求，均返回 200；其余厂商仍按官方文档
+  实现，未逐家真机验证。**
+- **联网搜索失败时工具会把异常原文回给模型（R08 顺带修复）。** `assistant_tools/search_tools.py` 的失败
+
+  分支直接拼了 `{exc}`，而 `AssistantSearchError` 的 `str()` 就是构造时传进来的原文——只有白名单里的
+  公开文案才允许进 SSE、模型上下文与落库历史（`search_errors.py` 的既有约定）。现在改用
+  `exc.public_message`，并补上"请勿声称已获得联网资料"的提示；回归用例见
+  `test_codeql_error_privacy.py::test_search_error_does_not_enter_sse_history_or_model_context`。
+- **确认执行写操作后，助手仍说"等待确认"（P0 + 任务/界面上下文/诊断等本轮修复；逐条证据见交付报告）。**
+  P0 根因是提案状态只存进程内存、执行成功后不回写会话、下一轮上下文也不读提案表；现在状态以数据库为准并在
+  下一轮注入权威状态块——已执行仍回答已执行，重启后未确认的显示已失效。
+- **助手工具调用轨迹与对话内容错位**：轨迹按消息 context 持久化，历史回看能看到每一步的工具与授权决策。
+- **清理过期 xfail、备份表覆盖守卫同源恒等、文档耗时数字失真**  （详见 T12/T15 证据）。
+- **官网与 README 的演示数据脚本在 2.0 上重新可用。** `scripts/demo_data/base.py::init_db()` 原来用 `Base.metadata.create_all` 建库，而 2.0 的 `app_schema_epoch` 那一行由基线迁移播种——造出来的库既没有 epoch 行也没有 `alembic_version`，启动闸门判成 `REFUSE_UNKNOWN`，用 `uvicorn` 起服务直接拒绝启动；原有测试因为 `TestClient` 不触发 lifespan 而一直是绿的。现在改为跑真实 `alembic upgrade head`，并在脚本内硬断言「恰好一行 epoch=2 且 revision 非空」。同时把演示岗位状态从旧值 `active` 改成规范值 `开放中`（首页「开放中岗位」不再恒为 0），时间锚点改为「运行日的昨天 08:30」（需要字节级复现时用 `RF_DEMO_NOW` 钉住），首页「近 7 天生成」与提醒分色不再依赖某个固定月份。
+- **官网在线体验站的 ATS 检测不再被当成「写操作」拒掉。** `frontend/src/demo/demoFetch.ts` 的只读豁免清单里还留着早已不存在的旧路径 `/api/ats/check`，而真实接口是 `POST /api/resumes/{id}/ats-check`——演示站里点「ATS 检测」拿到的是 403「这是在线体验版，无法真正保存改动」，看起来像功能坏了。现在豁免按路径形状匹配 `/api/resumes/{数字}/ats-check`，该形状走快照回放；其它写操作照旧 403。
+
 ## 2.0.0 - 2026-11-05
 
 ### Changed
 
-- **2.0 以全新库为起点：迁移链只保留一条基线迁移。** 原 74 条历史迁移全部下线，空库执行一次 `upgrade head` 即建全 2.0 的表 / 列 / 索引；数据库只由这条基线代表当前结构，不再有"逐版本演进"的兼容分支。
+- **2.0 以全新库为起点：迁移链只保留一条基线迁移。** 原 74 条历史迁移（v1.0.2 已发行的 46 条 + 2.0 开发期新增的 28 条）全部下线，空库执行一次 `upgrade head` 即建全 2.0 的表 / 列 / 索引；数据库只由这条基线代表当前结构，不再有"逐版本演进"的兼容分支。
 - **库版本闸门按 epoch 判定，不再按 revision 判定。** 新增单行表 `app_schema_epoch`（由基线迁移写入唯一一行 `epoch=2`）。启动时先读 epoch：缺失 epoch 表且库里有业务表 → 视为 pre-2.0 库，整包归档后建空库；epoch > 2 → 拒绝启动；epoch == 2 时 revision 才用于判断"在不在迁移链上"。这样"老库的 revision 不在新链上"不会再被误判成库损坏。
 - **1.x → 2.0 的启动顺序改为「判定 → 整包归档 → 校验 → 移走旧库 → 建空库 → 迁移」。** 任一步失败都中止启动、原库原样保留（不移动、不建库）。
 - **文档与界面文案同步到 2.0 口径。** README 版本号改 `2.0.0`、「旧资料升级说明」整行改为归档说明（功能条目数与表格行数一致）；`docs/upgrading.md` 新增「从 1.x 到 2.0：整包归档 + 全新库」；「我的资料」升级说明与使用指南改为"已归档、2.0 使用空库"。
@@ -15,7 +397,7 @@
 ### Removed
 
 - **补充事实（`profile_facts`）整套下线。** 删除后端路由 / schema / 服务 / 模型与前端 `features/profile-facts/` 模块；2.0 基线不再创建 `profile_fact`、`profile_fact_field_pref`。
-- **74 条历史迁移与 57 个迁移测试文件下线。** 它们守住的不变量改由 2.0 基线 schema 测试重建：`upgrade → downgrade base → upgrade` 往返可用、表集合与模型注册表一致、`app_schema_epoch` 单行 = 2。
+- **57 个迁移测试文件随历史迁移一并下线。** 它们守住的不变量改由 2.0 基线 schema 测试重建：`upgrade → downgrade base → upgrade` 往返可用、表集合与模型注册表一致、`app_schema_epoch` 单行 = 2。
 
 ### Migration
 
@@ -160,6 +542,7 @@
 - **自建板块的每条条目也能「从资料填入本条」。** 自建板块此前的条目级填入被跳过（正文形状是「主文本 + 标签行」，没有可按字段合并的结构）；现在按「只补空值」合并：主文本为空才填，标签行按标签名补空值、缺失的按资料顺序追加到末尾，已有非空内容与行顺序一字不动，也不复制资料条目的稳定身份。同一板块内复用「当前条目 / 已在其他条目」禁用语义；候选仍来自当前方案投影，跨板块互不影响。
 - **英文界面补齐枚举与后端下发标签的翻译（阶段 0.5，前端收尾）。** 岗位类型/状态、投递队列与批次状态、准入与匹配结论、失败分类与步骤、浏览器状态、事实台账的分类/核实状态/承担程度/证据来源、求职进度状态与来源、内推与提醒状态、面试类型/难度/风格、面经来源与轮次、知识库与资料箱分类、深挖反馈/演练/行动类型、简历目录的版式预设与板块名——这些原先直接渲染后端/类型层中文的展示点，现在都在页面层通过「协议值 → 语言包 key」映射（映射不到时回退原文，协议值本身一个未改）；数据看板的漏斗阶段、趋势月份、周内分布、记录来源，以及简历目录下发的板块名、版式名/说明、字号档位也一并接入。英文界面下这些位置不再露出中文，中文渲染逐字不变。
 - **英文文案统一第一轮 + 英文术语表。** 修正 71 处大小写/标点/美式拼写/跨页小节名不一致（Target job、Honors & awards、Campus activities 等），并新增 `docs/ui-copy-guide-en.md`（246 行：九组术语正名、大小写与拼写规则、语境差异判据、未收口清单）。同一中文含义对应多译文的分组由 259 组降到 242 组，其余为刻意的语境差异。
+- **英文界面最后三处「后端直接下发的中文」按语言收口。** ① 回收站的类型筛选与列表行：新增 `TRASH_LABELS_EN`，按与语言无关的 `TrashSpec.key` 取英文名，中文名仍是 `spec.label`（日志、测试与中文界面照旧）；② 事实台账的黄色提示：`claim_warnings(record, locale)` 的 7 条规则全部有英文分支，承担程度的英文用词与前端 `en-US.enumsClaims.ts` 逐字对齐（徽标与建议同词）；③ 投递浏览器首次登录提示：`login_hint(locale)`（中文原文留在 `browser_manager_i18n.py`）。站点显示名另加可选扩展点 `display_name_for(locale)`，英文界面显示 `BOSS Zhipin`、中文仍是 `BOSS直聘`，`BOSS_DISPLAY_NAME` 常量与 `matches()` 识别路径未动。协议值与中文文案逐字未变，未设置语言时一律回落中文。
 
 - **排版参数新增「联系方式换行」，并把联系方式默认改为"整字段不拆行"。** 页眉里的手机 / 邮箱 / 城市 / 出生年 / GitHub / 个人主页现在每个字段整体不拆行、字段之间自动换行——长网址不会再被从中间截成两行；可以在「排版参数」里指定在哪个字段前强制换行（例如让个人主页单独一行）。设置写进这份简历的 `format_config.contact_breaks` 并随简历保存，草稿预览、精确预览 PDF、Word、HTML 导出读同一份取值；旧简历没有这项设置时保持默认（不强制换行、每个字段整体不拆行）。
 - **简历制作台新增「文字级别」。** 在「局部排版」里选中内容后，可套用一级标题 / 二级标题 / 三级标题 / 正文 / 次要说明五个固定级别（类似 Word 的标题级别）；级别只写一组对象级样式覆盖（字号系数、加粗、段前段后），颜色 / 缩进 / 项目符号等其它局部设置不动，可多选批量应用、可「恢复跟随模板」只清掉级别，每次应用在历史里算一步、可撤销。为让草稿 HTML 与精确预览 / 导出观感一致，对象级覆盖现在同时作用于条目内部的角色元素（标题 / 元信息 / 要点），HTML 与 PDF / Word 按同一份模板基准比例投影（默认路径与无对象覆盖的简历产物不变）。
@@ -1152,14 +1535,6 @@
 - **已知限制二：Word 页眉仍只印姓名与求职意向，不含 GitHub 与个人主页。** 这是本次改动之前就存在的链路差异（PDF 与 HTML 的联系方式行有这两个字段，Markdown 与 Word 没有），本次只换文案、不新增字段，因此保持原样。
 
 - **已知限制三：生成链路（大模型）不消费这个字段。** 选英文只改变纸面固定文案，**不会**让已经生成好的中文内容变成英文；它也不是"下次生成时用英文写"的开关。让生成链路感知语言是下一个需求。
-
-## Unreleased
-
-### Added
-
-### Fixed
-
-### Changed
 
 ## 1.0.2 - 2026-10-18
 

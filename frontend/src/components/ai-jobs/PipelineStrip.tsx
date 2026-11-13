@@ -29,10 +29,10 @@ export interface PipelineStep {
 }
 
 const ICONS: Record<StepState, React.ReactNode> = {
-  done: <CheckCircleFilled style={{ color: "#52c41a" }} />,
-  running: <ClockCircleOutlined style={{ color: "#1677ff" }} />,
-  pending: <MinusCircleOutlined style={{ color: "#d9d9d9" }} />,
-  skipped: <MinusCircleOutlined style={{ color: "#d9d9d9" }} />,
+  done: <CheckCircleFilled style={{ color: "var(--rf-accent-green)" }} />,
+  running: <ClockCircleOutlined style={{ color: "var(--rf-info)" }} />,
+  pending: <MinusCircleOutlined style={{ color: "var(--rf-text-secondary)" }} />,
+  skipped: <MinusCircleOutlined style={{ color: "var(--rf-text-secondary)" }} />,
 };
 
 interface Props {
@@ -51,8 +51,8 @@ export default function PipelineStrip({ steps }: Props) {
         flexWrap: "wrap",
         padding: "12px 16px",
         borderRadius: 8,
-        background: "rgba(0,0,0,0.02)",
-        border: "1px solid rgba(0,0,0,0.06)",
+        background: "var(--rf-fill-quaternary)",
+        border: "1px solid var(--rf-fill-secondary)",
       }}
     >
       {steps.map((step, index) => (

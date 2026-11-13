@@ -82,6 +82,15 @@ COVERAGE: dict[str, tuple[str, ...] | str] = {
     ),
     "resume_generate_task": "不暴露：生成任务的实时进度（已收到多少字符、在做什么）。"
     "它是瞬时的过程状态，界面上已经能看到；助手在任务结束后读的是生成好的简历本身。",
+    # 第 21 条（0010）：外部简历是用户上传的**只读快照**（原件 + 上传时本地提取的正文），
+    # 与 resume_record 刻意隔离（PDF/docx 没有结构化条目，硬还原必然错位），也进不了
+    # 制作台、导出与版式。清单 §21.8 已定「助手本期不接」：要引用它得先有「这次对话
+    # 引用哪份简历」的入口；而助手需要的简历事实已由资料、台账与简历记录三条既有通路
+    # 覆盖，再读一份快照只会让两份「简历」在对话里混在一起。
+    "external_resume": "不暴露：外部简历是用户上传的**只读快照**（原件与上传时本地提取的正文），"
+    "与 resume_record 刻意隔离、进不了制作台与导出；清单 §21.8 已定「助手本期不接」——"
+    "要引用它得先有「这次对话引用哪份简历」的入口，而助手需要的简历事实已由资料、"
+    "台账与简历记录三条既有通路覆盖，再读一份快照只会让两份「简历」在对话里混在一起。",
     # 通用 AI 任务表只登记生命周期（状态/payload/result_ref），业务结果仍在各业务表里；
     # 助手经既有工具读到的就是结果本身，任务进度是界面轮询的瞬时过程状态。
     "ai_task": "不暴露：这张表只承载 AI 任务的进度与取消状态（跑没跑完、剩多少），"
@@ -118,9 +127,20 @@ COVERAGE: dict[str, tuple[str, ...] | str] = {
     "隐私口径，助手不读不写，追溯在简历详情与生成记录里查看。",
     "share_package": ("list_share_packages",),
     # ===== 投递 =====
-    "apply_queue_item": ("list_apply_queue",),
+    "apply_queue_item": (
+        "list_apply_queue",
+        "queue_list",
+        "queue_update_priority",
+        "apply_start",
+    ),
     "apply_task": ("list_apply_records",),
     "apply_task_item": ("list_apply_records",),
+    # 15A/15B：采集历史（每次看到岗位记一行）。**派生结论**已经通过队列行暴露给助手
+    # （ghost_score / jd_changed / ghost_evidence），原始 sighting 不再单独下发。
+    "job_seen": "不暴露：这是采集历史的派生事实表（每次看到岗位记一行），"
+    "助手要看的是 list_apply_queue / queue_list 已经算好的 ghost_score 与 jd_changed 结论，"
+    "不需要原始 sighting 记录——把几百条重复快照灌进上下文既没有信息增量，"
+    "也会让模型拿采样条数当证据去下结论。",
     "web_form_fill_record": (
         "list_web_form_fills",
         "get_web_form_fill",
@@ -171,12 +191,53 @@ COVERAGE: dict[str, tuple[str, ...] | str] = {
     "drill_session": ("list_drill_sessions", "get_drill_report"),
     "drill_contract": ("get_drill_report",),
     "drill_turn": ("get_drill_report",),
+    # ===== 期一跟进巡检 / 期二求职偏好（2026-11） =====
+    "application_follow_up": "不暴露：跟进决策是用户对巡检卡（已联系 / 对方已回 / 不跟了）"
+    "的显式动作，由用户在首页任务卡里逐条选择后落库；助手不代做跟进决策、也不读它，"
+    "巡检候选与文案由服务端确定性生成，不需要模型参与。",
+    # 偏好档刻意**只开三个工具**：读全量 + 两个必须走提案的写工具；没有删除/撤销工具
+    # （那两类是用户在设置页的显式动作，与「没有删除类工具」的既有口径一致）。
+    "job_preference": (
+        "get_job_preferences",
+        "create_job_preference",
+        "update_job_preference",
+    ),
     # ===== 助手自身的会话与技能 =====
     # 历史对话默认不暴露（内容就在上下文里）；放宽模式（用户知情开启）下开放只读回看。
     "chat_conversation": ("list_chat_conversations",),
     "chat_message": ("get_chat_conversation",),
     "assistant_skill": ("read_skill_knowledge",),
     "assistant_skill_file": ("read_skill_knowledge",),
+    # T14：一个对话启用了哪些技能。注入由服务端按当前会话读取（系统提示里的技能块），
+    # 给模型读写这张关联表只会让它自行"启用/停用"技能、改变自己的指令——这必须由用户
+    # 在界面上点，和写入提案同级。技能内容本身经 read_skill_knowledge 可达。
+    "assistant_conversation_skill": "不暴露：这是「对话 × 技能」的启用关联行，助手按当前对话"
+    "被服务端注入，不需要也不应该自读自写；启用/停用是用户在输入区技能菜单里的显式动作，"
+    "允许模型改它等于让它给自己换指令。",
+    # 0015（#31A/#31C/#18D）：语义记忆由服务端按相关性注入固定区块，助手既不需要
+    # 也不应该自读写——让它改自己的长期记忆等于让它给自己换人格设定，而且抽取本来
+    # 就是异步任务；用户在设置页「助手记忆」里逐条编辑/删除/标永不使用。
+    "assistant_memory": "不暴露：语义记忆（目标岗位/意向城市/薪资底线等）由服务端按当前"
+    "用户消息相关性取 top 5 注入固定区块，助手在对话里已经能看到；它的写入来自异步抽取"
+    "与用户在设置页的手填（source=manual/extracted），由模型自读自写会形成自我强化循环、"
+    "并绕过「用户可见可改」的硬要求（编辑/删除/永不使用只能在设置页做）。",
+
+    # T01：写操作提案是**授权状态**（待确认参数 + 目标指纹 + 终态），不是业务数据。
+    # 模型只通过系统提示里的状态块得知结果；给它读写工具等于让它查参数甚至自批，
+    # 会破坏"用户是唯一确认人"的边界。状态只由服务端批准/拒绝/清理推进。
+    "assistant_write_proposal": "不暴露：写操作提案是服务端授权与幂等状态表（含待确认参数、"
+    "目标指纹与终态）；模型只看系统提示的状态块，不能读参数、不能改状态，"
+    "否则「用户是唯一确认人」的边界失效。",
+    # 18A：任务层由服务端任务服务推进，模型只能经三个任务工具建/查/取消（写操作走提案卡）；
+    # 任务卡仍由页面展示，模型看不到别人的任务。
+    "agent_task": (
+        "task_create",
+        "task_status",
+        "task_cancel",
+    ),
+    "agent_task_step": "不暴露：步骤行仍只在页面任务区展示（task_status 只回进度计数与当前步标题，"
+    "不回 output_ref/attempt 等内部状态）；模型不应读写单步行。",
+
     # ===== W12 来源/事实锁/用量 + W13 版本/变体 + W17 表达资产：刻意不暴露 =====
     "resume_source": "不暴露：W12 来源实体是制作台「核对这条要点来自哪份资料」的关系数据；"
     "助手已能经 claim_record / 简历正文回答内容问题，来源链属于界面核对流程，"

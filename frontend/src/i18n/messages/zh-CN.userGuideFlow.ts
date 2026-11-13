@@ -3,9 +3,9 @@
 /**
  * 使用指南：八步的标题、导语、要点与动作按钮，以及首启动「快速开始」与弹窗自身的按钮文案。
  *
- * 数据文件（components/user-guide/*.ts、quickStartPaths.ts）只存 `userGuide.*` key，
+ * 数据文件（features/user-guide/*.ts、quickStartPaths.ts）只存 `userGuide.*` key，
  * 正文里的 `**强调**` 与「引用控件名」原样保留：前者由 `UserGuideModal` 渲染成粗体，
- * 后者由 `components/userGuideCopyRef.test.ts` 校验它确实存在于源码里。
+ * 后者由 `features/user-guide/userGuideCopyRef.test.ts` 校验它确实存在于源码里。
  */
 const userGuideFlow = {
   // ── 第 1 步 · 制作简历（resumeSteps.ts） ──
@@ -108,7 +108,7 @@ const userGuideFlow = {
     "在「手动调整」里**选中要改的那段文字 → 右键 →「AI 润色」**：写下要求 → 生成 → 结果先给你看，点「替换选中」才写回；只把选中的那一段发给模型。不满意可以直接关掉，原文一字不动。",
   "userGuideFlow.resume.step1.point30.lead": "生成完会提醒你",
   "userGuideFlow.resume.step1.point30.text":
-    "简历生成、岗位解读、匹配度分析、岗位优化建议这类要等模型的任务都先说明再开跑，生成中给「后台继续」——关掉窗口也能跑完（建议生成可随时取消），结束**弹窗提醒并响一声**（声音可在设置 → 提醒与提示音里关）。",
+    "简历生成、岗位解读、匹配度分析、岗位优化建议这类要等模型的任务都先说明再开跑，生成中给「后台继续」——关掉窗口也能跑完（建议生成可随时取消），结束**弹窗提醒并响一声**（声音可在设置 → 更新与帮助 → 提醒与提示音里关）。",
   "userGuideFlow.resume.step1.point31.lead": "写作增强",
   "userGuideFlow.resume.step1.point31.text":
     "编辑简历时**选中一段文字 → 右键 →「写作增强」**：可做 STAR 量化改写、话术生成器（简历版 / STAR 版 / 口述版）、多风格润色、中英互译。结果**写回你刚选中的那一段**（右键落在不可编辑的位置时动作变成「复制」）；还能任选两份简历做「版本对比」（纯本地计算、不调模型）。",
@@ -156,7 +156,7 @@ const userGuideFlow = {
   "userGuideFlow.assistant.step1.title": "求职助手",
   "userGuideFlow.assistant.step1.heading": "让助手直接帮你处理数据",
   "userGuideFlow.assistant.step1.description":
-    "可以问它项目里的任何事，也可以让它在明确告知后直接改动数据；在其它页面遇到问题时，单击投投悬浮球即可打开它，**双击**则打开「投投剪贴板」存放常贴的资料片段。",
+    "可以问它项目里的任何事，也可以让它在明确告知后直接改动数据；在其它页面遇到问题时，单击投投悬浮球即可打开它，**双击**则打开「投投剪贴板」存放常贴的资料片段。助手页顶部还会显示**今日简报**（值得投的新岗位、7 天没回音、面试倒计时等）与**回答视角**切换（通用 / HR / 面试官 / 猎头）。",
   "userGuideFlow.assistant.step1.point1.lead": "它能查到什么",
   "userGuideFlow.assistant.step1.point1.text":
     "岗位、备选岗位、资料箱、简历版式、个人资料之外，还能查提醒、内推、面经、题库历史、复盘历史、知识库、求职统计和分享包；也能汇总投递记录的失败原因帮你诊断。",
@@ -175,29 +175,30 @@ const userGuideFlow = {
   "userGuideFlow.assistant.step1.point6.lead": "一眼可见",
   "userGuideFlow.assistant.step1.point6.text":
     "每次改动记在回复里的「助手做了什么」，标题**直接写明「改动了 N 项」或「N 项失败」**，不展开也知道。",
-  "userGuideFlow.assistant.step1.point7.lead": "读取范围",
+  "userGuideFlow.assistant.step1.point7.lead": "读取与权限",
   "userGuideFlow.assistant.step1.point7.text":
-    "会**自动带上当前数据集里的个人资料**，但发送给模型前会去掉姓名、电话、邮箱和照片；岗位与简历仍由你按需关联。",
+    "默认「仅查看」只给脱敏资料（去掉姓名、电话、邮箱、照片）。要让助手读真实资料，把输入框旁的数据权限切到「放宽读取」或「完全权限」——这些内容会随提问发给你配置的服务商；设置页存全局默认，下拉只覆盖当前对话、换设备不同步。「完全权限」直接改数据、不逐条确认（技能新建/修改仍需确认）。",
   "userGuideFlow.assistant.step1.point8.lead": "贴图提问",
   "userGuideFlow.assistant.step1.point8.text":
     "输入框里可以**直接粘贴截图**（Ctrl+V）或点「附件」选文件（最多 4 个、单个 ≤ 2 MB）；贴着图的那一步问完，紧接的下一句里这张图还会再带上一次，再往后就不重复发了。悬浮球卡片里一样能用。",
-  "userGuideFlow.assistant.step1.point9.lead": "联网搜索",
+  "userGuideFlow.assistant.step1.point9.lead": "允许联网",
   "userGuideFlow.assistant.step1.point9.text":
-    "打开后助手会先自动搜一次，还能自己换关键词多搜（一轮合计最多 3 次），来源收在回答下方「参考来源（N）」，点标题可开原网页。",
-  "userGuideFlow.assistant.step1.point10.lead": "技能开关",
+    "打开后助手拿到一个搜索工具，由它自己决定搜什么、换关键词多搜（一轮合计最多 3 次，全部由工具发起，开箱没有开场资料）；来源收在回答下方「参考来源（N）」，点标题可开原网页。",
+  "userGuideFlow.assistant.step1.point10.lead": "对话技能",
   "userGuideFlow.assistant.step1.point10.text":
-    "输入框下方工具条里的「技能」按钮可以直接开关已启用的技能。",
+    "输入框顶部的技能 chip 显示**本对话已启用的技能**，点 chip 上的 × 停用该个；行末的「技能」按钮打开菜单勾选。**只对当前对话生效，换对话各有一套**；新对话默认不启用，一个对话最多 8 个，超出注入预算的靠后技能会被截断并标出来。",
   "userGuideFlow.assistant.step1.point11.lead": "新建技能",
-  "userGuideFlow.assistant.step1.point11.text": "要新建或改提示词，去侧栏的「**工作台 → 技能**」。",
+  "userGuideFlow.assistant.step1.point11.text":
+    "要新建或改提示词，去侧栏的「**工作台 → 技能**」；技能库里不再有启用开关——启用改为在对话输入区勾选。",
   "userGuideFlow.assistant.step1.point12.lead": "会话管理",
   "userGuideFlow.assistant.step1.point12.text":
     "左侧会话列表的「⋮」或右键可重命名、置顶、复制分享链接、在新对话中继续、归档与删除，也能导出 Markdown 或存进资料箱。",
   "userGuideFlow.assistant.step1.point13.lead": "消息操作",
   "userGuideFlow.assistant.step1.point13.text":
-    "右键任意一条消息可以「引用这条继续问」、复制或删除；要一次删掉几条，右键任意一条消息选「批量选择」，勾好后点「删除所选」。",
+    "右键任意一条消息可以「引用这条继续问」、复制或删除；鼠标移上去还会浮出消息操作条：复制（取完整正文）、引用、重新生成（只对最后一条助手回答）与删除。长回答会自动折叠，点「展开全文」看完整内容；要一次删掉几条，右键任意一条消息选「批量选择」，勾好后点「删除所选」。",
   "userGuideFlow.assistant.step1.point14.lead": "思考过程",
   "userGuideFlow.assistant.step1.point14.text":
-    "有思考模式的模型可以在输入框右侧调「思考强度」，开启后回复下方会出现默认折叠的「思考过程」。",
+    "有思考模式的模型可以在输入框右侧调「思考强度」，开启后回复下方会出现默认折叠的「思考过程」。发送键左边还会显示**当前模型名（只读）**：鼠标悬停能看到记录名与「在顶部切换」；切模型请用页头下拉，切完这里会跟着更新。",
   "userGuideFlow.assistant.step1.actionLabel": "打开求职助手",
   // ── 第 2 步 · 资料箱、知识库与工作台（assistantSteps.ts） ──
   "userGuideFlow.assistant.step2.title": "资料箱、知识库与工作台",
@@ -212,7 +213,7 @@ const userGuideFlow = {
     "存入的文件都收在资料箱「我的文件」页签：图片、文档、PDF 一眼可见、随时打开；它们属于当前数据集，导出/导入与升级都不会丢",
   "userGuideFlow.assistant.step2.point3.lead": "知识库",
   "userGuideFlow.assistant.step2.point3.text":
-    "沉淀成文内容——面经总结、简历技巧、求职策略、面试问答、行业笔记等；带分类与标签，正文支持 Markdown，可搜索、增删改，点卡片直接读全文。",
+    "沉淀成文内容——面经总结、简历技巧、求职策略、面试问答、行业笔记等；带分类与标签，正文支持 Markdown，可搜索、增删改，点卡片直接读全文。每条可以写「为什么记这条」与摘要要点，可按公司筛选，也能用语义检索找近义笔记；助手长回答、面试复盘、投递失败与简历诊断都能一键存成条目。",
   "userGuideFlow.assistant.step2.point4.lead": "两者的分工",
   "userGuideFlow.assistant.step2.point4.text":
     "资料箱放**还没成体系的零散资料**，知识库放**整理成文、愿意反复看的笔记**。",
@@ -224,7 +225,7 @@ const userGuideFlow = {
     "助手对话右侧的「⋮」可以把这段对话导出成 Markdown，或一键存进资料箱。",
   "userGuideFlow.assistant.step2.point7.lead": "技能",
   "userGuideFlow.assistant.step2.point7.text":
-    "工作台的「技能」是一段长期生效的提示词，勾选后就对之后每次对话生效；也能带上知识文件。",
+    "工作台的「技能」是提示词 + 可带的知识文件，新建、编辑、导入都在这里；**启用改为在对话里做**（只对那个对话生效，新对话默认不启用，最多 8 个）。从对话生成的技能先是「待验证」，验证通过前不能在对话里启用。提示词上限 4,000 字，知识文件最多 10 个、单文件 20,000 字、合计 60,000 字。",
   "userGuideFlow.assistant.step2.point8.lead": "版式",
   "userGuideFlow.assistant.step2.point8.text":
     "工作台「版式」里内置版式直接列出来，点「自制版式」只填参数（行高、页边距、区块间距、强调色），不用写代码；想压进一页时这是最快的办法。自制模板与导入 HTML 的入口已下线，已有模板仍按原样渲染。",
@@ -256,25 +257,25 @@ const userGuideFlow = {
     "导入默认新建一份，不碰当前正在用的那份；也能**新建一份空白数据集**从头开始记录。导入前先检查整包附件（校验和/同名冲突），有问题整次拒绝且本机原文件不动；确认后可选择跳过有问题的附件只导入库内容。",
   "userGuideFlow.dataBackup.step1.point7.lead": "存储与备份",
   "userGuideFlow.dataBackup.step1.point7.text":
-    "设置 → 数据底部能看到数据目录各分项占了多少磁盘；迁移时留在 backups/ 里的数据库快照也会列出来——不需要的可以逐份确认后移到本地数据目录下的回收目录，随时能在文件管理器里找回来，系统不会自动清理。",
+    "设置 → 数据与导出底部能看到数据目录各分项占了多少磁盘；迁移时留在 backups/ 里的数据库快照也会列出来——不需要的可以逐份确认后移到本地数据目录下的回收目录，随时能在文件管理器里找回来，系统不会自动清理。",
   "userGuideFlow.dataBackup.step1.point8.lead": "Key 去留",
   "userGuideFlow.dataBackup.step1.point8.text":
     "备份默认包含大模型 API Key，不需要时可在导出前取消勾选「备份中包含大模型 API Key」；恢复后建议到模型配置测试连接；旧版本导出的备份仍可导入，含 Key / 含字体（格式 5 与 6）的新包被旧版导入时会提示升级——跨大版本迁移请在同版本之间导出/导入。",
   "userGuideFlow.dataBackup.step1.point9.lead": "精简侧栏",
   "userGuideFlow.dataBackup.step1.point9.text":
-    "设置 → 应用 → 「界面与导航」里可以关掉侧栏里用不到的模块，卡片标题栏的「恢复默认显示」一键还原。隐藏只收起入口——不删数据，首页、岗位广场、简历中心、我的资料、投递台与设置始终保留。",
+    "设置 → 外观与交互 → 「界面与导航」里可以关掉侧栏里用不到的模块，卡片标题栏的「恢复默认显示」一键还原。隐藏只收起入口——不删数据，首页、岗位广场、简历中心、我的资料、投递台与设置始终保留。",
   "userGuideFlow.dataBackup.step1.point10.lead": "窄屏与键盘",
   "userGuideFlow.dataBackup.step1.point10.text":
-    "窄窗口点**「打开导航」**切换页面，「我的空间」仍在页头；键盘按 Tab 可先到「跳到主要内容」，按回车直接进入正文。常用动作有快捷键：Ctrl/⌘+K 搜索、Ctrl/⌘+S 保存、Ctrl/⌘+Z 撤回、Ctrl/⌘+J 开关助手；「设置 → 应用 → 快捷键」可改键。",
+    "窄窗口点**「打开导航」**切换页面，「我的空间」仍在页头；键盘按 Tab 可先到「跳到主要内容」，按回车直接进入正文。常用动作有快捷键：Ctrl/⌘+K 搜索、Ctrl/⌘+S 保存、Ctrl/⌘+Z 撤回、Ctrl/⌘+J 开关助手；「设置 → 外观与交互 → 快捷键」可改键。",
   "userGuideFlow.dataBackup.step1.point11.lead": "检查更新",
   "userGuideFlow.dataBackup.step1.point11.text":
-    "页头刷新图标可检查更新。设置 → 应用支持下载、进度与后台下载；读取失败先点「重试读取状态」。Windows 确认「重启并安装」，macOS 用 update.command；只换程序，保留 data/、.env 与备份，结果以实际版本和日志为准。",
+    "页头刷新图标可检查更新。设置 → 更新与帮助支持下载、进度与后台下载；读取失败先点「重试读取状态」。Windows 确认「重启并安装」，macOS 用 update.command、Linux 用 update.sh；只换程序，保留 data/、.env 与备份，结果以实际版本和日志为准。",
   "userGuideFlow.dataBackup.step1.point12.lead": "想卸载",
   "userGuideFlow.dataBackup.step1.point12.text":
     "Windows 双击项目目录里的 uninstall.cmd：默认只删启动器生成的环境与缓存，保留 data/ 与 .env；确认连数据一起删用 uninstall.cmd -Purge。macOS 不需要卸载脚本——直接删掉项目文件夹就是干净卸载。",
   "userGuideFlow.dataBackup.step1.point13.lead": "开始与停止",
   "userGuideFlow.dataBackup.step1.point13.text":
-    "Windows 双击 start.cmd / stop.cmd，macOS 双击 start.command / stop.command；两边都是零依赖一键启动。macOS 上第一次打开可能被系统拦一次，**右键点它 → 打开**即可，只需一次。",
+    "Windows 双击 start.cmd / stop.cmd，macOS 双击 start.command / stop.command；零依赖一键启动。macOS 首次打开可能被拦一次，**右键点它 → 打开**。Linux 执行 bash start.sh / stop.sh（AppImage 需赋执行位）。",
   "userGuideFlow.dataBackup.step1.point14.lead": "看源码",
   "userGuideFlow.dataBackup.step1.point14.text":
     "**页头「退出」左边**是 GitHub 图标，点开就是源码与 Issue 页面；更靠左那个标签显示**当前数据集**（点它直接打开菜单切换，菜单底部的「新建数据集…」还能就地再建一份）。**头像左边的「我的空间」** 是「我的资料」等私人页面的入口，头像本身则是你资料里当前用的那张照片。",

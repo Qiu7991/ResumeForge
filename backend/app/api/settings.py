@@ -6,6 +6,7 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db, session_engine
@@ -18,6 +19,7 @@ from ..schemas.batch_operation import (
     BatchOperationConfigOut,
 )
 from ..schemas.setting import (
+    AssistantLimitSetting,
     AssistantOrbSetting,
     AssistantRelaxedModeSetting,
     AutoBackupIntervalSetting,
@@ -38,6 +40,12 @@ from ..schemas.setting import (
 )
 from ..services.api_key_crypto import ApiKeyEncryptionError
 from ..services.api_key_session import clear_session_key, session_key_configured, set_session_key
+from ..services.assistant_limits import (
+    get_max_tool_rounds,
+    get_stream_budget_seconds,
+    save_max_tool_rounds,
+    save_stream_budget_seconds,
+)
 from ..services.batch_operation import (
     read_batch_operation_config,
     save_batch_export_config,
@@ -53,6 +61,7 @@ from ..services.llm.base import LLMError
 from ..services.llm.connection_probe import connection_probe_config
 from ..services.llm.model_catalog import list_available_models
 from ..schemas.generation_preferences import GenerationPreferences
+from ..services.llm.responses import ResponsesProvider, responses_unsupported_hint
 from ..services.llm.thinking import probe_thinking, thinking_support
 from ..services.llm.usage_tasks import (
     DEFAULT_AUDIT_LANGUAGE,
@@ -66,6 +75,7 @@ from ..services.profile.generation_preferences import (
     save_generation_preferences,
 )
 from ..services.settings_service import (
+    get_agent_task_events_enabled,
     get_assistant_orb_setting,
     get_assistant_relaxed_mode,
     get_auto_backup_interval_days,
@@ -75,6 +85,7 @@ from ..services.settings_service import (
     get_search_config,
     get_webform_relaxed_mode,
     resolve_llm_config_api_key,
+    save_agent_task_events_enabled,
     save_assistant_orb_setting,
     save_assistant_relaxed_mode,
     save_auto_backup_interval_days,
@@ -85,10 +96,19 @@ from ..services.settings_service import (
     save_webform_relaxed_mode,
 )
 from ..services.ui_locale import get_ui_locale
+from .assistant_compaction_api import register_compaction_setting_routes
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+# 上下文压缩的三个设置项（#10）单独一层模块：本文件已贴 500 行硬预算，只留注册一行。
+register_compaction_setting_routes(router)
+
+
+class AgentTaskEventsSetting(BaseModel):
+    """提醒到期自动生成任务卡开关（默认关；只建卡、不执行任何写操作）。"""
+
+    enabled: bool = False
 
 
 def _is_loopback_request(request: Request) -> bool:
@@ -127,13 +147,17 @@ def delete_llm_session_key() -> None:
 
 @router.get("/search", response_model=SearchConfig)
 def read_search_settings(db: Session = Depends(get_db)):
-    """联网搜索设置：来源、自建 SearXNG 地址、正文抓取条数与结果上限。"""
+    """联网搜索设置（**全局一份**，所有数据集共用）：来源、SearXNG 地址、抓取与条数上限。
+
+    升级后首次读取会把当前数据集的旧 ``search_config` / ``search_deepseek_api_key`
+    一次性迁移到全局（见 ``services.web_search_settings`），旧行保留不删。
+    """
     return get_search_config(db)
 
 
 @router.put("/search", response_model=SearchConfig)
 def write_search_settings(payload: SearchConfig, db: Session = Depends(get_db)):
-    """保存搜索设置；DeepSeek key 加密失败时显式报错，不落明文。"""
+    """保存全局搜索设置；DeepSeek key 加密失败时显式报错，不落明文。"""
     try:
         return save_search_config(db, payload)
     except ApiKeyEncryptionError as exc:
@@ -163,6 +187,23 @@ def write_assistant_orb(payload: AssistantOrbSetting, db: Session = Depends(get_
     return save_assistant_orb_setting(db, payload)
 
 
+@router.get("/assistant-limits", response_model=AssistantLimitSetting)
+def read_assistant_limits(db: Session = Depends(get_db)):
+    """求职助手的两条运行上限（工具轮次 / 整链预算）：DB 优先，缺省回默认。"""
+    return AssistantLimitSetting(
+        max_tool_rounds=get_max_tool_rounds(db),
+        stream_budget_seconds=get_stream_budget_seconds(db),
+    )
+
+
+@router.put("/assistant-limits", response_model=AssistantLimitSetting)
+def write_assistant_limits(payload: AssistantLimitSetting, db: Session = Depends(get_db)):
+    """保存上限：轮次下一轮生效、预算下一次请求生效；越界由模型校验直接拒绝。"""
+    save_max_tool_rounds(db, payload.max_tool_rounds)
+    save_stream_budget_seconds(db, payload.stream_budget_seconds)
+    return payload
+
+
 @router.get("/webform-relaxed-mode", response_model=WebFormRelaxedModeSetting)
 def read_webform_relaxed_mode(db: Session = Depends(get_db)):
     """网申填表「放宽模式」（默认关）：代点下拉/弹层与逐条确认过的声明勾选。"""
@@ -188,6 +229,23 @@ def write_assistant_relaxed_mode(
     payload: AssistantRelaxedModeSetting, db: Session = Depends(get_db)
 ):
     return AssistantRelaxedModeSetting(enabled=save_assistant_relaxed_mode(db, payload.enabled))
+
+
+@router.get("/agent-task-events", response_model=AgentTaskEventsSetting)
+def read_agent_task_events(db: Session = Depends(get_db)):
+    """提醒到期自动生成任务卡（默认关）：只建卡、不执行任何写操作、不发消息、不弹窗。"""
+    return AgentTaskEventsSetting(enabled=get_agent_task_events_enabled(db))
+
+
+@router.put("/agent-task-events", response_model=AgentTaskEventsSetting)
+def write_agent_task_events(payload: AgentTaskEventsSetting, db: Session = Depends(get_db)):
+    """保存开关；打开时立即启动后台扫描并补扫一次最近 24h 内的到期提醒。"""
+    enabled = save_agent_task_events_enabled(db, payload.enabled)
+    # 函数级导入：避免设置路由模块加载期就拉起后台调度服务依赖。
+    from ..services import agent_task_events
+
+    agent_task_events.on_enabled_setting_changed(enabled)
+    return AgentTaskEventsSetting(enabled=enabled)
 
 
 @router.get("/export-save-location", response_model=ExportSaveLocationOut)
@@ -331,10 +389,30 @@ async def test_llm(payload: LLMTestRequest, db: Session = Depends(get_db)):
         language=get_ui_locale(db) or DEFAULT_AUDIT_LANGUAGE,
         budget=SETTINGS_PROBE_TOKEN_BUDGET,
     )
+    # Responses 的已知不支持名单（Claude / Gemini / 硅基流动）先拦一道：
+    # 直接给出"切回 Chat Completions"的出路，而不是让用户看到一个裸 404。
+    if (probe_config.api_style or "openai") == "responses":
+        unsupported = responses_unsupported_hint(probe_config.base_url)
+        if unsupported is not None:
+            return LLMTestResult(ok=False, message=unsupported)
     started = time.perf_counter()
     try:
         provider = create_provider(probe_config)
-        reply = await provider.chat([{"role": "user", "content": "请只回复两个字：正常"}])
+        if isinstance(provider, ResponsesProvider):
+            # 按协议分支发最小请求：Responses 用 input:"hi" + max_output_tokens:16
+            # （任务书 §4 T09-7）；两条老链路的请求逐字节不变。
+            reply = await provider.probe_chat()
+            if not reply.strip():
+                # 实测（DeepSeek Responses）：思考模型会把 16 token 的探针预算全用在
+                # 思考上，正文为空但请求本身 200——配置是**可用**的，如实说明而非报失败。
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                return LLMTestResult(
+                    ok=True,
+                    latency_ms=latency_ms,
+                    message="连接成功：服务商已响应（思考模型用完了最小输出预算，未返回正文）",
+                )
+        else:
+            reply = await provider.chat([{"role": "user", "content": "请只回复两个字：正常"}])
     except LLMError as exc:
         logger.warning("LLM 连接测试失败：%s", exc)
         return LLMTestResult(ok=False, message=str(exc))

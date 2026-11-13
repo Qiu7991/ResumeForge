@@ -3,11 +3,7 @@
 拆分自 modules.css，纯搬迁、规则内容与顺序不变。 */
 
 /* ===== 模拟面试 ===== */
-.interview-setup-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0 16px;
-}
+/* 设定卡的布局规则在 modules-interview-setup.css（第 8 条起：外层纵向 stack）。 */
 
 .interview-room {
   display: flex;
@@ -107,12 +103,12 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .jane-avatar--intro {
-  width: 52px;
-  height: 52px;
+  width: 44px;
+  height: 44px;
 }
 
 .jane-avatar--report {
@@ -536,9 +532,9 @@
   margin-top: 8px;
 }
 
-.interview-setup-hint {
-  grid-column: 1 / -1;
-}
+/* 边界文案的规则已随设定卡改版搬到 modules-interview-setup.css（第 8 条：外层不再是
+   栅格，`grid-column: 1 / -1` 已失效）。这里刻意不留副本——两份同名规则靠加载顺序
+   决胜，正是 modules-interview-setup.test.ts 要防的坑。 */
 
 /* 报告末尾的教练参考答案附录：与报告正文用分隔线隔开，避免被误读成评分的一部分。 */
 .interview-report-coach {

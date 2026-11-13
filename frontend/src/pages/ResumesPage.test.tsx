@@ -43,7 +43,7 @@ vi.mock("../api/resumes", async (importOriginal) => ({
 
 // 深链用例只关心"详情弹窗开了没有、URL 参数有没有清掉"；预览主体是重渲染路径，
 // 由它自己的测试负责，这里桩掉。
-vi.mock("../components/resume/ResumeDetailPreview", () => ({
+vi.mock("../features/resume/preview/ResumeDetailPreview", () => ({
   default: () => <div data-testid="resume-preview-stub" />,
 }));
 
@@ -228,12 +228,12 @@ describe("ResumesPage 备注列", () => {
   });
 });
 
-describe("ResumesPage 行操作（三点菜单已移除）", () => {
-  it("行内不再有三点「更多操作」按钮；右键菜单仍含全部次级操作", async () => {
+describe("ResumesPage 行操作（三点菜单与右键菜单一致）", () => {
+  it("行内有三点「更多操作」按钮；右键菜单仍含全部次级操作", async () => {
     renderPage();
     const title = await screen.findByText(RESUME.title);
 
-    expect(screen.queryByRole("button", { name: "更多操作" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "更多操作" })).toBeInTheDocument();
     fireEvent.contextMenu(title.closest("tr") as HTMLElement);
     expect(await screen.findByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "编辑备注" })).toBeInTheDocument();
@@ -316,7 +316,10 @@ describe("ResumesPage ?resume_id= 深链（RF-11）", () => {
 
     expect(await screen.findByTestId("resume-preview-stub")).toBeInTheDocument();
     expect(apiMocks.getResume).toHaveBeenCalledWith(8);
-    expect(apiMocks.fetchResumeHtml).toHaveBeenCalledWith(8);
+    // 详情预览要完整正文（超额页也要画出来，问题清单 §7），所以显式带 includeOverflowPages。
+    expect(apiMocks.fetchResumeHtml).toHaveBeenCalledWith(8, false, {
+      includeOverflowPages: true,
+    });
   });
 
   it("非法 resume_id 忽略：不打开弹窗、不取详情", async () => {

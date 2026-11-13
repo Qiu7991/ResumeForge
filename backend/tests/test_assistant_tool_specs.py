@@ -21,10 +21,14 @@ import pytest
 from app.services.assistant_tools import _TOOLS, tool_names
 from app.services.assistant_tools._tools_specs_core import CORE_TOOLS
 from app.services.assistant_tools._tools_specs_data import DATA_TOOLS
+from app.services.assistant_tools._tools_specs_diagnosis import DIAGNOSIS_TOOLS
 from app.services.assistant_tools._tools_specs_document import DOCUMENT_TOOLS
+from app.services.assistant_tools._tools_specs_quality import QUALITY_TOOLS
 from app.services.assistant_tools._tools_specs_relaxed import RELAXED_TOOLS
 from app.services.assistant_tools._tools_specs_report import REPORT_TOOLS
 from app.services.assistant_tools._tools_specs_search import SEARCH_TOOLS
+from app.services.assistant_tools._tools_specs_tasks import TASK_TOOLS
+from app.services.assistant_tools._tools_specs_web import WEB_TOOLS
 
 # 名字前缀 → 一定是写工具。``delete_`` 目前一条都没有（助手不提供删除工具，
 # test_assistant_coverage 另有一条守卫），留着它是因为这个前缀一旦出现就必须是写。
@@ -64,10 +68,21 @@ EXPECTED_DATA_TOOL_ORDER = (
     "list_format_templates",
     # 文件副本库
     "list_user_files",
+    # 求职偏好（期二 T12）：只读查询 + 两个必走提案的写工具（追加在 DATA_TOOLS 末尾）。
+    "get_job_preferences",
+    "create_job_preference",
+    "update_job_preference",
+    # 投递队列（#15F）：只读查看 + 重排（可撤销写）+ 开始投递（唯一的外部副作用，必走提案）。
+    # 追加在 DATA_TOOLS 末尾，不重排既有分组。
+    "queue_list",
+    "queue_update_priority",
+    "apply_start",
+    # #29A 知识库混合检索（追加在 DATA 域末尾，不重排既有分组）。
+    "search_knowledge",
 )
 
-# 全量注册表顺序（CORE → DATA → RELAXED → REPORT → SEARCH → DOCUMENT）。这是提示词
-# 顺序的唯一契约来源；分组边界也在其中（写工具靠后的位置不要随手提前）。
+# 全量注册表顺序（CORE → DATA → RELAXED → REPORT → SEARCH → DOCUMENT → QUALITY → DIAGNOSIS）。
+# 这是提示词顺序的唯一契约来源；分组边界也在其中（写工具靠后的位置不要随手提前）。
 EXPECTED_TOOL_ORDER = (
     *(tool.name for tool in CORE_TOOLS),
     *EXPECTED_DATA_TOOL_ORDER,
@@ -75,6 +90,14 @@ EXPECTED_TOOL_ORDER = (
     *(tool.name for tool in REPORT_TOOLS),
     *(tool.name for tool in SEARCH_TOOLS),
     *(tool.name for tool in DOCUMENT_TOOLS),
+    # T29 只读质检组（追加在末尾，不重排既有分组）。
+    *(tool.name for tool in QUALITY_TOOLS),
+    # T31 只读错误诊断组（追加在末尾）。
+    *(tool.name for tool in DIAGNOSIS_TOOLS),
+    # #16 链接抓取/导入组（追加在末尾，不重排既有分组）。
+    *(tool.name for tool in WEB_TOOLS),
+    # 18A 长任务组（追加在末尾）。
+    *(tool.name for tool in TASK_TOOLS),
 )
 
 
@@ -99,6 +122,27 @@ def test_no_duplicate_tool_names():
     assert not duplicates, f"工具名重复注册：{duplicates}"
 
 
+def test_every_tool_has_a_string_description_and_object_schema():
+    """T31 回归：description 必须是字符串、parameters 必须是 object schema。
+
+    真实事故（2026-11-07）：一个工具把多段描述写成带逗号的括号元组，Tool.description
+    成了 tuple；本地测试全绿，但 DeepSeek 直接 400「description: invalid type: sequence」，
+    **所有**助手请求因此失败。这里钉住工具声明的可下发形状。
+    """
+    bad_descriptions = [
+        tool.name
+        for tool in _TOOLS
+        if not isinstance(tool.description, str) or not tool.description.strip()
+    ]
+    assert not bad_descriptions, f"工具 description 必须是字符串：{bad_descriptions}"
+    bad_parameters = [
+        tool.name
+        for tool in _TOOLS
+        if not isinstance(tool.parameters, dict) or tool.parameters.get("type") != "object"
+    ]
+    assert not bad_parameters, f"工具 parameters 必须是 object schema：{bad_parameters}"
+
+
 @pytest.mark.parametrize("prefix", WRITE_NAME_PREFIXES)
 def test_create_update_delete_tools_are_flagged_as_writes(prefix):
     """C-21：``create_*`` / ``update_*`` / ``delete_*`` 的 ``writes`` 必须为 True。
@@ -114,8 +158,9 @@ def test_create_update_delete_tools_are_flagged_as_writes(prefix):
         and not tool.writes
     ]
     assert not unflagged, (
-        f"这些工具名以 {prefix!r} 开头却没有标 writes=True：{unflagged}\n"
-        f"请在对应 Tool(...) 声明里加 writes=True；如果它确实是只读的，"
+        f"这些工具名以 {prefix!r} 开头却没有标成写入类：{unflagged}\n"
+        f"请在对应 Tool(...) 声明里给 permission 写入级别（REVERSIBLE_WRITE / "
+        f"IRREVERSIBLE_WRITE，见 _types.ToolPermission）；如果它确实是只读的，"
         f"先在 test_assistant_tool_specs.WRITE_PREFIX_EXEMPTIONS 登记理由。"
     )
 

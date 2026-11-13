@@ -1,5 +1,7 @@
 # ADR-0003：备份包资产清单（per-dataset asset manifest）与存储统计作用域
 
+> **2.0 已复核，结论仍适用**（备份格式此后从 4 演进到 5 / 6，当前 `BACKUP_FORMAT_VERSION = 6`）；文中提到的迁移号均为 **1.x 历史号**。
+
 日期：2026-10-13（生产审计 PR-15 / PR-16）
 状态：已实施
 
@@ -114,5 +116,5 @@ DB 恢复完全正常，只是附件缺失——这与老版本本来就没有"�
 `app/services/data_backup/{asset_manifest,export,manifest,paths,import_archive,
 auto_backup,scheduler}.py`、`app/services/datasets.py`、
 `app/services/storage_stats.py`、
-`frontend/src/components/settings/BackupStatusCard.tsx`、
+`frontend/src/features/settings/BackupStatusCard.tsx`、
 `backend/tests/test_backup_asset_manifest.py`、`backend/tests/test_storage_stats.py`。

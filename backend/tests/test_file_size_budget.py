@@ -120,6 +120,12 @@ _TEST_EXEMPTIONS: dict[str, Exemption] = {
     "backend/tests/test_interview.py": Exemption(
         "二开加教练轨道用例，与 interview.py 拆分同批处理", _FORK_BACKSTOP
     ),
+    # 合并上游 2.1.0（2026-11-13）：上游 451 行 + 二开的准入/投递结果用例 = 526。
+    # 与上面的 ApplyQueuePanel.tsx 同屏，界面拆分时用例跟着一起拆。
+    "frontend/src/features/apply/ApplyQueuePanel.test.tsx": Exemption(
+        "合并后 526 行：上游已到 451，二开加准入提示与投递结果列用例；与同屏组件同批拆",
+        _FORK_BACKSTOP,
+    ),
 }
 
 # 书面豁免清单（路径相对仓库根；理由必须具体，禁止「暂缓拆分」式空话）
@@ -222,9 +228,8 @@ _EXEMPTIONS: dict[str, Exemption] = {
     "backend/app/services/apply/task_apply.py": Exemption(
         "二开加站点适配分支，与 task_runner 同一条执行链", _FORK_BACKSTOP
     ),
-    "backend/app/services/browser/browser_manager.py": Exemption(
-        "二开加投递专用浏览器实例与端口隔离，状态机内聚", _FORK_BACKSTOP
-    ),
+    # browser_manager.py 的豁免已在合并上游 2.1.0（2026-11-13）时删除：合并后实测
+    # 492 行 ≤ 500，原来的条目变成幽灵豁免。上游把投递浏览器那段落抽走后腾出了空间。
     "backend/app/services/job/job_match.py": Exemption(
         "二开加平台派生筛选（platform.py 已拆出），剩余为匹配主流程", _FORK_BACKSTOP
     ),
@@ -243,13 +248,61 @@ _EXEMPTIONS: dict[str, Exemption] = {
     "frontend/src/styles/modules-interview.css": Exemption(
         "二开加教练卡片样式 74 行，与面试模块同一分段", _FORK_BACKSTOP
     ),
+    # ---- 合并上游 2.1.0（2026-11-13）：合并后逐个实测"单侧未超、合起来超" ----
+    #
+    # 口径与上一段相同：**两边各自实测都在预算内**，超线全部来自"双方在同一文件里
+    # 各加了一段"（上游改周边 + 我们加列/加分支）。合并期间拆文件会把冲突解决与
+    # 结构重构混在一批，回滚粒度变差，所以本批只登记、不拆。
+    #
+    # 到期日 2026-12-31，与二开移植那批同批处理。逐文件说明为什么现在不拆：
+    # - job_hunt_tasks.py：整条「采集→落候选→补 JD→建评分任务」的编排在这一个文件里，
+    #   拆开会让一次采集跨两个模块（同 apply.py 的理由）。
+    # - settings.py / _site_browser.py / interview.py：上游在本批把三个文件都推到 499
+    #   左右（settings 479 / _site_browser 455 / interview 499），我们各自又加了几行；
+    #   拆它们属于上游的结构问题，跟着上游节奏走比自己拆更省冲突。
+    # - NativeJobHuntView.tsx / ApplyQueuePanel.tsx / JobsPage.tsx / apply.css：界面上
+    #   一屏的编排（工具栏 + 表格 + 弹窗），拆成两半会让"一条交互横跨两个文件"。
+    # - ApplyQueuePanel.test.tsx：与上一条同屏，用例跟着界面走。
+    # - scripts/fork_gate.py：二开闸门脚本，命令清单是**顺序契约**（按 README 里的
+    #   执行次序），拆成多个模块会让"跑哪几条、什么顺序"散落。
+    "backend/app/api/job_hunt_tasks.py": Exemption(
+        "二开采集全链路编排（采集→落候选→补JD→评分）在同一文件，拆开会切断单次采集", _FORK_BACKSTOP
+    ),
+    "backend/app/api/settings.py": Exemption(
+        "合并后 502 行：上游已到 479，二开加采集相关设置读写；拆它属上游结构问题", _FORK_BACKSTOP
+    ),
+    "backend/app/services/apply/_site_browser.py": Exemption(
+        "合并后 502 行：上游已到 455，二开加投递专用浏览器实例隔离", _FORK_BACKSTOP
+    ),
+    "backend/app/services/interview/interview.py": Exemption(
+        "合并后 505 行：上游已到 499，二开加教练参考答案落库", _FORK_BACKSTOP
+    ),
+    "frontend/src/components/ai-jobs/NativeJobHuntView.tsx": Exemption(
+        "采集工作台一屏的编排（筛选+进度+候选表+动作），拆开会让一条交互跨两文件", _FORK_BACKSTOP
+    ),
+    "frontend/src/features/apply/ApplyQueuePanel.tsx": Exemption(
+        "合并后 533 行：上游已到 481，二开加准入提示与投递结果列", _FORK_BACKSTOP
+    ),
+    "frontend/src/pages/JobsPage.tsx": Exemption(
+        "合并后 511 行：上游已到 495，二开加导入时间列与候选抽屉", _FORK_BACKSTOP
+    ),
+    "frontend/src/styles/apply.css": Exemption(
+        "合并后 501 行：上游已到 466，二开加投递结果列样式", _FORK_BACKSTOP
+    ),
 }
 
 # scripts/（*.py，预算 800）的豁免清单：**当前为空**。
 # 2026-10-22 拆分批已按到期日（2026-11-15）执行并删除最后两条
 # （scripts/seed_demo_data.py、scripts/measure_api_perf.py，见上方历史记录）：
 # 拆分后各文件行数均 ≤400，远低于 800 预算，不再需要任何豁免。
-_SCRIPTS_EXEMPTIONS: dict[str, Exemption] = {}
+_SCRIPTS_EXEMPTIONS: dict[str, Exemption] = {
+    # 合并上游 2.1.0（2026-11-13）：937 行。二开闸门脚本，命令清单是**顺序契约**
+    # （README 里的执行次序就是它），拆成多模块会让"跑哪几条、什么顺序"散落。
+    # 到期日与上方 _FORK_BACKSTOP 同批处理。
+    "scripts/fork_gate.py": Exemption(
+        "二开闸门脚本，命令清单是顺序契约，拆分会打散执行次序", _FORK_BACKSTOP
+    ),
+}
 
 # desktop/（*.js，预算 500）：实测最大文件 470 行，零豁免起步——新增长文件
 # 必须自觉登记豁免 + 到期日。

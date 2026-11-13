@@ -1,10 +1,65 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-/* AI 求职助手：历史侧栏固定宽度，主区将消息与输入区分层。 */
+/* AI 求职助手：历史侧栏固定宽度，主区将消息与输入区分层。
+   高度上限一律读 --rf-viewport-h（P1-3）：桌面外壳里它已经扣掉了 32px 标题栏，
+   写死 100vh 会让助手页多出一整条标题栏高的溢出。 */
 .assistant-page {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 20px;
-  min-height: calc(100vh - 116px);
+  min-height: calc(var(--rf-viewport-h) - 116px);
+}
+
+/* ===== 高度链路（#1）=====
+ * 只对双栏形态生效：≤1092 是单栏，整页滚动是设计内的（V8-1092×614 实测溢出 61px），
+ * 不能把页面钉死成一屏高，否则历史横条 + 消息区会被压成一条缝。
+ *
+ * 三处叠加造成那条"只能滚 1px"的滚动条：
+ * 1. `min-height: calc(... - 116px)` 的 116 与 token 脱钩：pad=24 → 实际 112（矮 4px）、
+ *    pad=32（≥1920）→ 实际 128（高 12px，无提示条也必出滚动条）；
+ * 2. `.assistant-workspace` 的 `max-height` 只限盒子、`overflow` 仍 visible，
+ *    681−652=29.4px 的绘制溢出继续上抛给 `.app-content`（`overflow-y: auto`）；
+ * 3. 消息区 320px 下限没有对手能吸收，工作区想缩也缩不动。
+ *
+ * 换成"页面高度 = 视口 − 页头 − 上下内边距"，再让 workspace 吃满 100% 且不再溢出。
+ */
+@media (min-width: 1093px) {
+  .assistant-page {
+    height: calc(var(--rf-viewport-h) - var(--rf-header-height) - var(--rf-content-pad) * 2);
+    min-height: 0;
+  }
+
+  .assistant-workspace {
+    height: 100%;
+    max-height: none;
+  }
+
+  /* 先允许消息区被压缩，再由下一个媒体查询在"够高"的视口把 320 下限加回来。 */
+  .assistant-messages {
+    min-height: 0;
+  }
+}
+
+/* 阈值 700 不是拍的：可用 = H − 112，消息区 = H − 112 − 67.4 − 输入区。
+   A3 后输入区约 190，H=700 时消息区 330.6 ≥ 320，正好还能保住下限；再矮就交给内容。 */
+@media (min-width: 1093px) and (min-height: 700px) {
+  .assistant-messages {
+    min-height: 320px;
+  }
+}
+
+/*
+ * #18 的拓宽面板（今日简报 / 任务条 / 视角）是高度链路上的**第三个**固定块：
+ * 空库首屏实测 277px，而 768 高的视口里 header(67) + 消息区下限(320) + 输入区(198)
+ * 已经吃掉 585，只剩 119 —— 整页于是纵向溢出 183px（响应式门禁 R4-a 判红，
+ * 1280/1366/1440/1536 四档都中）。
+ *
+ * 它是"增强信息"而不是主内容，所以让它当吸收者：`min-height: 0` 允许被压，
+ * 压到装不下时自己滚（R2 只禁"真的到不了"的内容，可滚不算）。
+ */
+.assistant-breadth {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .assistant-sidebar {
@@ -23,7 +78,7 @@
  * 再嵌一层内滚会出现双滚动条，故排除。
  */
 .assistant-sidebar:not(.assistant-sidebar--floating) .assistant-conversation-list {
-  max-height: calc(100vh - 300px);
+  max-height: calc(var(--rf-viewport-h) - 300px);
   overflow-y: auto;
 }
 
@@ -120,23 +175,23 @@
   }
 }
 
+/*
+ * 三行式工作区：标题 / 可滚动的消息区 / 固定在底部的输入区。
+ *
+ * 用 flex 而不是三行 grid：grid 的行按**位置**分配，一旦有人往中间插一个子元素
+ * （2026-11 的助手页任务区就是第 4 个孩子），它就会顶替消息区的主行——自己撑到 320px
+ * 高（标题下方一大片空白），消息区反被挤成 auto、失去滚动区。flex 下消息区靠
+ * `flex: 1` 吃剩余高度，插入工具条/区块不会再错位；新增直接子元素只需要决定它
+ * 是 `flex: none`（固定）还是 `flex: 1`（可滚动）。
+ */
 .assistant-workspace {
-  display: grid;
-  grid-template-rows: auto minmax(320px, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  max-height: calc(100vh - 116px);
+  min-height: 0;
+  max-height: calc(var(--rf-viewport-h) - 116px);
   /* 「回到底部」悬浮按钮（问题 A）以工作区为定位基准。 */
   position: relative;
-}
-
-/*
- * 多选态在标题下多出一条选中操作栏，于是子元素从 3 个变成 4 个。
- * 网格行是按位置分配的：不补这一行，操作栏就会去顶替消息区的 `minmax(320px, 1fr)`
- * 主行——它自己撑到 320px 高（表现为标题下方一大片空白），消息区反被挤成 `auto`
- * 缩到内容高度、失去滚动区。补一行 `auto` 才是"多了一条工具条"的正确含义。
- */
-.assistant-workspace.is-selecting {
-  grid-template-rows: auto auto minmax(320px, 1fr) auto;
 }
 
 .assistant-header {
@@ -173,6 +228,8 @@
 }
 
 .assistant-messages {
+  /* 吃掉标题与输入区之外的全部高度，并在内部滚动（吸底跟随见 useAssistantAutoScroll）。 */
+  flex: 1 1 auto;
   min-height: 320px;
   padding: 18px 4px;
   overflow-y: auto;

@@ -80,17 +80,23 @@ const interviewPage = {
   "interviewPage.setup.typeLabel": "面试类型",
   "interviewPage.setup.difficultyLabel": "难度",
   "interviewPage.setup.styleLabel": "面试官风格",
+  "interviewPage.setup.styleExtraIgnored": "已填写自定义人设，此项不生效。",
   "interviewPage.setup.roundsLabel": "轮数",
-  "interviewPage.setup.roundsAuto": "自动（AI 判断收尾）",
+  "interviewPage.setup.roundsAuto": "自动",
+  "interviewPage.setup.roundsModeCustom": "指定轮数",
   "interviewPage.setup.roundsOption": "{round} 轮",
+  "interviewPage.setup.roundsUnit": "轮",
+  "interviewPage.setup.roundsRequired": "轮数需在 3–12 之间",
   "interviewPage.setup.roundsExtra":
-    "选「自动」时不设轮数：面试官按你的表现自主决定何时收尾，更接近真实面试。",
+    "「自动」由面试官按你的表现决定何时收尾；「指定轮数」由你定 3–12 轮。",
   "interviewPage.setup.focusLabel": "考察重点（选填）",
   "interviewPage.setup.focusExtra": "例如：用户增长、跨部门协作、成本控制",
   "interviewPage.setup.focusPlaceholder": "留空则按面试类型通用考察",
-  "interviewPage.setup.personaLabel": "自定义面试官人设（选填）",
+  "interviewPage.setup.personaLabel": "自定义人设（选填）",
+  /** 人设标签行右侧的辅助说明（第 2 条）：与人设并列后方位词失效，只说"覆盖"。 */
+  "interviewPage.setup.personaOverrideHint": "填写后覆盖风格设定",
   "interviewPage.setup.personaExtra":
-    "例如：某公司业务负责人，喜欢追问具体数字与落地过程。优先级高于上面的默认风格。",
+    "例如：某公司业务负责人，喜欢追问具体数字与落地过程。填写后覆盖面试官风格。",
   "interviewPage.setup.start": "开始面试",
   "interviewPage.setup.confidenceTip":
     "面试官会基于你的资料与岗位要求提问，回答越具体（做了什么、结果是什么）点评越有用。",
@@ -163,6 +169,25 @@ const interviewPage = {
   "interviewPage.setup.style.gentle": "温和引导",
   "interviewPage.setup.style.probing": "持续追问",
   "interviewPage.setup.style.pressure": "压力质询",
+
+  // 简历材料下拉的两组（#25）：外部简历与内部简历同列一个下拉，靠分组区分来源。
+  "interviewPage.setup.resumeGroup.internal": "本应用的简历",
+  "interviewPage.setup.resumeGroup.external": "外部简历（上传的）",
+  // 没有正文的外部简历在下拉里就禁用（方案 25C）：短标记给选项文案，长句子给悬停提示。
+  "interviewPage.setup.resumeNoTextBadge": "无正文",
+  "interviewPage.setup.resumeNoText": "这份简历没有提取到文字，请上传原件",
+  // 外部简历按岗位只打标签、不过滤（方案 25D）：列表接口没有 job_id 参数。
+  "interviewPage.setup.resumeJobTag": "关联此岗位",
+  // 「当前材料」：选完外部简历后下拉是空的（材料走"导入文件"那一侧），必须显式说清现在用的是哪份。
+  "interviewPage.setup.currentMaterial.record": "当前材料：本应用的简历《{name}》",
+  "interviewPage.setup.currentMaterial.external": "当前材料：外部简历《{name}》",
+  "interviewPage.setup.currentMaterial.file": "当前材料：导入的文件《{name}》",
+  "interviewPage.setup.currentMaterial.empty": "当前材料：尚未选择",
+
+  // 外部简历（第 21 条）"用于面试"的预填提示：从简历中心跳过来时把材料带进设定卡。
+  "interviewPage.setup.external.prefilled": "已带入外部简历「{name}」",
+  "interviewPage.setup.external.loadFailed": "没能读取这份外部简历，请手动选择或上传",
+  "interviewPage.setup.external.noText": "这份外部简历没有提取到文字，请在简历材料里上传原件",
 } as const;
 
 export default interviewPage;

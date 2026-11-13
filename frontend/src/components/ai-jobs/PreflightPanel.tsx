@@ -36,9 +36,9 @@ export default function PreflightPanel({
           <List.Item.Meta
             avatar={
               check.ok ? (
-                <CheckCircleFilled style={{ color: "var(--rf-color-success, #52c41a)" }} />
+                <CheckCircleFilled style={{ color: "var(--rf-success-strong)" }} />
               ) : (
-                <CloseCircleFilled style={{ color: "var(--rf-color-error, #ff4d4f)" }} />
+                <CloseCircleFilled style={{ color: "var(--rf-error-strong)" }} />
               )
             }
             title={check.label}

@@ -89,7 +89,7 @@ export default function ConnectionCard({
         type={tone}
         showIcon
         icon={connected ? <CheckCircleOutlined /> : <RobotOutlined />}
-        message={label}
+        title={label}
         description={
           <>
             {description && <div>{description}</div>}

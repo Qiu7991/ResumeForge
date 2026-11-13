@@ -17,12 +17,40 @@ from ..schemas.setting import (
     NAVIGATION_OPTIONAL_KEYS,
     AssistantOrbSetting,
     NavigationVisibility,
-    SearchConfig,
 )
 
-# 对外兼容面：API_KEY_MASK 的取用点是 test_api_settings.py:8 / test_llm_session_key.py:12 /
-# data_backup/api_keys.py:16，它们都从本模块 import；值本身由 llm_key_refs 定义。
-from .api_key_crypto import decrypt_key, encrypt_key
+# 对外兼容面：求职助手「数据权限」四档与旧放宽开关的实现在 assistant_permission；
+# 48 处既有调用点（api/settings.py、api/assistant.py、api/assistant_stream.py、助手工具）
+# 仍按本模块取符号，故逐个 ``as`` 同名重导出。
+from .assistant_permission import (
+    ASSISTANT_PERMISSION_DEFAULT as ASSISTANT_PERMISSION_DEFAULT,
+)
+from .assistant_permission import (
+    ASSISTANT_PERMISSION_LEVELS as ASSISTANT_PERMISSION_LEVELS,
+)
+from .assistant_permission import (
+    get_assistant_permission as get_assistant_permission,
+)
+from .assistant_permission import (
+    get_assistant_relaxed_mode as get_assistant_relaxed_mode,
+)
+from .assistant_permission import permission_axes as permission_axes
+from .assistant_permission import permission_from_axes as permission_from_axes
+from .assistant_permission import (
+    reset_runtime_relaxed_override as reset_runtime_relaxed_override,
+)
+from .assistant_permission import (
+    resolve_assistant_relaxed_mode as resolve_assistant_relaxed_mode,
+)
+from .assistant_permission import (
+    save_assistant_permission as save_assistant_permission,
+)
+from .assistant_permission import (
+    save_assistant_relaxed_mode as save_assistant_relaxed_mode,
+)
+from .assistant_permission import (
+    set_runtime_relaxed_override as set_runtime_relaxed_override,
+)
 from .llm_key_refs import API_KEY_MASK  # noqa: F401
 
 # 对外兼容面：48 处调用方与测试按本模块取符号，逐个 ``as`` 同名重导出（走 llm_settings）。
@@ -37,9 +65,25 @@ from .llm_settings import resolve_llm_config_api_key as resolve_llm_config_api_k
 from .llm_settings import save_llm_config as save_llm_config
 from .llm_settings import save_llm_config_record as save_llm_config_record
 
+# 对外兼容面：联网搜索设置的实现在 web_search_settings（全局文件，所有数据集共用）；
+# 既有调用点与测试仍按本模块取符号，逐个 as 同名重导出。
+from .web_search_settings import get_search_config as get_search_config
+from .web_search_settings import (
+    get_search_config_with_secrets as get_search_config_with_secrets,
+)
+from .web_search_settings import migrate_legacy_search_once as migrate_legacy_search_once
+from .web_search_settings import resolve_search_deepseek_key as resolve_search_deepseek_key
+from .web_search_settings import save_search_config as save_search_config
+
 logger = logging.getLogger(__name__)
 
-_SEARCH_CONFIG_KEY = "search_config"
+# ===== 投递台的两个 JSON 设置（#14：屏蔽清单 / 话术库）=====
+# 与 ``assistant_limits`` 同一条路：AppSetting 里一行 JSON，**零迁移**。
+# 校验与业务规则不在这里（``services/apply/blocklist.py`` /
+# ``services/apply/greeting_templates.py``）：本模块只负责"存进去、读出来、别把脏数据炸到调用方"。
+_APPLY_BLOCKLIST_KEY = "apply_blocklist"
+_APPLY_GREETING_TEMPLATES_KEY = "apply_greeting_templates"
+
 _REMINDER_POPUP_KEY = "reminder_popup_on_start"
 _ASSISTANT_ORB_KEY = "assistant_orb_enabled"
 _NAVIGATION_VISIBILITY_KEY = "navigation_visibility"
@@ -47,86 +91,9 @@ _WEBFORM_RELAXED_MODE_KEY = "webform_relaxed_mode"
 _EXPORT_SAVE_LOCATION_KEY = "export_save_location"
 # 自动备份间隔（天）的运行时设置：调度线程每次到期检查时读取，保存后下次检查生效。
 _AUTO_BACKUP_INTERVAL_KEY = "auto_backup_interval_days"
-# 求职助手放宽模式：开启后助手可读取完整资料（含姓名、电话等敏感字段）与
-# 网申填写记录、历史对话。默认必须**关**——它扩大的是发往模型的个人信息面。
-_ASSISTANT_RELAXED_MODE_KEY = "assistant_relaxed_mode"
-
-
-# ===== 联网搜索设置 =====
-
-# DeepSeek 搜索密钥单独一行：`search_config` 的 JSON 里只放掩码，真实密钥不落进
-# 那份会被整体回传前端的配置。与 LLM 的 key 一样走 DPAPI 加密（非 Windows 保持明文）。
-_SEARCH_DEEPSEEK_KEY = "search_deepseek_api_key"
-
-
-def _load_search_config(db: Session) -> SearchConfig:
-    """读取搜索设置原文；脏数据或缺失时退回默认（Bing + DuckDuckGo）。"""
-    row = db.get(AppSetting, _SEARCH_CONFIG_KEY)
-    if row is None:
-        return SearchConfig()
-    try:
-        return SearchConfig.model_validate(json.loads(row.value))
-    except (json.JSONDecodeError, ValidationError):
-        logger.warning("联网搜索设置数据损坏，已重置为默认值")
-        return SearchConfig()
-
-
-def resolve_search_deepseek_key(db: Session) -> str:
-    """取真实密钥（仅供运行时调用，**不得**回传前端）。未配置返回空串。"""
-    row = db.get(AppSetting, _SEARCH_DEEPSEEK_KEY)
-    if row is None or not row.value:
-        return ""
-    return decrypt_key(str(row.value))
-
-
-def get_search_config(db: Session) -> SearchConfig:
-    """对外（设置页）读取：``deepseek_api_key`` 只会是掩码或空串。"""
-    config = _load_search_config(db)
-    config.deepseek_api_key = API_KEY_MASK if resolve_search_deepseek_key(db) else ""
-    return config
-
-
-def get_search_config_with_secrets(db: Session) -> SearchConfig:
-    """运行时读取：把真实密钥解出来，供 ``aggregate_search`` 调 DeepSeek 用。"""
-    config = _load_search_config(db)
-    config.deepseek_api_key = resolve_search_deepseek_key(db)
-    return config
-
-
-def save_search_config(db: Session, config: SearchConfig) -> SearchConfig:
-    """保存联网搜索配置。
-
-    ``deepseek_api_key`` 的三种取值决定密钥行怎么变——这是"值只能是掩码或引用"
-    的落地点：
-    - 空串：**清除**已保存的密钥（用户显式移除）；
-    - 掩码（``********`` 开头）：保持不变（前端回显的就是它，原样回传不应清空密钥）；
-    - 其它：视为新密钥，加密后写入。
-    """
-    incoming = (config.deepseek_api_key or "").strip()
-    key_row = db.get(AppSetting, _SEARCH_DEEPSEEK_KEY)
-    if incoming.startswith(API_KEY_MASK):
-        stored_placeholder = API_KEY_MASK if key_row is not None else ""
-    elif incoming:
-        encrypted = encrypt_key(incoming)
-        if key_row is None:
-            db.add(AppSetting(key=_SEARCH_DEEPSEEK_KEY, value=encrypted))
-        else:
-            key_row.value = encrypted
-        stored_placeholder = API_KEY_MASK
-    else:
-        if key_row is not None:
-            db.delete(key_row)
-        stored_placeholder = ""
-
-    persisted = config.model_copy(update={"deepseek_api_key": stored_placeholder})
-    row = db.get(AppSetting, _SEARCH_CONFIG_KEY)
-    serialized = json.dumps(persisted.model_dump(), ensure_ascii=False)
-    if row is None:
-        db.add(AppSetting(key=_SEARCH_CONFIG_KEY, value=serialized))
-    else:
-        row.value = serialized
-    db.commit()
-    return get_search_config(db)
+# T26 事件触发：提醒到期时自动生成"准备"任务卡。默认**关**——用户主动开启，
+# 避免"助手自作主张"的观感；关闭后不再生成，已生成的卡保留（不追删）。
+_AGENT_TASK_EVENTS_KEY = "agent_task_events_enabled"
 
 
 # ===== 提醒弹窗设置 =====
@@ -231,34 +198,37 @@ def save_webform_relaxed_mode(db: Session, enabled: bool) -> bool:
     return bool(enabled)
 
 
-# ===== 求职助手放宽模式 =====
+# ===== 求职助手放宽模式 / 数据权限（T11） =====
+# 实现在 services/assistant_permission.py：四档 → (relaxed, allow_write) 的唯一映射口径、
+# 新旧键的写穿、以及请求级「读」轴覆盖的 ContextVar。本模块只按原名再导出（见文件顶部），
+# 既有调用点（api/settings.py、助手路由、助手工具）取符号的路径不变。
+
+# ===== Agent 任务事件触发（T26：提醒到期 → 生成任务卡）=====
 
 
-def get_assistant_relaxed_mode(db: Session) -> bool:
-    """读取「求职助手放宽模式」开关；缺失或脏数据退回默认**关**。
+def get_agent_task_events_enabled(db: Session) -> bool:
+    """读取「提醒到期自动生成任务卡」开关；缺失或脏数据退回默认**关**。
 
-    放宽模式会把助手的可读范围从"岗位筛选需要的资料"扩大到**全部资料**：姓名、
-    电话等敏感身份字段、网申填表的真实填写值、历史对话。它改变的是"发往模型的
-    个人信息面"，与网申放宽模式一样默认保守，由用户在知情的前提下显式开启。
-    API 密钥等凭据无论如何都不在解锁范围内。
+    它会让后台扫描在没有用户提问的情况下新建任务卡（只建卡、不执行任何写操作），
+    因此与其它"助手主动行为"一样默认保守，由用户在设置里显式开启。
     """
-    row = db.get(AppSetting, _ASSISTANT_RELAXED_MODE_KEY)
+    row = db.get(AppSetting, _AGENT_TASK_EVENTS_KEY)
     if row is None:
         return False
     try:
         value = json.loads(row.value)
     except (json.JSONDecodeError, TypeError):
-        logger.warning("助手放宽模式设置数据损坏，已重置为默认关闭")
+        logger.warning("提醒任务事件开关设置数据损坏，已重置为默认关闭")
         return False
     return value if isinstance(value, bool) else False
 
 
-def save_assistant_relaxed_mode(db: Session, enabled: bool) -> bool:
-    """持久化「求职助手放宽模式」开关。"""
-    row = db.get(AppSetting, _ASSISTANT_RELAXED_MODE_KEY)
+def save_agent_task_events_enabled(db: Session, enabled: bool) -> bool:
+    """持久化「提醒到期自动生成任务卡」开关。"""
+    row = db.get(AppSetting, _AGENT_TASK_EVENTS_KEY)
     serialized = json.dumps(bool(enabled))
     if row is None:
-        db.add(AppSetting(key=_ASSISTANT_RELAXED_MODE_KEY, value=serialized))
+        db.add(AppSetting(key=_AGENT_TASK_EVENTS_KEY, value=serialized))
     else:
         row.value = serialized
     db.commit()
@@ -354,4 +324,96 @@ def save_navigation_visibility(db: Session, config: NavigationVisibility) -> Nav
     else:
         row.value = serialized
     db.commit()
+    return cleaned
+
+
+# ===== 投递台 JSON 设置（#14）=====
+
+
+def _read_json_setting(db: Session, key: str, fallback: object) -> object:
+    """读一行 JSON 设置；**缺失或损坏都退回 fallback，不抛**。
+
+    这两个键是用户手填的（一行一家公司 / 一行一个关键词），也是最容易在落库后被人
+    手动改坏的地方。投递链路（采集入库、入队、投递前）三处都要读屏蔽清单——读不出来的
+    正确反应是"当作没配"，而不是让整次采集或整批投递失败。
+    """
+    row = db.get(AppSetting, key)
+    if row is None:
+        return fallback
+    try:
+        return json.loads(row.value)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("投递台设置 %s 数据损坏，已按未配置处理", key)
+        return fallback
+
+
+def _write_json_setting(db: Session, key: str, value: object) -> None:
+    serialized = json.dumps(value, ensure_ascii=False)
+    row = db.get(AppSetting, key)
+    if row is None:
+        db.add(AppSetting(key=key, value=serialized))
+    else:
+        row.value = serialized
+    db.commit()
+
+
+def _clean_name_list(values: object) -> list[str]:
+    """把任意形态的输入收成"非空、去空白、保序去重"的字符串列表。"""
+    if not isinstance(values, list):
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    return cleaned
+
+
+def get_apply_blocklist(db: Session) -> dict[str, list[str]]:
+    """读取屏蔽清单 ``{companies, keywords}``；缺失/损坏时返回两个空列表。
+
+    只做形态收敛（列表 + 非空字符串 + 去重），**不在这里判停用词**——那属于匹配规则，
+    在 ``services/apply/blocklist.py``；存下来的就是用户填的原话，界面上原样能看见。
+    """
+    raw = _read_json_setting(db, _APPLY_BLOCKLIST_KEY, {})
+    data = raw if isinstance(raw, dict) else {}
+    return {
+        "companies": _clean_name_list(data.get("companies")),
+        "keywords": _clean_name_list(data.get("keywords")),
+    }
+
+
+def save_apply_blocklist(
+    db: Session, companies: list[str], keywords: list[str]
+) -> dict[str, list[str]]:
+    """持久化屏蔽清单（整对象覆盖：PUT 语义）。"""
+    cleaned = {
+        "companies": _clean_name_list(list(companies)),
+        "keywords": _clean_name_list(list(keywords)),
+    }
+    _write_json_setting(db, _APPLY_BLOCKLIST_KEY, cleaned)
+    return cleaned
+
+
+def get_apply_greeting_templates(db: Session) -> list[dict[str, object]]:
+    """读取话术库（``[{id, name, body, tags, uses}]``）；缺失/损坏时返回空列表。
+
+    这里只保证"是个 dict 列表"，逐字段校验交给 schema（``GreetingTemplateIn``）——
+    非法条目由业务层丢弃并记日志，不让一行坏数据把整个话术库读空。
+    """
+    raw = _read_json_setting(db, _APPLY_GREETING_TEMPLATES_KEY, [])
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def save_apply_greeting_templates(
+    db: Session, templates: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    """持久化话术库（整对象覆盖：PUT 语义）。"""
+    cleaned = [dict(item) for item in templates if isinstance(item, dict)]
+    _write_json_setting(db, _APPLY_GREETING_TEMPLATES_KEY, cleaned)
     return cleaned

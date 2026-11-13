@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import Response
 
 from ..database import get_db
-from ..models.material import CANDIDATE_JOB_STATUSES, CandidateJob
+from ..models.material import CANDIDATE_JOB_STATUSES
 from ..schemas.common import Page
 from ..schemas.material import (
     CandidateCsvExportRequest,
@@ -19,14 +19,10 @@ from ..schemas.material import (
     CandidateCsvRow,
     CandidateJobBulkImportOut,
     CandidateJobBulkImportRequest,
-    CandidateJobCreate,
-    CandidateJobDetailOut,
-    CandidateJobImportRequest,
     CandidateJobOut,
-    CandidateJobUpdate,
 )
-from ..services import trash
-from ..services.apply._queue import queued_job_ids
+from ..services.actions import add_action_route
+from ..services.actions.catalog import all_actions
 from ..services.candidate_csv import (
     candidates_to_csv_text,
     decode_csv_bytes,
@@ -34,71 +30,18 @@ from ..services.candidate_csv import (
     parse_candidate_csv,
 )
 from ..services.candidate_jobs import (
-    MAX_CANDIDATE_LIST,
-    candidate_or_none,
-    create_candidate_job,
     delete_candidate_job,
     import_candidates,
     list_candidate_job_ids,
-    list_candidate_jobs,
     list_candidate_jobs_page,
-    mark_candidate_imported,
-    update_candidate_job,
 )
+from ..services.candidate_jobs_read import candidates_by_ids
 from ..services.csv_io import MAX_IMPORT_FILE_CHARS
-from ..services.user_files import save_from_data_url
 
 logger = logging.getLogger(__name__)
 
+
 router = APIRouter(prefix="/api/candidate-jobs", tags=["candidate-jobs"])
-
-
-def _with_queue_flags(db: Session, rows: list[CandidateJob]) -> list[CandidateJobOut]:
-    """给一批候选补上「是否已在投递队列」与「采集时间」（2026-11-10）。
-
-    **一次查询算完全部**（``queued_job_ids`` 走 ``WHERE job_id IN (...)``），不逐条查：
-    采集结果一次上百条，逐条查会让打开这一块随条数线性变慢。
-
-    两个字段都只增不改：``status`` / ``imported_job_id`` 的语义原样保留——前端已有代码
-    依赖它们，这里只是多给两条**它本来要自己算**的信息。
-    """
-    queued = queued_job_ids(db, [row.imported_job_id for row in rows])
-    out: list[CandidateJobOut] = []
-    for row in rows:
-        item = CandidateJobOut.model_validate(row)
-        out.append(
-            item.model_copy(
-                update={
-                    "in_apply_queue": bool(
-                        row.imported_job_id and int(row.imported_job_id) in queued
-                    ),
-                    # 采集来的候选才有「采集时间」；手动粘贴的留空（界面显示为"手动添加"）。
-                    "collected_at": row.created_at if row.collect_task_id else None,
-                }
-            )
-        )
-    return out
-
-
-def _save_image_copies(db: Session, candidate_id: int, images: list[str] | None) -> None:
-    """best-effort：把备选岗位截图 data URL 落一份磁盘副本（失败只记日志）。
-
-    ``CandidateJobUpdate.images`` 允许显式传 ``null``（区分"没提这个字段"与"清空"），
-    本函数对 ``None`` 与空列表同样按"没有图"处理。
-    """
-    for index, data_url in enumerate(images or []):
-        if not data_url:
-            continue
-        try:
-            save_from_data_url(
-                db,
-                str(data_url),
-                source_type="candidate_image",
-                source_ref=f"candidate_job:{candidate_id}",
-                fallback_name=f"candidate-{candidate_id}-{index + 1}",
-            )
-        except Exception:  # noqa: BLE001 - 副本是锦上添花，绝不能挡住暂存
-            logger.warning("备选岗位截图副本保存失败 candidate_job:%s", candidate_id, exc_info=True)
 
 
 def _parse_collect_task_ids(raw: str) -> list[int]:
@@ -114,34 +57,7 @@ def _parse_collect_task_ids(raw: str) -> list[int]:
     return list(dict.fromkeys(parsed))
 
 
-@router.get("", response_model=list[CandidateJobOut])
-def read_candidate_jobs(
-    status: str = Query(default=""),
-    keyword: str = Query(default=""),
-    collect_task_id: int | None = Query(default=None, ge=1),
-    collect_task_ids: str = Query(default=""),
-    limit: int = Query(default=MAX_CANDIDATE_LIST, ge=1, le=MAX_CANDIDATE_LIST),
-    sort: str = Query(default="created_desc", pattern="^(created_desc|score_desc|score_asc)$"),
-    db: Session = Depends(get_db),
-):
-    """列出备选岗位；``status`` 可选 pending / imported。
-
-    ``collect_task_id`` 用于「本次采集结果」——按批次看这次采到了什么。不传则返回
-    **全部批次的候选**：采集面板要一次列完"我采集过的所有岗位"，不该只显示最后一轮
-    （2026-11-10 用户要求：省得再去采集记录里翻）。
-    """
-    if status and status not in CANDIDATE_JOB_STATUSES:
-        raise HTTPException(status_code=422, detail="无效的备选岗位状态")
-    rows = list_candidate_jobs(
-        db,
-        status=status,
-        keyword=keyword,
-        collect_task_id=collect_task_id,
-        collect_task_ids=_parse_collect_task_ids(collect_task_ids),
-        limit=limit,
-        sort=sort,
-    )
-    return _with_queue_flags(db, rows)
+add_action_route(router, all_actions()["list_candidate_jobs"], route_path="")
 
 
 @router.get("/page", response_model=Page[CandidateJobOut])
@@ -150,9 +66,12 @@ def read_candidate_jobs_page(
     keyword: str = Query(default=""),
     collect_task_id: int | None = Query(default=None, ge=1),
     collect_task_ids: str = Query(default=""),
+    # 二开（2026-11-10）：排序键与 ``GET /api/candidate-jobs``（动作层
+    # ``ListCandidateJobsInput.sort``）同一口径。上游的 ``/page`` 写死「最近采集在前」，
+    # 而本分支要「按分数挑岗位」——没有这个参数，界面上的排序按钮就只能排当页。
+    sort: str = Query(default="created_desc"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    sort: str = Query(default="created_desc", pattern="^(created_desc|score_desc|score_asc)$"),
     db: Session = Depends(get_db),
 ):
     """分页列出备选岗位（RF-08）：过滤与排序与旧列表端点完全一致。
@@ -177,11 +96,7 @@ def read_candidate_jobs_page(
     return Page(items=items, total=total)
 
 
-@router.post("", response_model=CandidateJobOut, status_code=201)
-def create_candidate_job_entry(payload: CandidateJobCreate, db: Session = Depends(get_db)):
-    candidate = create_candidate_job(db, payload)
-    _save_image_copies(db, candidate.id, payload.images)
-    return candidate
+add_action_route(router, all_actions()["create_candidate_job"], route_path="")
 
 
 @router.post("/import", response_model=CandidateJobBulkImportOut)
@@ -223,13 +138,9 @@ def read_candidate_job_ids(
 @router.post("/csv/export")
 def export_candidate_jobs_csv(payload: CandidateCsvExportRequest, db: Session = Depends(get_db)):
     """把勾选的候选导出成 CSV（列集与导入共用，导出的文件可以直接改完再导回）。"""
-    candidates = _get_candidates_or_404(db, payload.candidate_ids)
     # 按用户选择的顺序导出，而不是数据库顺序：导出文件里行的次序与界面勾选一致。
-    by_id = {candidate.id: candidate for candidate in candidates}
-    ordered = [
-        by_id[candidate_id] for candidate_id in payload.candidate_ids if candidate_id in by_id
-    ]
-    text = candidates_to_csv_text(ordered)
+    candidates = _get_candidates_or_404(db, payload.candidate_ids)
+    text = candidates_to_csv_text(candidates)
     return Response(
         content=text,
         media_type="text/csv; charset=utf-8",
@@ -279,49 +190,20 @@ def _get_candidates_or_404(db: Session, candidate_ids: list[int]) -> list:
     已在回收站里的候选算"不存在"：列表里看不到它就勾不到它，能拿到 id 只可能来自
     过期页面——导出一份用户以为已经删掉的数据是更糟的结果。
     """
-    candidates = (
-        db.query(CandidateJob)
-        .filter(CandidateJob.id.in_(candidate_ids), trash.live_only(CandidateJob))
-        .all()
-    )
-    found_ids = {candidate.id for candidate in candidates}
-    missing = [candidate_id for candidate_id in candidate_ids if candidate_id not in found_ids]
+    candidates, missing = candidates_by_ids(db, candidate_ids)
     if missing:
         shown = "、".join(str(candidate_id) for candidate_id in missing)
         raise HTTPException(status_code=404, detail=f"以下备选岗位不存在：{shown}")
     return candidates
 
 
-@router.get("/{candidate_id}", response_model=CandidateJobDetailOut)
-def read_candidate_job(candidate_id: int, db: Session = Depends(get_db)):
-    candidate = candidate_or_none(db, candidate_id)
-    if candidate is None:
-        raise HTTPException(status_code=404, detail="备选岗位不存在或已被删除")
-    return candidate
+add_action_route(router, all_actions()["get_candidate_job"], route_path="/{candidate_id}")
 
 
-@router.put("/{candidate_id}", response_model=CandidateJobOut)
-def save_candidate_job(
-    candidate_id: int, payload: CandidateJobUpdate, db: Session = Depends(get_db)
-):
-    candidate = candidate_or_none(db, candidate_id)
-    if candidate is None:
-        raise HTTPException(status_code=404, detail="备选岗位不存在或已被删除")
-    updated = update_candidate_job(db, candidate, payload)
-    if "images" in payload.model_fields_set:
-        _save_image_copies(db, candidate.id, payload.images)
-    return updated
+add_action_route(router, all_actions()["update_candidate_job"], route_path="/{candidate_id}")
 
 
-@router.post("/{candidate_id}/imported", response_model=CandidateJobOut)
-def mark_imported(
-    candidate_id: int, payload: CandidateJobImportRequest, db: Session = Depends(get_db)
-):
-    """标记为已导入正式岗位（岗位由用户在前端确认保存后传入 id）。"""
-    candidate = candidate_or_none(db, candidate_id)
-    if candidate is None:
-        raise HTTPException(status_code=404, detail="备选岗位不存在或已被删除")
-    return mark_candidate_imported(db, candidate, payload.job_id)
+add_action_route(router, all_actions()["import_candidate_job"], route_path="/{candidate_id}/imported")
 
 
 @router.delete("/{candidate_id}", status_code=204)

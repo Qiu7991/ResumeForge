@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * 简历版式控件 · 第一组「结构类」的界面文案：模板 / 版式 / 板块顺序 / 最大篇幅
- * （components/resume/ResumeTemplateControls.tsx）。
+ * （features/resume/layout/ResumeTemplateControls.tsx）。
  *
  * 既有 sections.*（「按我的资料顺序排列」按钮与它的悬停说明）住在 zh-CN.fontDownload.ts；
  * 本文件新增的 key 一律带 templateControls 二级前缀，与它们区分开，不会重名。
@@ -74,6 +74,9 @@ const sections = {
     "简历内容最多排几页 A4；内容少时会自然留白，不会硬撑满",
   /** 段控的每一项：2 页。 */
   "sections.templateControls.pageLimitPages": "{count} 页",
+  // 单数孪生键：英文 count === 1 时是 `1 page`；中文无单复数，两条同句。
+  // 选择逻辑只在 `i18n/countMessage.ts` 里判一次，组件不各写一个三元。
+  "sections.templateControls.pageLimitPagesOne": "{count} 页",
   // 需求 7B：0 = 不限篇幅。单独一条文案，不能复用「{count} 页」（会渲染成「0 页」）。
   "sections.templateControls.pageLimitUnlimited": "不限",
 } as const;

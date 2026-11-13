@@ -5,7 +5,7 @@
 一个交付物。zip 里每份简历的文件名沿用单份导出的命名（标题 + 岗位），重名时追加序号。
 
 **参数有两个来源，本次优先**：请求体可以带 `config`（触发点弹窗里"本次参数"，只作用于
-这一批）；不带时读「设置 → 批量操作」里保存的默认值——老前端只传 id 列表，行为逐字不变。
+这一批）；不带时读「设置 → 外观与交互 → 批量操作」里保存的默认值——老前端只传 id 列表，行为逐字不变。
 既没传本次参数、全局也没配置时才 409。
 
 单份失败（正文仍有 `【待补】` 标记、模板渲染失败等）不拖垮整批：跳过并在响应头里说明
@@ -29,11 +29,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from ...database import get_db
-from ...models.resume import ResumeRecord
 from ...schemas.batch_operation import BatchExportConfig
-from ...services import trash
 from ...services.batch_operation import read_batch_operation_config, validate_batch_template
 from ...services.export_pipeline import ExportRequest
+from ...services.resume.resume_read_service import live_resumes_by_ids
 from .export_routes import _export_record, _require_local_export_request
 
 logger = logging.getLogger(__name__)
@@ -112,18 +111,13 @@ def batch_export_resumes(
     _require_local_export_request(request)
     export_config = _resolve_export_config(db, payload)
     resume_ids = list(dict.fromkeys(payload.resume_ids))
-    rows = (
-        db.query(ResumeRecord)
-        .filter(trash.live_only(ResumeRecord), ResumeRecord.id.in_(resume_ids))
-        .all()
-    )
-    found = {row.id: row for row in rows}
-    missing = [resume_id for resume_id in resume_ids if resume_id not in found]
+    rows, missing = live_resumes_by_ids(db, resume_ids)
     if missing:
         raise HTTPException(
             status_code=404,
             detail=f"以下简历不存在或已在回收站：{'、'.join(map(str, missing))}",
         )
+    found = {row.id: row for row in rows}
 
     archive_bytes = BytesIO()
     used: set[str] = set()

@@ -1,0 +1,199 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * 「语义检索」卡的纯函数：host 归一、配置回填、错误原因 → 引导 key。
+ *
+ * 分开成独立模块是为了能在不挂载组件的情况下测——这里没有 React、没有请求，
+ * 只有「后端只给原因，前端给怎么办」这条分工的映射表。
+ */
+import type { MessageKey } from "../../i18n";
+import type {
+  EmbeddingEndpointMode,
+  EmbeddingMaskedConfig,
+  EmbeddingProfile,
+  EmbeddingRemoteConfig,
+  EmbeddingRemoteStatus,
+} from "../../api/settings";
+
+/** 地址 → host（用于隐私确认与"换 host 重新确认"）。非法地址返回空串。 */
+export function embeddingHostOf(address: string): string {
+  try {
+    return new URL(address.trim()).host;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 真正会把文本发出去的那个地址：模板模式是 request_url，其余是 base_url。
+ *
+ * 必须与后端 EmbeddingProviderConfig.host() 同口径（settings_embedding.py 的
+ * _validate_remote 与 remote/enable 都用 host() 做确认校验），否则模板模式会确认错 host。
+ */
+export function embeddingEndpointAddress(config: EmbeddingRemoteConfig): string {
+  return config.endpoint_mode === "template" ? config.request_url : config.base_url;
+}
+
+/** 隐私确认/撤销所用的 host：模板模式取 request_url 的主机。 */
+export function embeddingEndpointHost(config: EmbeddingRemoteConfig): string {
+  return embeddingHostOf(embeddingEndpointAddress(config));
+}
+
+/** 表单默认值：自定义服务，OpenAI 兼容路径，批量 25（任务书 §4.1 的厂商实测值）。 */
+export function emptyRemoteConfig(): EmbeddingRemoteConfig {
+  return {
+    provider: "openai-http",
+    base_url: "",
+    model: "",
+    api_key: "",
+    batch_size: 25,
+    endpoint_mode: "openai",
+    request_url: "",
+    headers: [],
+    body_template: "",
+    response_path: "data[*].embedding",
+    allow_private: false,
+  };
+}
+
+/**
+ * 从 GET /status 回填表单。
+ *
+ * 真实路由在 /status 顶层给了掩码后的完整 config（见 mask_embedding_config）；有就用它，
+ * 没有（只有契约字段）时退回 host/model/batch 三个可见字段。api_key 恒置空：空串在后端
+ * 等于「沿用已存密钥」，界面不回显真实密钥。
+ *
+ * endpoint_mode 只认后端给的两个值：模板模式之外一律按 openai（避免把未知字符串塞给
+ * 后端 RemoteConfigIn 的 endpoint_mode 字段）。
+ */
+export function remoteConfigFromStatus(
+  remote: EmbeddingRemoteStatus,
+  savedConfig?: EmbeddingMaskedConfig | null,
+): EmbeddingRemoteConfig {
+  const saved = savedConfig && savedConfig.provider === "openai-http" ? savedConfig : null;
+  const endpointMode: EmbeddingEndpointMode =
+    saved?.endpoint_mode === "template" ? "template" : "openai";
+  return {
+    provider: "openai-http",
+    base_url: saved?.base_url ?? "",
+    model: saved?.model || remote.model || "",
+    api_key: "",
+    batch_size: saved?.batch_size ?? remote.batch_size ?? 25,
+    endpoint_mode: endpointMode,
+    request_url: saved?.request_url ?? "",
+    headers: (saved?.headers ?? []).map((row) => ({ name: row.name, value: row.value })),
+    body_template: saved?.body_template ?? "",
+    response_path: saved?.response_path || "data[*].embedding",
+    allow_private: saved?.allow_private ?? false,
+  };
+}
+
+/** 一条已保存配置 → 弹窗表单初值（密钥不回显：空串 = 后端沿用同一条旧 key）。 */
+export function profileConfigFromProfile(profile: EmbeddingProfile): EmbeddingRemoteConfig {
+  return {
+    provider: "openai-http",
+    base_url: profile.base_url,
+    model: profile.model,
+    api_key: "",
+    batch_size: profile.batch_size,
+    endpoint_mode: profile.endpoint_mode,
+    request_url: "",
+    headers: [],
+    body_template: "",
+    response_path: "data[*].embedding",
+    allow_private: false,
+  };
+}
+
+/**
+ * 生效项「有未生效改动」：保存时间晚于本次生效时间。
+ *
+ * 激活时后端把 `active_profile_updated_at` 记成那一刻的 profile.updated_at；之后编辑并保存
+ * 会推进 profile.updated_at，于是这里为 true。点「使用」重新探测成功后才消失。
+ */
+export function profileHasPendingChanges(
+  profile: EmbeddingProfile,
+  activeProfileId: string | undefined,
+  activeProfileUpdatedAt: string | undefined,
+): boolean {
+  if (!activeProfileId || profile.id !== activeProfileId) return false;
+  if (!activeProfileUpdatedAt) return false;
+  return Boolean(profile.updated_at) && profile.updated_at > activeProfileUpdatedAt;
+}
+
+/** 配置卡上的厂商标签：预设 id → 语言包 key；本地/未知一律显示「自定义」。 */
+const PROFILE_PRESET_LABEL_KEYS: Record<string, MessageKey> = {
+  dashscope: "embeddingSearch.remote.preset.dashscope",
+  openai: "embeddingSearch.remote.preset.openai",
+  zhipu: "embeddingSearch.remote.preset.zhipu",
+  siliconflow: "embeddingSearch.remote.preset.siliconflow",
+  ollama: "embeddingSearch.remote.preset.ollama",
+  custom: "embeddingSearch.remote.preset.custom",
+};
+
+export function profilePresetLabelKey(presetId: string): MessageKey {
+  return PROFILE_PRESET_LABEL_KEYS[presetId] ?? "embeddingSearch.remote.preset.custom";
+}
+
+/** host 是否已经确认过外发范围（未确认时激活会弹隐私确认）。 */
+export function profileHostConfirmed(profile: EmbeddingProfile, confirmedHosts: string[]): boolean {
+  return Boolean(profile.host) && confirmedHosts.includes(profile.host);
+}
+
+/**
+ * 远端失败原因 → 一句「怎么办」。
+ *
+ * 后端 detail 只写原因且不含 key/URL；前端据此归类，不去猜具体厂商。匹配串里出现
+ * 中文是为了接住后端可能返回的中文原因（属于 AGENTS.md 允许 i18n-ok 的
+ * 「includes 中文匹配后端文案」一类，不是界面文案）。
+ */
+export function embeddingGuidanceKey(reason: string): MessageKey {
+  const text = (reason || "").toLowerCase();
+  // i18n-ok: 匹配后端可能返回的中文原因，不是界面文案
+  if (/401|403|unauthor|invalid.*key|api key|密钥|鉴权/.test(text)) {
+    return "embeddingSearch.guidance.key";
+  }
+  // 本地资产的下载地址 404 与「远程厂商没有 embeddings 接口」是两件事：前者要等资产发布/换
+  // 镜像地址，后者要换服务商。后端原因里带「下载源」（见 rag_asset_archive）就先归类，
+  // 否则会被下面的 404 分支吃掉，显示成「该服务商不提供 embeddings 接口」。
+  // i18n-ok: 匹配后端可能返回的中文原因，不是界面文案
+  if (/下载源|资源未发布|download source/.test(text)) {
+    return "embeddingSearch.guidance.source";
+  }
+  // i18n-ok: 匹配后端可能返回的中文原因，不是界面文案
+  if (/404|not found|no.*embedding|embeddings 接口|嵌入接口/.test(text)) {
+    return "embeddingSearch.guidance.endpoint";
+  }
+  // i18n-ok: 匹配后端可能返回的中文原因，不是界面文案
+  if (/dimension|维度|dim\b/.test(text)) {
+    return "embeddingSearch.guidance.dimension";
+  }
+  // i18n-ok: 匹配后端可能返回的中文原因，不是界面文案
+  if (/429|rate.?limit|quota|限流|额度/.test(text)) {
+    return "embeddingSearch.guidance.quota";
+  }
+  // i18n-ok: 匹配后端可能返回的中文原因，不是界面文案
+  if (/private|loopback|内网|本机地址/.test(text)) {
+    return "embeddingSearch.guidance.private";
+  }
+  // i18n-ok: 匹配后端可能返回的中文原因，不是界面文案
+  if (/timeout|network|connect|dns|refused|unreachable|超时|网络/.test(text)) {
+    return "embeddingSearch.guidance.network";
+  }
+  // i18n-ok: 匹配后端可能返回的中文原因，不是界面文案
+  if (/sha256|checksum|校验失败/.test(text)) {
+    return "embeddingSearch.guidance.sha";
+  }
+  // i18n-ok: 匹配后端可能返回的中文原因，不是界面文案
+  if (/disk|no space|磁盘/.test(text)) {
+    return "embeddingSearch.guidance.disk";
+  }
+  // i18n-ok: 匹配后端可能返回的中文原因，不是界面文案
+  if (/runtime|onnxruntime|运行时/.test(text)) {
+    return "embeddingSearch.guidance.runtime";
+  }
+  // i18n-ok: 匹配后端可能返回的中文原因，不是界面文案
+  if (/download|下载/.test(text)) {
+    return "embeddingSearch.guidance.download";
+  }
+  return "embeddingSearch.guidance.retry";
+}

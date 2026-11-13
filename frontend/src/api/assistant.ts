@@ -2,6 +2,7 @@
 /** AI 求职助手：会话历史、附件和流式消息。 */
 import type {
   AssistantAttachmentInput,
+  AssistantCompactionResult,
   AssistantConversationBrief,
   AssistantConversationDetail,
   AssistantConversationForkPayload,
@@ -9,11 +10,40 @@ import type {
   AssistantSurface,
   AssistantStreamEvent,
   AssistantWriteProposal,
+  ContextUsage,
   ReasoningEffort,
 } from "../types";
 import type { Material } from "../types";
 import { getFilenameFromDisposition, request, requestRaw } from "./client";
 import { consumeSSE } from "./stream";
+
+/**
+ * 当前界面上下文（T25）：只送结构化标识，**标题一律由服务端按当前数据集重查**。
+ * 后端的 `AssistantClientContext` 是 `extra="forbid"`，多传字段会 422，所以这里只列三个字段。
+ */
+export type AssistantClientSelectionType =
+  | "job"
+  | "resume"
+  | "material"
+  | "claim"
+  | "knowledge"
+  | "tracker"
+  | "reminder"
+  | "interview_experience";
+
+export interface AssistantClientSelection {
+  type: AssistantClientSelectionType;
+  id: number;
+}
+
+export interface AssistantClientContext {
+  /** 路径形状的当前页面（不含查询串/片段）。 */
+  route: string;
+  /** 稳定视图标识（如 jobs / resume_detail）；解析不到时不编造，留空串。 */
+  view: string;
+  /** 从路径里确定性解析出的选中对象；解析不到就不传。 */
+  selected?: AssistantClientSelection;
+}
 
 function surfaceQuery(surface: AssistantSurface): string {
   return `surface=${encodeURIComponent(surface)}`;
@@ -78,7 +108,7 @@ export function conversationToMaterial(
  */
 export function createAssistantConversation(
   title = "",
-  options: { welcome?: boolean; surface?: AssistantSurface } = {},
+  options: { welcome?: boolean; surface?: AssistantSurface; skillIds?: number[] } = {},
 ): Promise<AssistantConversationBrief> {
   return request("/assistant/conversations", {
     method: "POST",
@@ -86,6 +116,8 @@ export function createAssistantConversation(
       title,
       welcome: options.welcome ?? false,
       surface: options.surface ?? "page",
+      // T14：空态先勾了技能时随建会话一起写入（服务端同事务，创建即带技能）。
+      skill_ids: options.skillIds ?? [],
     }),
   });
 }
@@ -208,10 +240,19 @@ export function sendAssistantMessage(
     resume_id?: number | null;
     include_profile?: boolean;
     web_search?: boolean;
+    /**
+     * T11 数据权限解算后的「读」轴：True = 读取真实资料（姓名/电话等）。
+     * 省略或 null = 沿用后端全局设置（旧客户端零改动），前端永远发解算后的具体布尔。
+     */
+    relaxed_mode?: boolean | null;
+    /** T11 数据权限解算后的「写」轴：True = 写工具直接执行，不再逐条确认。 */
+    allow_write?: boolean;
     reasoning_effort?: ReasoningEffort;
     /** 引用某条历史消息追问；被引用内容的快照会存进消息里。 */
     quoted_message_id?: number | null;
     attachments?: AssistantAttachmentInput[];
+    /** T25：当前界面上下文；后端会重查选中对象，标题不由前端提供。 */
+    client_context?: AssistantClientContext;
   },
   onEvent: (event: AssistantStreamEvent) => void,
   signal?: AbortSignal,
@@ -223,6 +264,81 @@ export function sendAssistantMessage(
     onEvent,
     signal,
   );
+}
+
+/**
+ * 重新生成最后一条助手回答（#13A）。
+ *
+ * 与发送不同：不插入新的用户消息（问题与上下文由后端从原消息里取），旧回答会被标成
+ * 已被取代——会话列表过滤它，DB 行保留。生成期间按钮由调用方置灰，避免两条流同时写
+ * 同一个会话。
+ */
+export function regenerateAssistantMessage(
+  conversationId: number,
+  messageId: number,
+  payload: {
+    reasoning_effort?: ReasoningEffort;
+    /** T11 数据权限解算后的两轴：与发送同一口径（后端传）。 */
+    relaxed_mode?: boolean | null;
+    allow_write?: boolean;
+  },
+  onEvent: (event: AssistantStreamEvent) => void,
+  signal?: AbortSignal,
+  surface: AssistantSurface = "page",
+): Promise<void> {
+  return consumeSSE(
+    `/api/assistant/conversations/${conversationId}/messages/${messageId}/regenerate?${surfaceQuery(surface)}`,
+    payload,
+    onEvent,
+    signal,
+  );
+}
+
+/**
+ * 这个对话最近一轮的上下文用量（需求 #6，输入区 chip 的弹层用）。
+ *
+ * 会话不存在时后端返回 404；旧消息没有落过用量时返回 `partial: true` 的估算值
+ * ——调用方不要把它当成完整口径（弹层里标「部分数据」）。
+ */
+export function getAssistantContextUsage(
+  conversationId: number,
+  surface: AssistantSurface = "page",
+): Promise<ContextUsage> {
+  return request(
+    `/assistant/conversations/${conversationId}/context-usage?${surfaceQuery(surface)}`,
+  );
+}
+
+/**
+ * 压缩这段对话的上下文（问题清单 #10）。
+ *
+ * `dryRun=true` 只出预估（后端不写库、不调模型）；真跑会消耗一次全量输入的模型调用，
+ * 所以界面先 dry-run 给用户看「预计从 28% 降到 9%，覆盖 17 轮」再确认。
+ */
+export function compactAssistantConversation(
+  conversationId: number,
+  dryRun: boolean,
+  surface: AssistantSurface = "page",
+): Promise<AssistantCompactionResult> {
+  return request(`/assistant/conversations/${conversationId}/compact?${surfaceQuery(surface)}`, {
+    method: "POST",
+    body: JSON.stringify({ dry_run: dryRun }),
+  });
+}
+
+/**
+ * 还原：清空压缩状态，下次请求就按原文发送。
+ *
+ * **原文从来没被删除过**——压缩只影响"发给模型的视图"，所以这里不需要任何确认之外的
+ * 补偿动作。
+ */
+export function restoreAssistantConversation(
+  conversationId: number,
+  surface: AssistantSurface = "page",
+): Promise<void> {
+  return request(`/assistant/conversations/${conversationId}/compact?${surfaceQuery(surface)}`, {
+    method: "DELETE",
+  });
 }
 
 /** 批准并执行一条写入提案（后端在同一次请求里完成"批准→核销→执行"）。 */

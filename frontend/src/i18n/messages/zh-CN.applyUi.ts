@@ -126,6 +126,27 @@ const applyUi = {
     "最近采集异常，站点可能已改版——先重试一次；如果一直这样，请到项目仓库反馈。",
   "applyUi.siteBar.degradedTag": "站点可能已改版",
   "applyUi.siteBar.healthAria": "站点健康度告警：{reason}",
+
+  // #14F 页头漏斗条：最近 7 天的执行量，点击下钻到投递记录 / 求职进度。
+  "applyUi.funnel.applied": "已投递",
+  "applyUi.funnel.succeeded": "成功",
+  "applyUi.funnel.failed": "失败",
+  "applyUi.funnel.interviewing": "面试中",
+  "applyUi.funnel.hint": "近 {days} 天",
+  "applyUi.funnel.drillAria": "近 {days} 天{dimension} {value}，点击查看",
+
+  // T07「我已提交」：成功记录详情抽屉里的记录动作、提醒日期与一次性引导。
+  "applyUi.recordDetail.submitted.section": "记录投递结果",
+  "applyUi.recordDetail.submitted.hint":
+    "投递成功了就记录一下；会挂一条跟进提醒，不记录也不影响现有统计。",
+  "applyUi.recordDetail.submitted.action": "把这笔记为已提交",
+  "applyUi.recordDetail.submitted.done": "已记录为已提交",
+  "applyUi.recordDetail.submitted.toast": "已记录这条投递为已提交",
+  "applyUi.recordDetail.submitted.reminder": "跟进提醒：{date}",
+  "applyUi.recordDetail.submitted.error": "这条投递没有记录上，请重试一次",
+  "applyUi.recordDetail.submitted.hintTitle": "投递后可以这样跟进",
+  "applyUi.recordDetail.submitted.hintBody":
+    "超过 7 天没有记录到状态变化时，首页「任务」卡会提醒你跟进；可在设置 → 助手与 AI 行为里关掉任务卡。",
 } as const;
 
 export default applyUi;

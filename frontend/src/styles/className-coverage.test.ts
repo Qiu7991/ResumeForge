@@ -12,7 +12,7 @@
  * 2. 按空白拆 token，**只守项目自有前缀**（antd 的 `ant-*`、CSS-in-JS 的 `css-*` 不归我们管）。
  * 3. token 必须作为选择器出现在**项目 CSS** 里（`.token` 后不能紧跟字母数字或 `-`）。扫描面是
  *    `src/**\/*.css` 而不只是 `src/styles/**`：本仓库既有集中分片，也有与组件同目录的样式
- *    （`components/resume-editor/document-editor.css` 承载全部 `document-*` 类名），只扫
+ *    （`features/resume/editor/document-editor.css` 承载全部 `document-*` 类名），只扫
  *    `styles/` 会把 200 多个有样式的类名误判成零样式。
  * 4. 以分隔符结尾的 token（`` `rf-announcement-${severity}` ``）是**动态修饰符**，改查基类
  *    `rf-announcement` 是否存在——这样拼错前缀仍然会红，但不会误伤合法的动态拼接。
@@ -86,7 +86,7 @@ const EXEMPTIONS: Record<string, Exemption> = {
     expires: REVIEW_DATE,
   },
   "interview-setup": {
-    reason: "设置区容器，字段布局由 SetupTab 内的栅格与 .interview-setup-grid 承担",
+    reason: "设置区容器，字段布局由 .interview-setup-stack 与其下的 .interview-setup-fields 承担",
     expires: REVIEW_DATE,
   },
   // —— 资料 / 方案 ——
@@ -116,10 +116,6 @@ const EXEMPTIONS: Record<string, Exemption> = {
   },
   "profile-list-item-content": {
     reason: "行内容容器，行本身由 .profile-list-item 承担",
-    expires: REVIEW_DATE,
-  },
-  "profile-reference-field": {
-    reason: "FileDropZone 透传的定位类，拖拽区样式由 FileDropZone 自身承担",
     expires: REVIEW_DATE,
   },
   "profile-section-empty-actions": {
@@ -250,10 +246,6 @@ const EXEMPTIONS: Record<string, Exemption> = {
   },
   "template-gallery-capability": {
     reason: "Typography.Text type=secondary，颜色与字号由 antd token 承担",
-    expires: REVIEW_DATE,
-  },
-  "template-recognition-confidence": {
-    reason: "识别置信度条容器，文字由 Typography 承担",
     expires: REVIEW_DATE,
   },
 };

@@ -10,6 +10,7 @@
 const pagesMisc = {
   // ── Apply desk (ApplyPage) ─────────────────────────────────────
   "pagesMisc.applyPage.title": "Apply desk",
+  "pagesMisc.applyPage.subtitleAria": "How this flow works",
   "pagesMisc.applyPage.subtitle":
     "Collect jobs → judge the match → confirm each one → apply automatically. Every action on a job site starts with you, and you sign in inside your own browser window.",
   "pagesMisc.applyPage.action.settings": "Apply settings",
@@ -46,7 +47,8 @@ const pagesMisc = {
   "pagesMisc.homePage.todo.queue.text": "{count} jobs are waiting in the apply queue",
   "pagesMisc.homePage.todo.queue.hint": "Line them up, start the browser and they go out",
   /** To-do 3: applications with no movement for over a week. */
-  "pagesMisc.homePage.todo.stalled.text": "{count} applications have not moved for over a week",
+  "pagesMisc.homePage.todo.stalled.text":
+    "{count} applications have had no status change for over a week",
   "pagesMisc.homePage.todo.stalled.hint": "See whether any needs a follow-up or a new status",
 
   // ── Job board (JobsPage) ──────────────────────────────────────

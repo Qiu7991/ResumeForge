@@ -35,15 +35,20 @@ vi.mock("../api/interview", async (importOriginal) => ({
   ...apiMocks,
 }));
 vi.mock("../api/stream", () => streamMocks);
-vi.mock("../components/QuestionBankPanel", () => ({ default: () => <div>题库面板</div> }));
-vi.mock("../components/InterviewExperiencePanel", () => ({ default: () => <div>面经面板</div> }));
-vi.mock("../components/InterviewReviewPanel", () => ({ default: () => <div>复盘面板</div> }));
+vi.mock("../features/questionbank/QuestionBankPanel", () => ({
+  default: () => <div>题库面板</div>,
+}));
+vi.mock("../features/interview/InterviewExperiencePanel", () => ({
+  default: () => <div>面经面板</div>,
+}));
+vi.mock("../features/interview/InterviewReviewPanel", () => ({
+  default: () => <div>复盘面板</div>,
+}));
 // 桩一律用 testid：测试里的中文 ByText 断言要计入 i18n 棘轮，新增用例不许再涨。
 vi.mock("./interview/ReportCard", () => ({
   ReportCard: () => <div data-testid="report-card" />,
 }));
 vi.mock("./interview/SetupTab", () => ({
-  AUTO_ROUNDS_OPTION: "auto",
   SetupTab: ({ onStart }: { onStart: (values: Record<string, unknown>) => void }) => (
     <button
       type="button"
@@ -51,10 +56,12 @@ vi.mock("./interview/SetupTab", () => ({
       onClick={() =>
         onStart({
           jobId: 3,
-          resumeId: 5,
+          resumeId: "r:5",
           interviewType: "综合面",
           difficulty: "中级",
           interviewerStyle: "严谨专业",
+          // roundsMode: "custom" —— 本文件要的是固定 3 轮（收尾决策发生在第 3 轮）。
+          roundsMode: "custom",
           rounds: 3,
           focus: "",
           persona: "",

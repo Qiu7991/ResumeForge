@@ -43,17 +43,24 @@ vi.mock("../api/interview", async (importOriginal) => ({
   ...apiMocks,
 }));
 vi.mock("../api/stream", () => streamMocks);
-vi.mock("../components/QuestionBankPanel", () => ({ default: () => <div>题库面板</div> }));
-vi.mock("../components/InterviewExperiencePanel", () => ({ default: () => <div>面经面板</div> }));
-vi.mock("../components/InterviewReviewPanel", () => ({ default: () => <div>复盘面板</div> }));
+vi.mock("../features/questionbank/QuestionBankPanel", () => ({
+  default: () => <div>题库面板</div>,
+}));
+vi.mock("../features/interview/InterviewExperiencePanel", () => ({
+  default: () => <div>面经面板</div>,
+}));
+vi.mock("../features/interview/InterviewReviewPanel", () => ({
+  default: () => <div>复盘面板</div>,
+}));
 vi.mock("./interview/ReportCard", () => ({ ReportCard: () => <div>评分报告</div> }));
 
-// SetupTab 桩：AUTO_ROUNDS_OPTION 的值必须与真实模块一致（InterviewPage 靠它分流）。
+// SetupTab 桩：`roundsMode` 必须与真实模块一致（InterviewPage 靠它分流「自动 / 指定轮数」）。
 const setupStubs = vi.hoisted(() => {
   const base = {
     // 0066：关联岗位与关联简历都是必选，页面直接从 values 里取。
     jobId: 3,
-    resumeId: 5,
+    // 关联简历的值带前缀（#25）：`r:` = 本应用的简历，提交时由 `toInternalResumeId` 还原成 5。
+    resumeId: "r:5",
     interviewType: "综合面",
     difficulty: "中级",
     interviewerStyle: "严谨专业",
@@ -61,13 +68,14 @@ const setupStubs = vi.hoisted(() => {
     persona: "",
   };
   return {
-    AUTO_ROUNDS_OPTION: "auto",
-    autoValues: { ...base, rounds: "auto" as const },
-    fixedValues: { ...base, rounds: 6 },
+    autoValues: { ...base, roundsMode: "auto" as const, rounds: 6 },
+    fixedValues: { ...base, roundsMode: "custom" as const, rounds: 6 },
     // 问题 5：两侧都用导入文件。这里的材料故意带上 warnings——上传接口的读取 DTO
     // 就是长这样，而写端点 extra="forbid" 不认它。
     materialValues: {
       ...base,
+      roundsMode: "custom" as const,
+      rounds: 6,
       jobId: undefined,
       resumeId: undefined,
       jobMaterial: {
@@ -81,7 +89,6 @@ const setupStubs = vi.hoisted(() => {
 });
 
 vi.mock("./interview/SetupTab", () => ({
-  AUTO_ROUNDS_OPTION: setupStubs.AUTO_ROUNDS_OPTION,
   SetupTab: ({ onStart }: { onStart: (values: Record<string, unknown>) => void }) => (
     <div>
       <button type="button" onClick={() => onStart(setupStubs.autoValues)}>

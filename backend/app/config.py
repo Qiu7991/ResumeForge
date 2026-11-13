@@ -77,7 +77,7 @@ def is_desktop_shell() -> bool:
 
 class Settings(BaseSettings):
     app_name: str = "ResumeForge"
-    app_version: str = "2.0.0"
+    app_version: str = "2.1.0"
 
     # SQLite 文件路径（相对 backend 目录），目录不存在时自动创建
     database_url: str = DEFAULT_DATABASE_URL
@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     # 内存占用与包大小无关。其余接口仍受 max_request_body_mb 约束。
     max_backup_upload_mb: int = Field(default=512, ge=1, le=4096)
     max_backup_uncompressed_mb: int = Field(default=4096, ge=1, le=65536)
+
+    # 资料箱附件上传单独放宽：端点按 10MB 校验单个文件，全局默认 8MB 会让 8–10MB
+    # 的 PDF/Word 在进入端点前就被中间件拦下。这里给到 12MB（10MB 内容 + multipart
+    # 边界与表单头的余量），其余接口仍受 max_request_body_mb 约束。
+    max_attachment_upload_mb: int = Field(default=12, ge=1, le=64)
 
     # 文件日志：在数据目录 logs/ 下追加一份 5MB×5 的滚动日志，防止长期挂机时
     # 启动器重定向的 stdout/stderr（runtime/*.log）无限膨胀。不想落盘的场景
@@ -114,10 +119,20 @@ class Settings(BaseSettings):
     # 收尾为 failed，防止模型端挂起时任务无限占用生成入口（RF-02）。
     resume_generate_budget_seconds: int = Field(default=600, ge=1, le=86400)
 
+    # 同时运行的简历生成任务上限（1–8，默认 4）：这是**运行上限**，不是提交上限。
+    # 超出上限的任务保持 pending 排队、有空位自动开始；调高会让多个 worker 争同一个
+    # SQLite 单写者并更容易撞模型限流，低配机器可调到 2（问题清单 §9.7）。
+    resume_generate_max_concurrent: int = Field(default=4, ge=1, le=8)
+    # 排队任务上限（1–200，默认 50）：只有排到这里才拒绝提交（429「生成队列已满」）。
+    # 正常使用碰不到，它防的是脚本/连点造成的无界内存队列。
+    resume_generate_max_pending: int = Field(default=50, ge=1, le=200)
+
     # 求职助手一次回复的整链预算（秒）：覆盖全部工具轮次与模型流式输出，到期即在
     # 下一个事件边界收尾为 error（RF-14 §2.1.b）。运行中的工具不强制中断（协作式，
     # 与 RF-02 同一约定）；它只防"挂死/无限拖"，不做用户取消语义。
-    assistant_stream_budget_seconds: int = Field(default=600, ge=1, le=86400)
+    # 这里是**部署默认**（1800 秒）：用户在设置页改的值存 AppSetting 且优先于此
+    # （见 ``services/assistant_limits``），设过之后本项只在读到脏值时兜底。
+    assistant_stream_budget_seconds: int = Field(default=1800, ge=1, le=86400)
 
     # 可选：OpenAI 兼容流式请求发送 stream_options.include_usage 以获取 token 用量。
     # 该开关**会改变默认请求体**，默认关闭（RF-14 §2.2：默认路径请求体逐字节不变的
@@ -128,6 +143,54 @@ class Settings(BaseSettings):
     # 只写 estimated_* 命名的遥测字段，不改任何请求体、不作为截断依据（按 token 截断
     # 属于 RF-13/RF-17 的产品决策）。
     llm_token_estimate_enabled: bool = False
+
+    # ===== RAG（语义补召回，默认关闭）=====
+    # 总开关：关闭时生成链与改造前逐字节一致（RAG 只在候选选择层加 boost，不碰
+    # prompt 字节）。打开后仍需 embedding provider 可用，否则自动回退关键词链。
+    rag_retrieval_enabled: bool = False
+    # Phase 0 查询扩展（零依赖：用已配置的 LLM 把 JD 提炼成中文近义/上位词，只进
+    # JobFocus.terms）。与总开关相互独立：它是单独可度量的实验路径。
+    rag_query_expansion_enabled: bool = False
+    rag_query_expansion_timeout_seconds: float = Field(default=8.0, ge=1.0, le=60.0)
+    # embedding provider 与"换模型就会掉分"的四个模型属性（计划 §2.3）。业务代码
+    # 只读这里，不出现具体模型字符串。
+    rag_embedding_provider: str = "fake"
+    rag_embedding_model: str = "fake-embedding-v1"
+    rag_embedding_dim: int = Field(default=64, ge=8, le=8192)
+    # cls | mean | last-token：pooling 方式由模型决定，换模型必须一起改。
+    rag_embedding_pooling: str = "mean"
+    rag_embedding_query_prefix: str = ""
+    rag_embedding_doc_prefix: str = ""
+    # 输出是否已 L2 归一（cosine 检索下归一化只影响分数尺度，不影响排序）。
+    rag_embedding_normalize: bool = True
+    rag_embedding_timeout_seconds: float = Field(default=10.0, ge=1.0, le=120.0)
+    # 向量补召回的最大候选数（防止失败时把整库塞进融合）。
+    rag_embedding_max_candidates: int = Field(default=40, ge=1, le=500)
+    # fake provider 只是 CI/评测用的确定性 hash 向量（与语义无关）。**默认禁止**它参与
+    # 生产排序：否则只把 RAG_RETRIEVAL_ENABLED 打开就会得到"语义随机"的候选顺序，
+    # 看不出坏也没有任何意义。只有测试/链路对比显式置 true 才允许。
+    rag_embedding_allow_fake: bool = False
+    # 单次生成请求内允许花在"算 boost"上的墙钟预算（秒）。冷启动需要编码整库时，
+    # 超出预算立即回退关键词链（fallback=budget_exceeded），缺失向量交给后台
+    # ai_task 预热；编码不阻塞首字节（方案 §2.2）。
+    rag_request_budget_seconds: float = Field(default=1.5, ge=0.1, le=30.0)
+
+    # ===== RAG 真实 embedding provider（本地 + 远程；默认关闭，设置页启用）=====
+    # 本地权重与 runtime 按需下载到数据目录（都不是安装包内容、不进备份）。GitHub
+    # Releases 是第一个下载源，HuggingFace 备用；文件名/sha256 由资产清单钉死，地址
+    # 可整体替换（镜像/自托管）。
+    rag_asset_base_url: str = (
+        "https://github.com/magicapple123/ResumeForge/releases/download/rag-assets-v1"
+    )
+    rag_asset_hf_base_url: str = (
+        "https://huggingface.co/ibm-granite/granite-embedding-97m-multilingual-r2/resolve/main"
+    )
+    # 数据目录下的两个版本化子目录名（测试可覆盖；生产用默认值）。
+    rag_local_model_dirname: str = "rag-model"
+    rag_local_runtime_dirname: str = "rag-runtime"
+    # 本机 Ollama / LM Studio 一类回环或私网端点默认拒绝；只有用户显式开启
+    # （设置页 allow_private 或此环境变量）才放行。公网端点不受影响。
+    rag_embedding_allow_private_endpoint: bool = False
 
     # 应用内更新允许的发布源主机名（英文逗号分隔）。下载包、checksum 与重定向的
     # **每一跳**都必须命中这里的主机或其子域，否则在发出请求前就拒绝（RF-26 §12.5）。

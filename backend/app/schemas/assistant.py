@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .assistant_compaction import ContextCompactionStateOut
 from .material import MAX_MATERIAL_TITLE_CHARS
 
 MAX_ASSISTANT_MESSAGE_CHARS = 20_000
@@ -53,6 +54,47 @@ def normalize_reasoning_effort(value: str) -> str:
     return effort
 
 
+#: T25 界面上下文里 selected.type 的白名单（与后端重查表一一对应）。
+CLIENT_SELECTION_TYPES = (
+    "job",
+    "resume",
+    "material",
+    "claim",
+    "knowledge",
+    "tracker",
+    "reminder",
+    "interview_experience",
+)
+
+
+class AssistantClientSelection(BaseModel):
+    """用户选中对象的**结构化标识**：只收 type+id，不收标题/正文（T25）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal[
+        "job",
+        "resume",
+        "material",
+        "claim",
+        "knowledge",
+        "tracker",
+        "reminder",
+        "interview_experience",
+    ]
+    id: int = Field(ge=1)
+
+
+class AssistantClientContext(BaseModel):
+    """当前界面上下文（T25）：route/view 也只是线索，标题一律由服务端重查。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    route: str = Field(default="", max_length=160)
+    view: str = Field(default="", max_length=64)
+    selected: AssistantClientSelection | None = None
+
+
 class AssistantMessageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -67,6 +109,9 @@ class AssistantMessageCreate(BaseModel):
     # （只读问答，行为与历史版本一致）。True 时写工具直接执行；False 时写工具转为
     # 待确认提案（REST 端点批准后才执行）。模型文本声称"用户已确认"改变不了它。
     allow_write: bool = False
+    # T11 数据权限的「读」轴请求级覆盖：None = 沿用全局设置（旧客户端零改动），
+    # True/False = 本次请求覆盖。流式路径每轮工具循环必须认这个覆盖，否则覆盖会被静默忽略。
+    relaxed_mode: bool | None = None
     # 有思考模式的大模型可以在这里调整推理强度；不支持该参数的服务商会被忽略。
     # 取值可以自定义（各家档位词汇不同），格式见 `normalize_reasoning_effort`。
     reasoning_effort: str = Field(default="", max_length=MAX_REASONING_EFFORT_CHARS)
@@ -84,6 +129,9 @@ class AssistantMessageCreate(BaseModel):
     # `language` 一列；权威值仍是用户显式保存的界面语言（`PUT /api/settings/locale`），
     # 这里只是"用户还没保存过界面语言"时的一次补充。
     locale: str = Field(default="", max_length=16)
+    # T25 共享应用状态：用户在哪一页、选中了哪条记录。**前端输入不可信**——后端会按
+    # 当前数据集重查对象并取服务端标题（见 api/assistant_client_context.py）。
+    client_context: AssistantClientContext | None = None
 
     @field_validator("locale")
     @classmethod
@@ -100,6 +148,21 @@ class AssistantMessageCreate(BaseModel):
         return self
 
 
+AssistantPermissionLevel = Literal["read_only", "read_full", "write_confirm", "write_full"]
+
+
+class AssistantPermissionSetting(BaseModel):
+    """求职助手数据权限档位（T11）：一档同时决定读、写两轴。
+
+    默认「仅查看」，与旧版 assistant_relaxed_mode=False 等价；写新键时同步写旧键，
+    仍在读旧键的路径不会与四档分叉。四档 → 两轴的映射在 services/settings_service.py。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    permission: AssistantPermissionLevel = "read_only"
+
+
 class ChatConversationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -107,6 +170,10 @@ class ChatConversationCreate(BaseModel):
     surface: ConversationSurface = "page"
     # 为真时自动附上一条引导消息（介绍助手功能与用法），用于首次进入创建默认会话。
     welcome: bool = False
+    # T14：新建对话时一次事务写入要启用的技能（空态先勾技能、发第一条消息时带上）。
+    # 上限由服务层校验（>8 → 422 中文提示，见 services/assistant/assistant_skills.py）。
+    # 这里只留一个防滥用的硬上限（200 远大于 8，路由仍会给出中文错误）。
+    skill_ids: list[int] = Field(default_factory=list, max_length=200)
 
 
 class ChatConversationUpdate(BaseModel):
@@ -144,6 +211,54 @@ class ChatConversationUpdate(BaseModel):
         if value is None:
             return None
         return " ".join(value.split())[:64]
+
+
+class ConversationSkillOut(BaseModel):
+    """对话里已启用的一项技能（菜单一次拿全：名称 + 一句话适用场景）。"""
+
+    id: int
+    name: str
+    description: str = ""
+
+
+class ConversationSkillLoadOut(BaseModel):
+    """单个技能在本对话里的加载明细（R05）：完整块多长、实际拼进去多长。
+
+    ``loaded_chars == requested_chars`` 未截断；``0 < loaded < requested`` 被截断；
+    ``loaded_chars == 0`` 整块因预算跳过。前端只用它显示，不自己重算预算。
+    """
+
+    skill_id: int
+    requested_chars: int = 0
+    loaded_chars: int = 0
+
+
+class ConversationSkillBudgetOut(BaseModel):
+    """本对话的技能注入预算（前端菜单右侧显示"X / 12,000 字"并给截断 chip 标黄）。"""
+
+    used_chars: int = 0
+    loaded_chars: int = 0
+    limit_chars: int = 12_000
+    # 提示词被截断、或因预算整块未加载的技能 id：界面上两者都算"没完整加载"。
+    truncated_skill_ids: list[int] = Field(default_factory=list)
+    # 逐技能明细（R05）；默认空列表——不含该字段的旧响应照样能通过校验。
+    per_skill: list[ConversationSkillLoadOut] = Field(default_factory=list)
+
+
+class ConversationSkillsOut(BaseModel):
+    """`GET/PUT /api/assistant/conversations/{id}/skills` 的统一载荷。"""
+
+    skill_ids: list[int] = Field(default_factory=list)
+    skills: list[ConversationSkillOut] = Field(default_factory=list)
+    budget: ConversationSkillBudgetOut = Field(default_factory=ConversationSkillBudgetOut)
+
+
+class ConversationSkillsUpdate(BaseModel):
+    """整体替换一个对话启用的技能。上限（8 个）在服务层校验，以便返回中文提示。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    skill_ids: list[int] = Field(default_factory=list, max_length=200)
 
 
 class ChatConversationForkRequest(BaseModel):
@@ -205,9 +320,16 @@ class ChatMessageOut(BaseModel):
     quoted_message_id: int | None = None
     attachments: list[ChatAttachmentOut] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
-    status: Literal["pending", "complete", "error", "cancelled"]
+    # superseded（#13A）：被「重新生成」取代的旧回答。DB 保留、供审计/导出回看，
+    # 但会话消息列表与模型历史都会过滤它，所以正常响应里不会出现这个值。
+    status: Literal["pending", "complete", "error", "cancelled", "superseded"]
     error: str = ""
     model: str = ""
+    # 消息类别（T01）：normal = 普通对话；proposal_result = 写操作终态的派生回写。
+    # 回写消息只是历史记录，状态以 assistant_write_proposal 表为准（见系统提示的状态块）。
+    kind: Literal["normal", "proposal_result"] = "normal"
+    # 派生回写关联的提案 id（普通消息为 None）。
+    proposal_id: str | None = None
     created_at: datetime
 
 
@@ -270,3 +392,38 @@ class AssistantToolListOut(BaseModel):
 
     items: list[AssistantToolOut] = Field(default_factory=list)
     count: int = 0
+
+
+class ContextUsageBucket(BaseModel):
+    """上下文用量的一个桶（需求 #6）。
+
+    ``key`` 是固定枚举（system / tools / conversation / connectors / skills），**不翻译**：
+    它是前后端共用的协议值，中文显示名在前端语言包里按 key 映射。
+    """
+
+    key: str
+    # 估算 token（``services/llm/token_estimate``）。**不是**服务商口径，禁止用于计费。
+    tokens: int = 0
+    # 该桶占上下文窗口的百分比；窗口未设置（0）时是 null 而不是 0——没有分母就不猜。
+    percent: float | None = None
+
+
+class ContextUsageOut(BaseModel):
+    """``GET /api/assistant/conversations/{id}/context-usage`` 的载荷。
+
+    字段与流式事件 ``context_usage`` 的 ``usage`` 完全一致，前端一套类型两处复用。
+    ``usage_actual`` 是上一轮服务商**实测**的输入 token；估算（``total``）/实测两者
+    不合并、不换算。
+    """
+
+    buckets: list[ContextUsageBucket] = Field(default_factory=list)
+    # 五桶之和（估算）。
+    total: int = 0
+    # 百分比分母（当前模型的 context_window_tokens）；0 = 未设置。
+    window: int = 0
+    percent: float | None = None
+    # true = 旧消息没有落过用量，这里只有 system / conversation 两桶是估算出来的。
+    partial: bool = False
+    usage_actual: int | None = None
+    # 压缩状态（#10）：null = 这个会话从来没压缩过。
+    compaction: ContextCompactionStateOut | None = None

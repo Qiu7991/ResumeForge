@@ -38,7 +38,8 @@ v2 把**每个字段变成一等公民，位置变成数据**：一个统一的 
 
 - v2 文档仍是**一个 JSON**，存在 `resume_record.content` 列里——文档结构本身不新增表 / 列。
   资料侧新增的自定义字段纸面属性（`default_placement` / `material_only`）随迁移 `0069`
-  **只加两列**（旧库兼容、可降级，见 `services/profile/field_placement.py`）。
+  **只加两列**（旧库兼容、可降级，见 `services/profile/field_placement.py`）。2.0 起这两列由基线
+  `0001_baseline_v2` 直接创建，`0069` 是 1.x 历史号。
 - 顶层带 `version: 2` 作为判定依据。读写边界只有一道门（`services/resume/document_io.py`）：
   **读**走 `ensure_document_version(content)`——`version == 2` 直通并归一化，否则交给 converter
   转成 v2（**只在内存里转，不写库**）；**写**走 `prepare_document_for_save(content)`，落库永远是 v2。
@@ -345,7 +346,8 @@ class HeaderFieldSpec:
   default_placement / material_only），用于识别承载区里的「标签：值」行。
 - 系统字段与自定义字段的纸面属性由 `GET /api/profile/field-placement-catalog` 下发（`schemas/profile_field_catalog.py`：
   标签 / 格式 / 默认位置 / 仅素材 / 资料字段 id），资料页与制作台共用，**前端不复制一份映射**；
-  自定义字段的默认位置来自迁移 `0069` 的两列，仅素材字段的 placement 恒为 `hidden`。
+  自定义字段的默认位置来自迁移 `0069` 的两列（2.0 起由基线 `0001_baseline_v2` 直接创建，
+  `0069` 是 1.x 历史号），仅素材字段的 placement 恒为 `hidden`。
 - 新增一个系统字段 = 目录里加一行 `FieldSpec` + `resume_labels` 加标签（若上纸面还要给
   `default_placement`）；不允许在渲染器或模板里再写一份「哪个字段放哪」。
 
@@ -552,6 +554,8 @@ class DocumentPlan(BaseModel):
   entry_title / body / meta）、`data-resume-path`（v2 路径）、`data-object-id`（条目 id）。
 - 9 套内置模板改成「`:root` 变量 + 主题 CSS + `{% include "_resume_document.j2" %}`」，只负责外壳与
   配色字号；`_resume_sections.j2` 保留为一行别名（历史自制模板的稳定契约，preflight 必需文件不变）。
+  2.0 起可选的**只有 6 套**（经典 / 现代 / 精简 / 优雅 / 极简 / 学术），`technical` / `editorial` / `split`
+  已从选择器下线，但注册表仍保留它们、旧简历与自制模板仍可渲染。
 - 灰字段列间距兜底 `equal=1.6 / flow=1.2`（字号倍数）由 `document_html.default_cell_gap()` 统一给出，
   四出口共用同一默认值。
 - 链接只放行 `http(s)` / `mailto`（其余按纯文本渲染，防 XSS）；自动转义开启。
@@ -600,16 +604,16 @@ class DocumentPlan(BaseModel):
 | 层 | 位置 | 职责 |
 |---|---|---|
 | 类型 | `frontend/src/types/resumeDocument.ts` | 与后端 v2 一一对应（discriminated union、placement / format / kind、header / section / entry / layout） |
-| 纯函数 | `frontend/src/features/resume-document/` | normalize / ensureIds / paths / placement 操作（moveItem / setPlacement / reorderItems）/ defaults / convertFromProfile / summarize，全部可单测 |
-| 编辑器 | `components/resume-editor/` | 三区卡：HeadZone（标题 + 元信息）、DetailZone（lead / trail 灰字段行）、BodyZone（正文块）+ 字段位置下拉 + 添加字段；中栏顶部 `ProfileFillMenu`（点开才拉投影、按 source 去重、只补空字段） |
-| 工作台页签 | `components/resume/WorkbenchParamsColumnV2.tsx` | 排版参数 / 本份简历结构 / 双语版本 / 表达资产库 / 来源核对 / 历史（后四个按宿主是否挂载显示；窄屏抽屉同组件） |
+| 纯函数 | `frontend/src/features/resume/document` | normalize / ensureIds / paths / placement 操作（moveItem / setPlacement / reorderItems）/ defaults / convertFromProfile / summarize，全部可单测 |
+| 编辑器 | `features/resume/editor` | 三区卡：HeadZone（标题 + 元信息）、DetailZone（lead / trail 灰字段行）、BodyZone（正文块）+ 字段位置下拉 + 添加字段；中栏顶部 `ProfileFillMenu`（点开才拉投影、按 source 去重、只补空字段） |
+| 工作台页签 | `features/resume/editor/WorkbenchParamsColumnV2.tsx` | 排版参数 / 本份简历结构 / 双语版本 / 表达资产库 / 来源核对 / 历史（后四个按宿主是否挂载显示；窄屏抽屉同组件） |
 | 排版参数 | 同上 | 文档模式（顶部，仅已有记录）/ 模板与版式 / 排版参数 / 间距 / 外观 / 局部排版 / **局部排版工具** / **分页** / 条目字段排版 |
 | 局部排版工具 | `typography/TypographyToolsPanelV2.tsx` | 条目排版（作用范围：整条 / 条目头 / 正文 / 灰字，分别写 `objects` 与 `object_roles`）/ 文字级别 / 多选批量；只写 `format_config` 的角色 / 对象域，不动正文 |
 | 分页 | `pagination/SectionPaginationPanel.tsx` | 板块级 `start_on_new_page` / `keep_together` + 已设置断页汇总 / 恢复自然分页；条目级开关在结构页签的条目字段排版内（`EntryLayoutPanel`），经 `onChange` 交宿主记历史与保存 |
-| 结构面板 | `components/resume/structure/` | 树 = 页 / 栏提示 → 板块 → 条目 → 位置分组；拖拽排序、跨组移动、显示 / 隐藏、复制、锁内容 / 锁排版、搜索、与画布联动；条目勾选框 + Shift 连选，与样式页「多选批量」共用宿主的同一份选择状态 |
-| 双语版本 | `components/resume/bilingual/BilingualWorkspaceV2.tsx` | 字段对照基于 v2 **item path**；采纳只写语言变体，**不替换主稿、不推进简历 revision**；「在工作台查看这份译文」打开只读真实版式预览（关掉不影响主稿与脏值） |
-| 表达资产库 | `components/resume/assets/PhraseLibraryPanelV2.tsx` | 检索 / 插入（服务端生成新对象身份，插入成功自动选中新 item）/ 删除进回收站 |
-| 来源核对 | `components/resume/sources/SourceChainPanelV2.tsx` | 来源链、关联覆盖、过期状态；按选中 v2 锚点建立 / 解除关联、新建手工来源、来源详情与修订、采纳写回（条件写 + 冲突提示）、事实锁增删；「当前改写」按 v2 身份解析 |
+| 结构面板 | `features/resume/outline` | 树 = 页 / 栏提示 → 板块 → 条目 → 位置分组；拖拽排序、跨组移动、显示 / 隐藏、复制、锁内容 / 锁排版、搜索、与画布联动；条目勾选框 + Shift 连选，与样式页「多选批量」共用宿主的同一份选择状态 |
+| 双语版本 | `features/resume/bilingual/BilingualWorkspaceV2.tsx` | 字段对照基于 v2 **item path**；采纳只写语言变体，**不替换主稿、不推进简历 revision**；「在工作台查看这份译文」打开只读真实版式预览（关掉不影响主稿与脏值） |
+| 表达资产库 | `features/resume/assets/PhraseLibraryPanelV2.tsx` | 检索 / 插入（服务端生成新对象身份，插入成功自动选中新 item）/ 删除进回收站 |
+| 来源核对 | `features/resume/provenance/SourceChainPanelV2.tsx` | 来源链、关联覆盖、过期状态；按选中 v2 锚点建立 / 解除关联、新建手工来源、来源详情与修订、采纳写回（条件写 + 冲突提示）、事实锁增删；「当前改写」按 v2 身份解析 |
 | 新建简历 | `ManualResumeModal` → `DocumentEditor` | 弹窗内嵌与制作台相同的新编辑器；初始内容整份来自当前方案投影；v1 编辑器最后入口已移除 |
 | 预览联动 | `ResumePreview` 等 | 点击纸面 → 新路径解析 → 编辑器定位；hover 字段 → 对应行描边（复用现有高亮注入） |
 
@@ -713,7 +717,7 @@ Job intent」、contact「联系方式行 / Contact line」、photo「照片 / P
 - 出口：四格式文本对拍（同一 document 的 HTML / PDF / Word / Markdown 产物同字段、同顺序）；
   PDF 侧既有 `test_pdf_exporter_*`（分页 / 溢出 / 列 / 页眉 / 孤行）继续守版式；Word 侧
   `test_docx_exporter*` 守页数估算与现有行为；
-- 前端：`features/resume-document/*.test.ts`（normalize / operations / paths / summarize / format /
+- 前端：`features/resume/document/*.test.ts`（normalize / operations / paths / summarize / format /
   catalogConvert 等纯函数全分支）+ 编辑器与结构面板的 vitest；
 - 守卫：`noAutoShrinkGuard`、`cjkRatchet`、`messagePacks`、`popupGuard` / `popupStackGuard`、
   `userGuideCopyRef`、文件行数预算与既有后端测试继续通过。

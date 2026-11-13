@@ -18,7 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from ..database import SessionLocal, get_db
+from ..database import get_db
 from ..models.job import Job
 
 logger = logging.getLogger(__name__)
@@ -64,9 +64,11 @@ async def score_job(
         return {"job_id": job_id, "cached": True, **cached}
 
     if not _job_has_jd(job):
+        # detail 只写原因，动作段归前端 `api/errorGuidance.ts` 的 formatErrorGuidance()
+        # （规范 §2.4 / §4.6）——同一句提示在两处写会先分叉、再互相矛盾。
         raise HTTPException(
             status_code=409,
-            detail="该岗位还没有 JD 正文，无法做语义评分。请先让采集补抓详情（或手动补全 JD）。",
+            detail="该岗位还没有 JD 正文，无法做语义评分（可让采集补抓详情或手动补全 JD）",
         )
 
     # 简历与资料：与备选评分走**同一条**取源路径（scoring_service），避免两处口径分叉。
@@ -131,8 +133,9 @@ def _persist_semantic(job_id: int, payload: dict[str, Any], *, model: str) -> No
     这里只负责给它一个独立的 Session：调用点在 await 之后，请求的 Session 已关闭。
     """
     from ..services.job_hunt.scoring_service import persist_semantic_for_job
+    from ..services.session_scope import open_session
 
-    session = SessionLocal()
+    session = open_session()
     try:
         persist_semantic_for_job(session, job_id, payload, model=model)
         session.commit()

@@ -23,7 +23,6 @@ from ..models.job import Job
 from ..schemas.apply import (
     ApplyConfigIn,
     ApplyConfigOut,
-    ApplyRecordBatchOut,
     ApplyRecordOut,
     ApplyTaskCreate,
     ApplyTaskDetailOut,
@@ -45,6 +44,8 @@ from ..schemas.apply import (
 )
 from ..schemas.common import Page
 from ..services import trash
+from ..services.actions import add_action_route
+from ..services.actions.catalog import all_actions
 from ..services.apply import apply_service, task_runner
 from ..services.job.job_match import generate_greeting, job_payload
 from ..services.job.job_match_context import resume_prompt_text
@@ -53,12 +54,16 @@ from ..services.llm.base import LLMError
 from ..services.settings_service import get_llm_config
 from ..services.site_health import site_health_overview
 from ._disconnect import client_gone, run_until_disconnect
+from .apply_extra import register_apply_extra_routes
 from .apply_queue import router as apply_queue_router
 from .apply_record_items import router as apply_record_items_router
 from .apply_tasks_page import router as apply_tasks_page_router
 from .webform.records_page import router as webform_records_page_router
 
 logger = logging.getLogger(__name__)
+
+
+
 
 router = APIRouter(prefix="/api/apply", tags=["apply"])
 collect_router = APIRouter(prefix="/api/collect", tags=["collect"])
@@ -71,6 +76,8 @@ router.include_router(apply_tasks_page_router)
 router.include_router(apply_queue_router)
 # 批次明细分页（B4 按需加载）：grouped 轻量分页后，展开批次在这里拉明细。
 router.include_router(apply_record_items_router)
+# #14 的 8 个补强端点整批在 apply_extra.py（本文件预算只剩个位数余量）。
+register_apply_extra_routes(router)
 
 
 def _raise(exc: apply_service.ApplyServiceError) -> None:
@@ -340,10 +347,7 @@ def list_tasks(
     """
     if kind and kind not in (TASK_KIND_APPLY, TASK_KIND_COLLECT):
         raise HTTPException(status_code=422, detail="无效的批次类型")
-    query = db.query(ApplyTask)
-    if kind:
-        query = query.filter(ApplyTask.kind == kind)
-    return query.order_by(ApplyTask.id.desc()).limit(limit).all()
+    return apply_service.list_apply_tasks(db, kind=kind, limit=limit)
 
 
 @router.get("/tasks/current", response_model=ApplyTaskOut | None)
@@ -427,7 +431,7 @@ def list_records(
     return Page(items=items, total=total)
 
 
-@router.get("/records/grouped", response_model=Page[ApplyRecordBatchOut])
+add_action_route(router, all_actions()["list_apply_records"], route_path="/records/grouped")
 def list_record_batches(
     keyword: str = Query(default=""),
     result: str = Query(default="", description="success / failed / skipped"),

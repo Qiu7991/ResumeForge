@@ -80,8 +80,8 @@ export default function BlocklistCard() {
           {t("aiJobs.native.blocklistHint")}
         </Text>
 
-        {error && <Alert type="error" showIcon message={error} />}
-        {saved && <Alert type="success" showIcon message={t("aiJobs.native.blocklistSaved")} />}
+        {error && <Alert type="error" showIcon title={error} />}
+        {saved && <Alert type="success" showIcon title={t("aiJobs.native.blocklistSaved")} />}
 
         <div>
           <Text strong>{t("aiJobs.native.blocklistCompanies")}</Text>

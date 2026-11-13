@@ -300,3 +300,14 @@ html[lang^="en"] .resume-wb-col-params {
   color: var(--rf-brand) !important;
   background: var(--rf-brand-tint) !important;
 }
+
+/* ===== 结构可见性面板（SectionVisibilityPanel） =====
+   标题行 + 说明 + 逐节开关，纵向堆叠；与参数栏其它块一致地占满栏宽。
+   这条规则此前缺失（类名写在 JSX 里但没有任何样式表定义它），
+   `className-coverage.test.ts` 的零样式清单把它点名了——补真样式而不是登记豁免。 */
+.resume-section-visibility {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}

@@ -28,7 +28,7 @@ class ToolExecutionContext:
     """一次工具执行的权限快照（请求级开关 + 数据集身份）。
 
     ``web_search`` 来自请求体的联网开关（每次请求由前端显式带上）；
-    ``relaxed`` / ``fetch_pages`` 是全局设置，每轮工具循环重读；
+    ``relaxed`` / ``fetch_pages`` / ``max_results`` 是全局设置，每轮工具循环重读；
     ``writable`` 是用户对**本次请求**显式同意写入的唯一通道（请求级
     ``allow_write``，默认 False）——模型文本声称"用户已确认"不会改变它；
     ``dataset_id`` / ``dataset_generation`` 来自 dataset_scope：切换数据集后
@@ -41,6 +41,9 @@ class ToolExecutionContext:
     fetch_pages: int
     relaxed: bool
     writable: bool
+    # 设置页的「每次最多返回的结果条数」（上限）；0 = 无上下文（导入预览等），
+    # 工具描述里不写具体条数。
+    max_results: int = 0
     request_id: str = ""
 
 
@@ -48,18 +51,53 @@ class ToolNotAuthorizedError(Exception):
     """执行层拒绝（工具未下发或未获授权）。message 面向模型可读。"""
 
 
+# 「永远走提案」的写工具（T14 D.1 / 期二 T12 / #15F）：即使 allow_write=True（完全权限）
+# 也不直接执行。
+#
+# 为什么单列这几个：create_skill / update_skill 写的是**下一轮就进系统提示**的提示词，
+# 且被标注"应当遵守"；create_job_preference / update_job_preference 写入的求职偏好
+# 同样会进下一轮系统提示（注入块），且被要求"应当遵守"。完全权限下模型若直接执行，
+# 就能自己造一条"忽略以上全部限制"的技能/偏好并立刻生效——这等于把安全边界交给了模型。
+# 技能与偏好写入必须始终由用户在界面上确认（「以后都这样」/「只在这次对话」两个按钮）。
+#
+# apply_start（#15F，全项目唯一的 EXTERNAL_SIDE_EFFECT 工具）：它会真的向招聘平台提交
+# 投递，平台侧没有撤回接口 = **本地不可撤销**。所以"用户这次给了完全权限"也不能成为
+# 直接执行的理由：每一批投递都必须在提案卡上逐条看清（哪几条、用哪份简历）再确认。
+# 它同时也被排除在"重试/自动重放"之外——外部副作用只允许执行一次。
+ALWAYS_PROPOSAL_TOOLS = frozenset(
+    {
+        "create_skill",
+        "update_skill",
+        "create_job_preference",
+        "update_job_preference",
+        "apply_start",
+    }
+)
+
+
+def requires_proposal(name: str, *, writable: bool) -> bool:
+    """这次工具调用是否必须转成待确认提案（下发与执行同源的门槛）。
+
+    ``writable=False`（未授予写入）时所有写工具都走提案（历史行为）；
+    ``writable=True` 时只有 ALWAYS_PROPOSAL_TOOLS 例外。调用方仍需先判断它是不是写工具
+    （``tool_writes``）——本函数只回答"写工具要不要转提案"。
+    """
+    return name in ALWAYS_PROPOSAL_TOOLS or not writable
+
+
 def build_context(
     *,
     web_search: bool = False,
     fetch_pages: int = 0,
+    max_results: int = 0,
     relaxed: bool = False,
     writable: bool = False,
     request_id: str = "",
 ) -> ToolExecutionContext:
     """构建当前轮次的执行上下文。
 
-    每轮工具循环调用一次：``relaxed``/``fetch_pages`` 由调用方重读设置后传入，
-    数据集身份在这里快照。**不要**把一条流的全部轮次共用同一份上下文。
+    每轮工具循环调用一次：``relaxed``/``fetch_pages``/``max_results`` 由调用方重读
+    设置后传入，数据集身份在这里快照。**不要**把一条流的全部轮次共用同一份上下文。
     """
     return ToolExecutionContext(
         dataset_id=dataset_scope.current_dataset_id(),
@@ -68,6 +106,7 @@ def build_context(
         fetch_pages=fetch_pages,
         relaxed=relaxed,
         writable=writable,
+        max_results=max_results,
         request_id=request_id,
     )
 

@@ -15,6 +15,10 @@ from sqlalchemy.orm import Session
 from ...models.apply import FAILURE_UNKNOWN
 from ...schemas.apply import CollectConfigIn
 from ..sites.base import SearchResult, SiteAdapter, SiteFailure
+from .blocklist import drop_if_blocked, load_blocklist
+# 去重判据与「采样留痕」都在 collector_history（15A/15B，上游 2.1.0）：interest 路径
+# 与搜索路径同一套——`Collector._already_known` 已被上游删掉，这里改用模块级函数。
+from .collector_history import already_known, known_job_of, record_sighting
 
 if TYPE_CHECKING:
     from .collector import Collector, CollectReport
@@ -42,6 +46,10 @@ def collect_interest(
     其余（去重、限速、暂停、进度、暂存区写入）与搜索路径完全一致。
     """
     from ..sites.boss_interest import fetch_interest_page
+
+    # 本轮采集任务 id（job_seen.run_id，"哪一轮见到的"）与屏蔽清单：与搜索路径同一套。
+    run_id = getattr(task, "id", None)
+    blocklist = load_blocklist(session)
 
     open_interest = getattr(adapter, "open_interest_page", None)
     if open_interest is None:
@@ -100,12 +108,18 @@ def collect_interest(
             seen.add(key)
             # 这一条占掉一个"收藏位置"——不管它后面是被跳过还是被采走。
             scanned += 1
-            known = collector._already_known(session, item)
+            # 15A/15B：**每一条**结果都记一次采样；去重判据与搜索路径同一份实现。
+            known_job = known_job_of(session, item)
+            record_sighting(session, item, known_job=known_job, run_id=run_id)
+            known = already_known(session, item, job=known_job)
             if known:
                 report.skipped += 1
                 if known == "trashed":
                     # 单独计数：这是"你之前删过它"，不是"早就在库里了"。
                     report.skipped_trashed += 1
+                continue
+            # 14E：屏蔽清单对 interest 路径同样生效（用户拉黑的公司不该换个入口又回来）。
+            if drop_if_blocked(report, blocklist, item.company, item.title):
                 continue
             pending.append(item)
         if not page_result.has_more:

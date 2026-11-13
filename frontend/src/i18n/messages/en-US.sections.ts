@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Resume template controls, structural group: template, layout preset, section order
- * and page limit (components/resume/ResumeTemplateControls.tsx).
+ * and page limit (features/resume/layout/ResumeTemplateControls.tsx).
  */
 const sections = {
   "sections.templateControls.templateLabel": "Template",
@@ -39,6 +39,7 @@ const sections = {
   "sections.templateControls.pageLimitHint":
     "Maximum number of A4 pages for the Resume; short content leaves natural whitespace instead of stretching",
   "sections.templateControls.pageLimitPages": "{count} pages",
+  "sections.templateControls.pageLimitPagesOne": "{count} page",
   "sections.templateControls.pageLimitUnlimited": "No limit",
 } as const;
 

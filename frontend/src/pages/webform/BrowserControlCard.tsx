@@ -15,7 +15,7 @@ import { memo } from "react";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
 import { BROWSER_STATE_LABEL_KEYS } from "../../i18n/enum/apply";
-import WebFormBrowserUrlBar from "../../components/webform/WebFormBrowserUrlBar";
+import WebFormBrowserUrlBar from "../../features/webform/WebFormBrowserUrlBar";
 import { BROWSER_STATE_META } from "../../types";
 import type { BrowserState, WebFormUrlHistory } from "../../types";
 import type { WebFormBusyState } from "./constants";
@@ -109,24 +109,20 @@ export const BrowserControlCard = memo(function BrowserControlCard({
               </Button>
             </Tooltip>
           ) : (
-            <Tooltip title={t("webFormPage.browserCard.startTooltip")}>
-              <Button
-                type="primary"
-                icon={<ChromeOutlined />}
-                aria-label={t("webFormPage.browserCard.startAria")}
-                loading={busy === "start"}
-                disabled={anyBusy}
-                onClick={onStart}
-              >
-                {t("webFormPage.browserCard.start")}
-              </Button>
-            </Tooltip>
-          )}
-          <Tooltip title={t("webFormPage.browserCard.settingsTooltip")}>
-            <Button icon={<SettingOutlined />} disabled={anyBusy} onClick={onOpenBrowserSettings}>
-              {t("webFormPage.browserCard.settings")}
+            <Button
+              type="primary"
+              icon={<ChromeOutlined />}
+              aria-label={t("webFormPage.browserCard.startAria")}
+              loading={busy === "start"}
+              disabled={anyBusy}
+              onClick={onStart}
+            >
+              {t("webFormPage.browserCard.start")}
             </Button>
-          </Tooltip>
+          )}
+          <Button icon={<SettingOutlined />} disabled={anyBusy} onClick={onOpenBrowserSettings}>
+            {t("webFormPage.browserCard.settings")}
+          </Button>
           <Tooltip title={t("webFormPage.browserCard.refreshTooltip")}>
             <Button
               icon={<ReloadOutlined />}
@@ -134,20 +130,16 @@ export const BrowserControlCard = memo(function BrowserControlCard({
               disabled={anyBusy}
               onClick={() => void onRefreshStatus()}
               aria-label={t("webFormPage.browserCard.refreshAria")}
-            >
-              {t("webFormPage.browserCard.refresh")}
-            </Button>
+            />
           </Tooltip>
-          <Tooltip title={t("webFormPage.browserCard.diagnosticsTooltip")}>
-            <Button
-              icon={<DownloadOutlined />}
-              loading={busy === "diagnostics"}
-              disabled={anyBusy}
-              onClick={() => void onExportDiagnostics()}
-            >
-              {t("webFormPage.browserCard.diagnostics")}
-            </Button>
-          </Tooltip>
+          <Button
+            icon={<DownloadOutlined />}
+            loading={busy === "diagnostics"}
+            disabled={anyBusy}
+            onClick={() => void onExportDiagnostics()}
+          >
+            {t("webFormPage.browserCard.diagnostics")}
+          </Button>
           {running && (sessionActive || liveRunning) ? (
             <Tooltip title={t("webFormPage.browserCard.endTooltip")}>
               <Button

@@ -14,7 +14,7 @@ GET    /llm/records     全部记录（首次调用触发从数据集的一次�
 POST   /llm/records     按名称 upsert 一条记录
 DELETE /llm/records/{id} 删除记录
 POST   /llm/records/{id}/activate  设为「使用中」
-POST   /llm/api-key/reveal         本机查看当前密钥（不缓存）
+POST   /llm/api-key/reveal         本机直连客户端读取当前密钥（界面无入口，不缓存）
 ======================  ============================================================
 
 `/llm/models`、`/llm/test`、`/llm/thinking/check` 仍留在 `api/settings.py`：它们只做
@@ -50,6 +50,7 @@ from ..services.global_llm_profiles import (
     write_global_llm,
 )
 from ..services.llm_key_refs import API_KEY_MASK, PROFILE_API_KEY_PREFIX
+from ..services.llm_settings import base_url_binding_identity
 from ..services.settings_service import (
     _strip_session_key,
     get_dataset_llm_config,
@@ -62,10 +63,6 @@ from ..services.settings_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
-
-
-def _normalized_url(value: str) -> str:
-    return (value or "").strip().rstrip("/")
 
 
 def _guard_loopback(request: Request, detail: str = "模型配置只能在运行后端的本机修改") -> None:
@@ -134,6 +131,11 @@ def write_llm_config(payload: LLMConfig, db: Session = Depends(get_db)) -> LLMCo
 
     密钥三条规则（与旧端点一致）：留空 = 保留原密钥；`"__clear__"` = 显式清空；
     其余按真实密钥或引用占位符解析。
+
+    "留空是否保留"按**绑定身份**（origin）判断，不按整串：切协议会把 base_url 的 path 从
+    `` 改成 ``/responses`` / ``/anthropic/v1``，若按整串比就会判成"换了地址"，于是把用户
+    的历史密钥静默清空——体验上等于"切个协议密钥就没了"。换主机仍然不保留（安全底线，
+    与 ``resolve_llm_config_api_key`` 同一条判据）。
     """
     existing = read_global_llm()
     incoming = payload.api_key
@@ -143,7 +145,8 @@ def write_llm_config(payload: LLMConfig, db: Session = Depends(get_db)) -> LLMCo
         keep = (
             existing.config.api_key
             if existing is not None
-            and _normalized_url(existing.config.base_url) == _normalized_url(payload.base_url)
+            and base_url_binding_identity(existing.config.base_url)
+            == base_url_binding_identity(payload.base_url)
             else ""
         )
         config = payload.model_copy(update={"api_key": keep})
@@ -190,10 +193,13 @@ def write_llm_record(payload: dict, db: Session = Depends(get_db)) -> LLMGlobalR
         config = config.model_copy(update={"api_key": ""})
     elif not incoming:
         previous = read_record_config(name)
+        # 与 PUT /llm 同一条规则：按 origin 判断"地址是否还是同一个服务"，
+        # 这样切协议（只改 path）不会把记录里的历史密钥清掉。
         keep = (
             previous.api_key
             if previous is not None
-            and _normalized_url(previous.base_url) == _normalized_url(config.base_url)
+            and base_url_binding_identity(previous.base_url)
+            == base_url_binding_identity(config.base_url)
             else ""
         )
         config = config.model_copy(update={"api_key": keep})
@@ -234,7 +240,7 @@ def reveal_llm_api_key(
     response: Response,
     db: Session = Depends(get_db),
 ) -> LLMApiKeyRevealResult:
-    """仅在用户点击显示时临时返回**生效**配置的密钥，禁止缓存。"""
+    """供本机直连客户端显式读取**生效**配置的密钥；界面不提供该入口，禁止缓存。"""
     _guard_loopback(request, "API Key 只能在运行后端的本机查看")
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"

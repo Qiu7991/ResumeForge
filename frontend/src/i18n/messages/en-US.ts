@@ -44,6 +44,7 @@ import materials from "./en-US.materials";
 import applyQueue from "./en-US.applyQueue";
 import claimForm from "./en-US.claimForm";
 import skills from "./en-US.skills";
+import conversationSkills from "./en-US.conversationSkills";
 import toolCalls from "./en-US.toolCalls";
 import datasets from "./en-US.datasets";
 import jobImport from "./en-US.jobImport";
@@ -62,7 +63,6 @@ import llmRecord from "./en-US.llmRecord";
 import educationSection from "./en-US.educationSection";
 import jobTable from "./en-US.jobTable";
 import jobAnalysis from "./en-US.jobAnalysis";
-import templateImport from "./en-US.templateImport";
 import webFormRecords from "./en-US.webFormRecords";
 import claimsPage from "./en-US.claimsPage";
 import browserStatus from "./en-US.browserStatus";
@@ -70,6 +70,10 @@ import trackerForm from "./en-US.trackerForm";
 import interviewExperience from "./en-US.interviewExperience";
 import jobMatchBatch from "./en-US.jobMatchBatch";
 import assistantComposer from "./en-US.assistantComposer";
+import assistantPermission from "./en-US.assistantPermission";
+import composerAddMenu from "./en-US.composerAddMenu";
+import reasoningChip from "./en-US.reasoningChip";
+import voiceInput from "./en-US.voiceInput";
 import webFormPage from "./en-US.webFormPage";
 import collectResult from "./en-US.collectResult";
 import webFormLegacy from "./en-US.webFormLegacy";
@@ -95,6 +99,7 @@ import profilePhoto from "./en-US.profilePhoto";
 import favorites from "./en-US.favorites";
 import atsCheck from "./en-US.atsCheck";
 import advancedParams from "./en-US.advancedParams";
+import embeddingSearch from "./en-US.embeddingSearch";
 import appHeader from "./en-US.appHeader";
 import backupStatus from "./en-US.backupStatus";
 import claimCard from "./en-US.claimCard";
@@ -108,6 +113,7 @@ import knowledgePage from "./en-US.knowledgePage";
 import liveModeCard from "./en-US.liveModeCard";
 import llmConfigCard from "./en-US.llmConfigCard";
 import llmRecordView from "./en-US.llmRecordView";
+import llmProtocol from "./en-US.llmProtocol";
 import profileTextModal from "./en-US.profileTextModal";
 import questionBankPanel from "./en-US.questionBankPanel";
 import referralDetail from "./en-US.referralDetail";
@@ -118,7 +124,6 @@ import resumeFieldDiffView from "./en-US.resumeFieldDiffView";
 import resumes from "./en-US.resumes";
 import resumesPage from "./en-US.resumesPage";
 import sections from "./en-US.sections";
-import styleTemplateEditor from "./en-US.styleTemplateEditor";
 import trackerImport from "./en-US.trackerImport";
 import writing from "./en-US.writing";
 import activationUi from "./en-US.activationUi";
@@ -129,6 +134,9 @@ import appConfig from "./en-US.appConfig";
 import applyCollect from "./en-US.applyCollect";
 import applyUi from "./en-US.applyUi";
 import assistantHooks from "./en-US.assistantHooks";
+import assistantBreadth from "./en-US.assistantBreadth";
+import assistantMemory from "./en-US.assistantMemory";
+import assistantLimits from "./en-US.assistantLimits";
 import assistantUi from "./en-US.assistantUi";
 import componentsMisc from "./en-US.componentsMisc";
 import componentsMisc2 from "./en-US.componentsMisc2";
@@ -142,6 +150,7 @@ import hooksUi from "./en-US.hooksUi";
 import interviewPage from "./en-US.interviewPage";
 import jobsCandidate from "./en-US.jobsCandidate";
 import jobsForm from "./en-US.jobsForm";
+import jobsImport from "./en-US.jobsImport";
 import jobsPage from "./en-US.jobsPage";
 import jobsUi from "./en-US.jobsUi";
 import llmUi from "./en-US.llmUi";
@@ -151,11 +160,20 @@ import profileUi from "./en-US.profileUi";
 import referralUi from "./en-US.referralUi";
 import settingsDatasets from "./en-US.settingsDatasets";
 import settingsUi from "./en-US.settingsUi";
+import tasksCard from "./en-US.tasksCard";
 import templatesUi from "./en-US.templatesUi";
 import touTou from "./en-US.touTou";
 import trackerUi from "./en-US.trackerUi";
 import userGuide from "./en-US.userGuide";
 import userGuideFlow from "./en-US.userGuideFlow";
+/** Follow-up sweep card (T06). */
+import followupSweep from "./en-US.followupSweep";
+/** Delivery receipt (T09). */
+import deliveryReceipt from "./en-US.deliveryReceipt";
+/** Job preference profile (T14). */
+import jobPreference from "./en-US.jobPreference";
+/** Assistant "context usage" panel (issue #6). */
+import contextUsage from "./en-US.contextUsage";
 import enumsApply from "./en-US.enumsApply";
 import enumsAssistant from "./en-US.enumsAssistant";
 import enumsClaims from "./en-US.enumsClaims";
@@ -167,6 +185,10 @@ import enumsReferral from "./en-US.enumsReferral";
 import enumsResumeCatalog from "./en-US.enumsResumeCatalog";
 import enumsTracker from "./en-US.enumsTracker";
 import aiJobs from "./en-US.aiJobs";
+/** Interview realtime voice (issue #26 P0). */
+import interviewVoice from "./en-US.interviewVoice";
+/** Company interview notes block on the interview page (issue #29D). */
+import interviewKnowledge from "./en-US.interviewKnowledge";
 
 const enUS = {
   ...core,
@@ -212,6 +234,7 @@ const enUS = {
   ...applyQueue,
   ...claimForm,
   ...skills,
+  ...conversationSkills,
   ...toolCalls,
   ...datasets,
   ...jobImport,
@@ -230,7 +253,6 @@ const enUS = {
   ...educationSection,
   ...jobTable,
   ...jobAnalysis,
-  ...templateImport,
   ...webFormRecords,
   ...claimsPage,
   ...browserStatus,
@@ -238,6 +260,10 @@ const enUS = {
   ...interviewExperience,
   ...jobMatchBatch,
   ...assistantComposer,
+  ...assistantPermission,
+  ...composerAddMenu,
+  ...reasoningChip,
+  ...voiceInput,
   ...webFormPage,
   ...collectResult,
   ...webFormLegacy,
@@ -263,6 +289,7 @@ const enUS = {
   ...favorites,
   ...atsCheck,
   ...advancedParams,
+  ...embeddingSearch,
   ...appHeader,
   ...backupStatus,
   ...claimCard,
@@ -276,6 +303,7 @@ const enUS = {
   ...liveModeCard,
   ...llmConfigCard,
   ...llmRecordView,
+  ...llmProtocol,
   ...profileTextModal,
   ...questionBankPanel,
   ...referralDetail,
@@ -286,7 +314,6 @@ const enUS = {
   ...resumes,
   ...resumesPage,
   ...sections,
-  ...styleTemplateEditor,
   ...trackerImport,
   ...writing,
   ...activationUi,
@@ -297,6 +324,9 @@ const enUS = {
   ...applyCollect,
   ...applyUi,
   ...assistantHooks,
+  ...assistantBreadth,
+  ...assistantMemory,
+  ...assistantLimits,
   ...assistantUi,
   ...componentsMisc,
   ...componentsMisc2,
@@ -310,6 +340,7 @@ const enUS = {
   ...interviewPage,
   ...jobsCandidate,
   ...jobsForm,
+  ...jobsImport,
   ...jobsPage,
   ...jobsUi,
   ...llmUi,
@@ -320,10 +351,16 @@ const enUS = {
   ...settingsDatasets,
   ...settingsUi,
   ...templatesUi,
+  ...tasksCard,
   ...touTou,
   ...trackerUi,
   ...userGuide,
   ...userGuideFlow,
+  ...followupSweep,
+  ...deliveryReceipt,
+  ...jobPreference,
+  /** Assistant "context usage" panel (issue #6). */
+  ...contextUsage,
   ...enumsApply,
   ...enumsAssistant,
   ...enumsClaims,
@@ -336,6 +373,10 @@ const enUS = {
   ...enumsTracker,
   /** AI 求职（BossHunter sidecar，2026-11-06）。 */
   ...aiJobs,
+  /** Interview realtime voice (issue #26 P0). */
+  ...interviewVoice,
+  /** Company interview notes block on the interview page (issue #29D). */
+  ...interviewKnowledge,
 } as const satisfies Record<keyof ZhCNMessages, string>;
 
 export default enUS;

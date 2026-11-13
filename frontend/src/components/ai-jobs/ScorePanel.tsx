@@ -136,7 +136,7 @@ export default function ScorePanel({ jobId, initial, onScored }: Props) {
           />
         </Space>
 
-        {error && <Alert type="error" showIcon message={error} />}
+        {error && <Alert type="error" showIcon title={error} />}
 
         {!score ? (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("aiJobs.score.empty")} />
@@ -223,7 +223,7 @@ export default function ScorePanel({ jobId, initial, onScored }: Props) {
               <Alert
                 type="warning"
                 showIcon
-                message={t("aiJobs.score.hardGaps")}
+                title={t("aiJobs.score.hardGaps")}
                 description={
                   <ul style={{ margin: 0, paddingLeft: 18 }}>
                     {score.hard_gaps.map((gap, index) => (

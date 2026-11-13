@@ -23,6 +23,8 @@ _BACKEND_ROOT: Final = Path(__file__).resolve().parent.parent
 _REQUIRED_FILES: Final[tuple[tuple[str, str], ...]] = (
     ("app/data/skills.json", "内置技能词典，岗位解析与匹配要用"),
     ("app/data/ats_keywords.json", "ATS 本地检测的通用关键词词库"),
+    ("app/data/rag-assets.json", "本地语义检索的资产清单（文件名/大小/sha256/平台矩阵）"),
+    ("app/assets/sample/sample_dataset.zip", "体验示例数据集（欢迎向导一键载入的完整演示数据）"),
     ("app/prompts/apply_greeting.md", "自动投递招呼语生成提示词"),
     ("app/prompts/assistant_system.md", "AI 助手系统提示词"),
     ("app/services/feature_catalog.py", "助手功能目录（能力地图动态生成依赖）"),
@@ -50,6 +52,9 @@ _REQUIRED_FILES: Final[tuple[tuple[str, str], ...]] = (
     ("app/prompts/interview_system.md", "模拟面试官系统提示词"),
     ("app/prompts/job_analysis.md", "岗位分析提示词"),
     ("app/prompts/job_comparison.md", "多岗位横向对比选岗提示词"),
+    # 2026-11-13 二开：自研求职采集的语义评分（`services/job_hunt/scoring.py` 读它）。
+    # 之前漏登记，`test_preflight` 的两条用例一直是红的。
+    ("app/prompts/job_hunt_scoring.md", "自研采集岗位语义评分提示词"),
     ("app/prompts/job_match.md", "岗位匹配度分析提示词"),
     ("app/prompts/job_multi_extract.md", "多份招聘信息拆分提示词"),
     ("app/prompts/job_text_extract.md", "招聘信息识别提示词"),

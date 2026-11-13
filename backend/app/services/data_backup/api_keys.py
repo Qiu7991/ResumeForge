@@ -22,6 +22,24 @@ def _plaintext_api_keys(bind: Engine) -> list[str]:
     return _plaintext_api_keys_in(database_path(bind))
 
 
+# 除模型配置外，数据集自己的 AppSetting 里还有两种"裸密钥行"：
+# 语音转写的 asr_api_key（每条语音配置共用同一行）与联网搜索的
+# search_deepseek_api_key。encrypt_key() 在 macOS/Linux 上按设计返回明文
+# （只有 Windows 走 DPAPI），所以"不含密钥"的导出必须把它们一起收集、一起剥离，
+# 否则备份包里会留下可直接使用的明文 Key。前缀匹配是为了将来的多条语音配置
+# （asr_api_key:xxx）也落在同一道闸门里。
+#
+# 2.1.0 修过的洞（"勾了不含 API Key 仍带出 key"）就出在这张名单上：新增来源的 Key
+# 忘了登记，它就会以明文留在包里。P4-09/P4-10 接 Tavily 与 Jina 时**必须**同步登记，
+# 否则"不含密钥"的勾选对这两个来源无效。
+_SECRET_APP_SETTING_WHERE = (
+    "key LIKE 'asr_api_key%'"
+    " OR key LIKE 'search_deepseek_api_key%'"
+    " OR key LIKE 'search_tavily_api_key%'"
+    " OR key LIKE 'search_jina_api_key%'"
+)
+
+
 def _plaintext_api_keys_in(database: Path) -> list[str]:
     """从**一个数据库文件**里收集明文密钥。
 
@@ -48,6 +66,13 @@ def _plaintext_api_keys_in(database: Path) -> list[str]:
                     value = ""
                 if value and not value.startswith(API_KEY_MASK):
                     found.append(value)
+            found.extend(
+                str(value)
+                for (value,) in connection.execute(
+                    f"SELECT value FROM app_setting WHERE {_SECRET_APP_SETTING_WHERE}"
+                )
+                if value and not str(value).startswith(API_KEY_MASK)
+            )
         if "llm_config_record" in tables:
             found.extend(
                 key
@@ -75,6 +100,10 @@ def _strip_api_keys(database: Path) -> None:
         if "llm_config_record" in tables:
             connection.execute("UPDATE llm_config_record SET api_key = ''")
         if "app_setting" in tables:
+            # 裸密钥行直接删（备份是副本；"剥离的是副本"由专门用例守住）。
+            connection.execute(
+                f"DELETE FROM app_setting WHERE {_SECRET_APP_SETTING_WHERE}"
+            )
             row = connection.execute(
                 "SELECT value FROM app_setting WHERE key = ?", (_LLM_CONFIG_KEY,)
             ).fetchone()

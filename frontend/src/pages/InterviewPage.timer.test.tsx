@@ -34,26 +34,29 @@ vi.mock("../api/interview", async (importOriginal) => ({
   ...apiMocks,
 }));
 vi.mock("../api/stream", () => streamMocks);
-vi.mock("../components/QuestionBankPanel", () => ({ default: () => <div>bank</div> }));
-vi.mock("../components/InterviewExperiencePanel", () => ({ default: () => <div>exp</div> }));
-vi.mock("../components/InterviewReviewPanel", () => ({ default: () => <div>review</div> }));
+vi.mock("../features/questionbank/QuestionBankPanel", () => ({ default: () => <div>bank</div> }));
+vi.mock("../features/interview/InterviewExperiencePanel", () => ({
+  default: () => <div>exp</div>,
+}));
+vi.mock("../features/interview/InterviewReviewPanel", () => ({ default: () => <div>review</div> }));
 vi.mock("./interview/ReportCard", () => ({ ReportCard: () => <div>report</div> }));
 
 const setupStubs = vi.hoisted(() => {
   const base = {
     jobId: 3,
-    resumeId: 5,
+    // 关联简历的值带前缀（#25）：`r:` = 本应用的简历。
+    resumeId: "r:5",
     interviewType: "综合面",
     difficulty: "中级",
     interviewerStyle: "严谨专业",
     focus: "",
     persona: "",
   };
-  return { AUTO_ROUNDS_OPTION: "auto", fixedValues: { ...base, rounds: 6 } };
+  // roundsMode: "custom" —— 本文件断言的是固定轮数（6 轮）下的计时行为。
+  return { fixedValues: { ...base, roundsMode: "custom" as const, rounds: 6 } };
 });
 
 vi.mock("./interview/SetupTab", () => ({
-  AUTO_ROUNDS_OPTION: setupStubs.AUTO_ROUNDS_OPTION,
   SetupTab: ({ onStart }: { onStart: (values: Record<string, unknown>) => void }) => (
     <button type="button" onClick={() => onStart(setupStubs.fixedValues)}>
       start-stub

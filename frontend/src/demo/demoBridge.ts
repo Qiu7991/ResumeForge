@@ -72,6 +72,8 @@ export const DEMO_ROUTES = [
   "/analytics",
   "/interview",
   "/assistant",
+  // 二开：AI 求职（自研采集工作台）也是菜单页，演示桥要能跳。
+  "/ai-jobs",
   "/profile",
   "/materials",
   "/knowledge",

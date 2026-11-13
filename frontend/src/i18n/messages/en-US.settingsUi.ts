@@ -44,6 +44,27 @@ const settingsUi = {
   "settingsUi.assistantRelaxed.neverSent":
     "Never sent in any mode: credentials such as the API key or the global configuration, or the image content of Resume photos; the assistant also never has delete tools.",
 
+  // ── Task cards master switch (T04; the agent_task_events key is unchanged) ──
+  "settingsUi.agentTaskEvents.title": "Task cards",
+  "settingsUi.agentTaskEvents.intro":
+    "When on, a due reminder creates a task card titled Prepare: <reminder title>, shown on the Home page. When off, no new cards are created and none are shown; existing records are kept and come back when you turn it on again.",
+  "settingsUi.agentTaskEvents.toggleAria": "Task cards",
+  "settingsUi.agentTaskEvents.enableToast": "On: task cards appear on Home",
+  "settingsUi.agentTaskEvents.disableToast": "Off: task cards are hidden from Home",
+  "settingsUi.agentTaskEvents.saveFailed": "Could not save the task card setting",
+  /** On-state explanation: due reminders create the card, shown on Home, no write action. */
+  "settingsUi.agentTaskEvents.stateOn":
+    "On: due reminders create a task card for you to confirm; it is shown on the Home page and never executes a write action.",
+  /** Off-state explanation (T04 semantics: no new cards and nothing shown on Home). */
+  "settingsUi.agentTaskEvents.stateOff":
+    "Off: task cards are hidden from Home and no new ones are created; existing records are kept and come back when you turn it on again.",
+  "settingsUi.agentTaskEvents.loadFailed": "Could not load the task card setting. Please retry.",
+  /** Confirmation when turning it off while unfinished tasks exist (D8). */
+  "settingsUi.agentTaskEvents.confirmTitle": "Turn off task cards",
+  "settingsUi.agentTaskEvents.confirmBody":
+    "{count} tasks are still unfinished. Turning task cards off hides them from Home; existing records are not deleted.",
+  "settingsUi.agentTaskEvents.confirmOk": "Turn off anyway",
+
   // ── Export save location card ───────────────────────────────
   "settingsUi.exportSave.title": "Generated content save location",
   "settingsUi.exportSave.intro":
@@ -124,10 +145,11 @@ const settingsUi = {
   "settingsUi.skills.introMiddle": ", or bundled with ",
   "settingsUi.skills.introKnowledge": "knowledge files",
   "settingsUi.skills.introTail":
-    " (.md / .txt). Enabled skills tell the assistant how to answer, while knowledge files are read on demand instead of being stuffed into the conversation. To create a skill or fine-tune one, ",
+    " (.md / .txt). **Skills are enabled inside a conversation, not globally in the skills library**: tick them in the assistant input's skills menu, and they apply to that conversation only; knowledge files are read on demand instead of being stuffed into the conversation. To create a skill or fine-tune one, ",
   "settingsUi.skills.manageLink": "manage them in the workbench",
   "settingsUi.skills.manageTail": ".",
   "settingsUi.skills.empty": "No skills yet",
+  // 二开（2026-11-10）：内置技能「推荐」与启用态标签（SkillsCard 用）。
   "settingsUi.skills.tagEnabled": "Enabled",
   "settingsUi.skills.tagDisabled": "Disabled",
   "settingsUi.skills.files": "{count} knowledge files",

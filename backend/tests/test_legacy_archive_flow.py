@@ -89,9 +89,6 @@ def test_fresh_install_starts_and_builds_2_0_database(tmp_path) -> None:
     with sqlite3.connect(database_file) as connection:
         assert connection.execute("SELECT epoch FROM app_schema_epoch").fetchall() == [(2,)]
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-    # 全新安装建到**当前迁移链的 head**（二开分支在基线之后追加了 0002；
-    # 钉死 BASELINE_REVISION 等于要求整条链只有一条迁移，那不是本用例守的性质：
-    # 这里要证明的是"启动后建出的是一个 2.0 的库，而不是 1.x 的 0046"）。
     assert revision == head_revision()
 
 

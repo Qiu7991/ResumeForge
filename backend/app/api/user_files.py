@@ -16,13 +16,19 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.user_file import UserFile
+from ..services.actions import add_action_route
+from ..services.actions.catalog import all_actions
 from ..services.document_text import preview_text_of_file
-from ..services.user_files import user_files_dir
+from ..services.system_reveal import reveal_path
+from ..services.user_files import (
+    list_file_copies,
+    lookup_file_copies,
+    user_files_dir,
+)
 
 router = APIRouter(prefix="/api/user-files", tags=["user-files"])
 logger = logging.getLogger(__name__)
@@ -33,20 +39,7 @@ _MAX_PAGE_SIZE = 100
 _MAX_TEXT_PREVIEW_BYTES = 50 * 1024 * 1024
 
 
-def _file_out(row: UserFile) -> dict:
-    """回显结构：刻意不含 sha256 与 disk_name——它们是实现细节，不是给界面的。"""
-    return {
-        "id": row.id,
-        "original_name": row.original_name,
-        "mime": row.mime,
-        "size": row.size,
-        "source_type": row.source_type,
-        "source_ref": row.source_ref,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-    }
-
-
-@router.get("")
+add_action_route(router, all_actions()["list_user_files"], route_path="")
 def list_user_files(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=_MAX_PAGE_SIZE),
@@ -55,14 +48,13 @@ def list_user_files(
     db: Session = Depends(get_db),
 ) -> dict:
     """分页列出副本；``keyword`` 模糊匹配原名，``source_type`` 精确过滤来源。"""
-    query = db.query(UserFile)
-    if source_type.strip():
-        query = query.filter(UserFile.source_type == source_type.strip())
-    if keyword.strip():
-        query = query.filter(UserFile.original_name.like(f"%{keyword.strip()}%"))
-    total = query.count()
-    rows = query.order_by(UserFile.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
-    return {"items": [_file_out(row) for row in rows], "total": total}
+    return list_file_copies(
+        db,
+        page=page,
+        page_size=page_size,
+        source_type=source_type,
+        keyword=keyword,
+    )
 
 
 @router.get("/lookup")
@@ -78,16 +70,12 @@ def lookup_user_files(
     入口再次保存时，反查仍能命中。结果按 id 升序——与各入口按数组顺序保存的
     顺序一致，调用方可按下标对应到原图。
     """
-    query = db.query(UserFile).filter(UserFile.source_type == source_type.strip())
-    if source_ref.strip():
-        ref = source_ref.strip()
-        query = query.filter(
-            or_(UserFile.source_ref == ref, UserFile.sources_json.contains(f'"{ref}"'))
-        )
-    if name.strip():
-        query = query.filter(UserFile.original_name == name.strip())
-    rows = query.order_by(UserFile.id.asc()).all()
-    return {"items": [{"id": row.id, "original_name": row.original_name} for row in rows]}
+    return lookup_file_copies(
+        db,
+        source_type=source_type,
+        source_ref=source_ref,
+        name=name,
+    )
 
 
 def _resolved_copy_path(row: UserFile, db: Session) -> Path:
@@ -172,23 +160,16 @@ def open_in_system(file_id: int, db: Session = Depends(get_db)) -> dict:
 def reveal_in_folder(file_id: int, db: Session = Depends(get_db)) -> dict:
     """在系统文件管理器里打开副本所在的文件夹并选中该文件。
 
-    与 ``open-in-system`` 的区别：这是"去看文件在哪"，不是"打开文件本身"——
-    Windows 用 ``explorer /select``，macOS 用 ``open -R``，Linux 打开所在目录。
-    explorer 定位成功也常返回非零退出码（文档化行为），所以这里用 Popen
-    发起即成功、不以退出码判失败。
+    与 ``open-in-system`` 的区别：这是"去看文件在哪"，不是"打开文件本身"。
+    平台分支收在 ``services/system_reveal.py``（清理清单里的「在文件夹中显示」用的是
+    同一份实现），这里只负责按 id 反查并守卫路径。
     """
     row = db.get(UserFile, file_id)
     if row is None:
         raise HTTPException(status_code=404, detail="文件副本不存在")
     path = _resolved_copy_path(row, db)
     try:
-        if sys.platform == "win32":
-            # explorer /select, 后面必须紧跟目标路径（逗号是语法的一部分）。
-            subprocess.Popen(["explorer", f"/select,{path}"])  # noqa: S606
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", str(path)])  # noqa: S606
-        else:
-            subprocess.Popen(["xdg-open", str(path.parent)])  # noqa: S606
+        reveal_path(path)
     except Exception as exc:  # noqa: BLE001 - 对外只给一句中文原因
         logger.warning(
             "打开副本所在文件夹失败 id=%s error_type=%s", int(file_id), type(exc).__name__

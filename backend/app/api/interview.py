@@ -37,6 +37,8 @@ from ..schemas.interview import (
 )
 from ..schemas.material import MaterialCreate, MaterialOut
 from ..services import trash
+from ..services.actions import add_action_route
+from ..services.actions.catalog import all_actions
 from ..services.interview import interview_questions as interview_questions_service  # noqa: F401
 from ..services.interview.interview import (
     add_message,
@@ -48,6 +50,7 @@ from ..services.interview.interview import (
     session_persona,
 )
 from ..services.interview.interview_context import _claims_json
+from ..services.interview.interview_read import list_sessions as list_session_records
 from ..services.interview.interview_report_markdown import _report_markdown
 from ..services.llm.base import LLMError
 from ..services.materials import create_material as create_material_record
@@ -70,8 +73,12 @@ from .interview_shared import (
 )
 from .interview_stream import _QuestionDeltaExtractor as _QuestionDeltaExtractor
 from .interview_stream import make_answer_stream
+from .interview_voice import record_stream_answer, register_voice_routes
 
 logger = logging.getLogger(__name__)
+
+
+
 
 router = APIRouter(prefix="/api/interview", tags=["interview"])
 
@@ -197,12 +204,9 @@ def _has_closing_remark(session: InterviewSession) -> bool:
 # ===== R-11 题库 / 答题思路 / 反向优化 的共用读取（实现见 ``interview_shared``）=====
 
 
-@router.get("", response_model=list[InterviewBrief])
+add_action_route(router, all_actions()["list_interview_sessions"], route_path="")
 def list_sessions(limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db)):
-    sessions = (
-        db.query(InterviewSession).order_by(InterviewSession.created_at.desc()).limit(limit).all()
-    )
-    return [_to_out(item) for item in sessions]
+    return [_to_out(item) for item in list_session_records(db, limit)]
 
 
 @router.post("", response_model=InterviewDetail, status_code=201)
@@ -285,7 +289,7 @@ async def create_session(payload: InterviewCreate, request: Request, db: Session
     return _to_detail(session)
 
 
-@router.get("/{session_id}", response_model=InterviewDetail)
+add_action_route(router, all_actions()["get_interview_report"], route_path="/{session_id}")
 def read_session(session_id: int, db: Session = Depends(get_db)):
     return _to_detail(_session_or_404(db, session_id))
 
@@ -551,7 +555,7 @@ async def submit_answer_stream(
         raise HTTPException(status_code=409, detail="这场面试已经结束")
     provider, _model = _require_provider(db)
 
-    answer = _record_answer(session, payload.content)
+    answer = record_stream_answer(session, payload.content, payload.client_turn_id)
     db.commit()
     index = answered_rounds(session)
 
@@ -574,3 +578,5 @@ register_question_routes(
 # 完全一致；两块的校验与错误文案各自留在自己的模块里（见模块文档）。
 register_material_routes(router, lambda db: _require_provider(db))
 register_followup_routes(router, lambda db: _require_provider(db))
+# #26 P0：语音取消端点（插话 → 中止生成 + 回滚）；
+register_voice_routes(router)

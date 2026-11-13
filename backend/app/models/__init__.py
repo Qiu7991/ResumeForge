@@ -1,6 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """集中导入全部模型，保证 Base.metadata 注册完整（create_all 依赖此注册）。"""
 
+from .agent_task import (
+    AGENT_TASK_RUNNING_STATUSES,
+    AGENT_TASK_SOURCE_FOLLOWUP,
+    AGENT_TASK_SOURCE_REF_STALLED_CONFIRM,
+    AGENT_TASK_SOURCE_REF_STALLED_FOLLOWUP,
+    AGENT_TASK_SOURCE_REFS,
+    AGENT_TASK_SOURCES,
+    AGENT_TASK_STATUSES,
+    AGENT_TASK_STEP_STATUSES,
+    AGENT_TASK_TERMINAL_STATUSES,
+    AgentTask,
+    AgentTaskStep,
+)
 from .ai_task import (
     AI_TASK_ACTIVE_STATUSES,
     AI_TASK_KINDS,
@@ -30,7 +43,32 @@ from .apply import (
     ApplyTaskItem,
     JobMatchAnalysis,
 )
-from .assistant import AssistantSkill, AssistantSkillFile, ChatConversation, ChatMessage
+from .assistant import (
+    AssistantSkill,
+    AssistantSkillFile,
+    AssistantWriteProposal,
+    ChatConversation,
+    ChatMessage,
+)
+from .assistant_memory import (
+    MEMORY_KIND_AVOID_COMPANY,
+    MEMORY_KIND_CITY,
+    MEMORY_KIND_CONSTRAINT,
+    MEMORY_KIND_LABELS,
+    MEMORY_KIND_SALARY_FLOOR,
+    MEMORY_KIND_SKILL_TAG,
+    MEMORY_KIND_TARGET_ROLE,
+    MEMORY_KIND_WORK_MODE,
+    MEMORY_KINDS,
+    MEMORY_SOURCE_EXTRACTED,
+    MEMORY_SOURCE_MANUAL,
+    MEMORY_SOURCES,
+    MEMORY_STATUS_ACTIVE,
+    MEMORY_STATUS_DELETED,
+    MEMORY_STATUS_SUPERSEDED,
+    MEMORY_STATUSES,
+    AssistantMemory,
+)
 from .career_scenario import CareerScenario
 from .claim import (
     CLAIM_CATEGORIES,
@@ -48,6 +86,14 @@ from .drill import (
     DrillTurn,
 )
 from .ai_job_link import AiJobLink
+from .external_resume import ExternalResume
+from .followup import (
+    FOLLOWUP_DECISION_CONTACTED,
+    FOLLOWUP_DECISION_REPLIED,
+    FOLLOWUP_DECISION_STOPPED,
+    FOLLOWUP_DECISIONS,
+    ApplicationFollowUp,
+)
 from .generation_plan import (
     PLAN_STATUS_FAILED,
     PLAN_STATUS_READY,
@@ -75,6 +121,21 @@ from .interview_experience import (
 from .interview_review_record import InterviewReviewRecord
 from .job import Job
 from .job_match_batch import JobMatchBatch
+from .job_preference import (
+    PREF_SOURCE_IMPORTED,
+    PREF_SOURCE_USER_EDITED,
+    PREF_SOURCE_USER_STATED,
+    PREF_SOURCES,
+    PREF_STATE_ACTIVE,
+    PREF_STATE_SUPERSEDED,
+    PREF_STATE_UNDONE,
+    PREF_STATES,
+    PREF_VALUE_KIND_LIST,
+    PREF_VALUE_KIND_SCALAR,
+    PREF_VALUE_KINDS,
+    JobPreference,
+)
+from .job_seen import JobSeen
 from .knowledge_entry import KnowledgeEntry
 from .llm_usage import LLMUsageRecord
 from .material import MATERIAL_CATEGORIES, CandidateJob, Material
@@ -143,7 +204,9 @@ from .setting import AppSetting, LLMConfigRecord
 from .share_package import SHARE_PERMISSIONS, SharePackage
 from .tracker import (
     CHANNELS,
+    CONFIRM_SILENCE_DAYS,
     EVENT_SOURCES,
+    FOLLOWUP_SILENCE_DAYS,
     SOURCES,
     STATUSES,
     ApplicationTrack,
@@ -165,6 +228,24 @@ from .web_form_record import SOURCE_BATCH, SOURCE_LIVE, WebFormFillRecord
 from .web_form_url_history import WebFormUrlHistory
 
 __all__ = [
+    # T19 Agent 任务层：多步计划 + 每步状态 + 等待审批 + 跨重启恢复。
+    "AgentTask",
+    "AgentTaskStep",
+    "AGENT_TASK_STATUSES",
+    "AGENT_TASK_STEP_STATUSES",
+    "AGENT_TASK_TERMINAL_STATUSES",
+    "AGENT_TASK_RUNNING_STATUSES",
+    "AGENT_TASK_SOURCES",
+    "AGENT_TASK_SOURCE_FOLLOWUP",
+    "AGENT_TASK_SOURCE_REFS",
+    "AGENT_TASK_SOURCE_REF_STALLED_CONFIRM",
+    "AGENT_TASK_SOURCE_REF_STALLED_FOLLOWUP",
+    # 期一跟进巡检：应用跟进决策（0006）。
+    "ApplicationFollowUp",
+    "FOLLOWUP_DECISIONS",
+    "FOLLOWUP_DECISION_CONTACTED",
+    "FOLLOWUP_DECISION_REPLIED",
+    "FOLLOWUP_DECISION_STOPPED",
     # 通用 AI 任务（0068）：所有 AI 入口统一登记，前端只有一个状态出口。
     "AiTask",
     "AI_TASK_KINDS",
@@ -180,10 +261,44 @@ __all__ = [
     "AppSchemaEpoch",
     "Job",
     "JobMatchBatch",
+    # 15A/15B 岗位采样流水（0012）：一次采集一条，见 models/job_seen.py。
+    "JobSeen",
+    # T10 求职偏好档（0008）：状态 / 来源 / 值形态三轴常量 + 模型。
+    "JobPreference",
+    "PREF_STATES",
+    "PREF_STATE_ACTIVE",
+    "PREF_STATE_SUPERSEDED",
+    "PREF_STATE_UNDONE",
+    "PREF_SOURCES",
+    "PREF_SOURCE_USER_STATED",
+    "PREF_SOURCE_USER_EDITED",
+    "PREF_SOURCE_IMPORTED",
+    "PREF_VALUE_KINDS",
+    "PREF_VALUE_KIND_LIST",
+    "PREF_VALUE_KIND_SCALAR",
     "ChatConversation",
     "ChatMessage",
+    "AssistantWriteProposal",
     "AssistantSkill",
     "AssistantSkillFile",
+    # 0015 助手语义记忆（#31A / #18D 合并模型）：kind 白名单 + 状态 + 来源 + 模型。
+    "AssistantMemory",
+    "MEMORY_KINDS",
+    "MEMORY_KIND_TARGET_ROLE",
+    "MEMORY_KIND_CITY",
+    "MEMORY_KIND_SALARY_FLOOR",
+    "MEMORY_KIND_AVOID_COMPANY",
+    "MEMORY_KIND_WORK_MODE",
+    "MEMORY_KIND_SKILL_TAG",
+    "MEMORY_KIND_CONSTRAINT",
+    "MEMORY_KIND_LABELS",
+    "MEMORY_STATUSES",
+    "MEMORY_STATUS_ACTIVE",
+    "MEMORY_STATUS_SUPERSEDED",
+    "MEMORY_STATUS_DELETED",
+    "MEMORY_SOURCES",
+    "MEMORY_SOURCE_MANUAL",
+    "MEMORY_SOURCE_EXTRACTED",
     "UserProfile",
     "ProfilePhoto",
     "ProfileCustomSection",
@@ -202,6 +317,7 @@ __all__ = [
     "Skill",
     "Award",
     "ResumeRecord",
+    "ExternalResume",
     "ResumeGenerateTask",
     "ResumeDeliveryRecord",
     "DELIVERY_SOURCES",
@@ -247,6 +363,9 @@ __all__ = [
     "VERIFICATION_STATUSES",
     "ApplicationTrack",
     "ApplicationTrackEvent",
+    # 期一跟进巡检的两个沉默阈值（FOLLOWUP_SILENCE_DAYS 是 STALLED_DAYS 的别名）。
+    "FOLLOWUP_SILENCE_DAYS",
+    "CONFIRM_SILENCE_DAYS",
     "CHANNELS",
     "EVENT_SOURCES",
     "STATUSES",

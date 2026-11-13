@@ -25,11 +25,11 @@ import {
   listInterviews,
   updateInterviewDuration,
 } from "../api/interview";
-import InterviewExperiencePanel from "../components/InterviewExperiencePanel";
-import InterviewReviewPanel from "../components/InterviewReviewPanel";
-import QuestionBankPanel from "../components/QuestionBankPanel";
+import InterviewExperiencePanel from "../features/interview/InterviewExperiencePanel";
+import InterviewReviewPanel from "../features/interview/InterviewReviewPanel";
+import QuestionBankPanel from "../features/questionbank/QuestionBankPanel";
 import { useBatchSelection } from "../hooks/useBatchSelection";
-import { toMaterialPayload } from "../features/interview/materialPayload";
+import { toInternalResumeId, toMaterialPayload } from "../features/interview/materialPayload";
 import { useInterviewTimer } from "../features/interview/useInterviewTimer";
 import { hasInterviewReport, useInterviewTurn } from "../features/interview/useInterviewTurn";
 import { Composer } from "./interview/Composer";
@@ -50,15 +50,9 @@ import type {
   QuestionBankRecord,
 } from "../types";
 import { AUTO_FINISH_MAX_ROUNDS, AUTO_ROUNDS_FLAG } from "../types";
-import { AUTO_ROUNDS_OPTION } from "../pages/interview/SetupTab";
 import { t } from "../i18n";
 import { useLocale } from "../i18n/i18nContext";
-
-/** 每页条数之类没有；这里是深链 ?job_id= 的解析：正整数才认，其余按"没带参"处理。 */
-function parseLinkedJobId(raw: string | null): number | undefined {
-  const parsed = Number(raw);
-  return raw && Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
-}
+import { parseLinkedJobId } from "../features/interview/parseLinkedJobId";
 
 export default function InterviewPage() {
   useLocale();
@@ -218,17 +212,17 @@ export default function InterviewPage() {
       // 而写端点 `extra="forbid"`，整份回传会让两侧各报一条「包含不支持的字段」。
       const session = await createInterview({
         job_id: values.jobMaterial ? undefined : values.jobId!,
-        resume_id: values.resumeMaterial ? undefined : values.resumeId!,
+        // 关联简历的值带前缀（#25）：`r:12` 才是内部 id，`e:7`（外部简历）没有内部 id。
+        resume_id: values.resumeMaterial ? undefined : toInternalResumeId(values.resumeId),
         job_material: toMaterialPayload(values.jobMaterial),
         resume_material: toMaterialPayload(values.resumeMaterial),
         interview_type: values.interviewType,
         difficulty: values.difficulty,
         interviewer_style: values.interviewerStyle,
-        // 「自动」档：何时结束交给 AI（最早第 AUTO_ROUNDS_FLAG 轮起可收尾）；rounds 只是
-        // 服务端的硬性保险，界面与提示词都不展示。
-        rounds:
-          values.rounds === AUTO_ROUNDS_OPTION ? AUTO_FINISH_MAX_ROUNDS : (values.rounds as number),
-        rounds_min: values.rounds === AUTO_ROUNDS_OPTION ? AUTO_ROUNDS_FLAG : null,
+        // 轮数按 `roundsMode` 分流（问题 05）。「自动」档：何时结束交给 AI（最早第
+        // AUTO_ROUNDS_FLAG 轮起可收尾），rounds 只是服务端的硬性保险，界面与提示词都不展示。
+        rounds: values.roundsMode === "auto" ? AUTO_FINISH_MAX_ROUNDS : values.rounds,
+        rounds_min: values.roundsMode === "auto" ? AUTO_ROUNDS_FLAG : null,
         focus: values.focus ?? "",
         persona: values.persona ?? "",
       });

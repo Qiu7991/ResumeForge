@@ -17,7 +17,11 @@ from sqlalchemy.orm import Session
 
 from ...schemas.apply import CollectConfigIn
 from ..sites.base import CollectQuery, SearchResult, SiteAdapter
+from .blocklist import drop_if_blocked, load_blocklist
 from .collect_filters import FilterTally, evaluate_filters
+# 去重判据与「采样留痕」都在 collector_history（15A/15B，上游 2.1.0）：
+# 重采不再"跳过即无痕"。
+from .collector_history import already_known, known_job_of, record_sighting
 
 if TYPE_CHECKING:
     from .collector import Collector, CollectReport
@@ -48,9 +52,14 @@ def collect_search(
     （unmapped_conditions / filter_reasons 等）还要用它们，两段共享同一份状态。
     """
     limit = config.per_task_limit
+    # 本轮采集任务 id：写进 job_seen.run_id（"哪一轮见到的"）。取不到（离线/单测里的
+    # 轻量 task 对象）就记空，采样本身仍然有效。
+    run_id = getattr(task, "id", None)
     # 本地筛选只对**适配器声明过**的条件生效。这份声明是有约束力的：没声明就说明该站点的
     # 接口不保证返回对应字段，硬筛会变成"凭缺失的字段做判断"——那正是要避免的误杀。
     declared = set(adapter.post_filter_conditions)
+    # 14E 闸门①：屏蔽清单一次读出、整轮复用（每条命中都要丢弃，不能只拦手动入队）。
+    blocklist = load_blocklist(session)
     keywords = list(config.keywords) or [""]
     seen_results: set[tuple[str, str, str]] = set()
     for keyword_index, keyword in enumerate(keywords):
@@ -97,7 +106,12 @@ def collect_search(
                     report.skipped += 1
                     continue
                 seen_results.add(identity)
-                known = collector._already_known(session, result)
+                # 15A/15B：**每一条**结果都记一次采样（已知岗位也记，新岗位 job_id 为空）。
+                # 没有这一步，重采就只是一次 `continue`——"这条岗位挂了半年""JD 改过"
+                # 永远没有证据。岗位只查一次，两处复用（见 collector_history 的纪律②）。
+                known_job = known_job_of(session, result)
+                record_sighting(session, result, known_job=known_job, run_id=run_id)
+                known = already_known(session, result, job=known_job)
                 if known:
                     report.skipped += 1
                     if known == "trashed":
@@ -124,6 +138,8 @@ def collect_search(
                     # 岗位没给这个字段 → **保留**（判断不了就不误杀），但要记账。
                     tally.undecided.update(decision.undecided)
                     tally.undecided_count += 1
+                if drop_if_blocked(report, blocklist, result.company, result.title):
+                    continue
                 pending.append(result)
 
             # 翻页饱和判定：这一页有结果但全是已见过的 → 记一次饱和；

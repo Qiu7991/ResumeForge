@@ -43,7 +43,7 @@ import type { JobHuntStatus } from "../../types/jobHunt";
 import type { JobList } from "../../types/job";
 import { useCandidates } from "../../hooks/useCandidates";
 import { usePersistentNumber } from "../../hooks/usePersistentNumber";
-import CollectResultPanel from "../apply/CollectResultPanel";
+import CollectResultPanel from "../../features/apply/CollectResultPanel";
 import { startBrowser } from "../../api/apply";
 import CollectProgressPanel from "./CollectProgressPanel";
 import HuntFilterForm, { DEFAULT_FILTERS, DEFAULT_KEYWORDS } from "./HuntFilterForm";
@@ -197,12 +197,12 @@ export default function NativeJobHuntView({ status }: Props) {
           - state.error 来自 useJobHuntNative（入队/导入等）
           - collectTask.state.error 来自采集任务启动本身（浏览器没启动之类的 503）
           以前只显示前者，于是"点开始采集 → 转一下 → 什么都没发生"——错误被吞了。 */}
-      {state.error && <Alert type="error" showIcon message={state.error} />}
+      {state.error && <Alert type="error" showIcon title={state.error} />}
       {collectTask.state.error && (
         <Alert
           type="error"
           showIcon
-          message={t("aiJobs.native.collectFailed")}
+          title={t("aiJobs.native.collectFailed")}
           description={collectTask.state.error}
           action={
             <Button size="small" onClick={() => void onStartBrowser()} loading={startingBrowser}>
@@ -216,7 +216,7 @@ export default function NativeJobHuntView({ status }: Props) {
         <Alert
           type="success"
           showIcon
-          message={t("aiJobs.native.queuedHint", { count: queued })}
+          title={t("aiJobs.native.queuedHint", { count: queued })}
           action={
             <Button size="small" type="primary" onClick={() => navigate("/apply")}>
               {t("aiJobs.native.goApply")}
@@ -408,7 +408,7 @@ export default function NativeJobHuntView({ status }: Props) {
                 style={{ marginTop: 8 }}
                 type="warning"
                 showIcon
-                message={t("aiJobs.native.persistErrors", {
+                title={t("aiJobs.native.persistErrors", {
                   count: result.persisted.errors.length,
                 })}
                 description={result.persisted.errors.slice(0, 5).join(t("aiJobs.native.errorSeparator"))}
@@ -495,11 +495,11 @@ export default function NativeJobHuntView({ status }: Props) {
         <Alert
           type="info"
           showIcon
-          message={t("aiJobs.native.scoreHintMulti", { count: selected.length })}
+          title={t("aiJobs.native.scoreHintMulti", { count: selected.length })}
         />
       )}
 
-      <Alert type="info" showIcon message={t("aiJobs.native.replyNotAvailable")} />
+      <Alert type="info" showIcon title={t("aiJobs.native.replyNotAvailable")} />
     </div>
   );
 }

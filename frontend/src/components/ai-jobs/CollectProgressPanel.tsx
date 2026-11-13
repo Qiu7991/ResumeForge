@@ -36,18 +36,22 @@ interface Props {
   startingBrowser: boolean;
 }
 
+/* 状态色走设计 token（`theme/design-tokens.css`），不写死十六进制：
+ * 深色主题下这套值会换成对应的一套，硬编码会让卡片在深色里变成浅底亮边。 */
 const STATE_COLOR: Record<CardState, string> = {
-  idle: "#d9d9d9",
-  running: "#1677ff",
-  done: "#52c41a",
-  failed: "#ff4d4f",
+  idle: "var(--rf-text-secondary)",
+  running: "var(--rf-info)",
+  done: "var(--rf-accent-green)",
+  failed: "var(--rf-error-strong)",
 };
 
+/* 底色用 `--rf-fill-*` 派生档，而不是自己写 alpha：深浅两套主题各自派生一层，
+ * 不需要第二份硬编码。运行中额外叠一层信息蓝以示"正在走"。 */
 const STATE_BG: Record<CardState, string> = {
-  idle: "rgba(0,0,0,0.02)",
-  running: "rgba(22,119,255,0.06)",
-  done: "rgba(82,196,26,0.06)",
-  failed: "rgba(255,77,79,0.06)",
+  idle: "var(--rf-fill-quaternary)",
+  running: "var(--rf-info-bg)",
+  done: "var(--rf-fill-tertiary)",
+  failed: "var(--rf-error-bg)",
 };
 
 interface CardSpec {
@@ -281,7 +285,7 @@ export default function CollectProgressPanel({
               padding: "10px 12px",
               borderRadius: 8,
               background: STATE_BG[card.state],
-              border: `1px solid ${card.state === "idle" ? "rgba(0,0,0,0.06)" : STATE_COLOR[card.state]}`,
+              border: `1px solid ${card.state === "idle" ? "var(--rf-fill-secondary)" : STATE_COLOR[card.state]}`,
               display: "flex",
               flexDirection: "column",
               gap: 4,
@@ -310,7 +314,7 @@ export default function CollectProgressPanel({
                   fontSize: 24,
                   lineHeight: 1.1,
                   fontWeight: 600,
-                  color: card.state === "idle" ? "#bfbfbf" : STATE_COLOR[card.state],
+                  color: card.state === "idle" ? "var(--rf-text-description)" : STATE_COLOR[card.state],
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
@@ -380,7 +384,7 @@ export default function CollectProgressPanel({
           style={{ marginTop: 8 }}
           type="error"
           showIcon
-          message={t("aiJobs.progress.failedTitle")}
+          title={t("aiJobs.progress.failedTitle")}
           description={errorText || undefined}
           action={
             needsBrowser ? (
@@ -397,7 +401,7 @@ export default function CollectProgressPanel({
           style={{ marginTop: 8 }}
           type="warning"
           showIcon
-          message={t("aiJobs.progress.scoreErrors", { count: scoreTask.errors.length })}
+          title={t("aiJobs.progress.scoreErrors", { count: scoreTask.errors.length })}
           description={scoreTask.errors.slice(0, 5).join(t("aiJobs.native.errorSeparator"))}
         />
       ) : null}

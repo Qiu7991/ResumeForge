@@ -245,14 +245,16 @@
   max-width: 96px;
 }
 
-/* 窄屏：4 列变 2 列，再窄变 1 列。 */
-@media (max-width: 1100px) {
+/* 窄屏：4 列变 2 列，再窄变 1 列。
+ * 断点用 theme/breakpoints.ts 的标准值（1092 = narrow、767 = phone），不写就地微调值：
+ * 这两个数值就是"内容盒放不下 4 列"的判定点，自定值只会让同一屏里两套阈值打架。 */
+@media (max-width: 1092px) {
   .hunt-source-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 767px) {
   .hunt-source-row {
     grid-template-columns: minmax(0, 1fr);
   }

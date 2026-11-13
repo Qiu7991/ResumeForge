@@ -18,30 +18,27 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from ..database import get_db, session_engine
-from ..models.assistant import AssistantSkill
 from ..schemas.skill import (
-    MAX_SKILL_DETAIL_FILE_CHARS,
-    AssistantSkillCreate,
-    AssistantSkillDetail,
     AssistantSkillOut,
     AssistantSkillUpdate,
 )
+from ..services.actions import add_action_route
+from ..services.actions.catalog import all_actions
+from ..services.actions.pilots import pilot_actions
 from ..services.assistant.assistant_skills import (
-    create_skill as create_skill_record,
-)
-from ..services.assistant.assistant_skills import (
+    PendingSkillError,
     delete_skill,
-    list_skills,
     set_skill_enabled,
     upsert_skill,
 )
-from ..services.assistant.assistant_skills import (
-    update_skill as update_skill_record,
-)
+from ..services.assistant.skill_views import skill_out as _to_out
 from ..services.data_backup import restore_directory
 from ..services.skill_archive import SkillImportError, parse_markdown_skill, parse_zip_skill
 
 logger = logging.getLogger(__name__)
+
+
+
 
 router = APIRouter(prefix="/api/assistant/skills", tags=["assistant"])
 
@@ -70,62 +67,7 @@ def _source_name(request: Request) -> str | None:
     return name[:MAX_SOURCE_NAME_CHARS] or None
 
 
-def _is_builtin(skill) -> bool:
-    """这条技能是不是随包内置的。
-
-    判据是"同名包是否存在"而不是额外加一列：内置技能由 `seed_builtin_skills` 按包名
-    注册，用户即使改过它的提示词，名字仍是包里的那个——界面上依旧该标「推荐」
-    （它确实来自产品自带）。**不落库**是为了不给 assistant_skill 加迁移。
-    """
-    from ..services.assistant.builtin_skills import builtin_skill_names
-
-    return skill.name in builtin_skill_names()
-
-
-def _to_out(skill) -> AssistantSkillOut:
-    return AssistantSkillOut(
-        id=skill.id,
-        name=skill.name,
-        description=skill.description,
-        enabled=skill.enabled,
-        source_name=skill.source_name,
-        prompt_chars=len(skill.prompt),
-        files=[item.path for item in skill.files],
-        builtin=_is_builtin(skill),
-        updated_at=skill.updated_at,
-    )
-
-
-def _to_detail(skill: AssistantSkill) -> AssistantSkillDetail:
-    """详情视图：带上知识文件正文，但按总量上限截断并标记 ``files_truncated``。"""
-    budget = MAX_SKILL_DETAIL_FILE_CHARS
-    truncated = False
-    file_details = []
-    for item in skill.files:
-        content = item.content or ""
-        if len(content) > budget:
-            content = content[: max(budget, 0)]
-            truncated = True
-        budget -= len(content)
-        file_details.append({"path": item.path, "size_bytes": item.size_bytes, "content": content})
-    return AssistantSkillDetail(
-        **_to_out(skill).model_dump(),
-        prompt=skill.prompt,
-        file_details=file_details,
-        files_truncated=truncated,
-    )
-
-
-def _skill_or_404(db: Session, skill_id: int) -> AssistantSkill:
-    skill = db.get(AssistantSkill, skill_id)
-    if skill is None:
-        raise HTTPException(status_code=404, detail="技能不存在或已被删除")
-    return skill
-
-
-@router.get("", response_model=list[AssistantSkillOut])
-def read_skills(db: Session = Depends(get_db)):
-    return [_to_out(skill) for skill in list_skills(db)]
+add_action_route(router, all_actions()["list_skills"], route_path="")
 
 
 @router.post("/import", response_model=AssistantSkillOut)
@@ -161,63 +103,15 @@ async def import_skill(request: Request, db: Session = Depends(get_db)):
     return _to_out(skill)
 
 
-@router.post("", response_model=AssistantSkillDetail, status_code=201)
-def create_skill(payload: AssistantSkillCreate, db: Session = Depends(get_db)):
-    """在工作台手动创建技能。"""
-    try:
-        payload.require_prompt()
-        skill = create_skill_record(
-            db,
-            name=payload.name,
-            description=payload.description,
-            prompt=payload.prompt,
-            enabled=payload.enabled,
-            files=[(item.path, item.content) for item in payload.files],
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _to_detail(skill)
+add_action_route(router, all_actions()["create_skill"], route_path="")
 
 
-@router.get("/{skill_id}", response_model=AssistantSkillDetail)
-def read_skill(skill_id: int, db: Session = Depends(get_db)):
-    """查看技能详情：提示词正文与知识文件清单。"""
-    return _to_detail(_skill_or_404(db, skill_id))
+add_action_route(router, all_actions()["get_skill"], route_path="/{skill_id}")
 
 
-@router.put("/{skill_id}", response_model=AssistantSkillDetail)
-def update_skill(skill_id: int, payload: AssistantSkillUpdate, db: Session = Depends(get_db)):
-    """更新技能（只提交要改的字段）；``files`` 提交时整体替换知识文件。"""
-    if all(
-        value is None
-        for value in (
-            payload.name,
-            payload.description,
-            payload.prompt,
-            payload.enabled,
-            payload.files,
-        )
-    ):
-        raise HTTPException(status_code=422, detail="至少提供一个要修改的技能字段")
-    try:
-        skill = update_skill_record(
-            db,
-            skill_id,
-            name=payload.name,
-            description=payload.description,
-            prompt=payload.prompt,
-            enabled=payload.enabled,
-            files=(
-                [(item.path, item.content) for item in payload.files]
-                if payload.files is not None
-                else None
-            ),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if skill is None:
-        raise HTTPException(status_code=404, detail="技能不存在或已被删除")
-    return _to_detail(skill)
+# T27 试点 3：PUT /api/assistant/skills/{skill_id} 由契约层生成（不可逆写，带 preview）。
+# 注册位置仍由本文件里的调用点显式决定（原来的装饰器位置，保持注册顺序）。
+add_action_route(router, pilot_actions()["update_skill"])
 
 
 @router.patch("/{skill_id}", response_model=AssistantSkillOut)
@@ -225,7 +119,11 @@ def toggle_skill(skill_id: int, payload: AssistantSkillUpdate, db: Session = Dep
     """快速开关技能（助手页与设置页的 Switch 走这里）。"""
     if payload.enabled is None:
         raise HTTPException(status_code=422, detail="缺少要切换的启用状态")
-    skill = set_skill_enabled(db, skill_id, payload.enabled)
+    try:
+        skill = set_skill_enabled(db, skill_id, payload.enabled)
+    except PendingSkillError as exc:
+        # #31D/#31F：待验证技能不可启用（409，前端据此提示先确认）。
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if skill is None:
         raise HTTPException(status_code=404, detail="技能不存在或已被删除")
     return _to_out(skill)

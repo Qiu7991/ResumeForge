@@ -14,10 +14,11 @@
  * 被 `source-ascii-english` 判成"源文是英文却没翻译"（§8.3 的判据）。真正要翻的是
  * SearXNG 后面那个「自建实例」，所以只有它一条走词表。
  *
- * ## 抓取正文的四档
+ * ## 搜索深度的三档（P4-08）
  *
- * `value`（0/1/2/3）是后端 `fetch_pages` 的档位，`labelKey` 只负责显示。
- * 中文的括号是全角，英文用 ASCII 括号。
+ * `value` 是后端 `depth` 的协议值（snippet/standard/deep），`labelKey` 只负责显示。
+ * 旧设置项叫「抓取正文的条数」（0~3），现在改成三档：摘要 0 页 / 标准 2 页×2 段 /
+ * 深入 5 页×3 段。中文的括号是全角，英文用 ASCII 括号。
  *
  * ## `SearXNG 实例地址` 那段说明含内嵌 `<code>`
  *
@@ -32,7 +33,7 @@ const searchCard = {
    * 以免顺手改掉用户可见的文案；英文同样保留同一个记号。
    */
   "searchCard.intro":
-    "这里配的是助手「联网搜索」开关打开时**怎么搜**；助手页那个开关决定这一次要不要联网。抓取正文能拿到比摘要更完整的页面内容，但每次搜索会慢一些，也可能被站点拒绝。",
+    "这里配的是助手「联网搜索」开关打开时**怎么搜**；助手页那个开关决定这一次要不要联网。抓取正文能拿到比摘要更完整的页面内容，但每次搜索会慢一些，也可能被站点拒绝。搜索来源、地址与 Key 保存在全局设置里，所有数据集共用，切换数据集不会改变它们。",
 
   "searchCard.action.save": "保存搜索设置",
   /**
@@ -56,11 +57,15 @@ const searchCard = {
   "searchCard.source.searxng": "SearXNG（自建实例）",
   /** 品牌名：两种语言写法相同，登记在 equalityExemptions。 */
   "searchCard.source.deepseek": "DeepSeek",
+  /** 品牌名，同上。 */
+  "searchCard.source.tavily": "Tavily",
+  "searchCard.source.jina": "Jina",
 
   "searchCard.sources.title": "搜索来源",
   "searchCard.sources.hint": "多个来源会并发查询后合并去重，至少选一个。",
 
   "searchCard.searxng.title": "SearXNG 实例地址",
+  "searchCard.searxng.placeholder": "例如 http://localhost:8080",
   "searchCard.searxng.hint":
     "公共实例经常限流，所以不预置默认值；填了自己的实例地址才会去查它，例如 http://localhost:8080。不选 SearXNG 来源时可以留空。",
 
@@ -75,19 +80,45 @@ const searchCard = {
   "searchCard.deepseek.privacy":
     "勾选这个来源后，抓取正文时网页地址会发送给 DeepSeek 由它读取；只有它失败时才回落到本机读取。不想发送地址就关掉这个来源。",
 
-  "searchCard.fetch.title": "抓取正文的条数",
-  "searchCard.fetch.hint": "对排序最靠前的几条结果打开页面读取正文。关闭时助手只能看到搜索摘要。",
-  /** 四个档位的显示名；`value` 是后端 `fetch_pages` 的取值，见文件头。 */
-  "searchCard.fetch.0": "只取摘要（最快）",
-  "searchCard.fetch.1": "抓前 1 条正文",
-  "searchCard.fetch.2": "抓前 2 条正文",
-  "searchCard.fetch.3": "抓前 3 条正文（最详细，也最慢）",
+  "searchCard.depth.title": "搜索深度",
+  "searchCard.depth.hint":
+    "决定要不要打开结果页读正文：摘要只给搜索摘要（最快）；标准抓前 2 页、每页最多 2 段；深入抓前 5 页、每页最多 3 段，并且总字数上限更高（最详细，也最慢）。",
+  /** 三个档位的显示名；`value` 是后端 `depth` 的取值，见文件头。 */
+  "searchCard.depth.snippet": "只取摘要（最快）",
+  "searchCard.depth.standard": "标准：抓前 2 页正文",
+  "searchCard.depth.deep": "深入：抓前 5 页正文（最详细，也最慢）",
 
-  "searchCard.results.title": "每次返回的结果条数",
-  "searchCard.results.hint": "1~15 条。条数越多，占用模型的上下文越多。",
-  "searchCard.results.aria": "搜索结果数量",
+  "searchCard.results.title": "每次最多返回的结果条数",
+  "searchCard.results.hint":
+    "可填 1~50。只是上限：模型会按问题需要决定实际看几条，条数越多占用上下文越多；实际条数还受来源限制（Bing 单来源最多 8 条）。",
+  "searchCard.results.aria": "每次最多返回的结果条数",
   /** 数字输入框后面的单位。 */
   "searchCard.results.unit": "条",
+  /**
+   * 多选卡片（条目 03）：4 个来源各一张卡，卡头右上显示已选个数。
+   * 卡片的副标题是"要什么「钥匙」"，不是营销文案：免密钥 / 自建实例 / 按量付费。
+   */
+  "searchCard.sources.count": "已选 {count} 个",
+  "searchCard.source.note.bing": "免密钥，直接可用",
+  "searchCard.source.note.duckduckgo": "免密钥，直接可用",
+  "searchCard.source.note.searxng": "需要自建实例地址",
+  "searchCard.source.note.deepseek": "需要 API Key，按量付费",
+  "searchCard.source.note.tavily": "需要 API Key，按量付费",
+  "searchCard.source.note.jina": "需要 API Key，有免费额度",
+  "searchCard.tavily.keyAria": "Tavily 搜索 API Key",
+  "searchCard.tavily.keyPlaceholder": "粘贴以 tvly- 开头的 Key",
+  "searchCard.tavily.note":
+    "一次调用就能带回摘要与整页正文，省掉逐条抓页面那一轮；免费额度每月 1000 次（basic 档每次 1 次额度）。正文同样会经过选段，不会把整页塞进上下文。",
+  "searchCard.jina.keyAria": "Jina 搜索 API Key",
+  "searchCard.jina.keyPlaceholder": "粘贴以 jina- 开头的 Key",
+  "searchCard.jina.note":
+    "搜索只取前 5 条干净正文；本机抓不到正文的页面（JS 渲染）会自动用它再读一次，本机能读到就不会重复请求。",
+
+  /** 卡片区下方的通用参数与卡头的自动保存状态。 */
+  "searchCard.general.title": "通用参数",
+  "searchCard.status.saved": "已自动保存",
+  "searchCard.status.saving": "保存中…",
+  "searchCard.status.error": "保存失败",
 } as const;
 
 export default searchCard;

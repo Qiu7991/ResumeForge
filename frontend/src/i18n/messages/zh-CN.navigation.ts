@@ -3,7 +3,7 @@
  * 侧栏、移动端导航抽屉、「我的空间」菜单与「界面与导航」设置卡：导航入口名、页面标题、
  * 品牌文案与外壳上的无障碍说明。
  *
- * 入口名以 `labelKey` 的形式放在 `components/navigation/navigationConfig.ts`，渲染处再
+ * 入口名以 `labelKey` 的形式放在 `features/shell/navigationConfig.ts`，渲染处再
  * `t()`；模块作用域不求值 `t()`，切语言时由消费组件订阅后重新渲染。
  */
 const navigation = {
@@ -29,6 +29,8 @@ const navigation = {
 
   /** 「事实核对」不在侧栏里，但路由标题要用它（/claims/drill）。 */
   "navigation.page.claimsDrill": "事实核对",
+  /** 「外部简历」独立页（第 1 条）：侧栏仍高亮「简历中心」，只有页头标题用它。 */
+  "navigation.page.externalResumes": "外部简历",
 
   /** 「我的空间」菜单的触发按钮文字，同时用作它的无障碍名。 */
   "navigation.mySpace.label": "我的空间",

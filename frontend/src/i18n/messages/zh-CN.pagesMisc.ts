@@ -8,6 +8,7 @@
 const pagesMisc = {
   // ── 投递台（ApplyPage） ─────────────────────────────────────────
   "pagesMisc.applyPage.title": "投递台",
+  "pagesMisc.applyPage.subtitleAria": "这次的流程是怎样的",
   "pagesMisc.applyPage.subtitle":
     "采集岗位 → 判断匹配度 → 显式确认 → 自动投递。所有对招聘网站的动作都由你显式发起，登录在你自己的浏览器窗口里完成。",
   "pagesMisc.applyPage.action.settings": "投递设置",
@@ -41,7 +42,7 @@ const pagesMisc = {
   "pagesMisc.homePage.todo.queue.text": "投递队列里有 {count} 个岗位在等",
   "pagesMisc.homePage.todo.queue.hint": "排好队、启动浏览器就能投",
   /** 待办三：超过一周没更新的投递条数。 */
-  "pagesMisc.homePage.todo.stalled.text": "有 {count} 条投递超过一周没更新",
+  "pagesMisc.homePage.todo.stalled.text": "有 {count} 条投递超过一周没改状态",
   "pagesMisc.homePage.todo.stalled.hint": "去看看要不要补一句跟进或改状态",
 
   // ── 岗位广场（JobsPage） ───────────────────────────────────────

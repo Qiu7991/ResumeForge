@@ -48,6 +48,12 @@ const LEGACY: Record<string, number> = {
   // base-shell.css:1093 —— 英文侧栏手动收起断点：≤1092 侧栏是 64px 图标导轨，
   // ≥1093 才允许 252px 宽侧栏（1093 = 标准断点 1092 的"开区间"下沿，非标准值但语义上紧贴它）。
   "styles/base-shell.css:1093": 1,
+  // assistant-layout.css:1093 ×2 / assistant-composer.css:1093 ×1 —— 助手页高度链路（#1）
+  // 只在双栏形态生效。1093 与上面 base-shell 同源：`responsive-narrow.css` 的
+  // `max-width: 1092` 定义单栏，这里要的正是它的补集；写 1092 会让两条规则在 1092 同时命中，
+  // 只能靠文件加载顺序决胜——那正是 #33 那类"看着生效、改个顺序就坏"的坑。
+  "styles/assistant-layout.css:1093": 2,
+  "styles/assistant-composer.css:1093": 1,
   "styles/modules-layout.css:1000": 1,
   "styles/modules-templates.css:575": 1,
   "styles/modules-webform.css:760": 1,
@@ -59,7 +65,6 @@ const LEGACY: Record<string, number> = {
   "styles/resume-panels.css:720": 1,
   "styles/workbench-narrow.css:1000": 1,
   "styles/workbench-narrow.css:1280": 1,
-  "styles/tracker-form.css:900": 1,
   "styles/trash.css:768": 1,
 };
 
@@ -184,6 +189,15 @@ describe("断点单一事实源", () => {
       // 该根节点内部没有 position:fixed 后代（antd 的 Dropdown/Popover 都 portal 到 body），
       // 按方案 §3.5 的判据安全。
       "styles/resume-panels.css",
+      // assistant-composer.css —— 助手输入区（T11）：`container-type` 挂在 `.assistant-composer`
+      // （输入区单容器）。左栏可拖拽/窗口变窄时输入区宽度与视口宽度不是一回事，模型 chip
+      // 的隐藏（<480px）必须按**容器宽**判断，视口媒体查询在这里语义是错的。
+      // 该容器内部没有 position:fixed 后代（相机/浮球/弹层都 portal 到 body 或在页面级容器），
+      // 按方案 §3.5 判据安全。
+      "styles/assistant-composer.css",
+      // interview-setup.css —— 面试设定卡（第 8 条）：`container-type` 挂在 `.interview-setup-stack`
+      // 上，只影响该卡的字段分档；该卡内没有 position:fixed 后代（§3.5 判据），已在 768/380 实测无溢出。
+      "styles/modules-interview-setup.css",
     ]);
     const offenders: string[] = [];
     for (const absolute of collectCssFiles()) {

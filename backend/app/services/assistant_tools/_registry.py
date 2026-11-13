@@ -16,17 +16,23 @@ from sqlalchemy.orm import Session
 from ..assistant.assistant_sources import SourceNumberer
 from ._tools_specs_core import CORE_TOOLS
 from ._tools_specs_data import DATA_TOOLS
+from ._tools_specs_diagnosis import DIAGNOSIS_TOOLS
 from ._tools_specs_document import DOCUMENT_TOOLS
+from ._tools_specs_quality import QUALITY_TOOLS
 from ._tools_specs_relaxed import RELAXED_TOOLS
 from ._tools_specs_report import REPORT_TOOLS
 from ._tools_specs_search import SEARCH_TOOLS
+from ._tools_specs_tasks import TASK_TOOLS
+from ._tools_specs_web import WEB_TOOLS
 from ._types import _WEB_SEARCH_TOOL_NAME, Tool, ToolResult, web_search_description
 from .policy import ToolExecutionContext, is_allowed, tool_visible
 
 logger = logging.getLogger(__name__)
 
 # 工具严格按原文件顺序拼接：core → data → relaxed（放宽模式，位置与拆分前一致）→
-# report → search → document（#38 简历文档：版面读数/版本变体/单条读写）。顺序是行为契约
+# report → search → document（#38 简历文档：版面读数/版本变体/单条读写）→ quality
+# （T29 只读质检：质量检测/ATS/统一检查/版本对比）→ diagnosis（T31 只读错误诊断）。
+# 顺序是行为契约
 # （tool_definitions 输出顺序 = 发给模型的工具列表顺序），不得重排。
 _TOOLS: tuple[Tool, ...] = (
     *CORE_TOOLS,
@@ -35,6 +41,13 @@ _TOOLS: tuple[Tool, ...] = (
     *REPORT_TOOLS,
     *SEARCH_TOOLS,
     *DOCUMENT_TOOLS,
+    *QUALITY_TOOLS,
+    *DIAGNOSIS_TOOLS,
+    # #16 链接抓取/导入（web_extract 只读 / import_jobs_from_url 写，走提案卡）；
+    # 追加在末尾，不重排既有分组（顺序是发给模型的工具列表契约）。
+    *WEB_TOOLS,
+    # 18A 长任务工具（task_create / task_status / task_cancel），同样追加在末尾。
+    *TASK_TOOLS,
 )
 
 
@@ -44,6 +57,7 @@ def tool_definitions(
     enabled: bool = True,
     web_search: bool = False,
     fetch_pages: int = 0,
+    max_results: int = 0,
     relaxed: bool = False,
 ) -> list[dict]:
     """OpenAI 工具声明。
@@ -55,8 +69,8 @@ def tool_definitions(
     （默认）不下发放宽模式工具——那些工具会读到敏感信息（身份字段、网申填写值、
     历史对话），只有用户显式开启才可见。
 
-    ``fetch_pages`` 是设置里"抓取正文的条数"，只影响联网搜索那条工具的描述措辞
-    （见 ``web_search_description``）。
+    ``fetch_pages`` 是设置里"抓取正文的条数"、``max_results`` 是"每次最多返回的
+    结果条数"，两者只影响联网搜索那条工具的描述措辞（见 ``web_search_description``）。
     """
     if not enabled:
         return []
@@ -66,6 +80,7 @@ def tool_definitions(
             dataset_generation=0,
             web_search=web_search,
             fetch_pages=fetch_pages,
+            max_results=max_results,
             relaxed=relaxed,
             writable=False,
         )
@@ -74,7 +89,7 @@ def tool_definitions(
         if not tool_visible(tool, web_search=ctx.web_search, relaxed=ctx.relaxed):
             continue
         description = (
-            web_search_description(ctx.fetch_pages)
+            web_search_description(ctx.fetch_pages, ctx.max_results)
             if tool.name == _WEB_SEARCH_TOOL_NAME
             else tool.description
         )
