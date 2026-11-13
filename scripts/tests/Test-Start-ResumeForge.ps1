@@ -951,6 +951,34 @@ while ($true) {
         -Condition ($processScriptContent -match 'Get-StaleBackendReason') `
         -Message "Start-ResumeForge 必须在沿用已运行的后端之前调用 Get-StaleBackendReason（否则旧版本会被一直沿用）。"
 
+    # ---- 陈旧的进程记录（2026-11-13 实测）---------------------------------------
+    # 后端在跑、/api/health 返回 200，而 runtimeackend.json 里的 PID 早已退出
+    # （服务被外部脚本拉起，记录没跟着更新）。原逻辑把这种情况与"端口被别人的程序占着"
+    # 当成同一件事报错，用户看到「不是从当前目录启动的」——而服务就是自己那份代码。
+    #
+    # 判定函数本身的两种结果在这里直接跑一遍（它只读记录 + Get-Process，不碰网络）。
+    $staleRecordPath = Join-Path $RuntimeDirectory "stale-record.json"
+    @{ process_id = 999999; started_at_unix = 1700000000; started_at = "2023-11-14T00:00:00Z" } |
+        ConvertTo-Json | Set-Content -LiteralPath $staleRecordPath -Encoding utf8
+    Assert-LauncherTest `
+        -Condition (Test-StaleProcessRecord -RecordPath $staleRecordPath) `
+        -Message "PID 已不存在的记录必须被判定为陈旧（否则启动器会把自家服务当成别人的）。"
+
+    $liveRecordPath = Join-Path $RuntimeDirectory "live-record.json"
+    @{
+        process_id      = $PID
+        started_at_unix = [DateTimeOffset]::new((Get-Process -Id $PID).StartTime).ToUnixTimeSeconds()
+    } | ConvertTo-Json | Set-Content -LiteralPath $liveRecordPath -Encoding utf8
+    Assert-LauncherTest `
+        -Condition (-not (Test-StaleProcessRecord -RecordPath $liveRecordPath)) `
+        -Message "指向活进程的记录不得被判成陈旧（否则会掩盖 PID 复用这种真冲突）。"
+
+    # 光有函数还不够：启动器必须真的调用它，且在 throw 之前。
+    Assert-LauncherTest `
+        -Condition ($processScriptContent -match 'Test-StaleProcessRecord') `
+        -Message "Assert-RunningServiceIsOwned 必须先区分陈旧记录与真冲突，不能一律报错。"
+
+
     # ---- 一台什么都没装的电脑：引导分支 -----------------------------------------
     # 覆盖参与判断的函数，断言"找不到 Python / Node 时"走的是哪条路。**真下载**由
     # windows-runtimes 作业负责（它会真的下 portable Node 与 Python 安装包并校验摘要）；

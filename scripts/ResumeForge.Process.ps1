@@ -24,6 +24,26 @@ function Assert-RunningServiceIsOwned {
         return
     }
 
+    # 分为两种情况，处理方式相反：
+    #
+    #   1) **记录里的进程已经死了**（PID 不存在）——这是陈旧记录。端口上那个健康的服务是
+    #      从别处起的（或被外部脚本直接拉起），记录只是没被更新。此时留着记录只会误导
+    #      后续排查（`runtime\backend.json` 指向一个不存在的 PID），而服务本身是好的。
+    #      正确动作：删掉陈旧记录并放行，让人继续用那个服务。
+    #
+    #   2) **记录指向一个还活着的、但不是我们要的进程**（PID 被别的程序复用、命令行对不上）
+    #      ——这才是"不是从当前目录启动"的真情形，必须报错。
+    #
+    # 2026-11-13 实测踩过第 1 种：后端在跑、health 返回 200，而 `backend.json` 里的 PID
+    # 早已退出，于是每次启动都被判成"别人的服务"。
+    $staleRecord = Test-StaleProcessRecord -RecordPath $RecordPath
+    if ($staleRecord) {
+        Write-Warning ("清理陈旧的进程记录（$RecordPath 里的 PID 已不存在）。" +
+            "端口 $Port 上的$DisplayName是从别处启动的，本次沿用它。")
+        Remove-Item -LiteralPath $RecordPath -Force -ErrorAction SilentlyContinue
+        return
+    }
+
     throw ("端口 $Port 上有一个简历通$DisplayName在运行，但它不是从当前目录启动的，所以这次不会沿用它。`n" +
         "当前目录：$ProjectRoot`n" +
         "也就是说：刚解压的这份代码一行都没跑起来——浏览器里看到的可能是另一个位置的简历通，" +

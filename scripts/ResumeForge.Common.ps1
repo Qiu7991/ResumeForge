@@ -213,6 +213,43 @@ function Get-ProcessRecordField {
     return $property.Value
 }
 
+<#
+记录文件里的那个进程是不是**已经死了**。
+
+与 `Get-ProcessRecordMatch` 的分工：那个函数回答"记录还能不能用来认定这个进程是自己人"
+（PID + 启动时间 + 命令行三重校验），答"不能"的原因有很多种；本函数只回答其中**最无歧义
+的一种**——记录里的 PID 在系统里根本不存在，记录纯属陈旧。
+
+为什么要单独判断（2026-11-13 实测）：后端在跑、`/api/health` 返回 200，而
+`runtime\backend.json` 里的 PID 早已退出（服务被外部脚本拉起，记录没跟着更新）。启动器把
+这种情况与"端口被别人的程序占着"当成同一件事报错，用户看到「不是从当前目录启动的」——
+而实际上服务就是自己那份代码，只是记录文件过期了。
+
+区别对待的依据：陈旧记录**删掉就好**，删掉之后没有任何东西会被误判；而"记录指向一个还活着
+但命令行对不上的进程"意味着 PID 被复用，那才必须报错。
+#>
+function Test-StaleProcessRecord {
+    param([string]$RecordPath)
+
+    if (-not (Test-Path -LiteralPath $RecordPath)) {
+        return $false
+    }
+    try {
+        $record = Get-Content -LiteralPath $RecordPath -Raw -Encoding utf8 | ConvertFrom-Json
+        $processId = Get-ProcessRecordField -Record $record -Name "process_id"
+        if ($null -eq $processId) {
+            # 记录里没有 PID：无从核对，按陈旧处理（它已经没有任何判别力）。
+            return $true
+        }
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        return $null -eq $process
+    }
+    catch {
+        # 记录损坏（截断/手改坏）：同样没有判别力，按陈旧处理。
+        return $true
+    }
+}
+
 function Get-ProcessRecordMatch {
     param(
         [string]$RecordPath,

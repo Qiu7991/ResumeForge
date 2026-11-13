@@ -1,7 +1,9 @@
 @echo off
-title 工作通（2.0 二开 + 求职采集，端口 8012）
+title 工作通 (2.0 二开 + 求职采集, 8012)
 setlocal
-rem 这个文件名是从上游继承的（上游 start.cmd 默认 8005）。在这里它**指向工作通自己的端口**，
-rem 避免和正在使用的简历通 1.0（8005）/ 简历通 2.0（8010）撞车。
-rem 2026-11-10：顺手删掉了从 2.0 复制来的 start-2.0.cmd（它用 8010，与工作通端口冲突）。
+rem This filename is inherited from upstream (whose start.cmd defaults to 8005).
+rem Here it points at 工作通's own ports so it never collides with 简历通 1.0
+rem (8005) or 简历通 2.0 (8010).
+rem
+rem NOTE: keep every `rem` line ASCII-only — see the same note in start-gzt.cmd.
 call "%~dp0start-gzt.cmd" %*
