@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AI 求职页（`/ai-jobs`）：按 `job_hunt_backend` 开关分发到两条实现。
+ * AI 求职页（`/ai-jobs`）：自研采集工作台。
  *
- * - `sidecar`（默认）：`LegacyAiJobsView` —— 调外部 BossHunter 引擎，原逻辑一行未改；
- * - `native`：`NativeJobHuntView` —— 工作通自研采集 + 复用投递台入队。
+ * 2026-11-19 之前这里按 `job_hunt_backend` 开关分发到两条实现：`sidecar`（遥控外部
+ * BossHunter 引擎）与 `native`（自研采集）。自研那套跑稳之后旧路径已删除，
+ * 现在是单向的——只剩 native，不再需要分发层。
  *
- * 为什么在这一层分发、而不是在页面里到处写 if：
- * 两条路径的数据源、前置条件（引擎 vs 浏览器）、可用动作都不同，混在一起迟早互相踩。
- * 分发点只有这里一处，两个视图各自独立演进。
+ * 保留这一层薄壳而不是把页面直接挂到 `NativeJobHuntView`：`/ai-jobs` 的加载态与
+ * 错误态（状态接口拉不到时给「重试」）属于**页面职责**，视图只管渲染成功的状态。
  */
 import { useCallback } from "react";
 
-import LegacyAiJobsView from "../components/ai-jobs/LegacyAiJobsView";
 import NativeJobHuntView from "../components/ai-jobs/NativeJobHuntView";
 import ErrorState from "../components/common/ErrorState";
 import PageSkeleton from "../components/common/PageSkeleton";
@@ -32,9 +31,5 @@ export default function AiJobsPage() {
   const status = statusState.data;
   if (!status) return <PageSkeleton rows={4} />;
 
-  return status.backend === "native" ? (
-    <NativeJobHuntView status={status} />
-  ) : (
-    <LegacyAiJobsView />
-  );
+  return <NativeJobHuntView status={status} />;
 }

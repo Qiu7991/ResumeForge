@@ -10,7 +10,7 @@ import { t } from "../../i18n";
 import TouTouOrb from "./TouTouOrb";
 import { defaultTouTouContext, TouTouContext } from "./touTouContext";
 import { registerTouTouContext, type TouTouSignal } from "./touTouPageContext";
-import { INTERVENTION_STORAGE_KEY } from "./touTouIntervention";
+import { INTERVENTION_STORAGE_KEY, interventionWeekKey } from "./touTouIntervention";
 import { renderOrb } from "./touTouTestUtils";
 import { askTouTouSideQuestion } from "./touTouSideAsk";
 
@@ -157,7 +157,10 @@ describe("中断预算（#27D）", () => {
         mutedKinds: {},
         weekly: {
           "layout-overflow": {
-            week: "2026-W46",
+            // 用**当前周**而不是写死的字符串：`weeklyCount` 只认"本周"的记录，
+            // 写死 `2026-W46` 会在跨年后（甚至下一周）让这条上限静默失效——
+            // 2026-11-19 就是这么红的。
+            week: interventionWeekKey(new Date()),
             count: 2,
           },
         },

@@ -201,12 +201,18 @@ class TaskRunner:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise TaskRunnerError("已有任务正在进行中，请先停止或等待其完成")
-            # AI 求职互斥（锁内检查，覆盖 apply/collect/backfill 三个入口）：
-            # 浏览器是两边共用的唯一资源，同时驱动会互相打架。
-            from ..ai_jobs.gate import try_clear_stale_ai_busy
+            # 浏览器互斥（锁内检查，覆盖 apply/collect/backfill 三个入口）：投递、采集、
+            # 网申填表共用同一个投递专用浏览器，同时驱动会互相打架。
+            #
+            # 2026-11-19：原先这里是 `ai_jobs.gate.try_clear_stale_ai_busy()`。那个门
+            # 靠 `_ai_busy` 标志位工作，而**自研采集从不置位它**——所以采集在跑的时候
+            # 投递照样能启动，互斥实际早已失效。现在换成纯查询式的
+            # `browser_gate.ensure_browser_free()`，两边对等过同一道门。
+            from ..browser_gate import ensure_browser_free
 
-            if not try_clear_stale_ai_busy():
-                raise TaskRunnerError("已有 AI 求职任务在运行，请等它结束或停止后再启动投递任务")
+            blocker = ensure_browser_free()
+            if blocker:
+                raise TaskRunnerError(blocker)
             # 先取租约再起线程（RF-03 TOCTOU）：切换持锁期间直接失败（409 语义不变）；
             # 只要租约登记成功，切换的排空就一定会等到本批次结束。
             try:

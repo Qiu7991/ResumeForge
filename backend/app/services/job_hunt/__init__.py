@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """自研求职采集（``services/job_hunt/``）：不依赖外部引擎的多平台岗位采集。
 
-与 ``services/ai_jobs/``（HTTP 代理到外部引擎的旧路径）**并存**，用设置项
-``job_hunt_backend``（``schemas/job_hunt.py``，默认 ``sidecar``）切换；旧路径保留
-作 fallback，删除要等自研实现稳定之后。
+2026-11-19：旧的 ``services/ai_jobs/``（HTTP 代理到外部 BossHunter 引擎）已整体删除，
+``job_hunt_backend`` 开关随之取消——本模块是采集的唯一实现。
 
 模块分工：
 - ``base``     ：平台适配器抽象（``JobSiteAdapter``）与数据结构（``JobStub``/``JobDetail``）；

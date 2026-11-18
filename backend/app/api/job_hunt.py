@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""自研求职采集路由（``/api/job-hunt/*``）：开关、平台清单、native 采集入口。
+"""自研求职采集路由（``/api/job-hunt/*``）：平台清单、采集入口、重抓与导入。
 
-与 ``/api/ai-jobs/*``（sidecar 旧路径）**并存**：``job_hunt_backend`` = sidecar
-（非默认，需外部 BossHunter 引擎）时本路由的采集入口拒绝执行（409），旧路径照常工作；
-= native（**默认**）时走 ``services/job_hunt`` 的自研采集（registry 适配器 + runner +
-CDP 抓取）。设置页的切换项读写的就是这里的 config。
+采集走 ``services/job_hunt``（registry 适配器 + runner + CDP 抓取）。
+
+2026-11-19：旧的 ``/api/ai-jobs/*`` sidecar 路径（遥控外部 BossHunter 引擎）已整体删除，
+``job_hunt_backend`` 开关随之取消——自研是唯一实现，不再有"两个后端"的概念。
 """
 from __future__ import annotations
 
@@ -18,11 +18,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..schemas.job_hunt import JobHuntConfig
 from ..services.job_hunt.cursor_store import clear_cursor, load_cursor, save_cursor
 from ..services.job_hunt.registry import get_registry
 from ..services.job_hunt.runner import HuntCriteria, JobHuntRunner, cdp_fetcher, hash_criteria
-from ..services.job_hunt.settings import get_job_hunt_config, save_job_hunt_config
 from .job_hunt_shared import (
     BLOCKLIST_KEY,
     BlocklistConfig,
@@ -58,25 +56,17 @@ class JobHuntCollectIn(BaseModel):
 
 
 @router.get("/status")
-def status(db: Session = Depends(get_db)) -> dict:
-    """开关状态 + 已注册平台清单（设置页/前端切换依据）。"""
-    config = get_job_hunt_config(db)
+def status() -> dict:
+    """已注册平台清单。
+
+    ``backend`` 字段保留只为兼容前端既有读取（`JobHuntStatus.backend`）：自研已是
+    唯一实现，值恒为 ``native``。等前端那个字段也清掉时可以一并删除。
+    """
     registry = get_registry()
     return {
-        "backend": config.job_hunt_backend,
+        "backend": "native",
         "platforms": [{"key": a.key, "name": a.name} for a in registry.all()],
     }
-
-
-@router.get("/config")
-def read_config(db: Session = Depends(get_db)) -> JobHuntConfig:
-    return get_job_hunt_config(db)
-
-
-@router.put("/config")
-def write_config(config: JobHuntConfig, db: Session = Depends(get_db)) -> JobHuntConfig:
-    """写开关（非法值由 pydantic Literal 直接 422；默认 native，删除键即回默认）。"""
-    return save_job_hunt_config(db, config)
 
 
 @router.post("/collect")
@@ -86,11 +76,6 @@ def collect(req: JobHuntCollectIn, db: Session = Depends(get_db)) -> dict:
     断点续采：``resume=True`` 时读上次游标（AppSetting KV）续翻；每次跑完都落游标，
     完整跑完（no_results / repeated_page）后清掉。
     """
-    config = get_job_hunt_config(db)
-    if config.job_hunt_backend != "native":
-        raise HTTPException(
-            409, "当前仍是 sidecar 模式：请在设置里把「自研求职后端」切到 native 后再采集"
-        )
     adapter = get_registry().resolve(req.site_key)
     if adapter is None:
         raise HTTPException(
@@ -281,10 +266,6 @@ def import_selected(req: JobHuntImportIn, db: Session = Depends(get_db)) -> dict
     与 ``collect(persist=True)`` 的区别：这里**只导用户勾中的**，不是采到什么导什么。
     采集 15 个往往只要 3 个，自动入库会把岗位广场塞满垃圾。
     """
-    config = get_job_hunt_config(db)
-    if config.job_hunt_backend != "native":
-        raise HTTPException(409, "当前是 sidecar 模式，无需导入（岗位由引擎管理）")
-
     adapter = get_registry().resolve(req.site_key)
     if adapter is None:
         raise HTTPException(404, f"未知平台 {req.site_key}")
@@ -372,10 +353,6 @@ def refetch_jd(req: JobHuntRefetchIn, db: Session = Depends(get_db)) -> dict:
     只处理能归属到已注册平台的岗位（按 ``source_url`` 主机名判断）；其余平台/手工
     录入的岗位无法重抓，如实跳过。后台线程跑，立刻返回本次排队的数量。
     """
-    config = get_job_hunt_config(db)
-    if config.job_hunt_backend != "native":
-        raise HTTPException(409, "当前是 sidecar 模式：先切到 native 再用重抓")
-
     from ..models.job import Job
 
     if req.job_ids:

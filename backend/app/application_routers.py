@@ -16,7 +16,6 @@ from fastapi import FastAPI
 
 from .api import (
     agent_tasks,
-    ai_jobs,
     ai_tasks,
     analytics,
     apply,
@@ -121,10 +120,8 @@ ROUTERS = (
     job_match.router,
     # 通用 AI 任务（0068）：独立前缀 /api/ai-tasks，不与其他前缀抢路径。
     ai_tasks.router,
-    # AI 求职（BossHunter sidecar）：独立前缀 /api/ai-jobs，不与其他前缀抢路径。
-    ai_jobs.router,
-    # 自研求职采集（services/job_hunt）：独立前缀 /api/job-hunt，与 sidecar 并存，
-    # 用 job_hunt_backend 开关切换（默认 native，旧路径不动）。
+    # 求职采集（services/job_hunt）：独立前缀 /api/job-hunt。
+    # 2026-11-19：原来的 sidecar 路径（/api/ai-jobs，遥控外部 BossHunter 引擎）已删除。
     job_hunt.router,
     # 任务化采集（/collect/task/*：可暂停/停止/有进度）：同前缀，拆开是为了让
     # job_hunt.py 守住 500 行预算。必须在 job_hunt.router 之后注册也无妨——

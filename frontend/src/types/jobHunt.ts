@@ -6,19 +6,17 @@
  * native = 工作通自研采集（services/job_hunt）。新老并存，删旧要等 native 稳定。
  */
 
-export type JobHuntBackend = "sidecar" | "native";
-
-export interface JobHuntConfig {
-  job_hunt_backend: JobHuntBackend;
-}
-
 export interface JobHuntPlatform {
   key: string;
   name: string;
 }
 
 export interface JobHuntStatus {
-  backend: JobHuntBackend;
+  /**
+   * 采集后端标识。2026-11-19 起自研是唯一实现，值恒为 `"native"`；
+   * 字段保留是为了兼容既有读取，等消费点清干净可一并删除。
+   */
+  backend: "sidecar" | "native";
   platforms: JobHuntPlatform[];
 }
 

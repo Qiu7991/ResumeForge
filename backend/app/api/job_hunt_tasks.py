@@ -27,7 +27,6 @@ from ..services.job_hunt.collect_task import (
     get_collect_manager,
 )
 from ..services.job_hunt.registry import get_registry
-from ..services.job_hunt.settings import get_job_hunt_config
 from .job_hunt_shared import acquire_client, is_blocked, read_blocklist_config
 
 logger = logging.getLogger(__name__)
@@ -85,10 +84,6 @@ def start_collect_task(
     与 ``POST /collect``（同步跑完）的区别：这个能查进度、能暂停、能停止。
     同一时刻只允许一个采集任务——两个任务同时驱动同一个浏览器会互相踩。
     """
-    config = get_job_hunt_config(db)
-    if config.job_hunt_backend != "native":
-        raise HTTPException(409, "当前是 sidecar 模式：请先在设置里切到 native")
-
     adapter = get_registry().resolve(req.site_key)
     if adapter is None:
         raise HTTPException(404, f"未知平台 {req.site_key}")
@@ -100,6 +95,15 @@ def start_collect_task(
             409,
             f"已有采集任务在跑（{running.site_key} {running.message or '进行中'}），请等它结束或先停止",
         )
+
+    # 浏览器互斥：投递、采集、网申填表共用同一个投递专用浏览器。这里与
+    # `TaskRunner.start` 过**同一道门**（2026-11-19 之前采集这条路根本没检查，
+    # 所以采集在跑的时候点投递不会被拦）。
+    from ..services.browser_gate import ensure_browser_free
+
+    blocker = ensure_browser_free()
+    if blocker:
+        raise HTTPException(409, blocker)
 
     # 浏览器必须可用：在启动线程前就检查，避免任务起来后立即失败留下一个"已失败"任务。
     client = acquire_client(db)

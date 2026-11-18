@@ -82,7 +82,7 @@
 | --- | --- |
 | [📋 岗位管理](https://magicapple123.github.io/ResumeForge-official/docs.html#jobs-manual) | 粘贴招聘信息自动解析成草稿；**一次粘贴多份会拆分并逐条确认**；技能标签与来源自动标注 |
 | [🗂 备选岗位](https://magicapple123.github.io/ResumeForge-official/docs.html#jobs-pool) | 还没核对的招聘信息先存这里，之后一键导入正式岗位（助手也能代导） |
-| [🤖 AI 求职](https://magicapple123.github.io/ResumeForge-official/docs.html#ai-jobs) | 自研岗位采集工作台（本 Fork 独有）：填关键词 + 城市 / 经验 / 学历 / 规模 / 薪资区间 / 行业后逐个关键词滚动翻页采集（BOSS 搜索页忽略 URL 的 page 参数，只能靠滚动加载）；采到的岗位先落**备选区**而不直接进岗位广场，自动补抓详情页完整 JD 再逐条语义评分；按分数排序、设分数线把高分低分分开，勾选后导入——只有勾选的才变成正式岗位。采集走独立浏览器，与投递专用浏览器分开配置 |
+| [🤖 AI 求职](https://magicapple123.github.io/ResumeForge-official/docs.html#ai-jobs) | 自研岗位采集工作台（本 Fork 独有）：填关键词 + 城市 / 经验 / 学历 / 规模 / 薪资区间 / 行业后逐个关键词滚动翻页采集（BOSS 搜索页忽略 URL 的 page 参数，只能靠滚动加载）；采到的岗位先落**备选区**而不直接进岗位广场，自动补抓详情页完整 JD 再逐条语义评分；按分数排序、设分数线把高分低分分开，勾选后导入——只有勾选的才变成正式岗位。采集与投递**共用同一个投递专用浏览器**（同一端口与登录态），所以两者互斥：一边在跑时另一边会提示等待，避免两个任务同时驱动同一个页面互相踩 |
 | [📥 拖拽导入](https://magicapple123.github.io/ResumeForge-official/docs.html#jobs-drag) | 岗位识别、附件、照片、数据集备份等都能从资源管理器直接拖进来；拖到窗口任意位置时按扩展名分流：`.zip` 导入数据集、`.csv` 导入岗位表、`.json` 新建手写简历 |
 | [🖱 批量设置状态](https://magicapple123.github.io/ResumeForge-official/docs.html#jobs-batch) | 岗位广场条目上右键「批量选择」进入多选后，可用批量工具栏对勾选岗位**批量设置状态**或批量删除 |
 | [💡 岗位需求解读](https://magicapple123.github.io/ResumeForge-official/docs.html#match-reading) | 依据招聘原文生成结构化需求总结、原文证据与通用准备建议 |

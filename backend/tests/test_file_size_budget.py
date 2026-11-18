@@ -294,14 +294,9 @@ _EXEMPTIONS: dict[str, Exemption] = {
 # 2026-10-22 拆分批已按到期日（2026-11-15）执行并删除最后两条
 # （scripts/seed_demo_data.py、scripts/measure_api_perf.py，见上方历史记录）：
 # 拆分后各文件行数均 ≤400，远低于 800 预算，不再需要任何豁免。
-_SCRIPTS_EXEMPTIONS: dict[str, Exemption] = {
-    # 合并上游 2.1.0（2026-11-13）：937 行。二开闸门脚本，命令清单是**顺序契约**
-    # （README 里的执行次序就是它），拆成多模块会让"跑哪几条、什么顺序"散落。
-    # 到期日与上方 _FORK_BACKSTOP 同批处理。
-    "scripts/fork_gate.py": Exemption(
-        "二开闸门脚本，命令清单是顺序契约，拆分会打散执行次序", _FORK_BACKSTOP
-    ),
-}
+# 2026-11-19：fork_gate.py 的豁免已删除——删除 ai_jobs 时整块移除了 phase_8（203 行），
+# 文件从 937 降到 729 行，回到 800 预算内。
+_SCRIPTS_EXEMPTIONS: dict[str, Exemption] = {}
 
 # desktop/（*.js，预算 500）：实测最大文件 470 行，零豁免起步——新增长文件
 # 必须自觉登记豁免 + 到期日。

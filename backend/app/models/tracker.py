@@ -75,6 +75,10 @@ SOURCE_MANUAL = "manual"
 SOURCE_RECOGNIZED = "recognized"
 # AI 求职（feat/ai-jobs-sidecar）：与 1.x models/tracker.py:77-78 逐字一致，
 # 供 delivery_sync 把已投递岗位写回求职进度时标记来源。
+#
+# **2026-11-19 保留**：产生它的 sidecar 代码已删除，但这是个**数据值**——从旧备份
+# 恢复出来的求职进度里可能带 `source="ai_jobs"`，删掉常量会让那些行的来源标签变成空串。
+# 留着它的成本是一个字符串，删掉的成本是老数据显示成"无来源"。
 SOURCE_AI_JOBS = "ai_jobs"
 SOURCES = (SOURCE_APPLY, SOURCE_MANUAL, SOURCE_RECOGNIZED, SOURCE_AI_JOBS)
 

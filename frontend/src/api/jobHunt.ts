@@ -11,7 +11,6 @@ import type {
   JobHuntBlocklist,
   JobHuntCollectRequest,
   JobHuntCollectResult,
-  JobHuntConfig,
   JobHuntPersistLedger,
   JobHuntStatus,
   JobHuntStub,
@@ -22,17 +21,6 @@ import { request } from "./client";
 /** 开关状态 + 已注册平台清单（设置页切换项的数据源）。 */
 export function getJobHuntStatus(signal?: AbortSignal): Promise<JobHuntStatus> {
   return request<JobHuntStatus>("/job-hunt/status", { signal });
-}
-
-export function getJobHuntConfig(): Promise<JobHuntConfig> {
-  return request<JobHuntConfig>("/job-hunt/config");
-}
-
-export function saveJobHuntConfig(config: JobHuntConfig): Promise<JobHuntConfig> {
-  return request<JobHuntConfig>("/job-hunt/config", {
-    method: "PUT",
-    body: JSON.stringify(config),
-  });
 }
 
 /** 执行一次自研采集（落库 + 可选分析）。耗时较长（抓页面），超时放宽。 */

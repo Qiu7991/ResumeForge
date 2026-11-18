@@ -12,64 +12,25 @@ def api(client):
     return client
 
 
-def _get_config(api):
-    return api.get("/api/job-hunt/config")
 
 
 def test_status_lists_platforms(api):
     resp = api.get("/api/job-hunt/status")
     assert resp.status_code == 200
     body = resp.json()
-    # 2026-11-10 口径变更（产品默认值反转，不是放松断言）：默认由 sidecar 改为 native。
-    # 原因：sidecar 要用户另装 BossHunter 引擎（公开版拿不到），而「AI 投递」在工作通里
+    # 2026-11-19：sidecar 路径已整体删除，`backend` 字段恒为 native（为兼容前端读取保留）。
+    # 此前 2026-11-10 曾把默认值由 sidecar 改为 native，理由是 sidecar 要用户另装
+    # BossHunter 引擎（公开版拿不到），而「AI 投递」在工作通里
     # 本该开箱可用；作者本地一直正常，就是因为他手动设成了 native。
     assert body["backend"] == "native"
     keys = {p["key"] for p in body["platforms"]}
     assert {"zhilian", "job51", "liepin"} <= keys
 
 
-def test_config_default_native(api):
-    """出厂默认是 native（自研采集），不需要外部引擎。"""
-    resp = _get_config(api)
-    assert resp.status_code == 200
-    assert resp.json()["job_hunt_backend"] == "native"
-
-
-def test_config_switch_roundtrip(api):
-    resp = api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
-    assert resp.status_code == 200
-    assert resp.json()["job_hunt_backend"] == "native"
-    assert _get_config(api).json()["job_hunt_backend"] == "native"
-    # 状态跟着变
-    assert api.get("/api/job-hunt/status").json()["backend"] == "native"
-    # 切回 sidecar
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
-    assert _get_config(api).json()["job_hunt_backend"] == "sidecar"
-
-
-def test_config_rejects_unknown_backend(api):
-    resp = api.put("/api/job-hunt/config", json={"job_hunt_backend": "whatever"})
-    assert resp.status_code == 422
-
-
-def test_collect_rejected_in_sidecar_mode(api):
-    """红线：`sidecar` 模式下 native 采集必须拒绝（409），旧路径不受影响。
-
-    **必须显式切到 sidecar**：默认值 2026-11-10 已改成 native，靠默认值来构造这个前提
-    会让用例名与行为脱节（名字说 sidecar，实际跑的是 native）。
-    """
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
-    resp = api.post("/api/job-hunt/collect", json={"site_key": "zhilian", "keywords": "AI"})
-    assert resp.status_code == 409
-    assert "sidecar" in resp.json()["detail"]
-
-
 def test_collect_unknown_platform_in_native_mode(api):
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
     resp = api.post("/api/job-hunt/collect", json={"site_key": "nope", "keywords": "AI"})
     assert resp.status_code == 404
     assert "nope" in resp.json()["detail"]
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
 
 
 def test_collect_reports_browser_unavailable(api, monkeypatch):
@@ -77,7 +38,6 @@ def test_collect_reports_browser_unavailable(api, monkeypatch):
 
     打桩打在内层 get_browser_manager 上，让 _acquire_client 自己的 503 转换被测到。
     """
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
     monkeypatch.setattr(
         "app.services.apply._site_browser.get_browser_manager",
         lambda db: (_ for _ in ()).throw(RuntimeError("no browser")),
@@ -85,14 +45,12 @@ def test_collect_reports_browser_unavailable(api, monkeypatch):
     resp = api.post("/api/job-hunt/collect", json={"site_key": "zhilian", "keywords": "AI"})
     assert resp.status_code == 503
     assert "浏览器" in resp.json()["detail"]
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
 
 
 def test_collect_cursor_saved_on_interrupt(api, db_session, monkeypatch):
     """native 采集跑通（假抓取器）：中断时游标落 KV，resume=True 续翻。"""
     from app.services.job_hunt.runner import hash_criteria
 
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
 
     class Stub:
         def __init__(self, payload):
@@ -123,7 +81,6 @@ def test_collect_cursor_saved_on_interrupt(api, db_session, monkeypatch):
     h = hash_criteria("zhilian", {"keywords": "AI"})  # 路由把空 city/extra 归一成默认
     from app.services.job_hunt.cursor_store import kv_key
     assert db_session.get(AppSetting, kv_key("zhilian", h)) is not None  # 游标已落库
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +124,6 @@ def _patch_collect(monkeypatch, stubs):
 
 def test_collect_persists_new_jobs(api, monkeypatch):
     """persist=True 时，采到的岗位要写进岗位广场。"""
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
     _patch_collect(monkeypatch, [_stub(), _stub("另一个岗位", "另一公司", "https://example.com/job/2")])
 
     resp = api.post(
@@ -186,12 +142,10 @@ def test_collect_persists_new_jobs(api, monkeypatch):
     assert "AI 工程师" in titles
     row = next(j for j in jobs["items"] if j["title"] == "AI 工程师")
     assert row["salary"] == "8-12K"
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
 
 
 def test_collect_is_idempotent(api, monkeypatch):
     """同一批岗位再采一次：inserted=0，skipped_duplicate 全中。"""
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
     stubs = [_stub()]
     _patch_collect(monkeypatch, stubs)
 
@@ -207,12 +161,10 @@ def test_collect_is_idempotent(api, monkeypatch):
     ).json()
     assert second["persisted"]["inserted"] == 0
     assert second["persisted"]["skipped_duplicate"] == 1
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
 
 
 def test_collect_persist_off_does_not_write(api, monkeypatch):
     """persist=False 时只返回卡片，不落库。"""
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
     _patch_collect(monkeypatch, [_stub("不该入库的岗位", "X公司", "https://example.com/job/9")])
 
     before = api.get("/api/jobs?page_size=50").json()["total"]
@@ -224,12 +176,10 @@ def test_collect_persist_off_does_not_write(api, monkeypatch):
     assert resp.json()["persisted"]["inserted"] == 0
     after = api.get("/api/jobs?page_size=50").json()["total"]
     assert after == before
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
 
 
 def test_collect_analyze_uses_force_false(api, monkeypatch):
     """N2：采集后触发的批量分析必须 force=False（= 评过的跳过，不重复评分）。"""
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
     _patch_collect(monkeypatch, [_stub("评分测试岗位", "Y公司", "https://example.com/job/77")])
 
     captured = {}
@@ -252,7 +202,6 @@ def test_collect_analyze_uses_force_false(api, monkeypatch):
     assert resp.status_code == 200, resp.text
     if captured:
         assert captured["force"] is False, "必须 force=False 才能不重复评分"
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +236,6 @@ def test_refetch_jd_picks_short_jds_and_passes_overwrite(api, db_session, monkey
         "app.api.job_hunt._start_serial_backfill",
         lambda plan, **kw: captured.update(ids=[jid for jid, _ in plan]),
     )
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
 
     resp = api.post("/api/job-hunt/refetch-jd", json={"short_threshold": 200})
 
@@ -298,7 +246,6 @@ def test_refetch_jd_picks_short_jds_and_passes_overwrite(api, db_session, monkey
     # overwrite=True 的验证在 detail_backfill 的单元测试里（这里已被打桩替换掉）；
     # 这条只确保「选对了哪些岗位」。
     assert body["queued"] >= 1
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
 
 
 def test_refetch_jd_skips_jobs_without_known_platform(api, db_session, monkeypatch):
@@ -318,21 +265,12 @@ def test_refetch_jd_skips_jobs_without_known_platform(api, db_session, monkeypat
         "app.api.job_hunt._start_serial_backfill",
         lambda plan, **kw: called.update(n=called["n"] + 1),
     )
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
 
     resp = api.post("/api/job-hunt/refetch-jd", json={})
 
     assert resp.status_code == 200, resp.text
     assert called["n"] == 0, "不认识的主机名不该触发任何抓取"
     assert resp.json()["skipped"] >= 1
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
-
-
-def test_refetch_jd_refuses_in_sidecar_mode(api):
-    """sidecar 模式下拒绝：那条路径没有自研抓取器可用。"""
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
-    resp = api.post("/api/job-hunt/refetch-jd", json={})
-    assert resp.status_code == 409
 
 
 def test_refetch_jd_starts_exactly_one_background_thread(api, db_session, monkeypatch):
@@ -360,7 +298,6 @@ def test_refetch_jd_starts_exactly_one_background_thread(api, db_session, monkey
         "app.api.job_hunt._start_serial_backfill",
         lambda plan, **kw: calls.append(list(plan)),
     )
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "native"})
 
     resp = api.post("/api/job-hunt/refetch-jd", json={})
 
@@ -368,4 +305,3 @@ def test_refetch_jd_starts_exactly_one_background_thread(api, db_session, monkey
     assert len(calls) == 1, f"必须只起一个后台线程，实际 {len(calls)} 个"
     picked = {jid for jid, _ in calls[0]}
     assert len(picked) >= 3, "跨平台的岗位都要进同一条队列"
-    api.put("/api/job-hunt/config", json={"job_hunt_backend": "sidecar"})
