@@ -1,22 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """BOSS 薪资字体解密测试。
 
-数据来源两档：
-- 合成字体（fontTools 现场构建，无网络无系统字体）：验证轮廓比对机制本身；
-- 真实夹具（docs/job-hunt-fixtures/，缺了就 skip，E18）：验证明文对照 + 约束求解
-  在真实页面数据上的行为，断言只落在**有实证**的符号上。
+全部用 fontTools 现场构建的合成字体与构造数据，**不依赖任何 HTML 夹具**：
+夹具是登录态浏览器导出的真实页面、按仓库规则不进 git，靠它做断言的用例在任何
+干净环境里都只会 skip。这里验证的是三条动态路径的逻辑本身。
 """
+
 from __future__ import annotations
 
 import base64
 import io
 import re
 
-import pytest
-
 import app.services.job_hunt.sites.boss_font as bf
-from job_hunt_fixtures import has, load
-
+from fontTools.pens.ttGlyphPen import TTGlyphPen
 
 # ---------------------------------------------------------------------------
 # decode_salary：纯替换逻辑（硬编码映射，不依赖夹具）
@@ -126,9 +123,18 @@ def _digit_pen_points(d: int) -> list[tuple[float, float]]:
     return [(0, 0), (500, 0), (250, 600 + d * 40)]
 
 
+def _triangle_glyph(a: tuple[int, int], b: tuple[int, int], c: tuple[int, int]):
+    """用一个三角形描出字形（测试只关心轮廓签名，不关心形状像不像数字）。"""
+    pen = TTGlyphPen(None)
+    pen.moveTo(a)
+    pen.lineTo(b)
+    pen.lineTo(c)
+    pen.closePath()
+    return pen.glyph()
+
+
 def _build_synthetic_font() -> bytes:
     from fontTools.fontBuilder import FontBuilder
-    from fontTools.pens.ttGlyphPen import TTGlyphPen
 
     fb = FontBuilder(1000, isTTF=True)
     order = ["gPad", *(f"g{d}" for d in range(10)), *(f"p{d}" for d in range(10)), "g0copy"]
@@ -136,26 +142,22 @@ def _build_synthetic_font() -> bytes:
     glyph_map: dict[str, object] = {}
     # 垫片字形（不进 cmap）：fontTools fontBuilder 编译 cmap format 4 时会把
     # glyphId=1 的映射丢掉（实测），垫一个不参与映射的字形把真实字形顶到 ≥2。
-    pen = TTGlyphPen(None)
-    pen.moveTo((0, 0)); pen.lineTo((7, 0)); pen.lineTo((3, 11)); pen.closePath()
-    glyph_map["gPad"] = pen.glyph()
+    glyph_map["gPad"] = _triangle_glyph((0, 0), (7, 0), (3, 11))
     for d in range(10):
-        pen = TTGlyphPen(None)
         pts = _digit_pen_points(d)
-        pen.moveTo(pts[0]); pen.lineTo(pts[1]); pen.lineTo(pts[2]); pen.closePath()
-        glyph_map[f"g{d}"] = pen.glyph()
+        glyph_map[f"g{d}"] = _triangle_glyph(*pts)
         # PUA 0xE031+d = 数字 d 字形的逐点拷贝（厂商混淆的真实做法）
-        pen = TTGlyphPen(None)
-        pen.moveTo(pts[0]); pen.lineTo(pts[1]); pen.lineTo(pts[2]); pen.closePath()
-        glyph_map[f"p{d}"] = pen.glyph()
+        glyph_map[f"p{d}"] = _triangle_glyph(*pts)
     # 复合字形：引用 g0 平移 (137,-11)，归一化后应仍匹配 '0'
     pen = TTGlyphPen(glyph_map)
     pen.addComponent("g0", (1, 0, 0, 1, 137, -11))
     glyph_map["g0copy"] = pen.glyph()
 
-    cmap = {**{ord(str(d)): f"g{d}" for d in range(10)},
-            **{0xE031 + d: f"p{d}" for d in range(10)},
-            0xE040: "g0copy"}
+    cmap = {
+        **{ord(str(d)): f"g{d}" for d in range(10)},
+        **{0xE031 + d: f"p{d}" for d in range(10)},
+        0xE040: "g0copy",
+    }
     fb.setupCharacterMap(cmap)
     fb.setupGlyf(glyph_map)  # type: ignore[arg-type]
     fb.setupHorizontalMetrics({name: (600, 0) for name in order})
@@ -205,76 +207,47 @@ _DET_TITLE_RE = re.compile(r'<h1 title="([^"]+)">')
 _DET_SALARY_RE = re.compile(r'<span class="salary">([^<]+)</span>')
 
 
-def _boss_ground_pair() -> tuple[str, str] | None:
-    """详情页主岗位的（列表页混淆薪资, 明文薪资）对照对。"""
-    if not (has("boss_list.html") and has("boss_detail.html")):
-        return None
-    cards = _LIST_CARDS_RE.findall(load("boss_list.html"))
-    title_m = _DET_TITLE_RE.search(load("boss_detail.html"))
-    salary_m = _DET_SALARY_RE.search(load("boss_detail.html"))
-    if not (cards and title_m and salary_m):
-        return None
-    wanted = title_m.group(1).strip()
-    for title, salary in cards:
-        if title.strip() == wanted:
-            return salary, salary_m.group(1).strip()
-    return None
+# ---------------------------------------------------------------------------
+# 关于「夹具端到端用例」——已移除，原因值得记下来
+# ---------------------------------------------------------------------------
+#
+# 这里原本有一组 TestBossFixtures，用真实 HTML 夹具做端到端验证，其中两条把
+# `E039 → 8 / E032 → 1 / E033 → 2` 写成了断言。2026-11-19 上游作者证明那组配对
+# 本身就是错的：正确映射是 `E030 → 0`，即 `E032 → 2`、`E033 → 3`、`E039 → 9`。
+#
+# 更要命的是它为什么会「通过」：`test_constraints_pin_three_more_symbols` 断言
+# 「穷举 18 个可行解后这 6 个符号取值唯一」——但基准配对错一位，约束求解就在**错误
+# 的基准**上收敛了，于是错答案被当成「唯一解」钉进注释和代码。这是环路论证：
+# 用已知（错误）值去验证推导出的值。
+#
+# 另外这批用例依赖 `docs/job-hunt-fixtures/*.html`，而 .gitignore 排除了 *.html，
+# 所以在任何干净环境里它们都是 skip——上游作者指出「16 passed 全部来自自证用例」，
+# 说的就是这层：它们既跑不起来，又只验证自己写进去的期望。
+#
+# 结论：删掉，不再保留「用夹具验证固定映射」这类用例。映射的正确性只能靠**外部**
+# 证据判定（同一岗位的明文对照、或字体文件本身的字形轮廓），本文件其余用例验证的
+# 是三条动态路径的**逻辑**（给定输入产出什么），不预设任何字符→数字的对应关系。
 
 
-@pytest.mark.skipif(not (has("boss_list.html") and has("boss_detail.html")),
-                    reason="缺 BOSS 夹具（需登录补抓）")
-class TestBossFixtures:
-    def test_ground_pair_exists(self):
-        pair = _boss_ground_pair()
-        assert pair is not None, "列表与详情没有同岗位对照——夹具结构变了"
-        encoded, plain = pair
-        assert bf.encoded_chars_in(encoded), "列表薪资应当含混淆字符"
-        assert plain == "8-12K", f"详情明文薪资变了：{plain}"
+# ---------------------------------------------------------------------------
+# salary_for_display：决定「最终展示/入库什么」
+# ---------------------------------------------------------------------------
+#
+# 这条不变式比三条解码路径本身更要紧：**未解码时绝不回退到混淆原文**。
+# 回退的话，`\ue032\ue033K` 这类私用区字符会直接写进库、在界面上显示成一串方块，
+# 比留空更糟——留空至少不骗人。
 
-    def test_pairs_mapping_from_fixture(self):
-        pair = _boss_ground_pair()
-        assert pair is not None
-        mapping = bf.mapping_from_pairs([pair])
-        assert mapping == {chr(0xE039): "8", chr(0xE032): "1", chr(0xE033): "2"}
 
-    def test_constraints_pin_three_more_symbols(self):
-        pair = _boss_ground_pair()
-        assert pair is not None
-        known = bf.mapping_from_pairs([pair])
-        salaries = [s for _, s in _LIST_CARDS_RE.findall(load("boss_list.html"))]
-        cm = bf.mapping_from_constraints(salaries, known=known)
-        # 穷举全部可行赋值后取值唯一的符号（18 个可行解里全部一致）
-        assert cm.certain == {
-            chr(0xE031): "0", chr(0xE032): "1", chr(0xE033): "2",
-            chr(0xE034): "3", chr(0xE035): "4", chr(0xE039): "8",
-        }
-        # 其余符号老实留在候选集里：候选全部落在 {5,6,7,9}，且不止一个（没被乱猜）
-        assert set(cm.candidates) == {chr(0xE036), chr(0xE037), chr(0xE038), chr(0xE03A)}
-        assert all(v <= {"5", "6", "7", "9"} for v in cm.candidates.values())
-        assert all(len(v) > 1 for v in cm.candidates.values())
+def test_salary_for_display_uses_decoded_when_ok():
+    """解码成功就用解码值。"""
+    assert bf.salary_for_display("23-26K", "\ue032\ue033-\ue032\ue036K", ok=True) == "23-26K"
 
-    def test_decode_cards_with_derived_mapping(self):
-        pair = _boss_ground_pair()
-        assert pair is not None
-        cm = bf.mapping_from_constraints(
-            [s for _, s in _LIST_CARDS_RE.findall(load("boss_list.html"))],
-            known=bf.mapping_from_pairs([pair]),
-        )
-        cards = _LIST_CARDS_RE.findall(load("boss_list.html"))
-        decoded = {t: bf.decode_salary(s, cm.certain) for t, s in cards}
-        # 只含已钉死符号的卡片：完整还原（全部 15 卡里这 4 张的字符集 ⊆ certain）
-        assert decoded["AI人工智能技术员（服装方向）"].text == "8-12K"
-        assert decoded["AI 漫剧合伙人"].text == "8-13K"
-        assert decoded["AI短剧制作员（带货/剧情/多平台）"].text == "8-13K"
-        assert decoded["接受无经验+当月发薪（人工智能赛道+双休）"].text == "12-24K"
-        for title in ("AI人工智能技术员（服装方向）", "AI 漫剧合伙人",
-                      "AI短剧制作员（带货/剧情/多平台）",
-                      "接受无经验+当月发薪（人工智能赛道+双休）"):
-            assert decoded[title].ok is True
-        # 含未定符号的卡片：已知位被还原、未知位保留原样并标 ok=False
-        partial = decoded["人工智能训练师"]
-        assert partial.ok is False and partial.text.endswith("-8K")
 
-    def test_no_font_embedded_in_fixture(self):
-        # 夹具是 DOM 导出，字体走外链没被保存：字体路径在夹具上应诚实返回 None
-        assert bf.extract_font_bytes(load("boss_list.html")) is None
+def test_salary_for_display_returns_empty_for_undecoded_encoded_text():
+    """未解码且原始串仍含混淆字符 → 返回空串，绝不把乱码透出去。"""
+    assert bf.salary_for_display("\ue032\ue033K", "\ue032\ue033K", ok=False) == ""
+
+
+def test_salary_for_display_falls_back_to_plain_raw():
+    """未解码但 raw 是明文（如详情页给的）→ 用 raw，它是可信的。"""
+    assert bf.salary_for_display("", "8-12K", ok=False) == "8-12K"
