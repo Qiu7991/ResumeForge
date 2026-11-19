@@ -249,49 +249,20 @@ def test_content_ready_selector_declared(adapter):
     assert html.count("job-card-box") >= 10
 
 
-# ---------- 完整字体映射（2026-11-08 实证收敛）----------
+# ---------- 不再有「固定映射」的断言 ----------
+#
+# 2026-11-19：原先这里有三条用例钉住手工收敛的 BOSS_TTF_MAP。上游作者用真实样本
+# 证明那份映射**整体偏移了一位**（E032 E033-E032 E036 实际是 23-26K，它解出
+# 12-15K），而当时用来验证它的正是这三条：
+#
+#   - covers_all_ten_symbols：只证明表里有 10 项，与对错无关；
+#   - decodes_all_cards：只证明 ok=True，错位映射同样全绿；
+#   - ranges_are_sane：只证明「下限 < 上限」——**错位映射照样满足**（12-15K、
+#     7-10K 全都自洽）。
+#
+# 三条都是一次性自证，钉不住「映射对不对」。映射正确性只能由外部证据判定（同一
+# 岗位的明文对照、或字体文件本身的字形），因此随硬编码一起删除。
 
-
-def test_default_mapping_covers_all_ten_symbols():
-    """BOSS 现行字体的 10 个 PUA 符号必须都有确定映射。"""
-    mapping = boss_font.default_mapping()
-    assert len(mapping) == 10
-    assert set(mapping.values()) == set("0123456789")
-
-
-def test_default_mapping_decodes_all_cards():
-    """用固定映射解真实夹具里的全部卡片，必须 15/15 成功。
-
-    这是「映射正确」的端到端锁：任何一位搞错，都会出现「下限 > 上限」
-    或解码不完整（ok=False）。
-    """
-    adapter = BossAdapter()
-    stubs = adapter.parse_list(load("boss_list.html"))
-    assert len(stubs) >= 10
-    for s in stubs:
-        assert s.salary_decoded_ok is True, f"{s.title} 未完整解码：{s.salary_raw}"
-        assert boss_font.encoded_chars_in(s.salary_decoded) == set()
-
-
-def test_default_mapping_ranges_are_sane():
-    """区间型薪资必须满足「下限 < 上限」——映射错一位就会违反。"""
-    import re
-
-    adapter = BossAdapter()
-    stubs = adapter.parse_list(load("boss_list.html"))
-    rng = re.compile(r"(\d+)\s*-\s*(\d+)")
-    checked = 0
-    for s in stubs:
-        m = rng.search(s.salary_decoded)
-        if not m:
-            continue
-        lo, hi = int(m.group(1)), int(m.group(2))
-        assert lo < hi, f"{s.title} 薪资区间倒挂：{s.salary_decoded}"
-        checked += 1
-    assert checked >= 10, f"应至少校验 10 条区间薪资，实际 {checked}"
-
-
-def test_parse_detail_normalizes_kangxi_radicals(adapter):
     """康熙部首要折回普通汉字。
 
     回归（2026-11-11）：BOSS 正文里混着 U+2F00–U+2FDF 的部首字形（⽤/⼈/⼯/⼒），

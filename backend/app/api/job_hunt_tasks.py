@@ -27,6 +27,7 @@ from ..services.job_hunt.collect_task import (
     get_collect_manager,
 )
 from ..services.job_hunt.registry import get_registry
+from ..services.job_hunt.sites.boss_font import salary_for_display
 from .job_hunt_shared import acquire_client, is_blocked, read_blocklist_config
 
 logger = logging.getLogger(__name__)
@@ -209,7 +210,11 @@ def start_collect_task(
                     continue
                 # 薪资：站点只按档位粗筛，这里精筛到用户填的区间。
                 if not salary_passes(
-                    getattr(stub, "salary_decoded", "") or getattr(stub, "salary_raw", ""),
+                    salary_for_display(
+                        getattr(stub, "salary_decoded", ""),
+                        getattr(stub, "salary_raw", ""),
+                        ok=bool(getattr(stub, "salary_decoded_ok", False)),
+                    ),
                     req.salary_min_k,
                     req.salary_max_k,
                 ):
@@ -414,7 +419,11 @@ def _stage_results(session: Any, task: Any, stubs: list[Any], adapter: Any) -> l
             title=title,
             company=company,
             location=(getattr(stub, "location", "") or "").strip(),
-            salary=(getattr(stub, "salary_decoded", "") or getattr(stub, "salary_raw", "") or "").strip(),
+            salary=salary_for_display(
+                getattr(stub, "salary_decoded", ""),
+                getattr(stub, "salary_raw", ""),
+                ok=bool(getattr(stub, "salary_decoded_ok", False)),
+            ).strip(),
             source_url=url,
             source=adapter.name,
             task_id=None,

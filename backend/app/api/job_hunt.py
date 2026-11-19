@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.job_hunt.cursor_store import clear_cursor, load_cursor, save_cursor
 from ..services.job_hunt.registry import get_registry
+from ..services.job_hunt.sites.boss_font import salary_for_display
 from ..services.job_hunt.runner import HuntCriteria, JobHuntRunner, cdp_fetcher, hash_criteria
 from .job_hunt_shared import (
     BLOCKLIST_KEY,
@@ -167,8 +168,14 @@ def _persist_stubs(
                     title=stub.title or "(未命名岗位)",
                     company=stub.company,
                     location=stub.location,
-                    # salary_decoded 已是明文（BOSS 的字体已在适配器里还原）
-                    salary=(stub.salary_decoded or stub.salary_raw)[:64],
+                    # 薪资只在**确实还原成功**时才写：BOSS 列表页的薪资是混淆串，
+                    # 没有可信映射时宁可留空，也不要把私用区字符写进库（见
+                    # `boss_font.salary_for_display`）。
+                    salary=salary_for_display(
+                        stub.salary_decoded,
+                        stub.salary_raw,
+                        ok=stub.salary_decoded_ok,
+                    )[:64],
                     description="",
                     requirements="",
                     source_url=stub.url,

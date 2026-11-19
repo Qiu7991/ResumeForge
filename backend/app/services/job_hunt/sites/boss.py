@@ -330,9 +330,16 @@ class BossAdapter(JobSiteAdapter):
             experience = next((tag for tag in tags if _EXPERIENCE_TAG_RE.match(tag)), "")
             education = next((tag for tag in tags if _EDUCATION_TAG_RE.match(tag)), "")
             salary_raw = _clean_salary(salary_m.group(1)) if salary_m else ""
-            # 列表页直接给出解码结果：字体映射已实证收敛（见 boss_font.BOSS_TTF_MAP），
-            # 不必等详情页的明文对照。解不完整时 decode_salary 会保持 ok=False。
-            decoded = boss_font.decode_salary(salary_raw, boss_font.default_mapping())
+            # 列表页解析阶段**不套用任何固定映射**：字体映射随站点换字体而变，抄一份
+            # 常数到代码里一旦配错就会静默解出"看着合理但是错"的数字（2026-11-19 的
+            # 真实事故：整表偏移一位，解出的 12-15K 实际是 23-26K，而"下限<上限"这类
+            # 结构约束对整体偏移零鉴别力）。
+            #
+            # 这里先原样保留混淆串（mapping=None → decode_salary 保持 ok=False）；
+            # 真正的解码在拿到证据之后做：补抓详情页时用明文对照校准
+            # （`mapping_from_pairs`），或从字体文件算（`build_digit_map_from_font`）。
+            # 解不出来就如实标未还原，不猜。
+            decoded = boss_font.decode_salary(salary_raw, None)
             stubs.append(
                 JobStub(
                     title=title,
