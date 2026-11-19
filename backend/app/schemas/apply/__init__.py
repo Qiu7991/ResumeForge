@@ -40,6 +40,8 @@ from .base import (
 )
 from .base import (
     DEFAULT_GREETING as DEFAULT_GREETING,
+)
+from .base import (
     DEFAULT_GREETING_BASELINE as DEFAULT_GREETING_BASELINE,
 )
 from .base import (

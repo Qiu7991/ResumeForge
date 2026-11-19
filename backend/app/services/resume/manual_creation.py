@@ -30,10 +30,10 @@ from ...models.resume import ResumeRecord
 from ...schemas.resume import ManualResumeRequest
 from ...schemas.resume_document import DocumentValidationError
 from ...services import trash
+from ...services.profile.generation_preferences import show_tech_stack
 from ...services.resume import document_io
 from ...services.resume.document_conversion_types import ConversionError
 from ...services.resume.document_view import header_text
-from ...services.profile.generation_preferences import show_tech_stack
 from ...services.resume.resume_record import build_manual_title
 from ...services.resume.resume_sections import (
     default_section_order_config,

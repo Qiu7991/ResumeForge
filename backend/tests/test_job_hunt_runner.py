@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.services.job_hunt.base import (
     HuntCriteria,
     JobDetail,
@@ -40,7 +39,7 @@ class FakeAdapter(JobSiteAdapter):
         return [JobStub(title=t, company=f"公司{t}", url=f"https://fake.example/job/{t}.html")
                 for t in self._pages.get(page, [])]
 
-    def parse_detail(self, html: str) -> "JobDetail":  # pragma: no cover - runner 不用
+    def parse_detail(self, html: str) -> JobDetail:  # pragma: no cover - runner 不用
         raise NotImplementedError
 
     def supports(self, url: str) -> bool:  # pragma: no cover - runner 不用

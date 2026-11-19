@@ -17,10 +17,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class Intent(str, Enum):
+class Intent(StrEnum):
     """一次 HR 回复的意向分类。"""
 
     INTERVIEW = "interview"  # 约面

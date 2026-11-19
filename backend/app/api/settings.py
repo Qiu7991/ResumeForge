@@ -18,6 +18,7 @@ from ..schemas.batch_operation import (
     BatchGenerationConfigOut,
     BatchOperationConfigOut,
 )
+from ..schemas.generation_preferences import GenerationPreferences
 from ..schemas.setting import (
     AssistantLimitSetting,
     AssistantOrbSetting,
@@ -60,7 +61,6 @@ from ..services.llm import create_provider
 from ..services.llm.base import LLMError
 from ..services.llm.connection_probe import connection_probe_config
 from ..services.llm.model_catalog import list_available_models
-from ..schemas.generation_preferences import GenerationPreferences
 from ..services.llm.responses import ResponsesProvider, responses_unsupported_hint
 from ..services.llm.thinking import probe_thinking, thinking_support
 from ..services.llm.usage_tasks import (

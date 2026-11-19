@@ -17,8 +17,8 @@ from app.services.candidate_jobs import (
     import_candidates,
     stage_candidate_job,
 )
-from app.services.candidate_origin import MANUAL_CANDIDATE_SOURCES, is_collected_candidate
 from app.services.candidate_jobs_read import with_queue_flags
+from app.services.candidate_origin import MANUAL_CANDIDATE_SOURCES, is_collected_candidate
 
 
 def test_platform_source_counts_as_collected_even_without_task_id():

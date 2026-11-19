@@ -20,8 +20,8 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.job_hunt.cursor_store import clear_cursor, load_cursor, save_cursor
 from ..services.job_hunt.registry import get_registry
-from ..services.job_hunt.sites.boss_font import salary_for_display
 from ..services.job_hunt.runner import HuntCriteria, JobHuntRunner, cdp_fetcher, hash_criteria
+from ..services.job_hunt.sites.boss_font import salary_for_display
 from .job_hunt_shared import (
     BLOCKLIST_KEY,
     BlocklistConfig,

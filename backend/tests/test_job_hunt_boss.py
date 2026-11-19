@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.services.job_hunt.base import HuntCriteria, JobParseError
 from app.services.job_hunt.registry import get_registry
 from app.services.job_hunt.sites import boss_font

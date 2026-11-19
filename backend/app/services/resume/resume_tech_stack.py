@@ -108,9 +108,7 @@ def visible_tech_stack_count(content: dict[str, Any]) -> int:
                 if not _is_tech_stack_item(item) or item.get("placement") == "hidden":
                     continue
                 values = item.get("values")
-                if isinstance(values, list) and values:
-                    count += 1
-                elif str(item.get("value") or "").strip():
+                if isinstance(values, list) and values or str(item.get("value") or "").strip():
                     count += 1
     projects = content.get("projects")
     if isinstance(projects, list):

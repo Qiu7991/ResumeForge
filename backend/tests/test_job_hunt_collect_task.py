@@ -8,15 +8,14 @@ from __future__ import annotations
 import threading
 import time
 
-
 from app.services.job_hunt.collect_task import (
     TASK_COMPLETED,
     TASK_FAILED,
     TASK_PAUSED,
     TASK_RUNNING,
     TASK_STOPPED,
-    CollectTaskManager,
     CollectTask,
+    CollectTaskManager,
     control_hook,
 )
 

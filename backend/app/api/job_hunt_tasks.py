@@ -111,9 +111,9 @@ def start_collect_task(
     blocklist = read_blocklist_config(db)
 
     def worker(task: Any) -> None:
-        from ..services.session_scope import open_session
         from ..services.job_hunt.collect_task import control_hook
         from ..services.job_hunt.runner import HuntCriteria, JobHuntRunner, cdp_fetcher
+        from ..services.session_scope import open_session
 
         session = open_session()
         try:

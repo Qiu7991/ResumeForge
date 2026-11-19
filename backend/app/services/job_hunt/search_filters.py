@@ -36,13 +36,18 @@ GROUP_TO_PARAM: dict[str, str] = {
     "salary": "salary",
 }
 
-# 界面分组 → 离线快照里的键（两者名字不同，容易抄错）。
+# 界面分组 → 快照分组键。
+#
+# 2026-11-19：改用 `snapshot_catalogue()` 之后两边同名了（它的 `FilterGroup.key`
+# 就是 `jobType` / `experience` …，而旧的模块私有 `_SNAPSHOT` 用的是 `jobTypeList`
+# / `experienceList` 那套带 List 后缀的键）。这张表保留是为了**一处可改**：
+# 以后任一侧改名只动这里，不用在 pluck 的循环里找。
 GROUP_TO_SNAPSHOT_KEY: dict[str, str] = {
-    "jobType": "jobTypeList",
-    "experience": "experienceList",
-    "degree": "degreeList",
-    "scale": "scaleList",
-    "salary": "salaryList",
+    "jobType": "jobType",
+    "experience": "experience",
+    "degree": "degree",
+    "scale": "scale",
+    "salary": "salary",
 }
 
 
@@ -59,14 +64,21 @@ class ResolvedSearchFilters:
 
 
 def _snapshot_groups() -> dict[str, tuple[tuple[str, str], ...]]:
-    """读 ``boss_filters_catalog`` 的离线快照（懒加载：那个模块会 import 一堆东西）。"""
-    # 绝对导入：本模块在 app/services/job_hunt/，相对层级很容易数错（`...` 会落到
-    # 不存在的 app.sites、`....` 又越出顶层包）。函数内导入是为了不在模块加载期
-    # 拉起整个 catalog 模块。
-    from app.services.sites.boss_filters_catalog import _SNAPSHOT  # noqa: PLC0415
+    """离线快照的分组 → ``((编码, 标签), ...)``。
 
+    用 ``snapshot_catalogue()`` 这个**公开**接口取，不读模块私有的 ``_SNAPSHOT``：
+    私有常量的结构上游随时可以改（改了就静默筛错），而那个函数的返回形状是有
+    契约的。代价只是要在外面摊平一层（``FilterGroup.options`` → ``(code, label)``
+    元组），换来的是一条不会因为上游重构而悄悄断掉的依赖。
 
-    return _SNAPSHOT
+    函数内导入是为了不在模块加载期拉起整个 catalog 模块（它会 import 一堆东西）。
+    """
+    from app.services.sites.boss_filters_catalog import snapshot_catalogue  # noqa: PLC0415
+
+    return {
+        group.key: tuple((option.code, option.label) for option in group.options)
+        for group in snapshot_catalogue()
+    }
 
 
 def resolve_search_filters(

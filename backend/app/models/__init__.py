@@ -14,6 +14,7 @@ from .agent_task import (
     AgentTask,
     AgentTaskStep,
 )
+from .ai_job_link import AiJobLink
 from .ai_task import (
     AI_TASK_ACTIVE_STATUSES,
     AI_TASK_KINDS,
@@ -85,7 +86,6 @@ from .drill import (
     DrillSession,
     DrillTurn,
 )
-from .ai_job_link import AiJobLink
 from .external_resume import ExternalResume
 from .followup import (
     FOLLOWUP_DECISION_CONTACTED,

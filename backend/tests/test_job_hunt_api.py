@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.models.setting import AppSetting
 
 
@@ -57,8 +56,8 @@ def test_collect_cursor_saved_on_interrupt(api, db_session, monkeypatch):
             self._payload = payload
 
     # 直接打桩 runner：路由层行为的账目（游标保存/清理）用假报告验证
-    from app.services.job_hunt.runner import HuntReport, HuntCursor
     from app.services.job_hunt.base import JobStub
+    from app.services.job_hunt.runner import HuntCursor, HuntReport
 
     def fake_run(self, criteria, *, fetch=None, on_progress=None, cursor=None):
         report = HuntReport(

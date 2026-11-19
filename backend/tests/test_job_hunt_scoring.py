@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from app.services.job_hunt.scoring import (
     CAP_CEILINGS,
     COMPONENT_LIMITS,

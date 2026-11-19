@@ -9,13 +9,13 @@
 
 
 from app.models.job import Job
+from app.services.job.job_service import find_job_by_identity
 from app.services.job.job_title_match import (
     is_placeholder_company,
     normalize_company,
     normalize_title,
     same_posting,
 )
-from app.services.job.job_service import find_job_by_identity
 
 
 class TestNormalize:

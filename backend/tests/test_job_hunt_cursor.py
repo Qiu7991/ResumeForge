@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
-from app.services.job_hunt.base import JobSiteAdapter, JobStub, HuntCriteria
+from app.services.job_hunt.base import HuntCriteria, JobSiteAdapter, JobStub
 from app.services.job_hunt.cursor_store import clear_cursor, kv_key, load_cursor, save_cursor
 from app.services.job_hunt.runner import HuntCursor, JobHuntRunner, hash_criteria
 

@@ -4,11 +4,10 @@ import io
 import zipfile
 from urllib.parse import quote
 
+import pytest
 from app import database
 from app.api import skills as skills_api
 from app.services.data_backup import restore_directory
-
-import pytest
 
 FRONTMATTER = """---
 name: 面试模拟官

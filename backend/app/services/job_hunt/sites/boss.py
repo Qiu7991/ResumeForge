@@ -384,12 +384,12 @@ class BossAdapter(JobSiteAdapter):
             company = _clean(company_m.group(1)) if company_m else ""
 
         # 详情页薪资是明文：能直接当 ground-truth，不需要字体解密。
+        #
+        # 原先这里有个 if/else 两个分支赋的是同一个值（死分支，ruff SIM108 抄出来的）。
+        # 少数情况下详情页给的也是编码文本，那种情形的正确表达是 `decoded_ok=False`
+        # —— 由 `salary_for_display` 在写库时决定"留空还是用原文"，这里不需要另一条路。
         decoded_ok = bool(salary_text) and not boss_font.encoded_chars_in(salary_text)
-        if not decoded_ok and salary_text:
-            # 少数情况下详情页也给的是编码文本：这里没有字体映射，如实标记未还原。
-            salary_text_out = salary_text
-        else:
-            salary_text_out = salary_text
+        salary_text_out = salary_text
 
         return JobDetail(
             title=title,

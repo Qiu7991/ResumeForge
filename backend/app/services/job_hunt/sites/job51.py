@@ -34,7 +34,7 @@ def _card_slices(html: str) -> list[str]:
     starts = [m.start() for m in re.finditer(re.escape(_CARD_MARKER), html)]
     if not starts:
         return []
-    return [html[s:e] for s, e in zip(starts, [*starts[1:], len(html)])]
+    return [html[s:e] for s, e in zip(starts, [*starts[1:], len(html)], strict=True)]
 
 
 class Job51Adapter(JobSiteAdapter):

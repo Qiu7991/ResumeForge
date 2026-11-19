@@ -16,6 +16,7 @@ from ...models.apply import FAILURE_UNKNOWN
 from ...schemas.apply import CollectConfigIn
 from ..sites.base import SearchResult, SiteAdapter, SiteFailure
 from .blocklist import drop_if_blocked, load_blocklist
+
 # 去重判据与「采样留痕」都在 collector_history（15A/15B，上游 2.1.0）：interest 路径
 # 与搜索路径同一套——`Collector._already_known` 已被上游删掉，这里改用模块级函数。
 from .collector_history import already_known, known_job_of, record_sighting

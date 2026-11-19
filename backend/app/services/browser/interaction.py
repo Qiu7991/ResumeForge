@@ -20,6 +20,7 @@ DOM 上事件照常冒泡，页面却毫无反应——**看起来成功了，�
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -52,10 +53,8 @@ def trusted_click(client: CdpClient, x: float, y: float) -> None:
     # ``Page.bringToFront`` / ``Target.activateTarget`` / 最小化→还原都无法改变
     # ``visibilityState``，站点（BOSS）就静默忽略点击。``Emulation.setFocusEmulationEnabled``
     # 是实测唯一能立刻把它拉回 ``visible`` 的开关；先开它，再走窗口还原兜底。
-    try:
+    with contextlib.suppress(CdpError):
         client.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
-    except CdpError:
-        pass
     ensure = getattr(client, "ensure_page_visible", None)
     if ensure is not None and not ensure():
         # 无法还原窗口（无头/远程会话等）不在这里打死流程：继续点击并把情况写日志，

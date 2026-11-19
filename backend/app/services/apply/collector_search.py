@@ -19,6 +19,7 @@ from ...schemas.apply import CollectConfigIn
 from ..sites.base import CollectQuery, SearchResult, SiteAdapter
 from .blocklist import drop_if_blocked, load_blocklist
 from .collect_filters import FilterTally, evaluate_filters
+
 # 去重判据与「采样留痕」都在 collector_history（15A/15B，上游 2.1.0）：
 # 重采不再"跳过即无痕"。
 from .collector_history import already_known, known_job_of, record_sighting

@@ -56,7 +56,7 @@ class HuntCursor:
         }
 
     @classmethod
-    def from_dict(cls, data: object) -> "HuntCursor | None":
+    def from_dict(cls, data: object) -> HuntCursor | None:
         if not isinstance(data, dict):
             return None
         site = str(data.get("site_key") or "")
@@ -107,7 +107,7 @@ class HuntReport:
     # 实际翻到的页码清单（断点续采 J7 用它登记游标）。
     visited_pages: list[int] = field(default_factory=list)
     # J7：跑完后可续的游标；resumed_from_page > 0 = 本次是续跑。
-    next_cursor: "HuntCursor | None" = None
+    next_cursor: HuntCursor | None = None
     resumed_from_page: int = 0
 
 

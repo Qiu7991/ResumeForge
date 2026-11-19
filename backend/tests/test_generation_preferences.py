@@ -5,12 +5,12 @@
 所以这里既守默认值，也守"存进去的只影响这个字段、读回来一型不差"。
 """
 
+from app.schemas.generation_preferences import GenerationPreferences
 from app.services.profile.generation_preferences import (
     get_generation_preferences,
     save_generation_preferences,
     show_tech_stack,
 )
-from app.schemas.generation_preferences import GenerationPreferences
 
 
 def test_default_is_off_without_writing_anything(db_session):

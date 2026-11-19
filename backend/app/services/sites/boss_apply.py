@@ -82,8 +82,8 @@ from .boss_apply_scripts import (
     _submit_state_script as _submit_state_script,
 )
 from .boss_page import (
-    CHAT_PAGE_PATH,
     _SELECTORS,
+    CHAT_PAGE_PATH,
     _as_payload,
     _current_url,
     _readiness_script,

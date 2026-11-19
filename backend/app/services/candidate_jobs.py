@@ -19,8 +19,8 @@ from ..models.material import (
     CandidateJob,
 )
 from ..schemas.job import RECOGNITION_SOURCE_OFFICIAL, JobCreate
-from .candidate_origin import is_collected_candidate
 from ..schemas.material import CandidateJobCreate, CandidateJobUpdate
+from .candidate_origin import is_collected_candidate
 from .job.job_service import create_job_record, find_by_job_identity, find_job_by_identity
 from .job_hunt.candidate_scoring import migrate_candidate_score
 from .job_parser.metadata import job_type_from_title

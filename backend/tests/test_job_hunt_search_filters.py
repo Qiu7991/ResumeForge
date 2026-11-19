@@ -5,8 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.services.job_hunt.search_filters import (
-    filter_stub_by_tags,
     filter_options,
+    filter_stub_by_tags,
     resolve_search_filters,
 )
 
