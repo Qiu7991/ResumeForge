@@ -66,6 +66,9 @@ const LEGACY: Record<string, number> = {
   "styles/workbench-narrow.css:1000": 1,
   "styles/workbench-narrow.css:1280": 1,
   "styles/trash.css:768": 1,
+  // claims.css:600 ×2 —— 台账表单「三个下拉 + 日期」挤在一行时每个只剩 ~90px，
+  // 这里按**表单可用宽度**收成单列；用 767 会在平板竖屏仍挤，故保留 600 并登记。
+  "styles/claims.css:600": 2,
 };
 
 interface MediaHit {
@@ -198,6 +201,19 @@ describe("断点单一事实源", () => {
       // interview-setup.css —— 面试设定卡（第 8 条）：`container-type` 挂在 `.interview-setup-stack`
       // 上，只影响该卡的字段分档；该卡内没有 position:fixed 后代（§3.5 判据），已在 768/380 实测无溢出。
       "styles/modules-interview-setup.css",
+      // settings-shell.css —— 设置页左侧导航（F38）：`container-type` 挂在 `.settings-shell`
+      // 上，≤900 时侧栏由吸顶改静态、导航收成顶部下拉。该容器内没有 position:fixed 后代
+      // （页头在容器外，弹层 portal 到 body），按方案 §3.5 判据安全。
+      "styles/settings-shell.css",
+      // webform-workbench.css —— 网申填表页两栏（I-11）：`container-type` 挂在
+      // `.webform-workbench` 上，只按内容区实际宽度决定两栏/单栏。侧栏可折叠时视口宽度
+      // 与内容宽差 200px 以上，用媒体查询会在 1440 + 展开侧栏时切错列。
+      // 该容器内没有 position:fixed 后代（浮球/弹层都 portal 到 body），按 §3.5 判据安全。
+      "styles/webform-workbench.css",
+      // T20：制作台左栏的参数网格。容器是 `.resume-wb-col-params .resume-wb-group-body`
+      // （不是整列：整列设 `container-type` 会让 `ChipStylePopover` 的 position:fixed
+      // 浮层被困在列内）。该分组内容盒内没有 fixed 后代，按 §3.5 判据安全。
+      "styles/resume-workbench-controls-wide.css",
     ]);
     const offenders: string[] = [];
     for (const absolute of collectCssFiles()) {

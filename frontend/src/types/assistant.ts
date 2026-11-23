@@ -11,6 +11,8 @@ export interface AssistantConversationBrief {
   archived: boolean;
   /** 分组名（"移动到项目"）；空串表示未分组。 */
   group_name: string;
+  /** 临时对话（F34）：为真时这段对话不注入也不抽取助手记忆；关闭不删已有记忆。 */
+  memory_off?: boolean;
   message_count: number;
   created_at: string;
   updated_at: string;
@@ -206,6 +208,44 @@ export interface AssistantQuotedMessage {
   excerpt: string;
 }
 
+/**
+ * 一条用户消息「本轮引用」的岗位/简历（F36）。
+ *
+ * 与 `AssistantMessage.context` 的同名字段同构：落库消息直接读 context，乐观气泡用
+ * 发送瞬间的标签快照（标题暂存在 `job_title` / `resume_title`，`job_company` 缺省）。
+ */
+export interface AssistantMessageReferences {
+  job_id?: number | null;
+  job_title?: string;
+  job_company?: string;
+  resume_id?: number | null;
+  resume_title?: string;
+}
+
+/** 引用片点击后的跳转目标。 */
+export type AssistantReferenceKind = "job" | "resume";
+
+/**
+ * 一条用户消息发送时勾选的技能（T24，消息级）。气泡前缀渲染为「使用 X」；
+ * 提示词正文不在这里（`context.skill_prompt` 只给模型）。
+ */
+export interface AssistantMessageSkill {
+  id: number;
+  name: string;
+}
+
+/**
+ * 助手这一轮参考过的记忆（T23）：只存 id + 当时的 value 快照。
+ *
+ * 存快照而不只存 id，是因为记忆可以被改或删——历史消息要能回答"它当时参考了什么"，
+ * 不能读回今天的那一行。
+ */
+export interface AssistantMessageMemory {
+  id: number;
+  kind: string;
+  value: string;
+}
+
 export interface AssistantMessage {
   id: number;
   conversation_id: number;
@@ -217,6 +257,13 @@ export interface AssistantMessage {
   context: {
     job_id?: number | null;
     resume_id?: number | null;
+    /**
+     * 发送时选中的岗位/简历标题快照（F36）。后端只在查到对象时写入，所以历史消息里可能没有；
+     * 有它之后岗位改名/删除也能在气泡里显示当时引用的名字。
+     */
+    job_title?: string;
+    job_company?: string;
+    resume_title?: string;
     include_profile?: boolean;
     web_search?: boolean;
     sources?: AssistantSource[];
@@ -224,10 +271,12 @@ export interface AssistantMessage {
     source_map?: AssistantSourceNumber[];
     tool_calls?: AssistantToolCall[];
     /**
-     * 本轮启用了哪些技能（T14，只记名字不记提示词正文）。没有启用技能时后端不落这个
-     * 字段——空数组与"没启用"语义不同，所以按可选处理。
+     * 这条**用户消息**发送时勾选了哪些技能（T24，消息级）。只记 id 与名字，提示词正文在
+     * `skill_prompt` 里（仅供模型，不进正文）。没勾技能时后端不落这个字段。
      */
-    skills?: string[];
+    skills?: AssistantMessageSkill[];
+    /** 这条用户消息的技能提示词（T24，模型侧注入用）；界面不展示它的正文。 */
+    skill_prompt?: string;
     /**
      * 模型的思考过程（开启思考强度时才有），供用户点开查看。
      *
@@ -250,6 +299,8 @@ export interface AssistantMessage {
      * 那时 `GET /context-usage` 会返回 `partial: true` 的估算值。
      */
     context_usage?: ContextUsage;
+    /** T23：这一轮注入的记忆（id + 内容快照）；没有注入时是空数组或缺失。 */
+    memories?: AssistantMessageMemory[];
   };
   /** superseded（#13A）：被「重新生成」取代的旧回答，后端过滤后不会下发，仅作类型完整。 */
   status: "pending" | "complete" | "error" | "cancelled" | "superseded";
@@ -265,12 +316,31 @@ export interface AssistantMessage {
   created_at: string;
 }
 
+/**
+ * 旧数据（T24）：会话详情里回显的「旧对话技能」。只有 id 与名字，不含提示词正文。
+ * 只用于提示一次「技能已改为只作用于下一条消息」，不参与任何请求。
+ */
+export interface AssistantLegacySkill {
+  id: number;
+  name: string;
+}
+
 export interface AssistantConversationDetail extends AssistantConversationBrief {
   messages: AssistantMessage[];
   /** 会话消息总数（B5 按需加载：messages 被截断到最新 N 条时也如实给全量数）。可选：旧响应没有。 */
   messages_total?: number;
   /** 是否还有更早的消息未加载（has_earlier=true 时列表顶部出「加载更早」）。可选：旧响应没有。 */
   has_earlier?: boolean;
+  /**
+   * 压缩状态（T25）：与 `GET /context-usage` 的 compaction 同一份，含摘要正文。
+   * 消息流据此在 `covered_until_message_id` 那条消息下方画压缩边界。
+   */
+  compaction?: ContextCompactionState | null;
+  /**
+   * 旧数据（T24）：这段对话在「按对话启用技能」时代挂过的技能，只读回显。
+   * 有值时消息流顶部给一行可关闭提示；它不参与任何提示词组装。
+   */
+  legacy_skills?: AssistantLegacySkill[];
 }
 
 export interface AssistantAttachmentInput {
@@ -312,6 +382,8 @@ export interface ContextCompactionState {
   created_at: string;
   /** 上次遮蔽掉的工具结果条数（L1 的量化结果）。 */
   masked_tool_results: number;
+  /** 摘要正文（T25）：与发给模型的是同一份渲染结果，按 4,000 字截断。 */
+  summary?: string;
 }
 
 /**
@@ -326,6 +398,9 @@ export interface ContextUsage {
   total: number;
   /** 百分比分母（当前模型的上下文窗口）；0 = 未设置。 */
   window: number;
+  window_source?: "manual" | "reference" | "fallback";
+  trigger_tokens?: number;
+  default_trigger_tokens?: number;
   percent: number | null;
   /** true = 这条会话的旧消息没落过用量，只有系统提示与对话两桶是估算出来的。 */
   partial: boolean;
@@ -390,4 +465,4 @@ export type AssistantStreamEvent =
   // 工具轮次到顶：后端先停下并如实上报轮数，前端据此给「继续」入口（需求 #5）。
   | { type: "round_limit"; rounds: number }
   | { type: "done"; message: AssistantMessage }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; code?: string };

@@ -233,8 +233,7 @@ export default function CollectProgressPanel({
   // 整体是否真的结束 = 采集线程结束 **且** 评分任务不在跑。
   // 采集结束不等于全部结束：评分是另一个后台任务（CandidateScoreTask），
   // 采集刚交接到评分时，采集任务已经是 completed 而分数还没出。
-  const allFinished =
-    Boolean(task?.finished) && !collecting && !Boolean(scoreTask?.running);
+  const allFinished = Boolean(task?.finished) && !collecting && !scoreTask?.running;
 
   // 采集失败且是"浏览器没启动"时直接给补救按钮——这是最常见的失败原因。
   // 判据是后端返回的**协议值前缀** `browser_required`，不是中文文案匹配：
@@ -314,7 +313,8 @@ export default function CollectProgressPanel({
                   fontSize: 24,
                   lineHeight: 1.1,
                   fontWeight: 600,
-                  color: card.state === "idle" ? "var(--rf-text-description)" : STATE_COLOR[card.state],
+                  color:
+                    card.state === "idle" ? "var(--rf-text-description)" : STATE_COLOR[card.state],
                   fontVariantNumeric: "tabular-nums",
                 }}
               >

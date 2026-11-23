@@ -8,12 +8,13 @@
  *
  * Why a standalone component: the same block will be needed on the apply desk later.
  */
-import { Alert, Button, Card, Empty, Progress, Select, Space, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Progress, Select, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 
 import { listResumes } from "../../api/resumes";
 import { scoreJob } from "../../api/jobHunt";
+import EmptyState from "../common/EmptyState";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
 import type { ResumeBrief } from "../../types/resume";
@@ -139,7 +140,7 @@ export default function ScorePanel({ jobId, initial, onScored }: Props) {
         {error && <Alert type="error" showIcon title={error} />}
 
         {!score ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("aiJobs.score.empty")} />
+          <EmptyState inline description={t("aiJobs.score.empty")} />
         ) : (
           <>
             <Space align="center" size={16}>
@@ -235,7 +236,9 @@ export default function ScorePanel({ jobId, initial, onScored }: Props) {
             )}
 
             {score.missing && (
-              <Text type="secondary">{t("aiJobs.score.missingLabel", { text: score.missing })}</Text>
+              <Text type="secondary">
+                {t("aiJobs.score.missingLabel", { text: score.missing })}
+              </Text>
             )}
           </>
         )}

@@ -8,6 +8,7 @@
 @import "./styles/assistant-message-actions.css";
 @import "./styles/assistant-composer.css";
 @import "./styles/assistant-context.css";
+@import "./styles/assistant-limits.css";
 @import "./styles/form-state.css";
 @import "./styles/recognition.css";
 @import "./styles/jobs.css";
@@ -28,6 +29,12 @@
 @import "./styles/settings-update.css";
 @import "./styles/usage-summary.css";
 @import "./styles/settings-search.css";
+/* I-09 外部连接页的行容器：11 行从"无 CSS 的 Flex 堆叠"改成带分隔线的三段式行。 */
+@import "./styles/settings-connections.css";
+/* I-03 助手记忆卡：三段分区 + 条目卡片化（`modules-workspace.css` 已贴 500 行预算）。 */
+@import "./styles/settings-memory.css";
+/* F38 设置页外壳（左侧九组导航）：与上面的设置分片同批，独立成片以便按需增长。 */
+@import "./styles/settings-shell.css";
 @import "./styles/responsive-narrow.css";
 @import "./styles/responsive.css";
 @import "./styles/foundation.css";
@@ -36,3 +43,5 @@
 @import "./styles/bilingual.css";
 @import "./styles/provenance.css";
 @import "./theme/dark-tokens.css";
+/* WF-09 主题切换的圆形扩散：View Transitions 伪元素样式（与 dark-tokens 同批，放最后）。 */
+@import "./styles/theme-transition.css";

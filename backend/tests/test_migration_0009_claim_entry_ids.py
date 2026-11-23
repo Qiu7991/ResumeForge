@@ -48,7 +48,9 @@ def _downgrade_until_removed(engine, config, column: str) -> int:
     本用例在「有人加了迁移」时红，而失败信息听起来像「迁移链有环」——完全指向
     错的地方。改成「迁移文件总数 + 1」，只保留它真正要防的语义（退不完 = 有环）。
     """
-    max_steps = len(list((Path(__file__).resolve().parents[1] / "migrations" / "versions").glob("[0-9]*.py")))
+    max_steps = len(
+        list((Path(__file__).resolve().parents[1] / "migrations" / "versions").glob("[0-9]*.py"))
+    )
     steps = 0
     while column in _column_names(engine, CLAIM_TABLE):
         command.downgrade(config, "-1")

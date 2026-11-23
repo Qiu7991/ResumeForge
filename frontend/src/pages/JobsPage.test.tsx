@@ -319,41 +319,64 @@ describe("JobsPage URL 状态化", () => {
     );
   });
 
-  it("点列头排序不写进 URL（排序只是本次浏览的视角）", async () => {
+  it("点列头排序不写进 URL（排序只是本次浏览的视角）", () => {
     renderPageWithProbe();
 
     // 表头标题在 antd 6 里会渲染多份（测量/克隆节点），统一点 `<th>` 本体。
-    const header = screen.getAllByText("岗位")[0]!;
-    fireEvent.click(header.closest("th") as HTMLElement);
+    const header = screen.getAllByText("岗位")[0]!.closest("th") as HTMLElement;
+    fireEvent.click(header);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "恢复默认排序" })).toBeEnabled());
+    // 先证明排序确实生效（否则下面"URL 没写"是空断言）：无排序时该属性不存在。
+    expect(header).toHaveAttribute("aria-sort", "ascending");
     expect(screen.getByTestId("location")).not.toHaveTextContent("sort=");
     expect(screen.getByTestId("location")).not.toHaveTextContent("order=");
   });
 
-  it("离开岗位广场再回来，排序恢复默认（按钮回到禁用）", async () => {
+  it("离开岗位广场再回来，排序恢复默认（列头没有箭头）", () => {
     const first = renderPageWithProbe();
-    const header = screen.getAllByText("岗位")[0]!;
-    fireEvent.click(header.closest("th") as HTMLElement);
-    await waitFor(() => expect(screen.getByRole("button", { name: "恢复默认排序" })).toBeEnabled());
+    const header = screen.getAllByText("岗位")[0]!.closest("th") as HTMLElement;
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-sort", "ascending");
     first.unmount();
 
     renderPageWithProbe();
-    expect(await screen.findByRole("button", { name: "恢复默认排序" })).toBeDisabled();
+    // 重进页面后没有任何列头带排序：无排序时 antd 6 不渲染 aria-sort（不是空串）。
+    expect(document.querySelector("th[aria-sort]")).toBeNull();
     expect(document.querySelector(".ant-table-column-sort")).toBeNull();
   });
 
-  it("「恢复默认排序」点击后回到默认排序并清除列头箭头", async () => {
+  it("列头点第三次取消排序：回到默认排序并清除箭头", () => {
     renderPageWithProbe();
-    const header = screen.getAllByText("公司")[0]!;
-    fireEvent.click(header.closest("th") as HTMLElement);
+    const header = screen.getAllByText("公司")[0]!.closest("th") as HTMLElement;
 
-    const reset = screen.getByRole("button", { name: "恢复默认排序" });
-    await waitFor(() => expect(reset).toBeEnabled());
-    fireEvent.click(reset);
-
-    await waitFor(() => expect(reset).toBeDisabled());
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-sort", "ascending");
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-sort", "descending");
+    fireEvent.click(header);
+    expect(header).not.toHaveAttribute("aria-sort");
     expect(document.querySelector(".ant-table-column-sort")).toBeNull();
+  });
+
+  it("排序后出现「恢复默认排序」并贴在尾槽，复位后箭头与按钮一起消失（I-39）", () => {
+    renderPageWithProbe();
+    const resetLabel = "恢复默认排序";
+    // 默认排序（最近导入在前）：按钮**不渲染**，不是灰着。
+    expect(screen.queryByRole("button", { name: resetLabel })).toBeNull();
+
+    const header = screen.getByRole("columnheader", { name: "发布时间" });
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-sort", "descending");
+
+    const reset = screen.getByRole("button", { name: resetLabel });
+    // 尾槽结构：按钮必须是 `.filter-row` 的**直接 flex 子项**，`margin-inline-start:auto`
+    // 才推得动；塞进 antd Space 的话它会被 `.ant-space-item` 包住，贴不到行右。
+    expect(reset.className).toContain("filter-reset");
+    expect(reset.closest(".filter-row")).not.toBeNull();
+
+    fireEvent.click(reset);
+    expect(header).not.toHaveAttribute("aria-sort");
+    expect(screen.queryByRole("button", { name: resetLabel })).toBeNull();
   });
 
   it("进页面时从 URL 恢复筛选与页码", () => {
@@ -395,91 +418,5 @@ describe("JobsPage URL 状态化", () => {
     );
     // 详情本身仍然开着（深链不该把抽屉关掉）。
     expect(screen.getByTestId("location")).toHaveTextContent("job_id=1");
-  });
-});
-
-describe("岗位详情重复打开（R2：双击、重开与竞态）", () => {
-  afterEach(cleanup);
-
-  beforeEach(() => {
-    // 两行：一为"护士"(id=1)，一为"后端开发"(id=2)，竞态用例需要两个岗位。
-    mocks.jobs = [makeJob({ id: 1, title: "护士" }), makeJob({ id: 2, title: "后端开发" })];
-    mocks.getJob.mockReset();
-    mocks.getJob.mockResolvedValue({ ...BASE_JOB });
-    mocks.startBackfill.mockReset();
-    mocks.startBackfill.mockResolvedValue({} as never);
-    for (const mock of Object.values(candidateMocks)) mock.mockReset();
-  });
-
-  /** 抽屉是否处于展开态：antd 在打开的抽屉根节点上挂 `-open` 类。 */
-  function drawerOpened(): boolean {
-    return document.querySelector(".ant-drawer-open") !== null;
-  }
-
-  it("连续两次点击同一岗位标题，抽屉仍然显示详情，且不重复请求", async () => {
-    // **这条守的是一个真实缺陷**：openDetail 原先无条件 setDetailJob(null)，而
-    // openedLinkedJobId 锁存着同一个 id，effect 因此不再拉取 —— 双击同一行之后抽屉
-    // 就是一片空白，用户看到的是"点了没反应"。
-    renderPageWithProbe();
-    fireEvent.click(screen.getByRole("button", { name: "护士" }));
-
-    await waitFor(() => expect(drawerOpened()).toBe(true));
-    await waitFor(() => expect(screen.getByText("负责病区护理工作。")).toBeInTheDocument());
-    expect(mocks.getJob).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(screen.getByRole("button", { name: "护士" }));
-
-    await waitFor(() => expect(drawerOpened()).toBe(true));
-    expect(screen.getByText("负责病区护理工作。")).toBeInTheDocument();
-    expect(mocks.getJob).toHaveBeenCalledTimes(1);
-  });
-
-  it("关闭抽屉后再点同一岗位，会重新拉取详情并重新打开", async () => {
-    renderPageWithProbe();
-    fireEvent.click(screen.getByRole("button", { name: "护士" }));
-    await waitFor(() => expect(screen.getByText("负责病区护理工作。")).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    await waitFor(() => expect(drawerOpened()).toBe(false));
-
-    fireEvent.click(screen.getByRole("button", { name: "护士" }));
-
-    await waitFor(() => expect(mocks.getJob).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(drawerOpened()).toBe(true));
-    expect(screen.getByText("负责病区护理工作。")).toBeInTheDocument();
-    expect(screen.getByTestId("location")).toHaveTextContent("job_id=1");
-  });
-
-  it("快速 A→B：晚到的 A 响应不会覆盖 B", async () => {
-    let resolveFirst: ((job: Job) => void) | undefined;
-    mocks.getJob.mockImplementation((id: number) => {
-      if (id === 1) {
-        // A 故意挂住：等 B 先回来之后再放行，模拟慢响应。
-        return new Promise<Job>((resolve) => {
-          resolveFirst = resolve;
-        });
-      }
-      return Promise.resolve({
-        ...BASE_JOB,
-        id: 2,
-        title: "后端开发",
-        description: "负责服务端开发。",
-      });
-    });
-
-    renderPageWithProbe();
-    fireEvent.click(screen.getByRole("button", { name: "护士" }));
-    await waitFor(() => expect(resolveFirst).toBeTypeOf("function"));
-
-    fireEvent.click(screen.getByRole("button", { name: "后端开发" }));
-    await waitFor(() => expect(screen.getByText("负责服务端开发。")).toBeInTheDocument());
-    expect(screen.getByTestId("location")).toHaveTextContent("job_id=2");
-
-    resolveFirst?.({ ...BASE_JOB, description: "负责病区护理工作。" });
-
-    // 晚到的 A 已经被序号守卫作废：内容仍然是 B 的。
-    await waitFor(() => expect(screen.queryByText("负责病区护理工作。")).not.toBeInTheDocument());
-    expect(screen.getByText("负责服务端开发。")).toBeInTheDocument();
-    expect(screen.getByTestId("location")).toHaveTextContent("job_id=2");
   });
 });

@@ -52,15 +52,46 @@ test("the rescue script starts with a UTF-8 BOM", () => {
   );
 });
 
-test("the rescue script compiles into the installer only", () => {
+// 注意用例名只说"抢救体"：文件顶部故意有**不属于**这个守卫的内容——`LogicLib` 的
+// include 与 `customHeader` 里的 26 条 `LangString RF_SHORTCUT`。它们是"两趟都要编"的
+// 例外：卸载器也会调用 setLinkVars 算快捷方式路径（见下面 customHeader 那条用例），
+// 所以必须同时出现在安装器与卸载器两个构建里。
+//
+// 2026-11-19（WF-07/WF-08）：文件末尾多了一行 `!include "${__FILEDIR__}\wizard.nsh"`，
+// **故意放在守卫之外**——wizard.nsh 里既有安装器页面也有卸载器页面，卸载器那一趟会
+// 整段跳过守卫，放进去就等于卸载器没有自己的页面。守卫的语义因此变成"抢救体只编进
+// 安装器"，由下面三条断言钉住：守卫恰好一处、抢救体在守卫内、向导 include 在守卫之后。
+test("the rescue body compiles into the installer only", () => {
   const source = readRescue();
   const guards = source.match(/!ifndef\s+BUILD_UNINSTALLER/g) || [];
   assert.strictEqual(guards.length, 1, "exactly one BUILD_UNINSTALLER guard");
+
+  const guardAt = source.search(/!ifndef\s+BUILD_UNINSTALLER/);
+  const closeAt = source.lastIndexOf("\n!endif");
+  assert.ok(closeAt > guardAt, "the guard must be closed before the shared wizard include");
+  for (const marker of ["!macro customInit", "!macro customInstall", "Function RF_CopyTree"]) {
+    const at = source.indexOf(marker);
+    assert.ok(
+      at > guardAt && at < closeAt,
+      `${marker} must stay inside the installer-only guard (uninstallers cannot use non-un. functions)`,
+    );
+  }
+
   const lastLine = source.trimEnd().split("\n").pop().trim();
   assert.strictEqual(
     lastLine,
-    "!endif",
-    "the BUILD_UNINSTALLER guard must stay open for the whole file and close at the end",
+    '!include "${__FILEDIR__}\\wizard.nsh"',
+    "the shared wizard include must come after the guard closes (the uninstaller build skips the guard)",
+  );
+  assert.ok(
+    fs.existsSync(path.join(DESKTOP, "nsis", "wizard.nsh")),
+    "the included wizard.nsh must exist",
+  );
+  const wizard = fs.readFileSync(path.join(DESKTOP, "nsis", "wizard.nsh"));
+  assert.deepStrictEqual(
+    [...wizard.subarray(0, 3)],
+    [0xef, 0xbb, 0xbf],
+    "wizard.nsh carries Chinese copy, so it needs a UTF-8 BOM as well",
   );
 });
 
@@ -101,7 +132,14 @@ test("the rescue is keyed on resume_forge.db and never overwrites an existing da
 test("the rescue fails closed on a running app and on copy failure", () => {
   const source = readRescue();
   // Running app: wait, then abort with an explanation instead of copying a live database.
-  assert.match(source, /\$\{nsProcess::FindProcess\}/, "must check whether the app is running");
+  // 判据是"有没有探测进程在跑"，不是"用不用 nsProcess"：该插件不在 electron-builder
+  // 的 NSIS 插件目录里（2026-11-19 实测 `Plugin not found, cannot call
+  // nsProcess::_FindProcess`），所以改成系统自带的 tasklist + find。
+  assert.match(
+    source,
+    /nsExec::Exec[^\n]*tasklist[^\n]*find\s+\/I\s+"\$\{PRODUCT_FILENAME\}\.exe"/,
+    "must check whether the app is running",
+  );
   const aborts = source.match(/\bAbort\b/g) || [];
   assert.strictEqual(aborts.length, 2, "exactly two abort paths: app running, rescue copy failed");
   assert.match(
@@ -111,6 +149,106 @@ test("the rescue fails closed on a running app and on copy failure", () => {
   );
   // Byte-for-byte verification while copying is what makes the abort meaningful.
   assert.match(source, /StrCmp\s+\$R6\s+\$R7/, "copy verification compares source and destination sizes");
+});
+
+// 26 种语言 = electron-builder 26.17.0 默认打包集（app-builder-lib/out/util/langs.js
+// 的 bundledLanguages，未配置 installerLanguages 时全打包）。少一条就会让该语言下
+// $(RF_SHORTCUT) 解析成空串 —— 实测 $LANGUAGE=1031 时快捷方式变成 ".lnk"。
+const BUNDLED_LCIDS = [
+  1033, 1031, 1036, 3082, 2052, 1028, 1041, 1042, 1040, 1043, 1030, 1053, 1044, 1035, 1049, 2070,
+  1046, 1045, 1058, 1029, 1051, 1038, 1025, 1055, 1054, 1066,
+];
+const CHINESE_LCIDS = new Set([2052, 1028]);
+
+test("the shortcut name is a LangString that every bundled language defines", () => {
+  const yaml = fs.readFileSync(YAML, "utf8");
+  const shortcut = /^\s*shortcutName:\s*"(\$\(RF_SHORTCUT\))"\s*$/m.exec(yaml);
+  assert.ok(
+    shortcut,
+    'nsis.shortcutName must be "$(RF_SHORTCUT)" so the name follows the system language',
+  );
+  assert.strictEqual(shortcut[1], "$(RF_SHORTCUT)");
+
+  const source = readRescue();
+  const defined = new Map();
+  for (const match of source.matchAll(/^\s*LangString RF_SHORTCUT (\d+) "([^"]*)"/gm)) {
+    defined.set(Number(match[1]), match[2]);
+  }
+  assert.strictEqual(
+    defined.size,
+    BUNDLED_LCIDS.length,
+    "exactly one LangString RF_SHORTCUT per bundled language",
+  );
+  for (const lcid of BUNDLED_LCIDS) {
+    assert.ok(defined.has(lcid), `LangString RF_SHORTCUT ${lcid} is missing`);
+    const expected = CHINESE_LCIDS.has(lcid) ? "简历通" : "ResumeForge";
+    assert.strictEqual(defined.get(lcid), expected, `RF_SHORTCUT ${lcid} must read ${expected}`);
+  }
+  assert.deepStrictEqual(
+    [...defined.keys()].filter((lcid) => !BUNDLED_LCIDS.includes(lcid)),
+    [],
+    "no LangString for a language electron-builder does not pack",
+  );
+});
+
+test("customHeader is defined outside the installer-only guard", () => {
+  const source = readRescue();
+  const headerIndex = source.indexOf("!macro customHeader");
+  const guardIndex = source.indexOf("!ifndef BUILD_UNINSTALLER");
+  assert.ok(
+    headerIndex >= 0,
+    "customHeader must exist: it is the only hook expanded after addLangs loads the languages",
+  );
+  // The uninstaller build calls setLinkVars too (templates/nsis/uninstaller.nsh), so
+  // $(RF_SHORTCUT) must stay resolvable there even though the rescue body must not compile in.
+  assert.ok(
+    headerIndex < guardIndex,
+    "customHeader must sit before the BUILD_UNINSTALLER guard",
+  );
+});
+
+test("every user-facing message box is bilingual", () => {
+  const source = readRescue();
+  const branches = (source.match(/\$\{If\} \$LANGUAGE/g) || []).length;
+  assert.ok(branches > 0, "the installer messages must branch on $LANGUAGE");
+
+  // 逐块校验，而不是**全文件**数 `${Else}` / `${EndIf}`：2026-11-2x 加了抢占式卸旧
+  // （RF_PREEMPTIVE_UNINSTALL，里面有 4 组自己的 ${If}/${Else}/${EndIf}）之后，
+  // 全文件计数把无关分支也算了进来，守卫于是误红。改成"每个 $LANGUAGE 分支内部
+  // 必须有 中文 MessageBox → ${Else} → English MessageBox → ${EndIf}"，
+  // 判定比原来更严：只有语言分支里漏了英文那一条才会红。
+  const blocks = [...source.matchAll(/\$\{If\} \$LANGUAGE\b[\s\S]*?\$\{EndIf\}/g)];
+  assert.strictEqual(blocks.length, branches, "each $LANGUAGE branch must be closed by ${EndIf}");
+  for (const match of blocks) {
+    const block = match[0];
+    const elseAt = block.indexOf("${Else}");
+    assert.ok(elseAt > 0, "each language branch needs an ${Else} English fallback");
+    const zh = block.slice(0, elseAt);
+    const en = block.slice(elseAt);
+    assert.strictEqual((zh.match(/^\s*MessageBox\b/gm) || []).length, 1, "one Chinese message box");
+    assert.strictEqual((en.match(/^\s*MessageBox\b/gm) || []).length, 1, "one English message box");
+  }
+
+  // 剩下的 MessageBox 必须走**本地化文案通道**：`$(RF_...)`，由 wizard.nsh 的 RF_STR
+  // 一次铺满 26 个 LCID。原来是"全文件 MessageBox 数 === 语言分支数 × 2"，那个等式在
+  // 2026-11-2x 之后不再成立 —— 桥的"旧版本还在运行"提示用 `$(RF_BRIDGE_APP_RUNNING)`
+  // 而不是复制一份中文/英文，那是对的写法，却会被纯计数误判成"少了一条英文"。
+  //
+  // ⚠️ 判据必须是"开引号后**紧跟** LangString"，不能只测"这一行里出现过 $(RF_*)"：
+  // QA 注入过 `MessageBox ... "正在恢复数据。$(RF_LOG_HINT)$RFLogFile"` —— 硬编码中文
+  // 散文 + 一个 LangString 尾巴，用子串判定 39 条全绿（2026-11-2x 复验发现的真洞）。
+  // 允许 LangString 后面接运行期变量（$RFLogFile / $INSTDIR），不允许它前面有散文。
+  const ranges = blocks.map((match) => [match.index, match.index + match[0].length]);
+  const boxes = [...source.matchAll(/^\s*MessageBox\b[^\n]*$/gm)];
+  assert.ok(boxes.length >= branches * 2, "every $LANGUAGE branch box must still be found by the scan");
+  for (const box of boxes) {
+    const inLanguageBlock = ranges.some(([start, end]) => box.index > start && box.index < end);
+    const localized = /^\s*MessageBox\b[^"\n]*"\$\(RF_[A-Z0-9_]+\)/.test(box[0]);
+    assert.ok(
+      inLanguageBlock || localized,
+      `unlocalised message box (neither a $LANGUAGE branch nor an $(RF_*) LangString right after the opening quote): ${box[0].trim()}`,
+    );
+  }
 });
 
 test("the recursive copy detects directories without IfFileExists", () => {

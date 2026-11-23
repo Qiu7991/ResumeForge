@@ -2,13 +2,15 @@
 /**
  * 桌面壳窗口桥（desktop/preload.js 暴露的 window.desktopShell）。
  *
- * 与 splash 桥分开的原因：splash 回答"这是不是桌面壳"（浏览器里不存在）；这个桥只被
- * 桌面标题栏使用，浏览器里连元素都不渲染。所有入口都是**固定的**通道 / 动作 id，
- * 主进程 desktop/lib/desktop-shell-ipc.js 侧做发送方校验与动作白名单。
+ * 与 splash 桥分开的原因：splash 回答"这是不是桌面壳"（浏览器里不存在）；这个桥被
+ * 桌面标题栏与 i18n 使用，浏览器里不存在桥、调用方全部按 no-op 降级。所有入口都是
+ * **固定的**通道 / 动作 id，主进程 desktop/lib/desktop-shell-ipc.js 侧做发送方校验与
+ * 动作白名单。
  *
  * 本文件不引入任何运行时 i18n / 业务模块：它只描述桥的形状与调用方式，测试里直接
  * stub 一个同形状对象即可。
  */
+import type { TitlebarOverlayPayload } from "../theme/titlebarOverlay";
 
 /** 主进程推送 / 快照的窗口状态：菜单文案、全屏隐藏、置顶勾选与撤销置灰都读它。 */
 export interface DesktopWindowState {
@@ -45,7 +47,33 @@ export interface DesktopShellBridge {
   menuAction?: (action: string) => Promise<DesktopMenuActionReply | undefined>;
   getWindowState?: () => Promise<DesktopWindowState | undefined>;
   onWindowState?: (callback: (state: DesktopWindowState) => void) => void;
-  setTheme?: (theme: "light" | "dark") => void;
+  /**
+   * 把标题栏覆盖层的配色报给主进程（2026-11-20 第 3 条）。
+   *
+   * 载荷有两种形态：`{ theme, color, symbolColor }`（新渲染层，颜色取自页面 CSS 的
+   * 计算值——CSS 是唯一真源），或裸主题名（旧壳/旧渲染层）。主进程两种都认，
+   * 见 desktop/lib/desktop-shell-ipc.js 的 normalizeOverlayPayload。
+   */
+  setTheme?: (payload: "light" | "dark" | TitlebarOverlayPayload) => void;
+  /**
+   * 托盘图标是否跟随系统主题（WF-20 的兜底开关，设置项 `tray_icon_follow_system`）。
+   * 只发布尔；旧壳没有这个入口时安静降级（设置卡也会因为探测不到而隐藏）。
+   */
+  setTrayIconFollowSystem?: (enabled: boolean) => void;
+  /**
+   * 开机自启（WF-08）：读写的是 Windows 注册表里安装器写的那条，**不是库里的一份布尔**。
+   * `supported=false` 表示当前平台/安装方式管不到 —— 设置卡会渲染成 disabled 并说明原因，
+   * 而不是假装能切。旧壳没有这两个入口时设置卡整张不渲染。
+   */
+  getLaunchAtLogin?: () => Promise<{ supported: boolean; enabled: boolean } | undefined>;
+  setLaunchAtLogin?: (
+    enabled: boolean,
+  ) => Promise<{ supported: boolean; enabled: boolean } | undefined>;
+  /**
+   * 把**应用内语言**报给壳层（托盘 / 原生对话框 / 关闭卡片跟随它，而不是系统语言）。
+   * 主进程只接受 "zh" / "en"，其它值忽略；旧壳没有这个入口时安静降级。
+   */
+  setLocale?: (locale: "zh" | "en") => void;
   /**
    * 把"焦点在不在可编辑区"报给主进程（#34F）。
    * 菜单打开前会从主进程读回这份实态，撤销/重做的置灰与实际能不能执行必须同源。

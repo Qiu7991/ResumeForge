@@ -15,20 +15,25 @@ const collectFilters = {
     "Collection is not affected: keywords and cities still apply. Click Reload below to try again.",
   "collectFilters.action.reload": "Reload",
   "collectFilters.action.test": "Test filters",
+  "collectFilters.action.check": "Check",
   "collectFilters.section.title": "Filter by job site conditions",
   "collectFilters.section.loading": "Reading the site's filters…",
   "collectFilters.test.hint":
     "Check each selected condition on the real job site to see whether it can still be picked there (this briefly navigates to the filter bar and does not affect collection)",
+  // I-17: accessible name for the ⓘ that now carries the sentence above.
+  "collectFilters.test.hintAria": "About testing the filters",
   "collectFilters.intro":
-    "These are the conditions from the job site's own filter bar; the site applies them while searching, which is more accurate than filtering after collection and means far fewer pages to go through. The option list is read from the site itself, so it follows the site whenever it changes.",
+    "These come from the job site's own filter bar: the site applies them while searching, which is more accurate than filtering after collection and means far fewer pages. The option list is read from the site itself and follows its changes.",
   "collectFilters.intro.rules":
     "Job type and salary are single-choice; the other conditions accept multiple values. Under part-time, salary is replaced by pay type and part-time hours.",
   "collectFilters.intro.breadth":
-    "The more conditions you pick, the more mixed one batch gets and the sooner duplicates appear.",
+    "The more you pick, the more mixed a batch gets and the sooner duplicates appear.",
   "collectFilters.launch.title":
-    "Start the dedicated browser to get the full option list your account can see",
+    "Start the dedicated browser to read the full option list your account can see",
   "collectFilters.launch.body":
     "Some options differ per account (for example, student accounts see internships under job type), and they can only be read from a browser where you are signed in. The current list is the site-wide one: usable, but not necessarily complete.",
+  "collectFilters.intro.hintAria": "About the site filters",
+  "collectFilters.status.failed": "Read failed, retry available",
   "collectFilters.result.partial": "{count} conditions could not take effect",
   "collectFilters.result.all": "Every selected condition is really selectable on the site",
   "collectFilters.result.applied": "Applied",
@@ -38,7 +43,7 @@ const collectFilters = {
   "collectFilters.result.unlimited": "{label} — {detail}",
   "collectFilters.tag.any": "Any",
   "collectFilters.aria.group": "Site filter - {label}",
-  "collectFilters.source.session.text": "Read from your signed-in session",
+  "collectFilters.source.session.text": "Read from the real option list",
   "collectFilters.source.session.hint":
     "These are the options your account can really see on the job site, so they are the most accurate.",
   "collectFilters.source.public.text": "Site-wide option list",
@@ -47,7 +52,6 @@ const collectFilters = {
   "collectFilters.source.snapshot.text": "Built-in snapshot (offline)",
   "collectFilters.source.snapshot.hint":
     "Reading from the site over the network failed, so this is a built-in snapshot. Its codes may be out of date; reconnect to the internet and reload before collecting.",
-  "collectFilters.source.unavailable.text": "Unavailable this time",
   "collectFilters.source.unavailable.hint":
     "This condition could not be read from the site this time, so it cannot be used for filtering yet.",
 } as const;

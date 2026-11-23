@@ -32,6 +32,8 @@ from .resume_labels import (
     patent_status_text,
     publication_status_text,
 )
+from .resume_rich_marks import item_text
+from .resume_rich_text import strip_markers
 
 __all__ = [
     "authors_inlines",
@@ -75,9 +77,7 @@ def _custom_enum_text(value: str, language: str) -> str | None:
     """
     normalized = normalize_language(language)
     displays = {
-        labels[normalized][value]
-        for labels in _ENUM_LABEL_MAPS
-        if labels[normalized].get(value)
+        labels[normalized][value] for labels in _ENUM_LABEL_MAPS if labels[normalized].get(value)
     }
     return displays.pop() if len(displays) == 1 else None
 
@@ -205,7 +205,8 @@ def item_inlines(
     lang = normalize_language(language)
     path = item_path(section_key, entry_id, item.id)
     if isinstance(item, TextItem):
-        return [Inline(text=item.text, role="body", path=path)]
+        # I-12：正文在 `text` 上；与字段的 `value` 走同一个读路径入口。
+        return [Inline(text=item_text(item, key="text"), role="body", path=path)]
     label_text = field_label_text(item, section_key, lang)
     want_label = item.show_label if show_label is None else show_label
     body: list[Inline] = []
@@ -217,7 +218,9 @@ def item_inlines(
             kind = spec.enum_kind if spec is not None else ""
             display = enum_text(item, kind, lang)
         else:
-            display = item.value
+            # I-12：有 `rich.runs` 时 `value` 是纯文本、样式旁挂，统一由 `item_text`
+            # 投影一次（没有 rich 时原样返回 value，下游解析器行为逐字节不变）。
+            display = item_text(item)
         body = [
             Inline(
                 text=display,
@@ -232,9 +235,8 @@ def item_inlines(
         body = authors_inlines(item, lang, path=path)
     segments: list[Inline] = []
     if want_label and label_text:
-        # 标签不是可点击的字段本体：path 留空。定位粒度是 item——列表值/作者名这类
-        # 多值字段的每个值段共享同一 item path（见 join_values / authors_inlines）。
-        segments.append(Inline(text=label_text + "：", role="meta", path=""))
+        # The label shares the field target, but has independent typography.
+        segments.append(Inline(text=label_text + "：", role="field_label", path=path))
     if wrap_paren and wants_paren(item):
         from .resume_labels import level_parens
 
@@ -248,5 +250,10 @@ def item_inlines(
 
 
 def plain_text(segments: list[Inline]) -> str:
-    """Inline 段拼成纯文本（Markdown/TXT/文本等价对拍用）。"""
-    return "".join(segment.text for segment in segments)
+    """Inline 段拼成纯文本（Markdown/TXT/文本等价对拍用）。
+
+    F22：字段名与值都可能带行内标记（`**` / `{@size=…}`）。纯文本出口必须先剥标记，
+    否则 TXT / ATS / 导出的姓名行会原样印出 `{@size=0.9}`——以前只有正文块走解析，
+    字段名一开放编辑就漏出来了。`strip_markers` 是唯一解析实现，与 HTML/PDF/Word 同源。
+    """
+    return "".join(strip_markers(segment.text) for segment in segments)

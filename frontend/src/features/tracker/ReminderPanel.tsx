@@ -11,8 +11,9 @@
  * （单文件 500 行硬预算；本文件只保留数据、弹层开关与列表交互）。
  */
 import { CheckSquareOutlined, PlusOutlined } from "@ant-design/icons";
-import { App, Button, Card, Empty, Form, Listy, Pagination, Segmented, Select, Space } from "antd";
+import { App, Button, Card, Form, Listy, Pagination, Segmented, Select, Space } from "antd";
 import FormModal from "../../components/common/FormModal";
+import EmptyState from "../../components/common/EmptyState";
 import LoadingBlock from "../../components/common/LoadingBlock";
 import { useClientPagination } from "../../hooks/useClientPagination";
 import dayjs from "dayjs";
@@ -268,9 +269,12 @@ export default function ReminderPanel() {
     },
   ];
 
-  /** 关联对象在下拉里查不到时的占位（与列表同口径：不猜、显示 "-"）。 */
+  /**
+   * 关联对象的显示名。未关联（或下拉里查不到）时返回 undefined，而不是 "-"：
+   * 详情抽屉按"空白即不存在"整行不渲染，一条没关联任何东西的提醒不该占三行 "–"。
+   */
   const labelOf = (options: { value: number; label: string }[], id: number | null | undefined) =>
-    id == null ? "-" : (options.find((option) => option.value === id)?.label ?? "-");
+    id == null ? undefined : options.find((option) => option.value === id)?.label;
 
   return (
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
@@ -317,7 +321,7 @@ export default function ReminderPanel() {
       ) : loading ? (
         <LoadingBlock />
       ) : rangedItems.length === 0 ? (
-        <Empty
+        <EmptyState
           description={items.length === 0 ? t("reminder.empty") : t("reminder.emptyFiltered")}
         />
       ) : (

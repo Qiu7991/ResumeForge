@@ -29,6 +29,8 @@ from ..profile.profile_service import (
     legacy_profile_has_entries,
     project_legacy_profile_from_consumed,
 )
+from ..resume.resume_inline_style import strip_style_markers
+from .assistant_error_detail import AssistantInputError
 
 MAX_JOB_CONTEXT_CHARS = 6_000
 MAX_PROFILE_CONTEXT_CHARS = 10_000
@@ -44,14 +46,29 @@ def trim(value: str, max_chars: int) -> str:
     return value if len(value) <= max_chars else f"{value[:max_chars].rstrip()}…"
 
 
+def strip_marks_deep(value: Any) -> Any:
+    """递归剥掉 JSON 里的行内样式标记（DF-6）：模型不需要看到 `{@color=…}`。
+
+    复用 `strip_style_markers`（保守剥离：未闭合 / 越界标记原样保留），不另写一份解析。
+    `**` 不在这里处理——助手读到的 Markdown 加粗是可读语义，不是泄漏。
+    """
+    if isinstance(value, str):
+        return strip_style_markers(value)
+    if isinstance(value, list):
+        return [strip_marks_deep(item) for item in value]
+    if isinstance(value, dict):
+        return {key: strip_marks_deep(item) for key, item in value.items()}
+    return value
+
+
 def resume_context(record: ResumeRecord, *, max_chars: int = MAX_RESUME_CONTEXT_CHARS) -> str:
-    content = dict(record.content or {})
+    content = strip_marks_deep(dict(record.content or {}))
     content.pop("photo", None)
     payload = {
         "id": record.id,
-        "title": record.title,
-        "target_job": record.job_title,
-        "company": record.company,
+        "title": strip_style_markers(record.title or ""),
+        "target_job": strip_style_markers(record.job_title or ""),
+        "company": strip_style_markers(record.company or ""),
         "source": record.source,
         "content": content,
     }
@@ -105,7 +122,11 @@ def load_local_context(
     if payload.job_id is not None:
         job = db.get(Job, payload.job_id)
         if job is None:
-            raise ValueError("选择的岗位不存在或已被删除")
+            raise AssistantInputError(404, "选择的岗位不存在或已被删除")
+        # 标题快照（F36）：context 里只有 id 时，岗位改名/删除后界面只能显示 `#12`。
+        # 这里只在查到对象时补写展示字段，`job_id` 保持原样供跳转与重放使用。
+        metadata["job_title"] = job.title
+        metadata["job_company"] = job.company
         job_out = JobOut.model_validate(job)
         summary = {
             "id": job.id,
@@ -122,7 +143,8 @@ def load_local_context(
     if payload.resume_id is not None:
         resume = db.get(ResumeRecord, payload.resume_id)
         if resume is None:
-            raise ValueError("选择的简历不存在或已被删除")
+            raise AssistantInputError(404, "选择的简历不存在或已被删除")
+        metadata["resume_title"] = resume.title
         take(resume_context(resume, max_chars=min(MAX_RESUME_CONTEXT_CHARS, max(remaining, 0))))
     # 个人资料是助手的默认本地上下文，不再由前端开关控制。这样用户直接问“按我的资料…”
     # 时不会因为忘记勾选而得到一份脱离真实资料的回答。放宽模式时携带身份字段（见 profile_context）。

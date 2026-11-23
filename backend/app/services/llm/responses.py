@@ -30,13 +30,16 @@ from ...runtime.operation_budget import OperationCancelled
 from ...schemas.setting import LLMConfig
 from . import retry
 from .base import (
+    NETWORK_ERRORS,
     BaseLLMProvider,
     LLMDelta,
     LLMError,
     build_request_timeout,
     log_llm_failure,
+    timeout_error,
 )
 from .client_pool import get_shared_client
+from .context_length_error import with_context_length_flag
 from .openai_compat import validated_base_url
 from .payload import status_error
 from .responses_messages import convert_messages, convert_tools
@@ -156,8 +159,11 @@ class ResponsesProvider(BaseLLMProvider):
                                     response.status_code, response.headers.get("retry-after")
                                 )
                                 if delay is None:
-                                    raise gate.final_error(
-                                        response.status_code, self._http_error(response)
+                                    raise await with_context_length_flag(
+                                        response,
+                                        gate.final_error(
+                                            response.status_code, self._http_error(response)
+                                        ),
                                     )
                                 logger.warning(
                                     "Responses 流式请求遇到 HTTP %s，%.1fs 后自动重试（第 %s 次）",
@@ -190,10 +196,10 @@ class ResponsesProvider(BaseLLMProvider):
                     raise self._translate_deadline_expiry(exc) from exc
                 except httpx.TimeoutException as exc:
                     log_llm_failure("timeout", type(exc).__name__)
-                    raise LLMError("模型响应超时，请稍后重试或调大超时时间") from exc
-                except httpx.RequestError as exc:
-                    log_llm_failure("disconnect", type(exc).__name__)
-                    raise LLMError("无法连接模型服务，请检查 Base URL 与网络状态") from exc
+                    raise timeout_error() from exc
+                except NETWORK_ERRORS as exc:
+                    # T02：代理/直连、socks、证书、超时四类分开说（net_path 随错误下发）。
+                    raise self._network_error(exc) from exc
         except OperationCancelled:
             finish_reason = self._cancelled_finish_reason()
             raise
@@ -239,8 +245,11 @@ class ResponsesProvider(BaseLLMProvider):
                                     response.status_code, response.headers.get("retry-after")
                                 )
                                 if delay is None:
-                                    raise gate.final_error(
-                                        response.status_code, self._http_error(response)
+                                    raise await with_context_length_flag(
+                                        response,
+                                        gate.final_error(
+                                            response.status_code, self._http_error(response)
+                                        ),
                                     )
                                 logger.warning(
                                     "Responses 调用遇到 HTTP %s，%.1fs 后自动重试（第 %s 次）",
@@ -260,10 +269,10 @@ class ResponsesProvider(BaseLLMProvider):
                     raise self._translate_deadline_expiry(exc) from exc
                 except httpx.TimeoutException as exc:
                     log_llm_failure("timeout", type(exc).__name__)
-                    raise LLMError("模型响应超时，请稍后重试或调大超时时间") from exc
-                except httpx.RequestError as exc:
-                    log_llm_failure("disconnect", type(exc).__name__)
-                    raise LLMError("无法连接模型服务，请检查 Base URL 与网络状态") from exc
+                    raise timeout_error() from exc
+                except NETWORK_ERRORS as exc:
+                    # T02：代理/直连、socks、证书、超时四类分开说（net_path 随错误下发）。
+                    raise self._network_error(exc) from exc
                 try:
                     data = json.loads(body)
                 except (ValueError, UnicodeError) as exc:
@@ -387,7 +396,8 @@ class ResponsesProvider(BaseLLMProvider):
 
     def _client(self) -> httpx.AsyncClient:
         # 与两家 provider 共享同一份连接池；超时按请求传入。
-        return get_shared_client(transport=self._transport)
+        # T02：端点一起传下去，回环地址强制直连。
+        return get_shared_client(transport=self._transport, url=self._net_target())
 
     def _timeout(self) -> httpx.Timeout:
         return build_request_timeout(self.config, self._deadline_remaining())
@@ -438,7 +448,7 @@ class ResponsesProvider(BaseLLMProvider):
                 "模型不存在或接口地址错误；也可能该服务商不支持 Responses 协议，"
                 "请检查 Base URL 与模型名称，或切回 Chat Completions 后重试（HTTP 404）"
             )
-        return status_error(status)
+        return status_error(status, response.headers.get("location"))
 
 
 __all__ = ["ResponsesProvider", "responses_unsupported_hint"]

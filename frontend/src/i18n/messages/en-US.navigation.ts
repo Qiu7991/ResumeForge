@@ -22,6 +22,7 @@ const navigation = {
   "navigation.item.knowledge": "Knowledge base",
   "navigation.item.skills": "Workbench",
   "navigation.item.analytics": "Analytics",
+  "navigation.item.research": "Company research",
   "navigation.item.claims": "Fact ledger",
   "navigation.item.trash": "Trash",
 
@@ -31,6 +32,8 @@ const navigation = {
 
   /** Trigger label for the "My space" menu, also its accessible name. */
   "navigation.mySpace.label": "My space",
+  /** Accessible name when the current page belongs to the group (visible text is a substring). */
+  "navigation.mySpace.currentAria": "My space: {name}",
   /** User guide entry in the sidebar and the mobile drawer. */
   "navigation.guide.open": "User guide",
 

@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from app.schemas.setting import SearchConfig
 from app.services.assistant_tools._registry import tool_definitions
@@ -202,6 +204,26 @@ def test_tool_description_mentions_the_configured_maximum():
     definitions = tool_definitions(web_search=True, fetch_pages=0, max_results=12)
     search = next(item for item in definitions if item["function"]["name"] == "web_search")
     assert "最多返回 12 条" in search["function"]["description"]
+
+
+def test_tool_description_teaches_search_operators():
+    """T15 / Q08：描述要教模型用 site: / after: / before: / lang: 与成对引号精确短语。
+
+    只列语法不够——必须点名场景（招聘站限定用 site:），否则模型仍然只会堆关键词。
+    这里的断言同时钉住"操作符不会被改写"这句承诺（``aggregate._run_sources`` 里
+    ``has_search_operators`` 的透传保护）。
+    """
+    for fetch_pages in (0, 2):
+        text = web_search_description(fetch_pages)
+        for token in ("site:", "after:", "before:", "lang:", '"'):
+            assert token in text, f"{token} 必须出现在联网搜索的工具描述里"
+        # 用带词边界的正则而不是子串判断：这里验的是"描述里给了招聘站限定的例子"，
+        # 不是 URL 白名单（`"zhipin.com" in text` 会被 CodeQL 判成
+        # py/incomplete-url-substring-sanitization，那是误读——text 是提示词文本）。
+        assert re.search(r"\bsite:zhipin\.com\b", text), "招聘站限定场景要给出具体例子"
+        assert "原样提交" in text  # 与 has_search_operators 的透传语义一致
+    # 两版描述仍然只差"能不能拿到正文"，操作符指引两版都有。
+    assert _WEB_SEARCH_DESC_SUMMARIES != _WEB_SEARCH_DESC_WITH_PAGES
 
 
 @pytest.mark.asyncio

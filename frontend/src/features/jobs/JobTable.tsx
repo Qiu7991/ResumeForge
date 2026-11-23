@@ -1,22 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 /** 岗位列表表格、列渲染和分页。 */
 
-import { CheckSquareOutlined, StarFilled, StarOutlined } from "@ant-design/icons";
+import {
+  ApartmentOutlined,
+  CheckSquareOutlined,
+  StarFilled,
+  StarOutlined,
+} from "@ant-design/icons";
 import { Button, Table, Tag, Tooltip, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 import type { SortOrder, TableRowSelection } from "antd/es/table/interface";
 import type { HTMLAttributes } from "react";
+import { useState } from "react";
+import JobResumeGraphModal from "./graph/JobResumeGraphModal";
 import { JOB_STATUS_META, type JobList, type Page } from "../../types";
 import { formatDateTime } from "../../utils/format";
 import { RowActions, RowContextMenu, type RowActionItem } from "../../components/common/RowActions";
+import { useToast } from "../../hooks/useToast";
 import SkillTags from "./SkillTags";
 // 二开（2026-11-10）：公司名列换 CompanyName 组件（蓝底 chips + 悬停完整名）。
 import CompanyName from "../../components/common/CompanyName";
 import { JOB_SOURCE_LABEL_KEYS, jobSourceKind } from "../../utils/jobSource";
 import { nextSortState, sortOrderFor, type JobSortState } from "../../utils/jobSort";
 import { t } from "../../i18n";
-import { jobStatusLabelKey, jobTypeLabelKey } from "../../i18n/enum/jobs";
+import { jobTypeLabelKey } from "../../i18n/enum/jobs";
 import { useLocale } from "../../i18n/i18nContext";
+import { jobCopyMenu } from "./jobRowCopyActions";
+import { jobStatusText, normalizeJobStatus } from "./jobStatusText";
 
 // 值域与 pages/jobs/jobFilterOptions.ts 的 BatchAction 保持一致（新增动作两处同步改）；
 // 此处只判「有无批量操作进行中」，不区分具体动作。类型本地持有是因为 components
@@ -50,17 +60,9 @@ interface Props {
 }
 
 /**
- * `active` / `open` 是历史落库值：显示前先归一到「开放中」，再查 JOB_STATUS_META
- * （颜色）与 jobStatusLabelKey()（展示名），兼容层别删。
- *
- * 归一后的值仍是落库的协议值，不是语言包 key：把它换成 key 会让颜色查不到
- * （静默掉成 default），所以归一表保持原样。
+ * `active` / `open` 是历史落库值：显示前先归一到「开放中」再查颜色与展示名。
+ * 归一逻辑在 `jobStatusText.ts`，列表 Tag 与「复制整行」共用同一份。
  */
-const STATUS_LABELS: Record<string, string> = {
-  active: "开放中", // i18n-ok: 归一化目标是落库的数据值（JOB_STATUS_META 的键），不是界面文案
-  open: "开放中", // i18n-ok: 同上，历史落库值共用同一个归一化目标
-};
-
 export default function JobTable({
   jobs,
   loading,
@@ -85,6 +87,9 @@ export default function JobTable({
 }: Props) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后列头与菜单不重渲染。
   useLocale();
+  // 「复制」的 Toast：工厂用同一个 message key 覆盖，连点不会堆成一列。
+  const toast = useToast();
+  const [graphJob, setGraphJob] = useState<JobList | null>(null);
   const columns: TableColumnsType<JobList> = [
     {
       title: t("jobTable.column.favorite"),
@@ -187,14 +192,13 @@ export default function JobTable({
       dataIndex: "status",
       width: 90,
       render: (value: string) => {
-        // 先归一再查表：`active` / `open` 是历史落库值（见上面的 STATUS_LABELS）。
+        // 先归一再查表：`active` / `open` 是历史落库值（见 jobStatusText.ts）。
         // 颜色仍来自 `types/job.ts` 的 JOB_STATUS_META（唯一来源），展示名来自语言包；
         // 两张表都没登记的取值按原逻辑回退，不丢信息。
-        const normalized = STATUS_LABELS[value] ?? value;
-        const labelKey = jobStatusLabelKey(normalized);
+        const normalized = normalizeJobStatus(value);
         return (
           <Tag color={JOB_STATUS_META[normalized]?.color ?? "default"}>
-            {labelKey ? t(labelKey) : value || "-"}
+            {jobStatusText(value) || "-"}
           </Tag>
         );
       },
@@ -280,10 +284,22 @@ export default function JobTable({
     { key: "generate", label: t("jobTable.action.generate"), onClick: () => onGenerate(job) },
   ];
 
-  /** 次级操作：行内「更多」下拉与整行右键菜单共用这一份（两处保证完全一致）。 */
+  /**
+   * 次级操作：行内「更多」下拉与整行右键菜单共用这一份（两处保证完全一致）。
+   *
+   * 「复制」子菜单放在「编辑」之前、删除之前：它是一次性取数动作（拿出去贴表单 /
+   * 发内推 / 粘进表格），既不是主操作也不该压住删除；两处入口都是这一份清单。
+   */
   const secondaryActions = (job: JobList): RowActionItem[] => [
     { key: "write", label: t("jobTable.action.write"), onClick: () => onWrite(job) },
     { key: "resumes", label: t("jobTable.action.resumes"), onClick: () => onViewResumes(job) },
+    {
+      key: "resume-graph",
+      label: t("jobTable.action.resumeGraph"),
+      icon: <ApartmentOutlined />,
+      onClick: () => setGraphJob(job),
+    },
+    jobCopyMenu(job, toast),
     { key: "edit", label: t("jobTable.action.edit"), onClick: () => onEdit(job) },
     {
       key: "delete",
@@ -313,50 +329,59 @@ export default function JobTable({
         ];
 
   return (
-    <Table
-      className="jobs-table"
-      rowKey="id"
-      rowSelection={selectionMode ? rowSelection : undefined}
-      columns={columns}
-      dataSource={jobs?.items ?? []}
-      loading={loading}
-      // 空表（无当前页行）时不启用横向滚动：否则 `.ant-table-content` 会变成
-      // "可横滚、区域内却没有任何可聚焦元素"的容器，命中 axe 的
-      // `scrollable-region-focusable`（serious）。有数据时照旧按列宽固定横滚。
-      // 11 列（二开多一列「导入时间」）：宽度之和 1364 + 116 ≈ 1480；沿用「比列宽和
-      // 少 14px」的历史取值口径，避免操作列加宽后表格总宽突然多出一截。
-      scroll={jobs?.items?.length ? { x: 1480 } : undefined}
-      components={{
-        body: {
-          // 整行右键即可编辑/删除；批量模式下不拦截右键，避免和选择操作打架。
-          row: (props: HTMLAttributes<HTMLTableRowElement>) => {
-            const rowKey = String((props as { "data-row-key"?: string })["data-row-key"] ?? "");
-            const job = (jobs?.items ?? []).find((item) => String(item.id) === rowKey);
-            if (batchAction !== null || !job) return <tr {...props} />;
-            return (
-              <RowContextMenu items={contextActions(job)}>
-                <tr {...props} />
-              </RowContextMenu>
-            );
+    <>
+      <Table
+        className="jobs-table"
+        rowKey="id"
+        rowSelection={selectionMode ? rowSelection : undefined}
+        columns={columns}
+        dataSource={jobs?.items ?? []}
+        loading={loading}
+        // 11 列（二开多一列「导入时间」）：宽度之和 1364 + 116 ≈ 1480。
+        scroll={jobs?.items?.length ? { x: 1480 } : undefined}
+        components={{
+          body: {
+            // 整行右键即可编辑/删除；批量模式下不拦截右键，避免和选择操作打架。
+            row: (props: HTMLAttributes<HTMLTableRowElement>) => {
+              const rowKey = String((props as { "data-row-key"?: string })["data-row-key"] ?? "");
+              const job = (jobs?.items ?? []).find((item) => String(item.id) === rowKey);
+              if (batchAction !== null || !job) return <tr {...props} />;
+              return (
+                <RowContextMenu items={contextActions(job)}>
+                  <tr {...props} />
+                </RowContextMenu>
+              );
+            },
           },
-        },
-      }}
-      pagination={{
-        current: page,
-        pageSize,
-        total: jobs?.total ?? 0,
-        disabled: batchAction !== null,
-        showSizeChanger: true,
-        showTotal: (total) => t("jobTable.pagination.total", { total }),
-        onChange: onPageChange,
-      }}
-      // 排序交给服务端：只把"排序动作"翻译成 API 参数，分页/筛选的动作各走各的。
-      onChange={(_pagination, _filters, sorter, extra) => {
-        if (extra.action !== "sort") return;
-        const active = Array.isArray(sorter) ? sorter[0] : sorter;
-        const columnKey = String(active?.columnKey ?? active?.field ?? "");
-        onSortChange(nextSortState(columnKey, active?.order as SortOrder | null | undefined));
-      }}
-    />
+        }}
+        pagination={{
+          current: page,
+          pageSize,
+          total: jobs?.total ?? 0,
+          disabled: batchAction !== null,
+          showSizeChanger: true,
+          showTotal: (total) => t("jobTable.pagination.total", { total }),
+          onChange: onPageChange,
+        }}
+        // 排序交给服务端：只把"排序动作"翻译成 API 参数，分页/筛选的动作各走各的。
+        onChange={(_pagination, _filters, sorter, extra) => {
+          if (extra.action !== "sort") return;
+          const active = Array.isArray(sorter) ? sorter[0] : sorter;
+          const columnKey = String(active?.columnKey ?? active?.field ?? "");
+          onSortChange(nextSortState(columnKey, active?.order as SortOrder | null | undefined));
+        }}
+      />
+      {graphJob && (
+        <JobResumeGraphModal
+          key={graphJob.id}
+          job={graphJob}
+          onClose={() => setGraphJob(null)}
+          onGenerate={() => {
+            setGraphJob(null);
+            onGenerate(graphJob);
+          }}
+        />
+      )}
+    </>
   );
 }

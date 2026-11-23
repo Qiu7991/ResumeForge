@@ -11,6 +11,8 @@
 // main.js keeps the registration point (`app.on("before-quit", ...)`) and the
 // `quitting` flag: the window close handler and the crash supervisor read that
 // flag directly, so it stays a local there and is flipped through `setQuitting`.
+// The `will-quit` fallback is the one exception -- it registers itself below,
+// because it only reads state owned by this closure (see handleWillQuit).
 //
 // Three things are injected rather than required, on purpose:
 //   * `app` / `dialog` -- this module must NOT `require("electron")`. The lifecycle
@@ -22,6 +24,13 @@
 //     handed down instead of the module's globals.
 //   * `requireChildProcess` -- a lazy accessor, so the installer spawn keeps using
 //     the shell's `child_process` (stubbed in the probes) and stays lazy as before.
+//   * `getWindow` -- the main window handle (R3-A hides it before the stop). Same
+//     reason as `app`/`dialog`: this module must stay electron-free.
+//
+// 用户可见的两条错误框文案跟随应用内语言（lib/shell-locale.js）；日志行保持原样。
+
+const { t } = require("./shell-locale");
+const { terminateRecordedBackend } = require("./backend-emergency-stop");
 
 // Hard cap on how long before-quit waits for the backend to stop. A normal
 // quit is a user waiting in front of the tray menu, so the cap is short: a
@@ -30,6 +39,47 @@
 // a live installation is the one case worth waiting (and failing) for.
 const STOP_TIMEOUT_MS = 6_000;
 const INSTALL_STOP_TIMEOUT_MS = 15_000;
+
+/**
+ * Per-quit stopwatch (R3-04 acceptance evidence).
+ *
+ * The quit used to be a black box that felt like 400–700ms of nothing; every
+ * stage now stamps itself relative to the quit request and lands in
+ * desktop-main.log. `mark()` logs the stage on its own line; `summary()` closes
+ * the run with the one-line shape the issue asked for:
+ *
+ *   quit timing: stop requested at +0ms, taskkill exit +182ms, process gone
+ *   +341ms, port probe +347ms, releasing quit +348ms
+ *
+ * A stage that never happened (no backend running, no taskkill on posix) reads
+ * "n/a" instead of a made-up number.
+ *
+ * @param {number} startedAt `Date.now()` at the quit request.
+ * @param {function(string): void} emit Log sink.
+ */
+function createQuitTimeline(startedAt, emit) {
+  const marks = new Map();
+  const elapsed = () => Date.now() - startedAt;
+  const at = (label) => (marks.has(label) ? `+${marks.get(label)}ms` : "n/a");
+  return {
+    mark(label) {
+      const ms = elapsed();
+      marks.set(label, ms);
+      emit(`quit timing: ${label} +${ms}ms`);
+      return ms;
+    },
+    summary(label) {
+      const ms = elapsed();
+      marks.set(label, ms);
+      emit(
+        `quit timing: stop requested at ${at("stop requested")}, taskkill exit ${at("taskkill exit")}, ` +
+          `process gone ${at("process gone")}, port probe ${at("port probe")}, ` +
+          `${label} ${at(label)}`,
+      );
+      return ms;
+    },
+  };
+}
 
 /**
  * Builds the quit-lifecycle closure for the desktop shell.
@@ -42,6 +92,8 @@ const INSTALL_STOP_TIMEOUT_MS = 15_000;
  * @param {object} deps.dialog Electron `dialog` module.
  * @param {function(string): void} deps.logLine Runtime log sink (user-profile log).
  * @param {function(): (object|null)} deps.getBackend Returns the current BackendManager.
+ * @param {function(): (object|null)} [deps.getWindow] Returns the current main window;
+ *     it is hidden before the backend stop (R3-A), so the user sees the quit immediately.
  * @param {function(): any} deps.getRestartTimer Returns the pending crash-restart timer.
  * @param {function(boolean): void} deps.setQuitting Writes main.js' `quitting` flag.
  * @param {function(string, number): {file: string, args: string[]}} deps.installerWaitCommand
@@ -49,9 +101,12 @@ const INSTALL_STOP_TIMEOUT_MS = 15_000;
  * @param {function(): object} deps.requireChildProcess Lazy accessor for child_process.
  * @param {function(Function, number): any} deps.setTimeout Timer venue of the caller.
  * @param {function(any): void} deps.clearTimeout Timer venue of the caller.
+ * @param {function(): ("zh" | "en")} [deps.getLocale] Current shell locale for the two dialogs.
  * @returns {{requestInstallAndQuit: function(string): void, handleBeforeQuit: function(object): void,
+ *   handleWillQuit: function(): void,
  *   getPendingInstallerPath: function(): (string|null), setPendingInstallerPath: function((string|null)): void}}
- *   The lifecycle surface; `handleBeforeQuit` is what `app.on("before-quit")` registers.
+ *   The lifecycle surface; `handleBeforeQuit` is what `app.on("before-quit")` registers,
+ *   `handleWillQuit` (registered internally) is the synchronous last-resort SIGTERM.
  */
 function createQuitLifecycle(deps) {
   const {
@@ -66,6 +121,8 @@ function createQuitLifecycle(deps) {
     setTimeout: scheduleTimeout,
     clearTimeout: cancelTimeout,
   } = deps;
+  const getLocale = typeof deps.getLocale === "function" ? deps.getLocale : () => "en";
+  const getWindow = typeof deps.getWindow === "function" ? deps.getWindow : () => null;
 
   // Set by the updater's installAndQuit dependency; the installer spawns in
   // before-quit AFTER the backend stop completes.
@@ -80,6 +137,9 @@ function createQuitLifecycle(deps) {
   // resumed exactly once.
   let stopInFlight = false;
   let shutdownComplete = false;
+  // 上一次异步停止的结论 { ok, reason, verified }：will-quit 的兜底靠它判断
+  // "异步那条路确认成功了吗"。null = 还没跑过（等于"没确认"）。
+  let lastStopOutcome = null;
 
   /** @returns {(string|null)} The verified installer awaiting a spawn, if any. */
   function getPendingInstallerPath() {
@@ -100,13 +160,39 @@ function createQuitLifecycle(deps) {
     app.quit();
   }
 
+  // R3-A: get the window out of sight BEFORE the backend stop. The stop takes
+  // hundreds of milliseconds (spawn taskkill, confirmation polls, port probe);
+  // with the window still up, the user reads that wait as "the click did
+  // nothing". hide() is deliberately not close(): the close handler in main.js
+  // is the ask-on-close / minimize-to-tray branch, and re-entering it here would
+  // pop the dialog again (or turn the quit into a hide-to-tray). Electron's
+  // hide() emits no "close" event, so `closeBehavior` is not reachable from here.
+  // A window that is already gone (startup failure, macOS dock quit) is fine:
+  // the stop must proceed either way.
+  function hideMainWindow(timeline) {
+    const win = getWindow();
+    if (!win) return;
+    try {
+      if (typeof win.isDestroyed === "function" && win.isDestroyed()) return;
+      win.hide();
+      timeline.mark("window hidden");
+    } catch (err) {
+      // A hide that throws must never hold the quit: the stop below still runs.
+      logLine(`quit: main window hide failed: ${err}`);
+    }
+  }
+
   // Stop the backend and normalise the outcome to { ok, reason }. The call
   // itself stays synchronous (the quit path must ask immediately); only the
   // result is awaited. A manager that reports nothing is treated as "completed"
   // (the pre-RR-02 contract) -- only an explicit ok:false blocks the install.
-  function stopBackendSafely() {
+  //
+  // `timeline` rides down through the manager so lib/backend-stop can stamp the
+  // taskkill / process-gone / port-probe stages it owns.
+  function stopBackendSafely(timeline) {
     const backend = getBackend();
     if (!backend) return Promise.resolve({ ok: true, reason: "", verified: true });
+    backend.quitTimeline = timeline;
     let started;
     try {
       started = backend.stop();
@@ -136,11 +222,38 @@ function createQuitLifecycle(deps) {
       child.unref();
       child.on("error", (err) => {
         logLine(`install-spawn-failed ${installerPath}: ${err}`);
-        try { dialog.showErrorBox("简历通", "更新安装程序未能启动，请保留下载文件后手动重试。"); } catch {}
+        const locale = getLocale();
+        try {
+          dialog.showErrorBox(
+            t(locale, "app.name"),
+            t(locale, "quit.installSpawnFailed.body"),
+          );
+        } catch {}
       });
       logLine(`install-spawned ${installerPath} (waits for shell pid ${process.pid})`);
     } catch (err) {
       logLine(`install-spawn-failed ${installerPath}: ${err}`);
+    }
+  }
+
+  // will-quit 兜底：**同步**给记录中的后端补一刀 SIGTERM（lib/backend-emergency-stop.js）。
+  //
+  // 为什么要有这一层（2026-11-23，2.3.1 门禁 run 45017991307）：Linux 的四个矩阵里
+  // 显式退出之后壳 177ms 就退了，uvicorn 还在端口上 accept。before-quit 的停止是异步
+  // 的，它的结论依赖 manager 里的状态；只要那条路判错（或压根没拿到 pid），壳照样
+  // 退出，后端就成了孤儿。这里不参与判断，只保证"壳要走了，后端跟着走"。
+  //
+  // 三个约束：同步（不等 Promise）、只打 manager 自己的记录（不按端口反查）、幂等
+  // （异步停止已确认就一个信号都不发）。任何异常都只记一行——兜底失败不能盖掉
+  // 真正的失败原因，更不能挡住 quit。
+  function handleWillQuit() {
+    try {
+      const outcome = lastStopOutcome;
+      const stopConfirmed = Boolean(outcome && outcome.ok === true && outcome.verified === true);
+      const report = terminateRecordedBackend(getBackend(), { stopConfirmed });
+      for (const line of report.log) logLine(line);
+    } catch (err) {
+      logLine(`quit fallback failed: ${err}`);
     }
   }
 
@@ -157,6 +270,9 @@ function createQuitLifecycle(deps) {
     event.preventDefault();
     setQuitting(true);
     stopInFlight = true;
+    // R3-04: the five stage stamps of this quit (see createQuitTimeline).
+    const timeline = createQuitTimeline(Date.now(), logLine);
+    timeline.mark("stop requested");
     const restartTimer = getRestartTimer();
     if (restartTimer) cancelTimeout(restartTimer);
     // Hold quit until the backend tree is down; a dangling uvicorn would
@@ -173,12 +289,23 @@ function createQuitLifecycle(deps) {
     // box -- that is the one path where continuing would corrupt an install.
     const installPending = Boolean(getPendingInstallerPath());
     const stopTimeoutMs = installPending ? INSTALL_STOP_TIMEOUT_MS : STOP_TIMEOUT_MS;
-    const stopPromise = stopBackendSafely();
+    // Window first, backend second: the install path hides too, but the
+    // installer still waits for the stop (below) and the native error boxes
+    // (shellDialogs / dialog.showErrorBox) stay visible without the window.
+    hideMainWindow(timeline);
+    const stopPromise = stopBackendSafely(timeline);
     const stopCapped = Promise.race([
       stopPromise,
       new Promise((resolve) => {
         scheduleTimeout(
-          () => resolve({ ok: false, reason: "停止后端超时", verified: false, timedOut: true }),
+          // reason 会出现在"安装被取消"的错误框里，所以它也是用户可见文案。
+          () =>
+            resolve({
+              ok: false,
+              reason: t(getLocale(), "quit.reason.stopTimeout"),
+              verified: false,
+              timedOut: true,
+            }),
           stopTimeoutMs,
         ).unref();
       }),
@@ -186,12 +313,19 @@ function createQuitLifecycle(deps) {
     stopCapped.then((outcome) => {
       stopInFlight = false;
       shutdownComplete = true;
+      // will-quit 的兜底读它："异步停止确认成功了吗"只有这一个判据。
+      lastStopOutcome = outcome;
       const stopOk = Boolean(outcome && outcome.ok);
       const stopVerified = !outcome || outcome.verified !== false;
-      const reason = (outcome && outcome.reason) || "未知原因";
+      const locale = getLocale();
+      const reason = (outcome && outcome.reason) || t(locale, "quit.reason.unknown");
       const backend = getBackend();
       const backendUrl = (backend && backend.url) || "（未知）";
       const probeDetail = (outcome && outcome.detail) || "（无）";
+      // A1：端口还通时补杀监听进程的那一行证据（端口 → pid → 命令行 → 结果）。
+      // 它由 backend-stop / backend-listener-rescue 产出，写在这里是因为 desktop-main.log
+      // 的出口只有这一个（那两个文件也都贴着 500 行预算）。
+      if (outcome && outcome.rescueLog) logLine(outcome.rescueLog);
       if (stopOk && (!installPending || stopVerified)) {
         spawnPendingInstaller();
       } else if (installPending) {
@@ -202,10 +336,8 @@ function createQuitLifecycle(deps) {
         );
         try {
           dialog.showErrorBox(
-            "简历通",
-            `更新未安装：后端服务未被确认停止（${reason}）。\n` +
-              "为避免覆盖仍在使用数据文件的后端进程，安装已取消。" +
-              "请手动结束残留的后端进程后重试更新。",
+            t(locale, "app.name"),
+            t(locale, "quit.installBlocked.body", { reason }),
           );
         } catch {
           // A failing dialog must not block the quit itself.
@@ -219,13 +351,21 @@ function createQuitLifecycle(deps) {
           logLine(`backend stop warning: ${outcome.warning} (url=${backendUrl}; detail=${probeDetail})`);
         }
       }
+      timeline.summary("releasing quit");
       app.quit();
     });
   }
 
+  // 兜底钩子的注册点放在**本模块**，不放在 main.js：before-quit 由 main.js 注册是
+  // 因为 `quitting` 是那里的局部变量，而这条兜底只读本闭包里的状态
+  // （lastStopOutcome / getBackend），main.js 的 500 行预算因此一行都不用动。
+  // `app.on` 不存在时（离线用例的极简替身）只是不注册，其余行为不变。
+  if (app && typeof app.on === "function") app.on("will-quit", handleWillQuit);
+
   return {
     requestInstallAndQuit,
     handleBeforeQuit,
+    handleWillQuit,
     getPendingInstallerPath,
     setPendingInstallerPath,
   };

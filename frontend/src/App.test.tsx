@@ -40,7 +40,12 @@ describe("first-visit guide", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole("dialog", { name: "欢迎使用简历通" })).toBeInTheDocument();
+    // 按 role 取、再断言标题文字：rc 的 useId 在测试环境把所有 id 都返回 `test-id`
+    // （见 `features/career-scenarios/ScenarioSelector.tsx` 的说明），页面上任一更早挂载的
+    // 浮层（如悬浮球的 Popover）会抢走 `aria-labelledby="test-id"` 的解析目标，于是
+    // 按可访问名查会查不到——这是测试环境的 id 撞车，不是弹窗少了标题。
+    const guide = await screen.findByRole("dialog");
+    expect(guide).toHaveTextContent("欢迎使用简历通");
     fireEvent.click(screen.getByRole("button", { name: "稍后查看" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     firstRender.unmount();
@@ -55,7 +60,8 @@ describe("first-visit guide", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "使用指南" }));
-    expect(await screen.findByRole("dialog", { name: "欢迎使用简历通" })).toBeInTheDocument();
+    const reopened = await screen.findByRole("dialog");
+    expect(reopened).toHaveTextContent("欢迎使用简历通");
   });
 });
 
@@ -85,11 +91,12 @@ describe("application navigation", () => {
     const toggle = await screen.findByRole("button", { name: "打开导航" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
-    const drawer = await screen.findByRole("dialog", { name: "功能导航" });
+    const drawer = await screen.findByRole("dialog");
+    expect(drawer).toHaveTextContent("功能导航");
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(within(drawer).getByRole("menuitem", { name: "岗位广场" }));
     expect(await screen.findByText("岗位广场内容")).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "功能导航" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByRole("main")).toHaveFocus();
     expect(document.title).toBe(`岗位广场 · ${t(APP_NAME_KEY)}`);
   });
@@ -167,8 +174,12 @@ describe("application navigation", () => {
     expect(headerActions).not.toBeNull();
     const repoLink = headerActions?.querySelector(".app-repo-button");
     expect(repoLink).not.toBeNull();
-    expect(repoLink).toHaveAttribute("href", GITHUB_REPO);
-    expect(repoLink).toHaveAttribute("aria-label", `在 GitHub 上查看 ${t(APP_NAME_KEY)} 源码`);
+    // F28：入口改成按钮——点击先弹 Star 提示，真正的跳转在弹窗里；不再直接带 href。
+    expect(repoLink!.tagName).toBe("BUTTON");
+    expect(repoLink).toHaveAttribute(
+      "aria-label",
+      t("appConfig.header.repoAria", { name: t(APP_NAME_KEY) }),
+    );
     // 页头里必须和「退出」并排，且页脚不再有第二个源码入口。
     expect(headerActions?.textContent).toContain("退出");
     expect(container.querySelector(".app-sider-footer .app-repo-button")).toBeNull();

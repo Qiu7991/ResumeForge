@@ -16,32 +16,41 @@
 - **不做推断**：普通自动回执只能落到「已投递」，不能推断出面试或 Offer。识别不出来就
   是「待确认」，由用户自己判断——这是本模块唯一会误导用户的失误来源。
 """
+
 from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ..database import Base
-from .profile import utcnow
-
-# ===== ① 状态：秋招漏斗的六个阶段 =====
-STATUS_UNKNOWN = "unknown"
-STATUS_APPLIED = "applied"
-STATUS_SCREENING = "screening"
-STATUS_ASSESSMENT = "assessment"
-STATUS_INTERVIEW = "interview"
-STATUS_OFFER = "offer"
-STATUS_REJECTED = "rejected"
-
-STATUSES = (
+from app.vocabulary.tracker import (
+    CHANNEL_HEADHUNTER,
+    CHANNEL_OTHER,
+    CHANNEL_PLATFORM,
+    CHANNEL_REFERRAL,
+    CHANNEL_UNKNOWN,
+    CHANNEL_WEBSITE,
+    CHANNELS,
+    SOURCE_AI_JOBS,
+    SOURCE_APPLY,
+    SOURCE_MANUAL,
+    SOURCE_RECOGNIZED,
+    SOURCES,
     STATUS_APPLIED,
-    STATUS_SCREENING,
     STATUS_ASSESSMENT,
     STATUS_INTERVIEW,
     STATUS_OFFER,
     STATUS_REJECTED,
+    STATUS_SCREENING,
     STATUS_UNKNOWN,
+    STATUSES,
 )
+
+from ..database import Base
+from .profile import utcnow
+
+# ===== ① 状态：秋招漏斗的六个阶段 =====
+# 词表（``STATUSES`` 与 7 个稳定码）已下沉到 ``app/vocabulary/tracker.py``（D8：契约层
+# 不再经由 models 取词表）；这里逐个显式 re-export，既有导入路径不变。
 
 STATUS_LABELS = {
     STATUS_APPLIED: "已投递",
@@ -65,22 +74,10 @@ STATUS_RANK = {
 }
 
 # 「进行中」的定义：还没走到终态，界面上要突出显示。
-ACTIVE_STATUSES = frozenset(
-    {STATUS_APPLIED, STATUS_SCREENING, STATUS_ASSESSMENT, STATUS_INTERVIEW}
-)
+ACTIVE_STATUSES = frozenset({STATUS_APPLIED, STATUS_SCREENING, STATUS_ASSESSMENT, STATUS_INTERVIEW})
 
 # ===== ② 记录来源 =====
-SOURCE_APPLY = "apply"
-SOURCE_MANUAL = "manual"
-SOURCE_RECOGNIZED = "recognized"
-# AI 求职（feat/ai-jobs-sidecar）：与 1.x models/tracker.py:77-78 逐字一致，
-# 供 delivery_sync 把已投递岗位写回求职进度时标记来源。
-#
-# **2026-11-19 保留**：产生它的 sidecar 代码已删除，但这是个**数据值**——从旧备份
-# 恢复出来的求职进度里可能带 `source="ai_jobs"`，删掉常量会让那些行的来源标签变成空串。
-# 留着它的成本是一个字符串，删掉的成本是老数据显示成"无来源"。
-SOURCE_AI_JOBS = "ai_jobs"
-SOURCES = (SOURCE_APPLY, SOURCE_MANUAL, SOURCE_RECOGNIZED, SOURCE_AI_JOBS)
+# 词表已下沉到 ``app/vocabulary/tracker.py``（D8）；这里逐个显式 re-export。
 
 SOURCE_LABELS = {
     SOURCE_APPLY: "投递台自动记录",
@@ -92,20 +89,7 @@ SOURCE_LABELS = {
 # ===== ②′ 投递渠道（RF-18）：用户自己选的"这份工作从哪来的" =====
 # 与 ``source``（记录来源：这一行**怎么进系统的**）是两个维度，不许混用。
 # 未知是合法取值且是默认值：不知道就是不知道，宁可留空也不替用户编一个渠道。
-CHANNEL_UNKNOWN = "unknown"
-CHANNEL_REFERRAL = "referral"
-CHANNEL_WEBSITE = "official_website"
-CHANNEL_PLATFORM = "job_platform"
-CHANNEL_HEADHUNTER = "headhunter"
-CHANNEL_OTHER = "other"
-CHANNELS = (
-    CHANNEL_UNKNOWN,
-    CHANNEL_REFERRAL,
-    CHANNEL_WEBSITE,
-    CHANNEL_PLATFORM,
-    CHANNEL_HEADHUNTER,
-    CHANNEL_OTHER,
-)
+# 词表已下沉到 ``app/vocabulary/tracker.py``（D8）；这里逐个显式 re-export。
 
 CHANNEL_LABELS = {
     CHANNEL_UNKNOWN: "未知",
@@ -313,7 +297,7 @@ class ApplicationTrack(Base):
         ForeignKey("job.id", ondelete="SET NULL"), nullable=True, index=True
     )
     resume_id: Mapped[int | None] = mapped_column(
-        ForeignKey("resume_record.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("resume_record.id", ondelete="SET NULL"), nullable=True, index=True
     )
     # 所用简历的标题快照（RF-17）：简历被删（resume_id 置 NULL）后仍能回答
     # "当时投的是哪一版"。旧行/未关联为空串，界面如实标注「历史关联未知」。
@@ -386,6 +370,7 @@ __all__ = [
     "MERGE_RESULTS",
     "MERGE_UNCHANGED",
     "MERGE_UPDATED",
+    "SOURCE_AI_JOBS",
     "SOURCE_APPLY",
     "SOURCE_LABELS",
     "SOURCE_MANUAL",

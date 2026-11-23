@@ -1,0 +1,52 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/**
+ * 行内格式右键菜单（I-25）：宽度收口 + 长标签不换行。
+ *
+ * 2026-11-16 实测：这个菜单挂在 `Dropdown` 的 portal 里，没有任何宽度约束，
+ * 一个长标签（「清除这段文字的行内格式」）就能把它撑到半屏。这里给上下限，
+ * 并让菜单项单行显示——超长就省略号，不要把整块菜单拉宽。
+ */
+.rf-inline-mark-menu .ant-dropdown-menu {
+  min-width: 168px;
+  max-width: 240px;
+  /* DF-3 / T09：限高 + 滚动**挂在菜单本身**。
+     挂到父级 `.rf-inline-mark-popup` 时，父级的 `overflow-y: auto` 会把子元素
+     （`.ant-dropdown-menu`，antd v6 的 boxShadow 宿主）的阴影裁掉——四边缺一条。
+     元素自己的 overflow 不裁自己的阴影，所以必须在这一层。 */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.rf-inline-mark-menu .ant-dropdown-menu-item,
+.rf-inline-mark-menu .ant-dropdown-menu-submenu-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * DF-3：菜单限高 + 内部滚动。
+ *
+ * 6 项 + 分隔线已接近 280px，「插入链接…」展开后更高；没有上限时 antd 的
+ * `overflow.adjustY` 会把整块菜单往上推，体感就是"总在光标上方"。上限放这里，
+ * 翻转判定仍只用**打开时**测到的高度（子菜单/链接输入框的增高靠这条兜底）。
+ */
+.rf-inline-mark-popup {
+  /* 限高与滚动已挪到 `.rf-inline-mark-menu .ant-dropdown-menu`（见上）。
+     这里**不能再写 overflow** —— 父级滚动容器会裁掉子菜单的 boxShadow。 */
+  overflow: visible;
+}
+
+/*
+ * DF-2：透明遮罩（覆盖纸面 iframe）。不承担任何视觉，只负责"点一下关闭"。
+ *
+ * z-index 是兜底值 = `appTheme` 的 zIndexPopupBase（3100）+ antd Dropdown 的 +50 − 1；
+ * 组件打开时会按弹层的实测层级覆盖它。菜单本体始终高一层，所以点击菜单不受影响。
+ */
+.rf-inline-mark-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 3149;
+  background: transparent;
+}

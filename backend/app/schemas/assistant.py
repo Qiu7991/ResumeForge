@@ -112,6 +112,7 @@ class AssistantMessageCreate(BaseModel):
     # T11 数据权限的「读」轴请求级覆盖：None = 沿用全局设置（旧客户端零改动），
     # True/False = 本次请求覆盖。流式路径每轮工具循环必须认这个覆盖，否则覆盖会被静默忽略。
     relaxed_mode: bool | None = None
+    compaction_threshold_tokens: int | None = Field(default=None, ge=1, le=2_000_000)
     # 有思考模式的大模型可以在这里调整推理强度；不支持该参数的服务商会被忽略。
     # 取值可以自定义（各家档位词汇不同），格式见 `normalize_reasoning_effort`。
     reasoning_effort: str = Field(default="", max_length=MAX_REASONING_EFFORT_CHARS)
@@ -124,6 +125,10 @@ class AssistantMessageCreate(BaseModel):
     # 「引用某条消息追问」：指向同一会话里的某条消息，模型会在引用上下文中作答。
     quoted_message_id: int | None = Field(default=None, ge=1)
     attachments: list[AssistantAttachmentInput] = Field(default_factory=list, max_length=4)
+    # T24：本条消息要使用的技能（**消息级**，只作用于这一次发送，发送后前端清空）。
+    # 上限（8 个）由服务层 ``validate_conversation_skill_ids`` 校验并给出中文提示；
+    # 这里只留一个防滥用的硬上限（200 远大于 8）。
+    skill_ids: list[int] = Field(default_factory=list, max_length=200)
     # 本次请求的界面语言（`zh-CN` / `en-US` 这类 BCP 47 标记）。**前端可选传**：
     # 不传就是空串，旧客户端零改动。它不是简历输出语言，只服务 #35 数据边界审计的
     # `language` 一列；权威值仍是用户显式保存的界面语言（`PUT /api/settings/locale`），
@@ -185,12 +190,21 @@ class ChatConversationUpdate(BaseModel):
     archived: bool | None = None
     # 分组名（"移动到项目"）；空串表示移出分组。
     group_name: str | None = Field(default=None, max_length=64)
+    # 临时对话（F34）：开启后这段对话不注入也不抽取记忆；关闭不删已有记忆。
+    memory_off: bool | None = None
 
     @model_validator(mode="after")
     def require_update(self):
         if all(
             value is None
-            for value in (self.title, self.pinned, self.favorite, self.archived, self.group_name)
+            for value in (
+                self.title,
+                self.pinned,
+                self.favorite,
+                self.archived,
+                self.group_name,
+                self.memory_off,
+            )
         ):
             raise ValueError("至少提供一个要修改的会话字段")
         return self
@@ -219,6 +233,17 @@ class ConversationSkillOut(BaseModel):
     id: int
     name: str
     description: str = ""
+
+
+class LegacyConversationSkillOut(BaseModel):
+    """旧数据的只读回显（T24）：这段对话在"技能按对话启用"时代挂过的技能。
+
+    只用于前端提示一次「技能已改为按下一条消息生效」；不参与任何提示词组装，
+    也不随 PUT 之后再参与——它读的就是即将废弃的 ``assistant_conversation_skill``。
+    """
+
+    id: int
+    name: str
 
 
 class ConversationSkillLoadOut(BaseModel):
@@ -343,6 +368,8 @@ class ChatConversationBrief(BaseModel):
     favorite: bool
     archived: bool = False
     group_name: str = ""
+    # 临时对话（F34）：为真时这段对话不读写助手记忆；侧栏据此显示小图标。
+    memory_off: bool = False
     # 列表里展示条数与最后活动时间，方便区分同名会话。
     message_count: int = 0
     created_at: datetime
@@ -361,6 +388,12 @@ class ChatConversationDetail(ChatConversationBrief):
     messages: list[ChatMessageOut] = Field(default_factory=list)
     messages_total: int = 0
     has_earlier: bool = False
+    # T25：压缩状态（含摘要正文）。与 GET /context-usage 的 compaction 同一份，
+    # 消息流据此在 covered_until_message_id 那条消息下方画压缩边界。
+    compaction: ContextCompactionStateOut | None = None
+    # T24：旧数据回显（只读）。有值时前端在消息流顶部给一行可关闭的提示，
+    # 说明技能已改成"只作用于下一条消息"，不再影响任何模型请求。
+    legacy_skills: list[LegacyConversationSkillOut] = Field(default_factory=list)
 
 
 class ChatEarlierMessagesOut(BaseModel):
@@ -381,6 +414,7 @@ class AssistantToolOut(BaseModel):
     """
 
     name: str
+    category: str = "core"
     description: str = ""
     # 写工具会改动数据（新建/修改简历、台账等）；界面据此标注「会改动数据」。
     writes: bool = False
@@ -421,6 +455,9 @@ class ContextUsageOut(BaseModel):
     total: int = 0
     # 百分比分母（当前模型的 context_window_tokens）；0 = 未设置。
     window: int = 0
+    window_source: Literal["manual", "reference", "fallback"] = "manual"
+    trigger_tokens: int = 0
+    default_trigger_tokens: int = 0
     percent: float | None = None
     # true = 旧消息没有落过用量，这里只有 system / conversation 两桶是估算出来的。
     partial: bool = False

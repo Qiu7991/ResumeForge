@@ -20,14 +20,15 @@
  * 仍是 900（220+96+140+96+240+108）。
  */
 import { FileSearchOutlined, MoreOutlined, StarFilled } from "@ant-design/icons";
-import { Button, Dropdown, Space, Table, Tag, Tooltip, Typography } from "antd";
-import type { TableColumnsType } from "antd";
+import { Badge, Button, Dropdown, Space, Table, Tag, Tooltip, Typography } from "antd";
+import type { BadgeProps, TableColumnsType } from "antd";
 import type { TableRowSelection } from "antd/es/table/interface";
 import { type KeyboardEvent as ReactKeyboardEvent, useMemo, useState } from "react";
 import { t } from "../../../i18n";
 import { QUEUE_STATUS_LABEL_KEYS } from "../../../i18n/enum/apply";
 import { useLocale } from "../../../i18n/i18nContext";
 import { useContextMenu } from "../../context-menu/contextMenuContext";
+import HintDetail from "../../../components/common/HintDetail";
 import {
   useRowActionMenu,
   useRowActionRunner,
@@ -41,7 +42,8 @@ import { AdmissionTag } from "./AdmissionTag";
 import ApplyResultCell from "./ApplyResultCell";
 import CompanyName from "../../../components/common/CompanyName";
 import GhostBadge from "../insights/GhostBadge";
-import { nextSortKey, scoreBand, sortQueueItems, type QueueSortKey } from "./queueSort";
+import { firstLine, nextSortKey, scoreBand, sortQueueItems, type QueueSortKey } from "./queueSort";
+import "../applyQueueTable.css";
 
 export function QueueTable({
   items,
@@ -66,13 +68,6 @@ export function QueueTable({
 }) {
   // 本组件用模块级 t()：必须订阅语言变化，否则切语言后列头停在旧文案。
   useLocale();
-  // 每页条数：默认 10 条（队列行高较高，一页塞太多会挤满整屏），由分页器切换。
-  //
-  // **必须是 state，不能直接写 `pageSize: 10`**（2026-11-08 用户截图：「10 条/页」
-  // 切换后毫无反应）。antd 的 `pagination.pageSize` 一旦传值就是**受控属性**——
-  // 用户切「20 条/页」时组件内部改了状态，下一帧又被这个常量按回 10。
-  // 1.x 修过同一处（注释原文「pageSize 一旦写成固定值就是受控属性」），2.0 移植时丢了。
-  const [pageSize, setPageSize] = useState(10);
   /** 招呼语格子兼作编辑入口：Enter / 空格与点击同效（移植自 1.x）。 */
   const activateEdit = (event: ReactKeyboardEvent<HTMLElement>, item: ApplyQueueItem) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -87,6 +82,7 @@ export function QueueTable({
   /** 排序口径：默认沿用后端顺序（= 入队顺序），点参考分列头才切换。 */
   const [sortKey, setSortKey] = useState<QueueSortKey>("joined");
   const rows = useMemo(() => sortQueueItems(items, sortKey), [items, sortKey]);
+  const initialPageSize = typeof window !== "undefined" && window.innerHeight >= 900 ? 20 : 10;
 
   /**
    * 打开某一行的右键菜单：菜单项与「···」下拉同源，二次确认也走同一套（`run`）。
@@ -125,7 +121,7 @@ export function QueueTable({
     {
       title: t("applyQueue.column.job"),
       dataIndex: "job_title",
-      width: 220,
+      width: 300,
       render: (title: string, item) => (
         // 外层 Tooltip 只包**岗位标题按钮**，不再包整个单元格：单元格里的「来源不支持」
         // 标签有自己的提示，两层 Tooltip 叠在同一个触发区上会同时弹出两句
@@ -162,8 +158,10 @@ export function QueueTable({
             )}
             {item.apply_supported === false && (
               // 和岗位广场上的「采集 / 手动」同一个位置放来源类标签：用户看来源就看这里。
+              // 2026-11-13：红实底 -> 灰描边。每行一个红块是这张表最吵的地方，而"来源不支持"
+              // 是既定事实、不是需要立刻处理的告警（真要处理有右上那个 chip）。
               <Tooltip title={t("applyQueue.table.unsupportedHint")}>
-                <Tag color="red" style={{ marginInlineEnd: 0 }}>
+                <Tag className="apply-queue-unsupported">
                   {t("applyQueue.table.unsupportedTag")}
                 </Tag>
               </Tooltip>
@@ -181,70 +179,66 @@ export function QueueTable({
       ),
     },
     {
-      // #14B 参考分列：列头同时是排序开关，tooltip 是后端规定必须原样展示的免责文案。
+      // 「匹配」= 参考分 + 准入（2026-11-13 合并）。两个窄列（96 / 140）里各只有一行字，
+      // 横向空掉一半，而岗位列与投递材料列被挤到换行；合成一列后分数在上、准入在下，
+      // 省出的 ~104px 还给内容列。
+      // I-17：免责文案原本藏在这一格的 tooltip 里——59 字、悬停才看得见，等于没有免责。
+      // 现在移到表格下方的脚注（常驻一句 + `ⓘ` 展开全文）。列头只剩排序开关本身。
       title: (
-        <Tooltip title={t("applyQueue.score.disclaimer")}>
-          <Button
-            type="text"
-            size="small"
-            className="apply-queue-sort"
-            aria-label={t(
-              sortKey === "joined"
-                ? "applyQueue.score.sortByScore"
-                : "applyQueue.score.sortByJoinedAt",
-            )}
-            onClick={() => setSortKey((current) => nextSortKey(current))}
-          >
-            {t("applyQueue.column.score")}
-            {/* 排序生效时给一个方向标记：仅靠悬浮提示说明不了"现在是按哪一列排的"。 */}
-            {sortKey === "score" ? " ↓" : ""}
-          </Button>
-        </Tooltip>
+        <Button
+          type="text"
+          size="small"
+          className="apply-queue-sort"
+          // 可见文字是「参考分」(+「 ↓」)，无障碍名必须以它开头：之前只写"按…排序"，
+          // 排序列切到"加入时间"后名字与可见文字对不上（axe label-content-name-mismatch）。
+          aria-label={`${t("applyQueue.column.match")}${sortKey === "score" ? " ↓" : ""} · ${t(
+            sortKey === "joined"
+              ? "applyQueue.score.sortByScore"
+              : "applyQueue.score.sortByJoinedAt",
+          )}`}
+          onClick={() => setSortKey((current) => nextSortKey(current))}
+        >
+          {t("applyQueue.column.match")}
+          {/* 排序生效时给一个方向标记：仅靠悬浮提示说明不了"现在是按哪一列排的"。 */}
+          {sortKey === "score" ? " ↓" : ""}
+        </Button>
       ),
-      key: "score",
-      width: 96,
-      align: "center",
+      key: "match",
+      width: 132,
       render: (_, item) => {
         const band = scoreBand(item.match_score);
-        if (band === "none") {
-          // 未分析不显示成 0 分（那会被读成"不匹配"），也不重复「未分析」四个字
-          // ——准入列已经有一个「未分析」标签，这一格只留一个破折号 + 悬浮说明。
-          return (
-            <Tooltip title={t("applyQueue.score.unanalyzed")}>
-              <span className="apply-queue-score" data-band="none">
-                —
-              </span>
-            </Tooltip>
-          );
-        }
         return (
-          <span className="apply-queue-score" data-band={band}>
-            {item.match_score}
-          </span>
+          <div className="apply-queue-match">
+            {band === "none" ? (
+              // 未分析不显示成 0 分（那会被读成"不匹配"）：一个破折号 + 悬浮说明，
+              // 准入那一格会同时给出「未分析」的结论。
+              <Tooltip title={t("applyQueue.score.unanalyzed")}>
+                <span className="apply-queue-score" data-band="none">
+                  —
+                </span>
+              </Tooltip>
+            ) : (
+              <span className="apply-queue-score" data-band={band}>
+                {item.match_score}
+              </span>
+            )}
+            <AdmissionTag item={item} variant="inline" />
+          </div>
         );
       },
     },
     {
-      // 「准入」这个列名用户看不懂（实测反馈"这个是什么意思"）。它在回答的是
-      // **「这条岗位能不能投」**——所以列头挂一句解释，而不是让人去猜。
-      title: (
-        <Tooltip title={t("applyQueue.admission.columnHint")}>
-          <span>{t("applyQueue.column.admission")}</span>
-        </Tooltip>
-      ),
-      key: "admission",
-      width: 140,
-      render: (_, item) => <AdmissionTag item={item} />,
-    },
-    {
       title: t("applyQueue.column.status"),
       dataIndex: "status",
-      width: 96,
-      align: "center",
-      render: (value: ApplyQueueItem["status"]) => {
-        const meta = QUEUE_STATUS_META[value];
-        return <Tag color={meta.color}>{t(QUEUE_STATUS_LABEL_KEYS[value])}</Tag>;
-      },
+      width: 104,
+      render: (value: ApplyQueueItem["status"]) => (
+        // 状态用「圆点 + 文字」而不是色块标签：它只是"能不能投"的前提，
+        // 每行一个实底色块会把视线从岗位名上拽走。色仍取 `QUEUE_STATUS_META`，不另立一套。
+        <Badge
+          status={QUEUE_STATUS_META[value].color as BadgeProps["status"]}
+          text={<span className="apply-queue-status">{t(QUEUE_STATUS_LABEL_KEYS[value])}</span>}
+        />
+      ),
     },
     {
       // 投递结果（2026-11-12）：用户问「这个是什么意思」——原来看不出"投了没有、
@@ -258,54 +252,43 @@ export function QueueTable({
     {
       title: t("applyQueue.column.assets"),
       key: "assets",
-      width: 260,
+      width: 300,
       render: (_, item) => (
-        <Space orientation="vertical" size={0} style={{ width: "100%" }}>
-          <Typography.Text
-            type="secondary"
-            ellipsis={{ tooltip: item.resume_title || t("applyQueue.detail.noResume") }}
-          >
-            {item.resume_title || t("applyQueue.detail.noResume")}
-          </Typography.Text>
-          {item.greeting ? (
-            // 招呼语本身就是编辑入口：单击打开编辑弹窗，不再要求先走「更多操作 → 编辑」。
-            //
-            // 用**原生 title** 而不是 antd <Tooltip>：
-            // 这一格同时是 `ellipsis`（宽度随内容变化）和 tooltip 锚点。antd Tooltip 用
-            // JS 每帧重算位置，而 ellipsis 的测量会改变元素尺寸 → 锚点矩形在
-            // y=372 / y=463 两档之间来回跳（实测序列），表现为鼠标一放上去就疯狂抖动。
-            // 原生 title 由浏览器自己管，不参与布局计算，零抖动，也不需要额外 DOM。
-            <Typography.Text
-              type="secondary"
-              className="apply-queue-greeting-edit"
-              role="button"
-              tabIndex={0}
-              title={`${item.greeting} · ${t("applyQueue.greeting.clickToEdit")}`}
-              aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
-              onClick={() => setEditing(item)}
-              onKeyDown={(event) => activateEdit(event, item)}
-              ellipsis
-            >
-              {item.greeting}
-            </Typography.Text>
-          ) : (
-            // 同样用原生 title（理由见上）：这里是 Tag，尺寸固定，但保持「一格内
-            // 不混用两种 tooltip 机制」更不容易在后续改动里再踩同一个坑。
-            <Tag
-              color="orange"
-              role="button"
-              tabIndex={0}
-              className="apply-queue-greeting-edit"
-              title={t("applyQueue.greeting.unconfirmedHint")}
-              aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
-              onClick={() => setEditing(item)}
-              onKeyDown={(event) => activateEdit(event, item)}
-              style={{ marginInlineEnd: 0, width: "fit-content" }}
-            >
-              {t("applyQueue.greeting.unconfirmed")}
+        <Space orientation="vertical" size={2} style={{ width: "100%" }}>
+          <div className="apply-queue-assets">
+            <Tag className="apply-queue-resume-tag">
+              {item.resume_title || t("applyQueue.detail.noResume")}
             </Tag>
-          )}
-          {/* 有字但没人工确认：AI 批量生成的草稿。有字不等于确认过，必须单独标出来。 */}
+            {item.greeting ? (
+              <Typography.Text
+                type="secondary"
+                className="apply-queue-greeting apply-queue-greeting-edit"
+                role="button"
+                tabIndex={0}
+                title={`${item.greeting} · ${t("applyQueue.greeting.clickToEdit")}`}
+                aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+                onClick={() => setEditing(item)}
+                onKeyDown={(event) => activateEdit(event, item)}
+                ellipsis
+              >
+                {firstLine(item.greeting)}
+              </Typography.Text>
+            ) : (
+              <Tag
+                color="orange"
+                role="button"
+                tabIndex={0}
+                className="apply-queue-greeting-edit"
+                title={t("applyQueue.greeting.unconfirmedHint")}
+                aria-label={t("applyQueue.greeting.editAria", { job: item.job_title })}
+                onClick={() => setEditing(item)}
+                onKeyDown={(event) => activateEdit(event, item)}
+                style={{ marginInlineEnd: 0, width: "fit-content" }}
+              >
+                {t("applyQueue.greeting.unconfirmed")}
+              </Tag>
+            )}
+          </div>
           {item.greeting && item.greeting_confirmed !== true ? (
             <Tag
               color="gold"
@@ -327,8 +310,9 @@ export function QueueTable({
     {
       title: t("applyQueue.column.actions"),
       key: "actions",
-      // #15C 之后操作列放两枚图标按钮（体检 + ⋯）：64px 只够一枚，收到 108px。
-      width: 108,
+      // 2026-11-13：两枚描边小方块 -> 两枚文字按钮，默认只有「⋯」可见，
+      // 「体检」在悬停/聚焦时显形（仍留在 DOM 里，读屏与键盘照样可达）。列宽 108 -> 72。
+      width: 72,
       // 表头与单元格一起右对齐：否则「操作」两字靠左、按钮靠右，看起来像没对齐（用户反馈过）。
       align: "right",
       render: (_, item) => (
@@ -339,7 +323,9 @@ export function QueueTable({
           {/* #15C 体检：只读、随时可点，结果在抽屉里（行内不展开，避免把行高撑开）。 */}
           <Tooltip title={t("applyQueue.insights.inspect.action")}>
             <Button
+              type="text"
               size="small"
+              className="apply-queue-row-action"
               aria-label={t("applyQueue.insights.inspect.action")}
               icon={<FileSearchOutlined />}
               onClick={() => onInspect(item)}
@@ -347,7 +333,9 @@ export function QueueTable({
           </Tooltip>
           <Dropdown trigger={["click"]} menu={{ items: buildMenu(rowMenuItems(item)) }}>
             <Button
+              type="text"
               size="small"
+              className="apply-queue-row-action is-always"
               aria-label={t("applyQueue.table.moreActionsAria", { job: item.job_title })}
               icon={<MoreOutlined />}
             />
@@ -374,23 +362,17 @@ export function QueueTable({
         size="small"
         columns={columns}
         dataSource={rows}
-        // 每页 10 条：队列条目行高较高，一页塞太多会把整屏挤满；分页形态与岗位广场 /
-        // 简历中心一致（条数切换 + 总数显示）。hideOnSinglePage：队列很短时不打扰。
+        // 高视口首屏展示更多队列条目；条数切换仍由 Table 内部状态管理。
         pagination={{
-          pageSize,
+          defaultPageSize: initialPageSize,
           hideOnSinglePage: true,
           showSizeChanger: true,
           showTotal: (total) => t("applyQueue.table.total", { total }),
-          // pageSize 是受控属性：不在这里回写 state，切「20 条/页」就永远停在 10。
-          onChange: (_page, size) => setPageSize(size),
         }}
         rowSelection={rowSelection}
         tableLayout="fixed"
-        // 空表时不启用横向滚动（与 `JobTable` 同一口径）：否则 `.ant-table-content` 会变成
-        // "可横滚、区域内却没有任何可聚焦元素"的容器，命中 axe 的
-        // `scrollable-region-focusable`（serious）。有数据时照旧按列宽固定横滚。
-        // 880 → 900：操作列 #15C 之后宽了 44px，`scroll.x` 与列宽之和保持一致（220+96+140+96+240+108）。
-        scroll={items.length ? { x: 900 } : undefined}
+        // 空表时不启用横向滚动（与 `JobTable` 同一口径）；列宽之和 300+132+104+160+300+72 = 1068。
+        scroll={items.length ? { x: 1068 } : undefined}
         onRow={(record) => ({
           // 行本身可聚焦：键盘用户要能按 Shift+F10 / 菜单键打开这一行的操作菜单。
           tabIndex: 0,
@@ -401,6 +383,16 @@ export function QueueTable({
           },
         })}
       />
+      {/* I-17：参考分免责声明是**必须让人看见**的一句，不是悬停彩蛋。脚注常驻一句，
+          完整的 59 字措辞（含"投递准入仍以五类匹配结论为准"）在 `ⓘ` 后面；提示模式下
+          直接内联展开。 */}
+      <p className="apply-queue-score-note">
+        <HintDetail
+          summary={t("applyQueue.score.disclaimerSummary")}
+          detail={t("applyQueue.score.disclaimer")}
+          label={t("applyQueue.score.disclaimerAria")}
+        />
+      </p>
     </>
   );
 }

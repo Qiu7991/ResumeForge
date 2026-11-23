@@ -24,6 +24,12 @@ const settingsUi = {
   "settingsUi.orb.tipsOffToast": "Toutou will no longer show tips",
   "settingsUi.orb.tipsHint":
     "When off, the orb stops showing tips and no longer suggests improving your Profile on the My Profile page; everything else keeps working.",
+  "settingsUi.orb.selectionAria": "Turn on Toutou selection toolbar",
+  "settingsUi.orb.selectionOnToast": "The Toutou selection toolbar will show over selected text",
+  "settingsUi.orb.selectionOffToast":
+    "The selection toolbar will no longer show over selected text",
+  "settingsUi.orb.selectionHint":
+    "When off, selecting text on a page no longer brings up the action bar (rewrite, copy, save as material); opening the assistant from the orb and the long-press action panel keep working.",
   "settingsUi.orb.loadFailed": "Could not load the Toutou orb setting",
   "settingsUi.orb.saveFailed": "Could not save the Toutou orb setting",
 
@@ -102,7 +108,7 @@ const settingsUi = {
   "settingsUi.help.previewFiles": " ({files})",
   "settingsUi.help.previewSeparator": ", ",
   "settingsUi.help.previewNote":
-    "The bundle contains only redacted runtime events, system information and the tail of recent backend logs (anything resembling a token is scrubbed); it never includes full Resume text, form values, cookies or prompts.",
+    "Redacted events, system info and recent logs (desktop logs when shell-launched; tokens scrubbed). No Resume text, form values, cookies or prompts.",
   "settingsUi.help.feedbackLead": "Feedback: ",
   "settingsUi.help.feedbackJoin": " or join our user group ",
   "settingsUi.help.feedbackTail": " (we can help right there).",
@@ -138,6 +144,31 @@ const settingsUi = {
   "settingsUi.reminderPopup.soundHint":
     "On by default. If the browser blocks autoplay, the sound is skipped silently.",
 
+  // Desktop tray icon (WF-20, desktop shell only).
+  "settingsUi.desktopTray.title": "Desktop tray icon",
+  "settingsUi.desktopTray.intro":
+    "The tray icon follows the app theme by default. Turn this on to follow the system theme instead, e.g. a light taskbar with a dark app.",
+  "settingsUi.desktopTray.toggleAria": "Follow the system theme for the tray icon",
+  "settingsUi.desktopTray.enableToast": "On: the tray icon follows the system theme",
+  "settingsUi.desktopTray.disableToast": "Off: the tray icon follows the app theme",
+  "settingsUi.desktopTray.loadFailed": "Could not load the tray icon setting",
+  "settingsUi.desktopTray.saveFailed": "Could not save the tray icon setting",
+  "settingsUi.desktopTray.defaultHint": "Off by default (follows the app theme). Desktop only.",
+
+  // Start at login (WF-08, desktop shell only). Value comes from Windows itself.
+  "settingsUi.launchAtLogin.title": "Start when you sign in",
+  "settingsUi.launchAtLogin.intro":
+    "ResumeForge can start when you sign in to Windows. This is the same startup entry the installer writes.",
+  "settingsUi.launchAtLogin.toggleAria": "Start ResumeForge when you sign in to Windows",
+  "settingsUi.launchAtLogin.enableToast": "On: ResumeForge starts when you sign in",
+  "settingsUi.launchAtLogin.disableToast": "Off: ResumeForge no longer starts when you sign in",
+  "settingsUi.launchAtLogin.loadFailed": "Could not read the startup setting",
+  "settingsUi.launchAtLogin.saveFailed": "Could not change the startup setting",
+  "settingsUi.launchAtLogin.unsupported":
+    "This build cannot manage startup for you. Use Task Manager > Startup instead.",
+  "settingsUi.launchAtLogin.hint":
+    "Read from Windows itself, so it matches what the installer set.",
+
   // ── Assistant skills summary card (read only) ───────────────
   "settingsUi.skills.title": "Assistant skills",
   "settingsUi.skills.introLead": "A skill is a ",
@@ -169,21 +200,67 @@ const settingsUi = {
   "settingsUi.webFormRelaxed.warning":
     "Once on, the program tries to click dropdown and popup options for you and to tick the declaration items you confirmed one by one; something can be picked wrong, so check the form afterwards. " +
     "Four categories are never filled for you: date pickers, file uploads, password / verification code / bank card, and read-only radio or checkbox options without a popup - you need to handle these yourself.",
-
   // ── Generation preferences: show project tech stack ──────────
   "settingsUi.generationPrefs.title": "Generation preferences · Resume content",
   "settingsUi.generationPrefs.intro":
-    "Controls whether generated resumes show a separate \"Tech stack: ...\" line. " +
+    'Controls whether generated resumes show a separate "Tech stack: ..." line. ' +
     "The tech stack stays in your profile for job matching and interview prep; this switch only decides whether it appears on the resume page.",
   "settingsUi.generationPrefs.toggleAria": "Show project tech stack on resumes",
   "settingsUi.generationPrefs.enableToast": "On: generated resumes will show project tech stack",
-  "settingsUi.generationPrefs.disableToast": "Off: generated resumes no longer show project tech stack",
+  "settingsUi.generationPrefs.disableToast":
+    "Off: generated resumes no longer show project tech stack",
   "settingsUi.generationPrefs.saveFailed": "Could not save generation preferences",
   "settingsUi.generationPrefs.hint":
     "Nothing is deleted when this is off - the tech stack items simply stay off the page and remain visible (and draggable back) in the resume editor. " +
     "Resumes generated earlier are not affected.",
   "settingsUi.skills.tagRecommended": "Recommended",
 
+  // ── Outbound network & proxy (T02 / T05) ──────────────────
+  "settingsUi.network.title": "Network and proxy",
+  "settingsUi.network.intro": "Models, search and updates share this outbound path.",
+  "settingsUi.network.instantHint": "Changes apply as soon as you save",
+  "settingsUi.network.modeLabel": "Outbound mode",
+  "settingsUi.network.mode.system": "Follow system",
+  "settingsUi.network.mode.systemHint": "Uses the system proxy and certs",
+  "settingsUi.network.mode.direct": "Direct",
+  "settingsUi.network.mode.directHint": "Bypasses every proxy",
+  "settingsUi.network.mode.custom": "Custom proxy",
+  "settingsUi.network.mode.customHint": "Enter an address yourself",
+  "settingsUi.network.clean": "No changes",
+  "settingsUi.network.dirty": "Unsaved changes",
+  "settingsUi.network.probeBlocked": "Save first, then test",
+  "settingsUi.network.directWarning":
+    "Direct bypasses the system proxy. On proxy-only networks (corporate, some broadband) nothing connects: models, search, updates.",
+  "settingsUi.network.urlPlaceholder": "e.g. http://127.0.0.1:7890",
+  "settingsUi.network.url": "Proxy address",
+  "settingsUi.network.username": "Proxy username",
+  "settingsUi.network.usernamePlaceholder": "Username (optional)",
+  "settingsUi.network.password": "Proxy password",
+  "settingsUi.network.passwordPlaceholder": "Password (optional)",
+  "settingsUi.network.passwordKeep": "Leave blank to keep",
+  "settingsUi.network.socksHint":
+    "Only http:// or https:// proxies are supported. Proxy apps usually expose an http port as well; use that one.",
+  "settingsUi.network.trust": "Trust the system certificate store",
+  "settingsUi.network.trustHint":
+    "Off by default. Turn on only when antivirus or a gateway scans HTTPS with its own certificate; every machine-trusted cert is then accepted.",
+  "settingsUi.network.probe": "Test connection",
+  "settingsUi.network.probeCurrent": "Current settings",
+  "settingsUi.network.probeDirect": "Direct",
+  "settingsUi.network.probeOk": "Connected",
+  "settingsUi.network.detected": "System proxy detected at {proxy} (source: {source})",
+  "settingsUi.network.useDirect": "Switch to Direct",
+  "settingsUi.network.saved": "Saved - applies to the next request",
+  "settingsUi.network.save": "Save",
+  "settingsUi.network.checklist.title":
+    "When it cannot connect, check these four (one action each):",
+  "settingsUi.network.checklist.proxy":
+    "Proxy: make sure the proxy app is running and the port is right; if unsure, switch to Direct and test again.",
+  "settingsUi.network.checklist.tls":
+    "Certificate: the browser opens the site but this app cannot - usually antivirus or a gateway. Allowlist the app, or trust the system store.",
+  "settingsUi.network.checklist.refused":
+    "Connection refused: the Base URL has a missing or extra /v1, or the port is wrong; follow the provider docs and end it with /v1.",
+  "settingsUi.network.checklist.timeout":
+    "Timeout: test Direct once; if Direct also times out it is the line or the provider - switch networks or retry later.",
 } as const;
 
 export default settingsUi;

@@ -31,11 +31,13 @@ const assistantHooks = {
   "assistantHooks.messageActions.error.delete": "删除消息失败",
   "assistantHooks.messageSelection.success.deletedCount": "已删除 {count} 条消息",
   "assistantHooks.messageSelection.error.delete": "删除消息失败",
-  "assistantHooks.sidebar.success.skillEnabled": "已启用技能「{name}」",
-  "assistantHooks.sidebar.success.skillDisabled": "已停用技能「{name}」",
+  "assistantHooks.sidebar.success.skillEnabled": "本条将使用「{name}」",
+  "assistantHooks.sidebar.success.skillDisabled": "已从本条移除「{name}」",
   "assistantHooks.sidebar.error.toggleSkill": "切换技能失败",
   "assistantHooks.sidebar.success.movedToGroup": "已移动到「{name}」",
   "assistantHooks.sidebar.success.removedFromGroup": "已移出分组",
+  "assistantHooks.sidebar.success.memoryOff": "这段对话不再记忆",
+  "assistantHooks.sidebar.success.memoryOn": "已恢复记忆读写",
   "assistantHooks.url.info.outOfRange":
     "链接里的对话不在当前列表中，可能超出了最近 100 条对话的范围。",
 } as const;

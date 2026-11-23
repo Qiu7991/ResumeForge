@@ -13,17 +13,20 @@
  * 这个域。**换照片 / 移除照片时必须同步清掉它**：`source.sha256` 指向旧图，留着就是死数据
  * （后端会判失效、保存时再由 `prune_overrides` 裁掉，但界面会短暂地"裁剪还在"）。
  */
-import { CameraOutlined, DeleteOutlined, ScissorOutlined } from "@ant-design/icons";
+import { DeleteOutlined } from "@ant-design/icons";
 import Button from "antd/es/button";
 import Input from "antd/es/input";
 import Select from "antd/es/select";
-import Space from "antd/es/space";
-import Upload from "antd/es/upload";
-import { useState } from "react";
+import Tooltip from "antd/es/tooltip";
 import type { MessageKey } from "../../../i18n";
 import { useI18n } from "../../../i18n/i18nContext";
 import type { ResumeFormatConfig } from "../../../types/resumeFormat";
-import type { HeaderItem, HeaderPlacement, ResumeDocument } from "../../../types/resumeDocument";
+import type {
+  HeaderItem,
+  HeaderPlacement,
+  LabelMode,
+  ResumeDocument,
+} from "../../../types/resumeDocument";
 import {
   CUSTOM_HEADER_KEY_PREFIX,
   HEADER_PLACEMENT_LABEL_KEYS,
@@ -37,13 +40,15 @@ import {
   readPhotoCropFromFormatConfig,
   withPhotoCrop,
 } from "../preview/photoCrop";
-import { readAsDataUrl } from "../../../utils/attachments";
-import CroppedPhotoThumb from "./CroppedPhotoThumb";
-import PhotoCropDialog from "./PhotoCropDialog";
-import ResizableValueTextArea from "./ResizableValueTextArea";
+import PhotoAssetEditor from "./PhotoAssetEditor";
+import AutoGrowValueTextArea from "./AutoGrowValueTextArea";
+import { applyInlineEdit } from "./lastFocusedTextarea";
+import { readRichValue, richItemPatch } from "./inlineMarkWrite";
+import { registerInlineMarkField } from "./useInlineMarkRange";
+import InlineMarkContextMenu from "../layout/InlineMarkContextMenu";
 
-const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+//: 字段名开关适用的位置：name / photo 不提供（F20）。
+const LABEL_MODE_PLACEMENTS = new Set<HeaderPlacement>(["contact", "subtitle", "name_meta"]);
 
 interface Props {
   document: ResumeDocument;
@@ -71,7 +76,6 @@ export default function HeaderItemEditor({
   onNotice,
 }: Props) {
   const { t } = useI18n();
-  const [cropOpen, setCropOpen] = useState(false);
   const isPhoto = item.key === "photo";
   const photo = isPhotoDataUrl(item.value) ? item.value : "";
   const cropParams: PhotoCropParams | null = isPhoto
@@ -86,33 +90,7 @@ export default function HeaderItemEditor({
     onFormatConfigChange(withPhotoCrop(formatConfig, null));
   };
 
-  const uploadPhoto = (file: File) => {
-    if (!PHOTO_TYPES.has(file.type)) {
-      onNotice(t("document.photo.formatError"), "warning");
-      return;
-    }
-    if (file.size > PHOTO_MAX_BYTES) {
-      onNotice(t("document.photo.tooLarge"), "warning");
-      return;
-    }
-    void readAsDataUrl(file)
-      .then((dataUrl) => {
-        clearCrop();
-        patch({ value: dataUrl });
-        onNotice(t("document.photo.updated"), "info");
-      })
-      .catch(() => onNotice(t("document.photo.readFailed"), "warning"));
-  };
-
-  /**
-   * 打开裁剪：弹窗自己按**已保存参数**还原矩形（没有参数就是整幅），
-   * 这里不再持有一份 draft，避免"两套状态各说各话"。
-   */
-  const openCrop = () => {
-    setCropOpen(true);
-  };
-
-  /** `params = null` = 恢复原图（删掉 `photo_crop` 域）。 */
+  /** 裁剪参数写回：`null` = 恢复原图（删掉 `photo_crop` 域）。 */
   const applyCrop = (params: PhotoCropParams | null) => {
     if (!onFormatConfigChange) {
       onNotice(t("document.photo.cropFailed"), "warning");
@@ -125,112 +103,103 @@ export default function HeaderItemEditor({
   if (isPhoto) {
     return (
       <div className="document-item-editor document-header-editor" data-document-path={path}>
-        <div className="document-photo-editor">
-          <div className="document-photo-frame">
-            {photo ? (
-              <CroppedPhotoThumb
-                photo={photo}
-                crop={cropParams}
-                className="document-photo-thumb"
-                alt={t("document.photo.thumbnail")}
-              />
-            ) : (
-              <span className="document-photo-empty">{t("document.photo.empty")}</span>
-            )}
-          </div>
-          <Space wrap>
-            <Upload
-              accept="image/jpeg,image/png,image/webp"
-              showUploadList={false}
-              disabled={readOnly}
-              beforeUpload={(file) => {
-                uploadPhoto(file as File);
-                return Upload.LIST_IGNORE;
-              }}
-            >
-              <Button size="small" icon={<CameraOutlined />} disabled={readOnly}>
-                {t("document.photo.replace")}
-              </Button>
-            </Upload>
-            <Button
-              size="small"
-              icon={<ScissorOutlined />}
-              disabled={readOnly || !photo}
-              onClick={openCrop}
-            >
-              {t("document.photo.crop")}
-            </Button>
-            <Button
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              disabled={readOnly || !photo}
-              onClick={() => {
-                clearCrop();
-                patch({ value: "" });
-                onNotice(t("document.photo.removed"), "info");
-              }}
-            >
-              {t("document.photo.remove")}
-            </Button>
-          </Space>
-        </div>
+        {/* T02：上传/裁剪/删除抽到 `PhotoAssetEditor`，与左栏「照片」页签共用一份实现。 */}
+        <PhotoAssetEditor
+          photo={photo}
+          crop={cropParams}
+          disabled={readOnly}
+          variant="compact"
+          onCropChange={onFormatConfigChange ? applyCrop : undefined}
+          onPhotoChange={(dataUrl) => {
+            clearCrop();
+            patch({ value: dataUrl });
+          }}
+          onNotice={onNotice}
+        />
         <PlacementSelect
           value={item.placement}
           disabled={readOnly}
           onChange={(placement) => patch({ placement })}
         />
-        <PhotoCropDialog
-          open={cropOpen}
-          photo={photo}
-          initialCrop={cropParams}
-          onClose={() => setCropOpen(false)}
-          onApply={applyCrop}
-          onNotice={onNotice}
-        />
       </div>
     );
   }
 
+  /** F22：页眉字段的右键菜单与条目共用一套规则（页眉没有工具条，右键是这里的入口）。 */
+  const inlineCommit = (next: { text: string; selection: { start: number; end: number } }) =>
+    applyInlineEdit({ text: next.text, start: next.selection.start, end: next.selection.end });
+
+  /**
+   * I-13：值的**读写都走结构化模型**。
+   *
+   * 读：有 `rich` 用它，没有就把旧标记串解析成纯文本 + runs（兼容读，见 `readRichValue`）。
+   * 写：`value` 恒为纯文本，样式落 `rich.runs`——标记串不再被拼出来。
+   */
+  const richValue = readRichValue(item);
+
   return (
-    <div className="document-item-editor document-header-editor" data-document-path={path}>
-      {isCustomHeaderItem(item) ? (
-        <Input
-          size="small"
-          aria-label={t("document.basic.customField")}
-          placeholder={t("document.basic.customField")}
-          value={item.label}
+    <InlineMarkContextMenu onCommit={inlineCommit} disabled={readOnly}>
+      <div className="document-item-editor document-header-editor" data-document-path={path}>
+        {isCustomHeaderItem(item) ? (
+          <Input
+            size="small"
+            aria-label={t("document.basic.customField")}
+            placeholder={t("document.basic.customField")}
+            value={item.label}
+            disabled={readOnly}
+            onFocus={registerInlineMarkField}
+            onChange={(event) => patch({ label: event.target.value })}
+          />
+        ) : null}
+        {/* 值输入：问题 8 起是"单行语义"的文本域，I-14 起按内容自适应（1–4 行）；
+            自定义标签那颗 Input 保持不动。 */}
+        <AutoGrowValueTextArea
+          ariaLabel={label}
+          placeholder={t("document.field.valuePlaceholder")}
+          value={richValue.text}
+          rich={{ runs: richValue.runs, onChange: (next) => patch(richItemPatch(next)) }}
           disabled={readOnly}
-          onChange={(event) => patch({ label: event.target.value })}
+          onChange={(value) => patch({ value })}
         />
-      ) : null}
-      {/* 值输入：问题 8 起改成"单行语义、可拖高"的文本域（自定义标签那颗 Input 保持不动）。 */}
-      <ResizableValueTextArea
-        ariaLabel={label}
-        placeholder={t("document.field.valuePlaceholder")}
-        value={item.value}
-        disabled={readOnly}
-        onChange={(value) => patch({ value })}
-      />
-      <PlacementSelect
-        value={item.placement}
-        disabled={readOnly}
-        onChange={(placement) => patch({ placement })}
-      />
-      {!readOnly ? (
-        <Button
-          size="small"
-          type="text"
-          danger
-          aria-label={t("document.item.remove")}
-          icon={<DeleteOutlined />}
-          onClick={() => {
-            onChange(removeHeaderItem(document, path));
-            onNotice(t("document.toast.fieldRemoved"), "info");
-          }}
+        <PlacementSelect
+          value={item.placement}
+          disabled={readOnly}
+          onChange={(placement) => patch({ placement })}
         />
-      ) : null}
-    </div>
+        {LABEL_MODE_PLACEMENTS.has(item.placement) ? (
+          // F20：三态改为「自动 / 显示字段名 / 隐藏字段名」。`auto` 是默认值，与存量行为
+          // 逐字节一致；入口只有这一处（版面参数组不再另设总开关，避免两个真源）。
+          <Tooltip title={t("structure.layout.labelMode.hint")}>
+            <Select
+              size="small"
+              className="document-header-label-mode"
+              aria-label={t("structure.layout.labelMode.aria")}
+              disabled={readOnly || undefined}
+              value={item.label_mode ?? (item.show_label === false ? "hide" : "auto")}
+              options={[
+                { value: "auto", label: t("structure.layout.labelMode.auto") },
+                { value: "show", label: t("structure.layout.labelMode.show") },
+                { value: "hide", label: t("structure.layout.labelMode.hide") },
+              ]}
+              onChange={(mode: LabelMode) => patch({ label_mode: mode })}
+            />
+          </Tooltip>
+        ) : null}
+        {!readOnly ? (
+          <Button
+            size="small"
+            type="text"
+            danger
+            aria-label={t("document.item.remove")}
+            icon={<DeleteOutlined />}
+            onClick={() => {
+              onChange(removeHeaderItem(document, path));
+              onNotice(t("document.toast.fieldRemoved"), "info");
+            }}
+          />
+        ) : null}
+      </div>
+    </InlineMarkContextMenu>
   );
 }
 

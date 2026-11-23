@@ -8,6 +8,7 @@
 因此"文档附件"对模型而言是一段文字，对用户而言仍是一份文件。
 """
 
+import logging
 from typing import Any
 
 from ...schemas.assistant import AssistantAttachmentInput
@@ -24,6 +25,9 @@ from ..attachments import (
     unsupported_attachment_error,
 )
 from ..document_text import extract_document_text
+from .assistant_error_detail import AssistantInputError, attachment_detail
+
+logger = logging.getLogger(__name__)
 
 MAX_HISTORY_MESSAGES = 20
 MAX_HISTORY_CHARS = 40_000
@@ -99,6 +103,22 @@ def normalize_attachments(attachments: list[AssistantAttachmentInput]) -> list[d
     return normalized
 
 
+def normalize_attachments_for_api(
+    attachments: list[AssistantAttachmentInput],
+) -> list[dict[str, Any]]:
+    """路由层专用：把校验错误翻成**固定文案**的 HTTPException。
+
+    为什么不在路由里 try/except：CodeQL 的 `py/stack-trace-exposure` 会把"路由函数里出现
+    异常处理器 + 同函数返回响应"判定为异常信息外泄（见 2026-11 的 2 条存量告警）。把
+    翻译收进服务层后，路由只剩一次调用，污点链在这里断开；异常原文只进日志。
+    """
+    try:
+        return normalize_attachments(attachments)
+    except ValueError as exc:
+        logger.warning("附件校验失败：%s", exc)
+        raise AssistantInputError(422, attachment_detail(str(exc))) from None
+
+
 def conversation_title(content: str, attachments: list[dict[str, Any]], max_chars: int = 36) -> str:
     """按首条消息生成会话标题。"""
     source = " ".join(content.split())
@@ -139,6 +159,16 @@ def image_content_blocks(attachments: list[dict[str, Any]]) -> list[dict[str, An
     ]
 
 
+def _with_skill_prompt(skill_prompt: str, content: str) -> str:
+    """把消息级技能提示词拼在正文之前（空提示词原样返回正文）。
+
+    只在这一处拼：历史与当前消息共用它，避免两边各写一遍导致格式漂移。
+    """
+    if not skill_prompt:
+        return content
+    return f"{skill_prompt}\n\n{content}" if content else skill_prompt
+
+
 def history_messages_for_model(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """只携带最近的已完成历史，并按字符预算从旧到新裁剪。
 
@@ -148,6 +178,11 @@ def history_messages_for_model(history: list[dict[str, Any]]) -> list[dict[str, 
 
     图片不计入字符预算：它本来就是 data URL，按字符算没有意义，大小上限在入库时
     （`services/attachments.py`）已经卡过了。
+
+    T24：用户消息的 ``skill_prompt``（消息级技能）拼在它**自己的正文之前**。历史里的
+    消息同样拼——技能只作用于发送时那一条，但那一轮之后的追问仍需要看到它，否则
+    「勾了技能问一句、再追问」的第二轮技能就丢了。拼装只发生在这里，不写回数据库，
+    因此 API 返回的 ``content`` 永远不含提示词。
     """
     window = history[-MAX_HISTORY_MESSAGES:]
     last_user_index = next(
@@ -164,6 +199,7 @@ def history_messages_for_model(history: list[dict[str, Any]]) -> list[dict[str, 
         index = len(window) - 1 - offset
         content = str(item.get("content") or "")
         if item.get("role") == "user":
+            content = _with_skill_prompt(str(item.get("skill_prompt") or ""), content)
             content += attachment_text_block(item.get("attachments") or [], 4_000)
         remaining = MAX_HISTORY_CHARS - used
         if remaining <= 0:
@@ -186,9 +222,15 @@ def current_user_message_for_model(
     attachments: list[dict[str, Any]],
     context_blocks: list[str],
     quoted: dict[str, Any] | None = None,
+    skill_prompt: str = "",
 ) -> dict[str, Any]:
-    """组装给模型的当前用户消息：正文 + 引用上文 + 显式上下文 + 附件（文本/图片）。"""
+    """组装给模型的当前用户消息：技能 + 正文 + 引用上文 + 显式上下文 + 附件（文本/图片）。
+
+    ``skill_prompt``（T24）是本条消息勾选的技能提示词，按约定拼在正文之前——与历史
+    消息走的 :func:`_with_skill_prompt` 是同一份格式。
+    """
     text = f"用户问题：\n{content or '请分析我上传的附件。'}"
+    text = _with_skill_prompt(skill_prompt, text)
     if quoted:
         # 引用上文是**对话内容**（不是资料），单独标注一句，模型才知道用户在追问什么。
         role_label = "求职助手" if quoted.get("role") == "assistant" else "用户"
@@ -206,4 +248,3 @@ def current_user_message_for_model(
     if not images:
         return {"role": "user", "content": text}
     return {"role": "user", "content": [{"type": "text", "text": text}, *images]}
-

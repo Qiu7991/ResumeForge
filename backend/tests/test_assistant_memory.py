@@ -23,6 +23,7 @@ from app.models.profile import utcnow
 from app.services.ai_task_registry import registered_ai_task_kinds
 from app.services.assistant import memory
 from app.services.assistant.memory_extract import (
+    backfill_pending_extractions,
     mark_extracted,
     parse_extraction_response,
     run_extraction,
@@ -153,6 +154,25 @@ def test_relevant_memories_returns_top_five_and_empty_when_unrelated(db_session)
     assert unrelated == []
 
 
+def test_injection_ignores_kind_label_and_applies_threshold(db_session):
+    """I-06：kind 标签不参与计分 + 命中阈值 + 两字城市名的完整命中。
+
+    四个固定样例（来自问题清单实测）：
+    ①「这个岗位怎么样」不再给所有 target_role 各记一分（标签「岗位」不计分）；
+    ②「上海的机会」能召回 city=上海（完整命中记忆值）；
+    ③「我想去江浙一带」召回不了「只看杭州和上海」——已知限制，规则层不做近义召回；
+    ④ 空消息返回空列表。
+    """
+    memory.create_memory(db_session, kind="target_role", value="算法工程师", key="算法")
+    memory.create_memory(db_session, kind="city", value="上海", key="上海")
+    memory.create_memory(db_session, kind="city", value="杭州", key="杭州")
+
+    assert memory.relevant_memories(db_session, "这个岗位怎么样") == []
+    assert [item.value for item in memory.relevant_memories(db_session, "上海的机会")] == ["上海"]
+    assert memory.relevant_memories(db_session, "我想去江浙一带") == []
+    assert memory.relevant_memories(db_session, "") == []
+
+
 def test_render_memory_block_uses_latest_user_message(db_session):
     """注入块只出现在相关时；内容是固定区块格式。"""
     conversation = _conversation(db_session)
@@ -169,7 +189,11 @@ def test_render_memory_block_uses_latest_user_message(db_session):
 
 def test_api_create_list_edit_delete_and_never_use(client):
     """#31C：可见可改——创建、列表、编辑、删除、永不使用。"""
-    assert client.get("/api/assistant/memories/settings").json() == {"auto_extract": False}
+    # T23：设置载荷含两个开关——自动抽取默认关、注入默认开。
+    assert client.get("/api/assistant/memories/settings").json() == {
+        "auto_extract": False,
+        "inject": True,
+    }
 
     created = client.post(
         "/api/assistant/memories",
@@ -193,9 +217,20 @@ def test_api_create_list_edit_delete_and_never_use(client):
     assert edited.json()["value"] == "杭州、上海"
     assert edited.json()["confidence"] == 0.9
 
+    # F33：永不使用 = 停用（suppressed），条目仍留在列表里，可恢复；不是删除。
     never_used = client.post(f"/api/assistant/memories/{body['id']}/never-use")
     assert never_used.status_code == 200
-    assert never_used.json()["status"] == "deleted"
+    assert never_used.json()["status"] == "suppressed"
+    listed = client.get("/api/assistant/memories").json()
+    assert [item["id"] for item in listed] == [body["id"]]
+    assert listed[0]["status"] == "suppressed"
+
+    restored = client.post(f"/api/assistant/memories/{body['id']}/restore")
+    assert restored.status_code == 200
+    assert restored.json()["status"] == "active"
+
+    # 删除才是从列表消失（仍可回溯，不再注入）。
+    assert client.delete(f"/api/assistant/memories/{body['id']}").status_code == 204
     assert client.get("/api/assistant/memories").json() == []
 
 
@@ -213,11 +248,13 @@ def test_api_rejects_unknown_kind_and_sensitive_value(client):
 def test_settings_switch_controls_auto_extract(client, db_session):
     """自动抽取默认关；打开后持久化（31C 的控制项）。"""
     assert client.put("/api/assistant/memories/settings", json={"auto_extract": True}).json() == {
-        "auto_extract": True
+        "auto_extract": True,
+        "inject": True,
     }
     assert memory.auto_extract_enabled(db_session) is True
     assert client.put("/api/assistant/memories/settings", json={"auto_extract": False}).json() == {
-        "auto_extract": False
+        "auto_extract": False,
+        "inject": True,
     }
 
 
@@ -297,3 +334,155 @@ def test_should_schedule_blocks_when_a_task_is_already_running(db_session):
 def test_memory_extract_handler_is_registered():
     """#31A 接 ai_task 执行器：kind 必须已登记（否则 API 层会 400）。"""
     assert AI_TASK_KIND_ASSISTANT_MEMORY in registered_ai_task_kinds()
+
+
+class _RecordingRunner:
+    """记录 start 调用的替身执行器：补扫的验收只看"登记了几条"。"""
+
+    def __init__(self) -> None:
+        self.started: list[int] = []
+
+    def start(self, task_id: int) -> None:
+        self.started.append(task_id)
+
+    def mark_failed(self, task_id: int, reason: str) -> None:  # pragma: no cover - 不应发生
+        raise AssertionError(f"补扫不应该走到失败收尾：{task_id} {reason}")
+
+
+def _patch_runner(monkeypatch: pytest.MonkeyPatch) -> _RecordingRunner:
+    import app.services.ai_task_runner as runner_module
+
+    runner = _RecordingRunner()
+    monkeypatch.setattr(runner_module, "get_ai_task_runner", lambda: runner)
+    return runner
+
+
+def test_backfill_schedules_the_idle_conversation(db_session, monkeypatch):
+    """I-04：上一段对话已空闲且 cursor 落后 → 启动补扫恰好登记 1 条抽取任务。"""
+    runner = _patch_runner(monkeypatch)
+    conversation = _conversation(db_session)
+    _message(db_session, conversation, "user", "我只看杭州", minutes_ago=11)
+    _message(db_session, conversation, "assistant", "好的", minutes_ago=10)
+    memory.set_auto_extract(db_session, True)
+
+    assert backfill_pending_extractions(db_session) == 1
+    tasks = db_session.query(AiTask).filter(AiTask.kind == AI_TASK_KIND_ASSISTANT_MEMORY).all()
+    assert len(tasks) == 1
+    assert (tasks[0].payload or {}).get("conversation_id") == conversation.id
+    assert runner.started == [tasks[0].id]
+
+
+def test_backfill_skips_when_switch_is_off(db_session, monkeypatch):
+    """I-04 判据一：自动抽取关闭时一条都不登记。"""
+    runner = _patch_runner(monkeypatch)
+    conversation = _conversation(db_session)
+    _message(db_session, conversation, "assistant", "好的", minutes_ago=10)
+
+    assert backfill_pending_extractions(db_session) == 0
+    assert (
+        db_session.query(AiTask).filter(AiTask.kind == AI_TASK_KIND_ASSISTANT_MEMORY).count() == 0
+    )
+    assert runner.started == []
+
+
+def test_backfill_skips_when_cursor_is_up_to_date(db_session, monkeypatch):
+    """I-04 判据二：这段对话已经抽过（cursor 覆盖最新消息）→ 不再登记。"""
+    _patch_runner(monkeypatch)
+    conversation = _conversation(db_session)
+    _message(db_session, conversation, "user", "我只看杭州", minutes_ago=11)
+    last = _message(db_session, conversation, "assistant", "好的", minutes_ago=10)
+    memory.set_auto_extract(db_session, True)
+    mark_extracted(db_session, conversation.id, last.id)
+
+    assert backfill_pending_extractions(db_session) == 0
+
+
+def test_backfill_skips_conversation_with_a_running_task(db_session, monkeypatch):
+    """I-04 判据三：同会话已有在跑的任务 → 不重复登记（幂等由在跑任务保证）。"""
+    _patch_runner(monkeypatch)
+    conversation = _conversation(db_session)
+    _message(db_session, conversation, "user", "我只看杭州", minutes_ago=11)
+    _message(db_session, conversation, "assistant", "好的", minutes_ago=10)
+    memory.set_auto_extract(db_session, True)
+    db_session.add(
+        AiTask(
+            kind=AI_TASK_KIND_ASSISTANT_MEMORY,
+            payload={"conversation_id": conversation.id},
+            label="整理助手记忆",
+        )
+    )
+    db_session.commit()
+
+    assert backfill_pending_extractions(db_session) == 0
+
+
+def test_backfill_skips_empty_and_too_recent_conversations(db_session, monkeypatch):
+    """I-04 判据四：没有消息的会话、刚聊完还没到空闲阈值的会话都不登记。"""
+    _patch_runner(monkeypatch)
+    memory.set_auto_extract(db_session, True)
+    empty = _conversation(db_session, title="空会话")
+    fresh = _conversation(db_session, title="刚聊完")
+    _message(db_session, fresh, "assistant", "在的", minutes_ago=1)
+    assert empty.id and fresh.id
+
+    assert backfill_pending_extractions(db_session) == 0
+
+
+def test_suppressed_is_not_reinjected_and_blocks_reextraction(db_session):
+    """F33 最关键的一条：停用后不再注入，且同一事实不会被再次抽取出来。"""
+    created = memory.create_memory(db_session, kind="city", value="杭州", source="manual")
+    memory.suppress_memory(db_session, created)
+
+    assert memory.active_memories(db_session) == []
+    # 抽取器再看到同一句「我只考虑杭州」：必须当 NOOP，而不是把停用条目又变回生效。
+    counts = memory.apply_operations(
+        db_session,
+        [{"op": "ADD", "kind": "city", "value": "杭州", "confidence": 0.9}],
+    )
+    assert counts["add"] == 0
+    assert counts["noop"] == 1
+    db_session.refresh(created)
+    assert created.status == "suppressed"
+
+    memory.restore_memory(db_session, created)
+    assert [item.value for item in memory.active_memories(db_session)] == ["杭州"]
+
+
+def test_memory_history_records_each_action_in_reverse_order(client):
+    """历史按时间倒序：create → update → suppress → restore。"""
+    created = client.post("/api/assistant/memories", json={"kind": "city", "value": "杭州"}).json()
+    mid = created["id"]
+    client.patch(f"/api/assistant/memories/{mid}", json={"value": "杭州、上海"})
+    client.post(f"/api/assistant/memories/{mid}/never-use")
+    client.post(f"/api/assistant/memories/{mid}/restore")
+
+    history = client.get(f"/api/assistant/memories/{mid}/history")
+    assert history.status_code == 200, history.text
+    actions = [item["action"] for item in history.json()]
+    assert actions == ["restore", "suppress", "update", "create"]
+    update = history.json()[2]
+    assert update["before"] == "杭州"
+    assert update["after"] == "杭州、上海"
+
+
+def test_source_excerpt_is_returned_for_extracted_memory(client, db_session):
+    """来源摘录：让人看见"这句话是从哪儿学来的"，最多 60 字。"""
+    conversation = _conversation(db_session)
+    message = _message(
+        db_session,
+        conversation,
+        "user",
+        "我只考虑杭州的机会，最好离地铁近一点，通勤别超过四十分钟，谢谢。",
+    )
+    record = memory.create_memory(
+        db_session,
+        kind="city",
+        value="杭州",
+        source="extracted",
+        conversation_id=conversation.id,
+        message_id=message.id,
+    )
+    listed = client.get("/api/assistant/memories").json()
+    row = next(item for item in listed if item["id"] == record.id)
+    assert row["source_excerpt"].startswith("我只考虑杭州")
+    assert len(row["source_excerpt"]) <= 60

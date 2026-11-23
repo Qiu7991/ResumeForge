@@ -13,14 +13,34 @@
 时间戳统一用 ``.profile.utcnow``（无时区 UTC）；岗位/简历被删除后记录仍要可读，所以
 对它们用 ``SET NULL`` + 快照字段；批次内的条目随批次 ``CASCADE`` 删除。
 
-本模块同时定义前后端共用的**状态/枚举常量**与唯一的准入闸门映射 ``admission_of``。
+本模块同时**持有**前后端共用的状态/枚举常量（失败分类词表已下沉到
+``app/vocabulary/apply.py``，这里 re-export）与唯一的准入闸门映射 ``admission_of``。
 只在这里写一次，前端镜像同一份取值，避免"两处各判一次、判得不一样"。
 """
+
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
+
+from app.vocabulary.apply import (
+    FAILURE_CAPTCHA_REQUIRED,
+    FAILURE_FILE_UPLOAD_FAILED,
+    FAILURE_GREETING_MISSING,
+    FAILURE_GREETING_UNCONFIRMED,
+    FAILURE_JOB_CLOSED,
+    FAILURE_LOGIN_REQUIRED,
+    FAILURE_NETWORK_TIMEOUT,
+    FAILURE_PROFILE_INSUFFICIENT,
+    FAILURE_SELECTOR_INVALID,
+    FAILURE_SITE_UNSUPPORTED,
+    FAILURE_UNCONFIRMED,
+    FAILURE_UNKNOWN,
+)
+
+# ``FAILURE_CATEGORIES`` 本模块只做 re-export、正文不再引用，用 ``X as X`` 显式标记。
+from app.vocabulary.apply import FAILURE_CATEGORIES as FAILURE_CATEGORIES
 
 from ..database import Base
 from .profile import utcnow
@@ -53,9 +73,7 @@ HARD_GATES = (HARD_GATE_MET, HARD_GATE_UNMET, HARD_GATE_UNKNOWN)
 
 _ALLOW_STATUSES = frozenset({MATCH_STATUS_MATCHED, MATCH_STATUS_EXPRESSION_GAP})
 _BLOCK_STATUSES = frozenset({MATCH_STATUS_REAL_GAP})
-_NEEDS_CONFIRM_STATUSES = frozenset(
-    {MATCH_STATUS_EVIDENCE_INSUFFICIENT, MATCH_STATUS_TO_CONFIRM}
-)
+_NEEDS_CONFIRM_STATUSES = frozenset({MATCH_STATUS_EVIDENCE_INSUFFICIENT, MATCH_STATUS_TO_CONFIRM})
 
 
 def admission_of(status: str) -> str:
@@ -138,43 +156,8 @@ ITEM_STATUSES = (
 )
 
 # ===== ⑦ 失败分类（一等的可识别类型）=====
-FAILURE_SELECTOR_INVALID = "selector_invalid"
-FAILURE_LOGIN_REQUIRED = "login_required"
-FAILURE_CAPTCHA_REQUIRED = "captcha_required"
-FAILURE_GREETING_MISSING = "greeting_missing"
-# 「有字但没确认」不是「缺失」：批量生成的草稿已经落库，只是没经用户点确认。两者要分开，
-# 否则进度表里明明写着招呼语、分类却显示「招呼语缺失」，用户只会以为程序坏了。
-FAILURE_GREETING_UNCONFIRMED = "greeting_unconfirmed"
-FAILURE_NETWORK_TIMEOUT = "network_timeout"
-FAILURE_FILE_UPLOAD_FAILED = "file_upload_failed"
-# 岗位不属于任何已注册的招聘网站（例如纯手动录入、来源与投递链接都指不到站点）。
-# 它**不是**运行时故障，而是"这个岗位本来就不该走到投递这一步"——所以单列一类，
-# 否则记录里只会写「未知失败」，用户与我们都看不出真正的原因。
-FAILURE_SITE_UNSUPPORTED = "site_unsupported"
-# 「资料不足」是**用户可以自己解决**的前置条件缺失（没有可用简历 / 资料键没值），不是站点
-# 故障——所以按软跳过处理（不触发熔断），但要留下机器可读的分类让统计与界面说清楚。
-FAILURE_PROFILE_INSUFFICIENT = "profile_insufficient"
-# 「无法确认」= 动手了但读不到成功凭据。**未知状态永不记成功**，也不能当成站点故障去熔断
-# （页面可能其实已经投出去了，重试反而会重复投递）——单列一类，让用户去浏览器核对。
-FAILURE_UNCONFIRMED = "unconfirmed"
-# 「职位已关闭 / 停止招聘」：站点页面还在，但没有沟通入口。这不是我们的故障、也不是
-# 选择器失效——按软跳过处理（不触发熔断），并写清原因让用户把它移出队列。
-FAILURE_JOB_CLOSED = "job_closed"
-FAILURE_UNKNOWN = "unknown"
-FAILURE_CATEGORIES = (
-    FAILURE_SELECTOR_INVALID,
-    FAILURE_LOGIN_REQUIRED,
-    FAILURE_CAPTCHA_REQUIRED,
-    FAILURE_GREETING_MISSING,
-    FAILURE_GREETING_UNCONFIRMED,
-    FAILURE_NETWORK_TIMEOUT,
-    FAILURE_FILE_UPLOAD_FAILED,
-    FAILURE_SITE_UNSUPPORTED,
-    FAILURE_PROFILE_INSUFFICIENT,
-    FAILURE_UNCONFIRMED,
-    FAILURE_JOB_CLOSED,
-    FAILURE_UNKNOWN,
-)
+# 词表（FAILURE_CATEGORIES 与 12 个稳定码）已下沉到 ``app/vocabulary/apply.py``（D8：
+# 契约层不再经由 models 取词表）；本模块逐个显式 re-export，既有导入路径不变。
 
 # 面向用户的失败分类说明：诊断信息会直接展示给用户，用户再反馈给我们修，所以要写清楚。
 FAILURE_CATEGORY_LABELS = {
@@ -259,7 +242,7 @@ class ApplyQueueItem(Base):
     company: Mapped[str] = mapped_column(String(128), default="")
     # 用户指定用哪份简历；空 = 运行时按默认规则解析。
     resume_id: Mapped[int | None] = mapped_column(
-        ForeignKey("resume_record.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("resume_record.id", ondelete="SET NULL"), nullable=True, index=True
     )
     # 本岗位的招呼语（用户可编辑 / 按岗位生成后落此）；空 = 用默认招呼语。
     greeting: Mapped[str] = mapped_column(Text, default="")
@@ -319,7 +302,7 @@ class ApplyTaskItem(Base):
     company: Mapped[str] = mapped_column(String(128), default="")
     # 快照：记录当时用的简历，简历被删除后仍可读。
     resume_id: Mapped[int | None] = mapped_column(
-        ForeignKey("resume_record.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("resume_record.id", ondelete="SET NULL"), nullable=True, index=True
     )
     resume_title: Mapped[str] = mapped_column(String(256), default="")
     # 实际发送的招呼语（脱敏按"记全文但截断到合理上限"处理）。

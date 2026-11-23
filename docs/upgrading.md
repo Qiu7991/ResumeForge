@@ -109,7 +109,7 @@ git pull --ff-only
 cd backend
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 cd ..\frontend
-npm ci
+pnpm install --frozen-lockfile
 ```
 
 ### macOS / Linux
@@ -125,14 +125,14 @@ git pull --ff-only
 cd backend
 .venv/bin/python -m pip install -r requirements.txt
 cd ../frontend
-npm ci
+pnpm install --frozen-lockfile
 ```
 
 依赖安装完成后，Windows 用户可在项目根目录双击 `start.cmd`、macOS 用户双击 `start.command`，Linux 用户在项目根目录执行 `bash start.sh`（先 `chmod +x start.sh` 也可以 `./start.sh`），它会启动前后端并自动打开页面。需要关闭服务时双击 `stop.cmd` / `stop.command`，或执行 `bash stop.sh`。停止时优先按启动记录（PID、命令行与启动时刻签名三者对得上才动手）；**没有启动记录时**（实例被别的窗口/脚本直接拉起、记录被清理等）会按「监听端口 + 启动命令特征 + 健康检查自报 ResumeForge」识别当前实例再停，所以不会再出现「双击 stop 没反应、端口仍被占」的情况；身份对不上的进程一律不碰。
 
 一键启动器默认使用后端端口 8005，页面地址就是它（发布包自带 `frontend/dist`，由后端同源提供，运行期不需要 Node）；只有显式以 dev 模式启动（`--frontend-mode dev`，Windows 为 `-FrontendMode dev`）时才需要前端端口 5173。若端口冲突，Windows 用 `-BackendPort`（`start.cmd -BackendPort 8010`，参数用空格分隔），macOS 用 `--backend-port`（`bash scripts/macos/start.sh --backend-port 8010`），Linux 用 `bash start.sh --backend-port 8010`。手动启动示例中的后端端口 8000 是开发默认值，与一键启动器互不冲突。
 
-启动器会在 `frontend/` 目录执行 npm 安装，因此从资源管理器双击启动时不会因为当前工作目录不同而误报缺少 `package-lock.json`。仓库包含锁文件时使用 `npm ci`；旧压缩包缺少锁文件时会回退到一次 `npm install`。
+启动器会在 `frontend/` 目录执行 `pnpm install --frozen-lockfile`，因此从资源管理器双击启动时不会因为当前工作目录不同而误报找不到锁文件。**没有**"锁文件缺失就退回普通 install"的兜底：缺少 `pnpm-lock.yaml` 时它会直接失败（那个兜底会重新生成 `package-lock.json`，让两套锁文件互相矛盾）。pnpm 不是 Node 的随附组件，所以启动器优先用 Node 自带的 `corepack pnpm`——它按 `package.json` 的 `packageManager` 取到 12.21.0 并缓存，**首次调用需要联网**；只有找不到 corepack 时才用 PATH 上的 pnpm。
 
 首次创建环境时，启动器会探测现有 **Python 3.11 – 3.13** 和 Node.js 20.19.0+/npm，满足要求时直接复用（装了好几个受支持版本时优先用 3.12）。缺少 Python 时优先通过 Windows `winget` 进行用户级静默安装，再回退到固定版本且校验 SHA-256 的 Python 官方 x64 安装器；缺少 Node.js/npm 时同样先使用 `winget`，再回退到校验过的 Node.js 官方 x64/ARM64 便携 ZIP（先试国内镜像，再回官方源，**两者都做 SHA-256 校验**），并解压到 `runtime/tools/`。自动准备需要网络，不会触碰数据库或 `.env`；如果 winget、网络、系统架构或权限不满足条件，启动器会停止并给出手动安装指引。升级代码时 `runtime/` 不受正常 `git pull` 影响；即使便携 Node 目录被手动删除，下次启动也只会重新准备运行时，不影响业务数据。
 
@@ -152,7 +152,7 @@ $env:PYTHONUTF8 = "1"
 
 # 终端 2
 cd frontend
-npm run dev
+pnpm run dev
 ```
 
 macOS/Linux 将后端 Python 路径替换为 `.venv/bin/python`；前端命令不变。
@@ -185,7 +185,7 @@ git checkout <previous-stable-tag-or-commit>  # 例如已发布的 v0.1.0 标签
 
 将占位符替换为你要回滚到的实际稳定标签或提交；发布新版本时应为稳定版本创建 Git 标签（形如 `v0.3.0`）。版本号与 CHANGELOG 可以交给 `scripts/bump_version.py` 处理：它按自上一个 `v*` 标签以来的提交类型判定幅度，同步更新后端配置、前端 `package.json` 与 lockfile、README 与 CHANGELOG，但**不会替你提交或打标签**，改完会打印需要手动执行的命令。如果数据库已经执行了不可逆的迁移，必须先阅读对应 revision 的降级说明；不要把新版本数据库直接交给旧版本使用。
 
-改用回滚也可以走应用内：在 **设置 → 数据与导出 → 数据集** 里把之前导出的备份包导入为一份新数据集（只新增、
+改用回滚也可以走应用内：在 **设置 → 数据与存储 → 数据集** 里把之前导出的备份包导入为一份新数据集（只新增、
 不覆盖当前数据），确认内容无误后再切换过去。切换时会对该数据集补跑建表/补列/Alembic 迁移，
 所以导入一份来自旧版本的数据集也能正常使用（**仅限同一个 major 内**；1.x 的包在 2.0 会被直接拒收，
 见「从 1.x 到 2.0：整包归档 + 全新库」）。注意备份包记录着导出时的 Alembic revision，
@@ -208,10 +208,11 @@ git checkout <previous-stable-tag-or-commit>  # 例如已发布的 v0.1.0 标签
 `scripts/Build-Release.ps1` 是唯一推荐的出包方式：
 
 ```powershell
-# 发布时要出三个包（各带一份 .sha256）
+# 发布时要出四个包（all / windows / macos / linux，各带一份 .sha256）
 .\scripts\Build-Release.ps1 -Ref v0.16.0                       # 全平台 → ResumeForge-0.16.0-all.zip
 .\scripts\Build-Release.ps1 -Ref v0.16.0 -Platform windows     # 官网 Windows 按钮
 .\scripts\Build-Release.ps1 -Ref v0.16.0 -Platform macos       # 官网 macOS 按钮
+.\scripts\Build-Release.ps1 -Ref v0.16.0 -Platform linux       # 官网 Linux 按钮
 # 打包当前提交（本地试验）；输出目录默认是 <项目>\dist
 .\scripts\Build-Release.ps1 -OutputDirectory D:\tmp
 ```
@@ -220,15 +221,15 @@ git checkout <previous-stable-tag-or-commit>  # 例如已发布的 v0.1.0 标签
 脚本会先跑 `scripts/Build-Desktop.ps1 -Target win` 产出 NSIS 安装器，再注入压缩包的
 `desktop/ResumeForge-Setup-<版本>.exe` 条目并纳入必需清单校验——解压便携包的用户不用再去
 单独的下载页就能跑安装版。默认**关**：普通包保持"纯源码 + 启动器"，旧版应用内更新器解析的
-正是这个形态。前提：`desktop/node_modules` 已安装（在 `desktop/` 下跑过 `npm install`）；
+正是这个形态。前提：`desktop/node_modules` 已安装（在 `desktop/` 下跑过 `pnpm install`）；
 `desktop/package.json` 的版本号必须与 `backend/app/config.py` 一致，否则直接报错。
 macOS 桌面目标（dmg）仍未接线——electron-builder 的 mac 包需要真 Mac，依旧是有 Mac 实机
 之后的独立事项。`Test-Build-Release.ps1` 通过 `-DesktopSetupPath` 钩子（仅测试用）在 CI 上
 验证整条注入 + 校验链路。
 
-三个包都要挂到 GitHub Release 上。**全平台包不是可选项**：已经装在 0.14.2 及更早版本上的
+四个包都要挂到 GitHub Release 上。**全平台包不是可选项**：已经装在 0.14.2 及更早版本上的
 用户，应用内更新跑的是他们本机那份旧代码，它按文件名排序取第一个 `.zip`——只有
-`ResumeForge-<版本>-all.zip` 排在 `-macos.zip` / `-windows.zip` 前面（`a` < `m` < `w`）。
+`ResumeForge-<版本>-all.zip` 排在 `-linux.zip` / `-macos.zip` / `-windows.zip` 前面（`a` < `l` < `m` < `w`）。
 少了它，那些用户点「重启并安装」必然下到 macOS 包、必然报「更新包缺少 start.cmd」。
 `Test-Build-Release.ps1` 把这条名字钉成了断言。
 

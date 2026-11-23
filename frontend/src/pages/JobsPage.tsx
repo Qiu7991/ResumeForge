@@ -2,8 +2,8 @@
 /** 岗位广场：搜索筛选、手动添加、详情与生成简历入口。 */
 import { App } from "antd";
 import type { TableRowSelection } from "antd/es/table/interface";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { markCandidateJobImported } from "../api/candidateJob";
 import { openBrowserUrl } from "../api/apply";
 import { deleteJob, getJob, updateJob } from "../api/jobs";
@@ -34,10 +34,12 @@ import { useJobQueue } from "./jobs/useJobQueue";
 import { useJobsPageState } from "./jobs/useJobsPageState";
 import { useSelectAllJobs } from "./jobs/useSelectAllJobs";
 import { useJobBatchActions } from "./jobs/useJobBatchActions";
+import { useJobsDeepLinkEffects } from "./jobs/useJobsDeepLinkEffects";
 import { useDeleteUndo } from "../features/trash/useDeleteUndo";
 import { registerJobCreateHandler } from "../features/shortcuts/runtimeTargets";
 import { t } from "../i18n";
 import { useLocale } from "../i18n/i18nContext";
+import { DEFAULT_JOB_SORT_STATE, isDefaultJobSort } from "../utils/jobSort";
 
 export default function JobsPage() {
   useLocale();
@@ -111,47 +113,14 @@ export default function JobsPage() {
     return () => registerJobCreateHandler(null);
   }, []);
 
-  // 完成通知的「查看结果」深链（/jobs?match_batch=history）：打开分析记录后清掉参数，
-  // 让刷新/返回不会再弹。useJobsPageState 管它自己的筛选参数，这里只动 match_batch。
-  // URL → state 的镜像同步属"派生事件"，规则按书面理由豁免（与 useJobsPageState 同模式）。
-  /* eslint-disable react-hooks/set-state-in-effect */
-  const [searchParams, setSearchParams] = useSearchParams();
-  useEffect(() => {
-    if (searchParams.get("match_batch") !== "history") return;
-    setMatchBatchView("history");
-    setMatchBatchOpen(true);
-    setSearchParams(
-      (previous) => {
-        const next = new URLSearchParams(previous);
-        next.delete("match_batch");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [searchParams, setSearchParams]);
-
-  // 完成通知的「查看」深链（/jobs?job_id=<id>&analysis=1）：等详情拉全之后自动打开解读弹窗，
-  // 再把参数清掉。boolean 锁存保证"清参数触发的这一轮"不会再把弹窗重开一次；参数彻底
-  // 消失后复位，这样从任务条再点一次「查看」（同一个岗位）仍然能打开。
-  const analysisLinkHandled = useRef(false);
-  useEffect(() => {
-    if (searchParams.get("analysis") !== "1") {
-      analysisLinkHandled.current = false;
-      return;
-    }
-    if (!detailJob || analysisLinkHandled.current) return;
-    analysisLinkHandled.current = true;
-    setAnalysisJob(detailJob);
-    setSearchParams(
-      (previous) => {
-        const next = new URLSearchParams(previous);
-        next.delete("analysis");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [searchParams, detailJob, setSearchParams]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  // 完成通知的两条深链（match_batch=history / job_id+analysis=1）整域下沉到 hook：
+  // 「到达即消费、消费完清参数」的锁存语义只有一份实现。
+  useJobsDeepLinkEffects({
+    detailJob,
+    setMatchBatchView,
+    setMatchBatchOpen,
+    setAnalysisJob,
+  });
 
   useEffect(() => {
     if (error) message.error(error);
@@ -358,16 +327,16 @@ export default function JobsPage() {
         setCandidatesOpen={setCandidatesOpen}
         setFormOpen={setFormOpen}
         onImportCsv={() => setImportCsvOpen(true)}
-        sortState={sortState}
-        applySort={applySort}
         selectionMode={selectionMode}
         enterSelectionMode={enterSelectionMode}
+        extraActions={<ImportFromUrlLauncher buttonSize="small" onImported={() => void reload()} />}
+        // 排序复位（I-39）：只在离开默认排序时渲染，位置由 JobFilterBar 的尾槽保证
+        // 是这一行的最右。复位后回到「最近导入在前」，并且 applySort 已经把页码拉回 1。
+        sortReset={{
+          changed: !isDefaultJobSort(sortState),
+          onReset: () => applySort(DEFAULT_JOB_SORT_STATE),
+        }}
       />
-
-      {/* 从链接导入（#16C）：按钮+弹窗自包含；导入后停在岗位广场、只刷新列表，不自动入队。 */}
-      <div style={{ marginBottom: 12 }}>
-        <ImportFromUrlLauncher onImported={() => void reload()} />
-      </div>
 
       <BatchToolbar
         selectionMode={selectionMode}

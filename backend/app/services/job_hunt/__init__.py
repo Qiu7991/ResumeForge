@@ -11,6 +11,7 @@
 - ``sites/``   ：各平台适配器与反爬处理（BOSS 字体解密等，J2+）；
 - ``replies``  ：回复监测（只读，不自动回复，J8）。
 """
+
 from .base import HuntCriteria, JobDetail, JobParseError, JobSiteAdapter, JobStub
 from .registry import JobHuntRegistry, default_registry, get_registry
 

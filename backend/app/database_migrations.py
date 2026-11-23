@@ -23,6 +23,15 @@ ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
 # 2.0 基线：纯 CREATE 语句、无存在性判断，结构自检重放时必须跳过它。
 # 与 tests/migration_refs.py 的 BASELINE_REVISION 同值；这里不能从 tests 导入。
 _BASELINE_REVISION = "0001_baseline_v2"
+# 历史二开重编号桥接：合并上游 2.3.1 前，本地生产库停在旧编号的二开迁移上
+# （当时接在 0017 之后）。上游 2.2+ 占用了 0018–0022，二开迁移随之顺延到 0023–0024；
+# 仅在本机启动路径（repair_schema=True）把这两个已确认的旧编号回拨到 0017，
+# 让 alembic 顺序执行上游 0018–0022 与幂等的 0023–0024。备份导入路径（repair_schema=False）
+# 不走桥接，保持 fail-closed 校验。
+_LEGACY_FORK_REVISIONS_ANCHOR = "0017_agent_task_params"
+_LEGACY_FORK_REVISIONS = frozenset(
+    {"0018_fork_apply_greeting_plan_aijob", "0019_candidate_job_score"}
+)
 
 
 def application_tables() -> tuple[str, ...]:
@@ -89,9 +98,7 @@ def _replay_idempotent_migrations(bind: Engine, scripts: ScriptDirectory) -> Non
     （0010 的表引用 0008 的列），乱序会在中途撞 FK/缺列。
     """
     ordered = [
-        revision
-        for revision in scripts.walk_revisions()
-        if revision.revision != _BASELINE_REVISION
+        revision for revision in scripts.walk_revisions() if revision.revision != _BASELINE_REVISION
     ]
     ordered.reverse()  # walk_revisions() 是 head → base，反转成 base → head
 
@@ -125,9 +132,6 @@ def _assert_schema_complete(bind: Engine, before: list[str]) -> None:
             "这说明某个迁移不是幂等的，或模型里引用了没有迁移覆盖的列。"
             "请把这条消息连同 data/logs/backend.log 一起报告，库已被备份。"
         )
-
-    """库是否已经包含当前模型认识的业务表（用于拒绝未版本化的库）。"""
-    return bool(set(inspect(bind).get_table_names()).intersection(_APPLICATION_TABLES))
 
 
 def _missing_schema_objects(bind: Engine) -> list[str]:
@@ -215,6 +219,7 @@ def backup_sqlite_database(bind: Engine, output_dir: Path | None = None) -> Path
     logger.info("SQLite 备份已创建 path=%s", destination)
     return destination
 
+
 def run_database_migrations(
     bind: Engine, *, backup: bool = True, repair_schema: bool = True
 ) -> Path | None:
@@ -285,12 +290,20 @@ def run_database_migrations(
             "数据库已有业务表但没有版本号：启动闸门未先归档旧库，已拒绝迁移。"
             "这属于启动顺序错误，请报告维护者；原始库未被修改。"
         )
-    backup_path = (
-        backup_sqlite_database(bind) if backup and _database_has_user_data(bind) else None
-    )
+    backup_path = backup_sqlite_database(bind) if backup and _database_has_user_data(bind) else None
     # Reuse the application's connection so sqlite:///:memory: is migrated in
     # place instead of creating and discarding a second in-memory database.
     with bind.begin() as connection:
+        if repair_schema and current_revision in _LEGACY_FORK_REVISIONS:
+            logger.warning(
+                "检测到合并前的旧二开迁移号 %s，先回拨版本号到 %s 再顺序补齐上游迁移",
+                current_revision,
+                _LEGACY_FORK_REVISIONS_ANCHOR,
+            )
+            connection.execute(
+                text("UPDATE alembic_version SET version_num = :rev"),
+                {"rev": _LEGACY_FORK_REVISIONS_ANCHOR},
+            )
         config.attributes["connection"] = connection
         command.upgrade(config, "head")
     logger.info("数据库迁移完成 revision=%s", head_revision)

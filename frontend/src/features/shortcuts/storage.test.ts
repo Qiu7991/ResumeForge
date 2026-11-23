@@ -92,6 +92,9 @@ describe("默认值与坏数据", () => {
         "redo",
         "save",
         "search",
+        "selectionPanel",
+        // I-18：提示模式开关（默认 Alt+H）。
+        "showHints",
         "switchDataset",
         "toggleTheme",
         "undo",

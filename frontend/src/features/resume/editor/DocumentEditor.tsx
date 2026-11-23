@@ -16,9 +16,8 @@
  * 自己算页签。
  */
 import { Dropdown } from "antd";
-import type { MenuProps } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useI18n } from "../../../i18n/i18nContext";
 import type { DocumentFieldCatalog, ResumeDocument } from "../../../types/resumeDocument";
 import {
@@ -26,24 +25,24 @@ import {
   catalogSectionOf,
   ensureIds,
   entryPath,
-  locatePath,
   needsIds,
   parseDocumentPath,
   sectionKeyOfPath,
 } from "../document";
-import { removeItem, removeSection, toggleItemHidden } from "../document/mutations";
+import { removeSection } from "../document/mutations";
 import DocumentHeaderPanel from "./DocumentHeaderPanel";
 import DocumentSectionTabs, { type DocumentSectionTabItem } from "./DocumentSectionTabs";
 import SectionEditor from "./SectionEditor";
 import { DocumentDragContext, useDocumentDragHost } from "./documentDragContext";
-import { hasActiveTextSelection } from "../../context-menu/selectionGuard";
-import { DocumentChipMenuContext, type ChipMenuRequest } from "./documentChipMenuContext";
+import { DocumentChipMenuContext } from "./documentChipMenuContext";
 import "./document-editor.css";
 import "./chip-menu.css";
-import { useChipMenuDismiss } from "./useChipMenuDismiss";
 import { DocumentExpandContext } from "./documentExpandContext";
-import ChipStylePopover, { type ChipStylePopoverState } from "./ChipStylePopover";
+import { loadInlineFormatPreview } from "./inlineFormatPreviewStore";
+import ChipStylePopover from "./ChipStylePopover";
+import PhotoFramePopover from "./PhotoFramePopover";
 import DocumentNotice, { type NoticeState } from "./DocumentNotice";
+import { useEditorChipMenu } from "./useEditorChipMenu";
 import type { ResumeLayout } from "../../../types";
 import type { ResumeFormatConfig } from "../../../types/resumeFormat";
 
@@ -107,15 +106,10 @@ export default function DocumentEditor({
   const [activeKey, setActiveKey] = useState<string>(BASIC_TAB);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [draggedPath, setDraggedPath] = useState<string | null>(null);
-  /**
-   * 字段右键菜单的当前目标（R-30 第 5 项）：整个编辑器只有这一份菜单，
-   * 不再每个 chip 各包一个 Dropdown。null = 关着。
-   */
-  const [chipMenu, setChipMenu] = useState<ChipMenuRequest | null>(null);
+
   // #8：展开（字段编辑器可见）与选中（高亮/联动/定位）分离——单击只选中，双击/F2 才展开。
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
-  // #7：右键「调整排版」浮层（layout 通道存在时才有这项）。
-  const [stylePopover, setStylePopover] = useState<ChipStylePopoverState | null>(null);
+
   const rootRef = useRef<HTMLDivElement>(null);
   const revealFrame = useRef(0);
   /**
@@ -166,6 +160,14 @@ export default function DocumentEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * T01：行内格式预览开关是**全局 KV 设置**，在文档编辑器挂载时读一次（模块级 store 里
+   * 全进程只发一次请求）。页眉与三个值入口都在本组件下面，所以这一个挂载点覆盖全部字段。
+   */
+  useEffect(() => {
+    void loadInlineFormatPreview();
+  }, []);
+
   const fallbackCatalog = useMemo(() => buildFallbackCatalog(t), [t]);
   const catalog = fieldCatalog ?? fallbackCatalog;
 
@@ -208,32 +210,6 @@ export default function DocumentEditor({
     if (path !== selectedPath) suppressRevealRef.current = true;
     onSelectPath?.(path);
   };
-  const setExpanded = useCallback(
-    (path: string | null) => {
-      setNotice(null);
-      setExpandedPath(path);
-      if (path && selectedPath !== path) {
-        suppressRevealRef.current = true;
-        onSelectPath?.(path);
-      }
-    },
-    [onSelectPath, selectedPath],
-  );
-  const toggleExpand = useCallback(
-    (path: string) => {
-      setNotice(null);
-      if (expandedPath === path) {
-        setExpandedPath(null);
-        return;
-      }
-      setExpandedPath(path);
-      if (selectedPath !== path) {
-        suppressRevealRef.current = true;
-        onSelectPath?.(path);
-      }
-    },
-    [expandedPath, onSelectPath, selectedPath],
-  );
   const report = (text: string, tone: "info" | "warning" = "info") => setNotice({ text, tone });
 
   /**
@@ -255,29 +231,6 @@ export default function DocumentEditor({
     report(t("document.section.removed", { section }));
   };
 
-  /** chip 请求开菜单（键盘 Shift+F10 / 菜单键走这条）；只读时不弹。 */
-  const requestChipMenu = useCallback(
-    (request: ChipMenuRequest) => {
-      if (readOnly) return;
-      setChipMenu(request);
-    },
-    [readOnly],
-  );
-  /**
-   * #7：条目卡右键菜单的「排版整条…」——范围锁定为**整条**（`objects[<entryId>]`），
-   * 走的还是同一个排版浮层；没有 layout 通道（宿主没给 onLayoutChange）时不接。
-   */
-  const requestEntryStyle = useCallback(
-    (request: ChipMenuRequest) => {
-      if (readOnly || !onLayoutChange) return;
-      setStylePopover({ path: request.path, x: request.x, y: request.y });
-    },
-    [onLayoutChange, readOnly],
-  );
-  const chipMenuHost = useMemo(
-    () => ({ request: requestChipMenu, requestStyle: requestEntryStyle }),
-    [requestChipMenu, requestEntryStyle],
-  );
   /**
    * 任务 6：`format_config` 的写回通道（照片裁剪参数住在它的 `photo_crop` 域里）。
    * 宿主没接 `onLayoutChange` 时返回 `undefined`——那表示"这一屏没有版式通道"，
@@ -287,101 +240,84 @@ export default function DocumentEditor({
     if (!onLayoutChange || !layout) return undefined;
     return (next: ResumeFormatConfig) => onLayoutChange({ ...layout, format_config: next });
   }, [layout, onLayoutChange]);
+  // 拖拽上下文（`rejectRef` 身份稳定，文档变化不会让所有 chip 重渲染）。
+  const dragHost = useDocumentDragHost(draggedPath, setDraggedPath);
+  const {
+    chipMenu,
+    stylePopover,
+    photoFramePopover,
+    closeChipMenu,
+    closeStylePopover,
+    closePhotoFramePopover,
+    chipMenuHost,
+    chipMenuItems,
+    onChipMenuClick,
+    handleContextMenu,
+    handleEscCapture,
+  } = useEditorChipMenu({
+    document,
+    readOnly,
+    onChange,
+    onNotice: report,
+    onLayoutChange,
+    onCollectAsset,
+    // I-04 第 1 条边：右键菜单 / 排版浮层 / 照片框浮层一开，先收起展开中的字段编辑器。
+    onOverlayOpen: () => setExpandedPath(null),
+  });
+  /**
+   * I-04 第 2 条边：展开字段编辑器时关掉右键菜单与排版浮层。
+   *
+   * 只在**展开**（`path` 非空）时关：`select()` 每次选择都会调 `setExpandedPath(null)`，
+   * 若"收起"也关浮层，"浮层开着点纸面预览"的既有工作流会被破坏。
+   * 这两回调必须定义在 `useEditorChipMenu` 之后（要用它的关闭函数），所以 `expandHost`
+   * 也一并挪到这里。
+   */
+  const setExpanded = useCallback(
+    (path: string | null) => {
+      setNotice(null);
+      setExpandedPath(path);
+      if (path) {
+        closeChipMenu();
+        closeStylePopover();
+        closePhotoFramePopover();
+      }
+      if (path && selectedPath !== path) {
+        suppressRevealRef.current = true;
+        onSelectPath?.(path);
+      }
+    },
+    [closeChipMenu, closePhotoFramePopover, closeStylePopover, onSelectPath, selectedPath],
+  );
+  const toggleExpand = useCallback(
+    (path: string) => {
+      setNotice(null);
+      if (expandedPath === path) {
+        setExpandedPath(null);
+        return;
+      }
+      // 展开即互斥：菜单 / 浮层不能与编辑器同屏（"卡片压卡片"）。
+      closeChipMenu();
+      closeStylePopover();
+      closePhotoFramePopover();
+      setExpandedPath(path);
+      if (selectedPath !== path) {
+        suppressRevealRef.current = true;
+        onSelectPath?.(path);
+      }
+    },
+    [
+      closeChipMenu,
+      closePhotoFramePopover,
+      closeStylePopover,
+      expandedPath,
+      onSelectPath,
+      selectedPath,
+    ],
+  );
   const expandHost = useMemo(
     () => ({ expandedPath, toggleExpand, setExpanded }),
     [expandedPath, setExpanded, toggleExpand],
   );
-  // 拖拽上下文（`rejectRef` 身份稳定，文档变化不会让所有 chip 重渲染）。
-  const dragHost = useDocumentDragHost(draggedPath, setDraggedPath);
-
-  /** 右键事件委托：命中最近的、带 `data-document-path` 的字段 chip 才接管。 */
-  const handleContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (readOnly) return;
-    const node = (event.target as HTMLElement | null)?.closest?.("[data-document-path]");
-    const path = node?.getAttribute("data-document-path");
-    if (!path) return;
-    /**
-     * 选中了文字就让位给选区菜单（AI 润色那一层）：两套监听都处理同一个 `contextmenu`
-     * 时，屏幕上会叠出两张卡片（2026-11-04 用户实测）。字段动作（收藏/排版/隐藏/移除）
-     * 是"没选字时对整块的操作"，选字后用户要的是剪切/复制/润色。
-     */
-    if (hasActiveTextSelection()) return;
-    event.preventDefault();
-    setChipMenu({ path, x: event.clientX, y: event.clientY });
-  };
-
-  const closeChipMenu = useCallback(() => setChipMenu(null), []);
-  const chipMenuTarget = chipMenu ? locatePath(document, chipMenu.path) : null;
-  // #6：滚动/resize/失焦也关菜单（antd 只覆盖点外面与 Esc；浮层锚点滚走会错位）。
-  useChipMenuDismiss(chipMenu !== null, closeChipMenu, { closeOnOutsidePointer: true });
-  const chipMenuItem =
-    chipMenuTarget && (chipMenuTarget.kind === "item" || chipMenuTarget.kind === "header")
-      ? chipMenuTarget.item
-      : null;
-  // 页眉字段与板块内字段的 `placement` 枚举不同（HeaderPlacement vs Placement），
-  // 但"隐藏"在两边的取值都是 `"hidden"`；TextItem 没有 placement，只带一个 hidden 布尔。
-  const chipMenuHidden = chipMenuItem
-    ? chipMenuItem.kind === "text"
-      ? chipMenuItem.hidden
-      : chipMenuItem.placement === "hidden"
-    : false;
-  const chipMenuItems: MenuProps["items"] = [
-    // #19 双入口之一：宿主接了收藏回调时，正文 item（含要点文本块）多一项「收藏为资产」。
-    ...(onCollectAsset && chipMenuTarget?.kind === "item"
-      ? [
-          { key: "collect", label: t("assets.action.collect") },
-          { type: "divider" as const, key: "collect-divider" },
-        ]
-      : []),
-    // #7 的「调整排版」只对可排版的正文 item 有语义（页眉字段没有条目/位置样式可调）。
-    ...(onLayoutChange && chipMenuTarget?.kind === "item"
-      ? [
-          { key: "style", label: t("document.editor.styleEntry") },
-          { type: "divider" as const, key: "style-divider" },
-        ]
-      : []),
-    { key: "toggle", label: chipMenuHidden ? t("document.item.show") : t("document.item.hide") },
-    { key: "remove", label: t("document.item.remove"), danger: true },
-  ];
-  const onChipMenuClick: MenuProps["onClick"] = ({ key }) => {
-    const path = chipMenu?.path;
-    const anchor = chipMenu;
-    setChipMenu(null);
-    if (!path) return;
-    if (key === "collect") {
-      onCollectAsset?.(path);
-      return;
-    }
-    if (key === "style" && anchor) {
-      setStylePopover({ path, x: anchor.x, y: anchor.y });
-      return;
-    }
-    if (key === "toggle") {
-      onChange(toggleItemHidden(document, path));
-      report(chipMenuHidden ? t("document.toast.shown") : t("document.toast.hidden"), "info");
-      return;
-    }
-    if (key === "remove") {
-      onChange(removeItem(document, path));
-      report(t("document.toast.fieldRemoved"), "info");
-    }
-  };
-
-  /** A3：Esc 的层级——菜单/浮层 → 编辑器 → 选中 → 最后才放行给 antd Modal 关制作台。 */
-  const handleEscCapture = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "Escape") return;
-    if (chipMenu) {
-      event.preventDefault();
-      event.stopPropagation();
-      closeChipMenu();
-      return;
-    }
-    if (stylePopover) {
-      event.preventDefault();
-      event.stopPropagation();
-      setStylePopover(null);
-    }
-  };
 
   /**
    * A3：焦点在展开出来的字段编辑器里（输入框 / 下拉）时，Esc 也先收编辑器并**把焦点还给
@@ -484,8 +420,21 @@ export default function DocumentEditor({
                 document={document}
                 layout={layout}
                 disabled={readOnly}
-                onClose={() => setStylePopover(null)}
+                onClose={closeStylePopover}
                 onLayoutChange={onLayoutChange}
+              />
+            ) : null}
+            {/* I-01：照片字段的「照片框…」——与「调整排版」互斥，同一浮层位置只开一个。 */}
+            {photoFramePopover ? (
+              <PhotoFramePopover
+                state={photoFramePopover}
+                formatConfig={layout?.format_config ?? null}
+                disabled={readOnly}
+                onClose={closePhotoFramePopover}
+                onChange={(format_config) => {
+                  if (!layout || !onLayoutChange) return;
+                  onLayoutChange({ ...layout, format_config });
+                }}
               />
             ) : null}
           </div>

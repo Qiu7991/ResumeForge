@@ -83,7 +83,9 @@ describe("WorkbenchParamsColumnV2 · 分组归属（#7 / #13）", () => {
         <RecordHarness />
       </AntdApp>,
     );
-    expect(container.querySelectorAll(".resume-typography-panel")).toHaveLength(0);
+    expect(container.querySelectorAll(".resume-typography-panel")).toHaveLength(1);
+    expect(screen.getByText(t("typography.role.field_label"))).toBeInTheDocument();
+    expect(screen.queryByText(t("typography.role.body"))).toBeNull();
     expect(screen.queryByText(t("structure.typographyTools.title"))).toBeNull();
   });
 
@@ -104,6 +106,19 @@ describe("WorkbenchParamsColumnV2 · 分组归属（#7 / #13）", () => {
     expect(pageText.indexOf(t("research.mode.label"))).toBeLessThan(pageText.indexOf(language));
     // 联系方式换行只有一个入口。
     expect(within(pageGroup).getAllByText(t("workbench.contactBreak.label"))).toHaveLength(1);
+  });
+
+  it("照片不再是独立页签，改成排版参数里的第四个分组（5.1）", () => {
+    const { container } = render(
+      <AntdApp>
+        <RecordHarness />
+      </AntdApp>,
+    );
+    // 本用例只挂 params + structure 两个页签（没有双语/资产/来源/历史）。
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    const groups = Array.from(container.querySelectorAll<HTMLElement>(".resume-wb-group"));
+    // 模板 / 版面 / 样式 / 照片 —— 照片在最后。
+    expect(groups[groups.length - 1]?.textContent).toContain(t("workbench.group.photo"));
   });
 });
 

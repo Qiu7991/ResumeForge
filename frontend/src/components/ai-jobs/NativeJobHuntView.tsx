@@ -14,7 +14,7 @@
  * - no delivery execution (the apply desk owns batches, breakers, failure classes);
  * - no scoring UI (the job library's match analysis is the same result set).
  */
-import { Alert, Button, Card, Empty, Space, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -46,6 +46,7 @@ import {
   normalizeSiteKey,
 } from "./huntFilterStorage";
 import CompanyName from "../common/CompanyName";
+import EmptyState from "../common/EmptyState";
 
 const { Text, Title } = Typography;
 
@@ -231,8 +232,6 @@ export default function NativeJobHuntView({ status }: Props) {
     },
   ];
 
-
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* 两个 error 是不同来源，必须都显示：
@@ -331,7 +330,12 @@ export default function NativeJobHuntView({ status }: Props) {
 
         {/* 黑名单折叠：长效配置，不该占首屏。展开后才渲染（省一次接口调用）。 */}
         <div style={{ marginTop: 12 }}>
-          <Button type="link" size="small" style={{ padding: 0 }} onClick={() => setBlocklistOpen((v) => !v)}>
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0 }}
+            onClick={() => setBlocklistOpen((v) => !v)}
+          >
             {blocklistOpen ? "− " : "+ "}
             {t("aiJobs.hunt.blocklistToggle")}
           </Button>
@@ -369,7 +373,9 @@ export default function NativeJobHuntView({ status }: Props) {
                 title={t("aiJobs.native.persistErrors", {
                   count: result.persisted.errors.length,
                 })}
-                description={result.persisted.errors.slice(0, 5).join(t("aiJobs.native.errorSeparator"))}
+                description={result.persisted.errors
+                  .slice(0, 5)
+                  .join(t("aiJobs.native.errorSeparator"))}
               />
             )}
           </div>
@@ -419,9 +425,7 @@ export default function NativeJobHuntView({ status }: Props) {
         size="small"
         extra={
           <Space>
-            <Text type="secondary">
-              {t("aiJobs.native.selected", { n: selected.length })}
-            </Text>
+            <Text type="secondary">{t("aiJobs.native.selected", { n: selected.length })}</Text>
             <Button
               type="primary"
               disabled={!selected.length}
@@ -444,7 +448,7 @@ export default function NativeJobHuntView({ status }: Props) {
             selectedRowKeys: selected,
             onChange: (keys) => setSelected(keys as number[]),
           }}
-          locale={{ emptyText: <Empty description={t("aiJobs.native.empty")} /> }}
+          locale={{ emptyText: <EmptyState inline description={t("aiJobs.native.empty")} /> }}
         />
       </Card>
 

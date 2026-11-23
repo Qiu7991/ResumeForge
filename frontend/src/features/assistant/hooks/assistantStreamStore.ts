@@ -13,77 +13,51 @@
  *   收尾刷新（会话列表 + 命中会话的详情），刷新回调优先用当前仍挂载的实例，
  *   全部离场时退回发送时捕获的那一份——保证离场期间回复完整落库并刷新列表。
  * - 发送互斥标记（原 sendingRef）随之全局化：双实例天然不会同时发送。
+ *
+ * 拆分（行数预算）：状态容器 / 订阅 / delta 缓冲在 assistantStreamCore.ts；本文件保留
+ * 发送生命周期与对外导出（导出名一个未变）。
  */
 
 import type { RefObject } from "react";
 import { regenerateAssistantMessage, sendAssistantMessage } from "../../../api/assistant";
 import { resolvePermissionAxes } from "../assistantPermission";
 import { buildAssistantClientContext } from "../clientContext";
+import { getConversationContextState, recordContextResult } from "../conversationContextState";
 import { t } from "../../../i18n";
 import type {
-  AssistantSource,
-  AssistantSourceNumber,
+  AssistantMessageReferences,
+  AssistantMessageSkill,
   AssistantStreamEvent,
-  AssistantToolCall,
   AssistantSurface,
-  ContextUsage,
   ReasoningEffort,
 } from "../../../types";
 import type { PendingAttachment } from "../assistantUtils";
 import type { TouTouStatus } from "../../tou-tou/touTouTypes";
+import {
+  appendAssistantStreamReasoningDelta,
+  appendAssistantStreamTextDelta,
+  type AssistantStreamInstance,
+  finalizeAssistantStreamText,
+  getAssistantStreamAbortController,
+  getAssistantStreamInstances,
+  getAssistantStreamState,
+  isAssistantStreamRequestErrored,
+  isAssistantStreamSending,
+  patchAssistantStream,
+  scheduleAssistantStreamFlush,
+  setAssistantStreamAbortController,
+  setAssistantStreamRequestErrored,
+  setAssistantStreamSending,
+} from "./assistantStreamCore";
 
-/** 对外暴露的流式会话状态（与原 useAssistantStream 的 useState 一一对应）。 */
-export interface AssistantStreamState {
-  sending: boolean;
-  sendingConversationId: number | null;
-  pendingUserText: string;
-  pendingSentAt: string;
-  pendingUserAttachments: PendingAttachment[];
-  streamingText: string;
-  streamingReasoning: string;
-  streamingSources: AssistantSource[];
-  streamingSourceMap: AssistantSourceNumber[];
-  streamingTools: AssistantToolCall[];
-  progressText: string;
-  streamError: string;
-  /** 上一轮回复撞到工具轮次上限时的轮数；null = 没撞到（不显示「继续」）。 */
-  roundLimitRounds: number | null;
-  /**
-   * 最近一次收到的上下文用量（需求 #6）。它属于 `contextUsageConversationId` 那个
-   * 会话——切换会话后由 `useAssistantContextUsage` 决定还用不用它，所以这里不在流
-   * 收尾时清空（清空会让面板在"刚回答完"的瞬间闪成「—」）。
-   */
-  contextUsage: ContextUsage | null;
-  contextUsageConversationId: number | null;
-}
-
-const initialState: AssistantStreamState = {
-  sending: false,
-  sendingConversationId: null,
-  pendingUserText: "",
-  pendingSentAt: "",
-  pendingUserAttachments: [],
-  streamingText: "",
-  streamingReasoning: "",
-  streamingSources: [],
-  streamingSourceMap: [],
-  streamingTools: [],
-  progressText: "",
-  streamError: "",
-  roundLimitRounds: null,
-  contextUsage: null,
-  contextUsageConversationId: null,
-};
-
-/**
- * 挂载实例注册表：流结束收尾时用它们的回调刷新数据。
- * 每个挂载的 useAssistantStream 实例注册一份，卸载时注销。
- */
-export interface AssistantStreamInstance {
-  activeIdRef: RefObject<number | null>;
-  reloadConversations: () => Promise<unknown>;
-  loadDetail: (id: number) => Promise<void>;
-}
+export type { AssistantStreamInstance, AssistantStreamState } from "./assistantStreamCore";
+export {
+  abortAssistantStream,
+  getAssistantStreamState,
+  registerAssistantStreamInstance,
+  resetAssistantStreamForTests,
+  subscribeAssistantStream,
+} from "./assistantStreamCore";
 
 /**
  * 「重新生成」目标（#13A）：重跑会话里最后一条助手回答。
@@ -104,107 +78,25 @@ export interface SendAssistantStreamOptions extends AssistantStreamInstance {
   setTouTouStatus: (status: TouTouStatus) => void;
   jobId: number | undefined;
   resumeId: number | undefined;
+  /** 本轮引用的岗位/简历快照（F36，乐观气泡用）。 */
+  contextRefs?: AssistantMessageReferences;
+  /** F36：发送成功后清空关联选择（拿到 conversationId 之后才调，失败不能清）。 */
+  clearContextRefs?: () => void;
   webSearch: boolean;
   reasoningEffort: ReasoningEffort;
   surface: AssistantSurface;
   /** 当前引用的消息 id；发送时随请求带上，之后清空。 */
   quotedMessageId: number | null;
   clearQuote: () => void;
-}
-
-let state: AssistantStreamState = initialState;
-let abortController: AbortController | null = null;
-/** 发送互斥标记（原 sendingRef 的全局化形态）。 */
-let sending = false;
-let requestErrored = false;
-const listeners = new Set<() => void>();
-const instances = new Set<AssistantStreamInstance>();
-
-/*
- * delta/reasoning 文本缓冲（T02 流式渲染性能）：这两类事件高频到达（每 token 一发），
- * 原实现每个事件都 patch + emit，50 个 delta 就是 50 次全量订阅者通知。现在先累积到
- * 模块级缓冲，用 rAF 合并成每帧最多一次 flush；后台标签页的 rAF 会暂停，补一个
- * setTimeout 兜底（两者谁先到谁触发，flushScheduled 防重复）。tool/progress/sources/
- * error 等低频事件仍走立即 patch——它们要求即时可见。
- */
-let pendingTextDelta = "";
-let pendingReasoningDelta = "";
-let flushScheduled = false;
-let flushTimerId: ReturnType<typeof setTimeout> | null = null;
-
-/** 把缓冲里的增量一次性并入状态并通知订阅者；缓冲为空时不动状态。 */
-function flushStreamText(): void {
-  flushScheduled = false;
-  if (flushTimerId !== null) {
-    clearTimeout(flushTimerId);
-    flushTimerId = null;
-  }
-  const textDelta = pendingTextDelta;
-  const reasoningDelta = pendingReasoningDelta;
-  if (!textDelta && !reasoningDelta) return;
-  pendingTextDelta = "";
-  pendingReasoningDelta = "";
-  patch({
-    streamingText: state.streamingText + textDelta,
-    streamingReasoning: state.streamingReasoning + reasoningDelta,
-  });
-}
-
-function scheduleStreamFlush(): void {
-  if (flushScheduled) return;
-  flushScheduled = true;
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => {
-      if (flushScheduled) flushStreamText();
-    });
-  }
-  // 兜底：rAF 被暂停（后台 tab）或被 fake timers 接管时，这把定时器保证 flush 会发生。
-  flushTimerId = setTimeout(() => {
-    if (flushScheduled) flushStreamText();
-  }, 50);
-}
-
-/** 流结束/中止/出错时的强制收口：缓冲里的最后一批增量立即落进状态，再清掉调度。 */
-function finalizeStreamText(): void {
-  flushStreamText();
-}
-
-function emit(): void {
-  for (const listener of listeners) listener();
-}
-
-function patch(next: Partial<AssistantStreamState>): void {
-  state = { ...state, ...next };
-  emit();
-}
-
-/** useSyncExternalStore 的订阅入口。 */
-export function subscribeAssistantStream(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-/** useSyncExternalStore 的快照入口：只在 patch 时替换引用，保证不变性约定。 */
-export function getAssistantStreamState(): AssistantStreamState {
-  return state;
-}
-
-/** 挂载实例注册；返回注销函数（组件卸载时调用）。 */
-export function registerAssistantStreamInstance(instance: AssistantStreamInstance): () => void {
-  instances.add(instance);
-  return () => {
-    instances.delete(instance);
-  };
-}
-
-/**
- * 用户手动停止（输入框的停止按钮）。行为与原来一致：只 abort 当前请求。
- * 注意：这里**不是**组件卸载路径——卸载不再中止回答。
- */
-export function abortAssistantStream(): void {
-  abortController?.abort();
+  /**
+   * T24：**这一条消息**要使用的技能 id（消息级）。空数组时请求里不带 `skill_ids`，
+   * 避免旧后端因 `extra="forbid"` 把空字段当成未知参数。
+   */
+  skillIds?: number[];
+  /** 同一批技能的 id+名字快照（乐观气泡显示「使用 X」）；发送后由页面清空选择。 */
+  skillRefs?: AssistantMessageSkill[];
+  /** 发送已经发起（且会话已拿到）后清空输入区的技能选择：技能只作用于下一条消息。 */
+  clearSkills?: () => void;
 }
 
 /**
@@ -225,7 +117,7 @@ export async function sendAssistantStreamMessage(
   regenerate?: RegenerateStreamTarget,
 ): Promise<void> {
   const trimmedText = text.trim();
-  if (sending) return;
+  if (isAssistantStreamSending()) return;
   // 重新生成不读输入框/附件，只关心"当前没有别的流正在写同一会话"。
   if (
     !regenerate &&
@@ -234,9 +126,9 @@ export async function sendAssistantStreamMessage(
   ) {
     return;
   }
-  sending = true;
-  requestErrored = false;
-  patch({ sending: true, streamError: "" });
+  setAssistantStreamSending(true);
+  setAssistantStreamRequestErrored(false);
+  patchAssistantStream({ sending: true, streamError: "" });
   options.setTouTouStatus("thinking");
   let conversationId: number | null;
   try {
@@ -245,8 +137,8 @@ export async function sendAssistantStreamMessage(
       options.activeIdRef.current ??
       (await options.createConversation());
   } catch (error) {
-    sending = false;
-    patch({
+    setAssistantStreamSending(false);
+    patchAssistantStream({
       sending: false,
       streamError:
         error instanceof Error
@@ -257,14 +149,18 @@ export async function sendAssistantStreamMessage(
     return;
   }
   if (!conversationId) {
-    sending = false;
-    patch({ sending: false, streamError: t("assistantHooks.stream.error.createConversation") });
+    setAssistantStreamSending(false);
+    patchAssistantStream({
+      sending: false,
+      streamError: t("assistantHooks.stream.error.createConversation"),
+    });
     options.setTouTouStatus("error");
     return;
   }
   // T11 四档权限：请求体永远发送**解算后的两轴布尔**（跟随全局在这里解算成具体档位），
   // 不发中间态——后端只认布尔。解算所需的全局默认取不到时按「仅查看」处理（少发安全）。
   const permissionAxes = await resolvePermissionAxes(conversationId);
+  const thresholdTokens = getConversationContextState(conversationId).thresholdTokens;
   const attachmentPayload = regenerate
     ? []
     : options.attachmentsRef.current.map(({ name, mime_type, data }) => ({
@@ -277,15 +173,21 @@ export async function sendAssistantStreamMessage(
     clearContent();
     // 引用只对这一次提问有效：发出去就清掉，避免用户以为下一条也带着引用。
     options.clearQuote();
+    options.clearContextRefs?.(); // F36：只对这次提问有效，且已拿到 conversationId
+    // T24：技能同样只作用于下一条消息；非空才清（空选择不需要一次无意义的 setState）。
+    if (options.skillIds?.length) options.clearSkills?.();
   }
   const controller = new AbortController();
-  abortController = controller;
-  patch({
+  setAssistantStreamAbortController(controller);
+  patchAssistantStream({
     // 重新生成：用户消息已经在历史里，不再画一条乐观气泡。
     pendingUserText: regenerate ? "" : trimmedText || t("assistantHooks.stream.attachmentOnly"),
     // 正在发送的这条消息还没有服务端时间戳，用它被发出的时刻顶上。
     pendingSentAt: new Date().toISOString(),
     pendingUserAttachments: optimisticAttachments,
+    pendingUserRefs: regenerate ? null : (options.contextRefs ?? null),
+    // T24：乐观气泡立刻显示「使用 X」；落库后同一条信息来自 context.skills。
+    pendingUserSkills: regenerate ? [] : (options.skillRefs ?? []),
     streamingText: "",
     streamingReasoning: "",
     streamingSources: [],
@@ -299,18 +201,18 @@ export async function sendAssistantStreamMessage(
   if (!regenerate) options.clearAttachments();
   const handleEvent = (event: AssistantStreamEvent) => {
     // 手动停止后立刻重发的场景：旧流的迟到事件不能写进新一轮会话状态。
-    if (abortController !== controller) return;
+    if (getAssistantStreamAbortController() !== controller) return;
     if (event.type === "delta") {
-      pendingTextDelta += event.text;
-      scheduleStreamFlush();
+      appendAssistantStreamTextDelta(event.text);
+      scheduleAssistantStreamFlush();
     }
     if (event.type === "reasoning") {
-      pendingReasoningDelta += event.text;
-      scheduleStreamFlush();
+      appendAssistantStreamReasoningDelta(event.text);
+      scheduleAssistantStreamFlush();
     }
-    if (event.type === "progress") patch({ progressText: event.message });
+    if (event.type === "progress") patchAssistantStream({ progressText: event.message });
     if (event.type === "sources") {
-      patch({
+      patchAssistantStream({
         streamingSources: event.sources,
         streamingSourceMap: event.source_map ?? [],
         ...(event.error ? { progressText: event.error } : {}),
@@ -318,9 +220,9 @@ export async function sendAssistantStreamMessage(
     }
     if (event.type === "tool") {
       // 显式挑字段，而不是解构剔除 type：仓库的 lint 不允许未使用的变量。
-      patch({
+      patchAssistantStream({
         streamingTools: [
-          ...state.streamingTools,
+          ...getAssistantStreamState().streamingTools,
           {
             name: event.name,
             arguments: event.arguments,
@@ -338,26 +240,33 @@ export async function sendAssistantStreamMessage(
     if (event.type === "write_proposal") {
       // 写入提案（RF-01）跟在对应 tool 事件之后到达：挂回最近一条工具记录，
       // 由 MessageToolCalls 渲染确认卡（待确认的写入在折叠面板外一眼可见）。
-      if (state.streamingTools.length === 0) return;
-      const next = [...state.streamingTools];
+      if (getAssistantStreamState().streamingTools.length === 0) return;
+      const next = [...getAssistantStreamState().streamingTools];
       next[next.length - 1] = { ...next[next.length - 1], proposal: event.proposal };
-      patch({ streamingTools: next });
+      patchAssistantStream({ streamingTools: next });
     }
     if (event.type === "error") {
-      requestErrored = true;
+      recordContextResult(conversationId, event.code);
+      setAssistantStreamRequestErrored(true);
       // 出错也先把缓冲的文本冲出去：用户看到的错误前文要与已收到的内容一致。
-      finalizeStreamText();
-      patch({ streamError: event.message });
+      finalizeAssistantStreamText();
+      patchAssistantStream({ streamError: event.message });
       options.setTouTouStatus("error");
     }
-    if (event.type === "done") options.setTouTouStatus("done");
+    if (event.type === "done") {
+      recordContextResult(conversationId);
+      options.setTouTouStatus("done");
+    }
     if (event.type === "round_limit") {
       // 撞到轮次上限：留着轮数，流收尾后仍要给用户一个「继续」入口（下一轮发送时复位）。
-      patch({ roundLimitRounds: event.rounds });
+      patchAssistantStream({ roundLimitRounds: event.rounds });
     }
     if (event.type === "context_usage") {
       // 归到发送时那个会话：面板只在"这条会话"上显示，切换会话时不串号。
-      patch({ contextUsage: event.usage, contextUsageConversationId: conversationId });
+      patchAssistantStream({
+        contextUsage: event.usage,
+        contextUsageConversationId: conversationId,
+      });
     }
     if (event.type === "start") void options.reloadConversations();
   };
@@ -369,6 +278,7 @@ export async function sendAssistantStreamMessage(
         regenerate.messageId,
         {
           reasoning_effort: options.reasoningEffort,
+          compaction_threshold_tokens: thresholdTokens,
           relaxed_mode: permissionAxes.relaxed,
           allow_write: permissionAxes.allowWrite,
         },
@@ -383,6 +293,7 @@ export async function sendAssistantStreamMessage(
       conversationId,
       {
         content: trimmedText,
+        compaction_threshold_tokens: thresholdTokens,
         job_id: options.jobId,
         resume_id: options.resumeId,
         // 后端保留这个字段只是兼容旧客户端；助手现在始终读取本地个人资料。
@@ -393,6 +304,8 @@ export async function sendAssistantStreamMessage(
         allow_write: permissionAxes.allowWrite,
         reasoning_effort: options.reasoningEffort,
         quoted_message_id: options.quotedMessageId,
+        // T24：技能只作用于这一条消息；空选择时整个字段都不发（后端 extra=forbid）。
+        ...(options.skillIds && options.skillIds.length > 0 ? { skill_ids: options.skillIds } : {}),
         attachments: attachmentPayload,
         // T25：带上"用户在哪一页、选中了哪条"的结构化线索；标题由后端按当前数据集重查。
         // 查询串只用于白名单参数（`/jobs?job_id=N` 这类抽屉选中），路由表全是静态页，
@@ -408,27 +321,30 @@ export async function sendAssistantStreamMessage(
     );
   } catch (error) {
     if (!controller.signal.aborted) {
-      requestErrored = true;
-      patch({
+      recordContextResult(conversationId);
+      setAssistantStreamRequestErrored(true);
+      patchAssistantStream({
         streamError: error instanceof Error ? error.message : t("assistantHooks.stream.error.send"),
       });
       options.setTouTouStatus("error");
     }
   } finally {
-    if (abortController === controller) abortController = null;
-    sending = false;
+    if (getAssistantStreamAbortController() === controller) setAssistantStreamAbortController(null);
+    setAssistantStreamSending(false);
     const aborted = controller.signal.aborted;
-    const errored = requestErrored;
+    const errored = isAssistantStreamRequestErrored();
     // done/abort/error 的统一收口（T02）：强制把缓冲里的最后一批 delta flush 出去，
     // 保证最终展示的流式文本与随后落库的消息逐字节一致，再清空流式视图。
-    finalizeStreamText();
+    finalizeAssistantStreamText();
     // 收尾（问题 B 核心）：无论组件是否还挂载，都清空流式视图并完成数据刷新，
     // 保证离场期间回复完整落库、会话列表与命中会话详情被刷新。
-    patch({
+    patchAssistantStream({
       sending: false,
       sendingConversationId: null,
       pendingUserText: "",
       pendingUserAttachments: [],
+      pendingUserRefs: null,
+      pendingUserSkills: [],
       streamingText: "",
       streamingReasoning: "",
       streamingSources: [],
@@ -437,7 +353,7 @@ export async function sendAssistantStreamMessage(
       progressText: "",
       streamError: "",
     });
-    const targets: AssistantStreamInstance[] = [...instances];
+    const targets: AssistantStreamInstance[] = getAssistantStreamInstances();
     if (targets.length === 0) {
       // 所有实例都已离场：退回发送时捕获的那份回调，把刷新请求照样发出去
       // （对已卸载实例的 setState 是安全的 no-op，但请求本身会完成）。
@@ -457,24 +373,4 @@ export async function sendAssistantStreamMessage(
     await Promise.all(refreshes);
     options.setTouTouStatus(aborted ? "idle" : errored ? "error" : "done");
   }
-}
-
-/**
- * 仅供测试：把 store 重置回空闲。某个用例把流挂起时避免污染同文件后续用例。
- * 同时清空文本缓冲与挂起的 flush 定时器——否则上一个用例欠下的 flush 会在
- * 下一个用例的 fake timers 下突兀触发，把串了状态的文本带进新用例。
- */
-export function resetAssistantStreamForTests(): void {
-  abortController = null;
-  sending = false;
-  requestErrored = false;
-  pendingTextDelta = "";
-  pendingReasoningDelta = "";
-  flushScheduled = false;
-  if (flushTimerId !== null) {
-    clearTimeout(flushTimerId);
-    flushTimerId = null;
-  }
-  state = initialState;
-  emit();
 }

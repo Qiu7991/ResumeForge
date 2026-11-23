@@ -64,6 +64,7 @@ const document = {
   "document.entry.empty": "这个板块还没有条目",
   "document.entry.copy": "复制条目",
   "document.entry.remove": "移除条目",
+  "document.entry.selectAria": "选择第 {index} 条：{title}",
   "document.entry.hide": "隐藏条目",
   "document.entry.show": "显示条目",
   "document.entry.moveUp": "上移条目",
@@ -84,6 +85,8 @@ const document = {
   "document.addField.action": "添加字段",
   "document.addField.custom": "自定义字段",
   "document.addField.customLabel": "字段标签",
+  "document.addField.customTitle": "新建自定义字段",
+  "document.addField.customSubmit": "创建字段",
   "document.addField.empty": "没有可添加的字段",
   "document.addField.fromProfile": "来自资料",
   "document.addField.materialOnly": "仅素材",
@@ -125,8 +128,21 @@ const document = {
   // ── 字段编辑器 ─────────────────────────────────────────────
   "document.field.value": "内容",
   "document.field.valuePlaceholder": "输入内容",
+  "document.inlineFormat": "行内格式",
+  "document.inlineFormat.preview": "预览行内格式",
+  "document.inlineFormat.previewHint":
+    "未编辑时按真实样式显示（含字号/字重/颜色）；编辑时保持纯文本，否则光标会错位。",
+  "document.inlinePreview.enterHint": "回车或点击进入编辑",
+  "document.inlineFormat.appliedHint": "已{what} · 离开输入框后可看到效果",
+  "document.inlineFormat.clearedHint": "已清除格式 · 离开输入框后可看到效果",
+  "document.inlineFormat.previewSaveFailed": "开关没存上，已恢复原来的设置",
   "document.field.label": "标签",
   "document.field.labelPlaceholder": "字段标签",
+  /** DF-10：自定义字段允许留空名；所有显示位置都用这一句兜底，绝不显示 `custom:` 内部键。 */
+  "document.field.unnamed": "未命名字段",
+  /** F22：字段名可改可清；清空 = 跟随目录（同时恢复「字段语言」联动）。 */
+  "document.field.labelReset": "恢复默认字段名",
+  "document.field.labelResetHint": "清空后跟随目录与字段语言；填了就不再跟随切换",
   "document.field.dateStart": "开始日期",
   "document.field.dateEnd": "结束日期",
   "document.field.datePresent": "至今",

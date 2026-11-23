@@ -1,0 +1,70 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* I-16：浏览器状态条的骨架与「同高」约束。从 `apply.css` 拆出——那个文件已贴 500 行
+   硬预算，而这组规则只服务一个组件，独立成文件更好定位。 */
+
+/*
+ * I-16 状态条第二行的"占位"与"内容"必须同高。
+ *
+ * 首屏还没读到状态时这一行渲染骨架，读到之后换成端口 / 扫码提示。此前它只在
+ * `data` 到位时才存在，于是数据回来的一瞬间整条卡片长高一行（布局跳动）。
+ * 现在两个分支共用 `.apply-browser-meta` 这一个容器，并把行高钉在 18px
+ * （与 `apply-density.css` 里扫码提示的 line-height 同档）：
+ * 骨架 18px、真实文本 18px，切换前后高度差为 0。
+ */
+.apply-page .apply-browser-meta {
+  min-height: 18px;
+}
+
+/* 端口是骨架换下来的那一块，行高必须与骨架逐像素对齐。 */
+.apply-page .apply-browser-port {
+  line-height: 18px;
+}
+
+/*
+ * 骨架宽度跟随容器（60%），**不写死像素**：窄到 768 时一个 220px 的固定宽度会把
+ * 卡片顶出横向滚动。`min-width` 只兜住极窄容器里的可见性，不参与定宽。
+ */
+.apply-page .apply-browser-skeleton {
+  display: block;
+  width: 60%;
+  max-width: 60%;
+  min-width: 40px;
+}
+
+.apply-page .apply-browser-skeleton .ant-skeleton-input {
+  width: 100%;
+  min-width: 0;
+  height: 18px;
+}
+
+/*
+ * 动作簇「两态严格等宽」（2026-11-20）。
+ *
+ * 静止态是 [启动浏览器][⋯]，运行态是 [打开招聘网站][⌃][⋯]。两处不等宽：
+ * 1. 折叠/展开那颗只在运行态渲染（30px 小按钮 + 8px 间隙 = 38px）；
+ * 2. 主按钮文案本身差一个字（5 vs 6 个汉字 = 14px）。
+ * 这里分别用「同尺寸的不可见槽位」和「按较长标签定宽的标签槽」把两处补平：
+ * 都不写死像素，尺寸由同一个 antd 组件 / 同一套字体算出来，换主题、换语言自动跟随。
+ * 补平的是**布局宽度**，不是视觉：静止态里那颗占位按钮 `visibility:hidden`，
+ * 既不可聚焦也不进无障碍树（wrapper 上还有 aria-hidden）。
+ */
+.apply-page .apply-browser-toggle-slot {
+  display: inline-flex;
+  visibility: hidden;
+}
+
+/* 两个标签叠在同一个网格单元里，列宽取两者中较宽的那个（= 较长文案），
+   再把占位的那一份隐藏：文字居中，视觉上永远只是一颗正常的主按钮。 */
+.apply-page .apply-browser-cta {
+  display: inline-grid;
+  align-items: center;
+  justify-items: center;
+}
+
+.apply-page .apply-browser-cta > * {
+  grid-area: 1 / 1;
+}
+
+.apply-page .apply-browser-cta > .apply-browser-cta-sizer {
+  visibility: hidden;
+}

@@ -25,8 +25,6 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from ..config import DATA_DIR
-from ..dataset_registry import configured_database_file
 from ..models.profile import utcnow
 from ..models.resume import ResumeRecord
 from ..models.share_package import (
@@ -36,12 +34,7 @@ from ..models.share_package import (
 )
 from ..runtime.log_fields import safe_log_text
 from ..schemas.resume_document import document_to_json
-from ..schemas.share_package import (
-    ShareCommentsOut,
-    ShareFileOut,
-    SharePackageBrief,
-    SharePackageOut,
-)
+from ..schemas.share_package import ShareCommentsOut, SharePackageBrief
 from . import trash
 from .export_pipeline import ExportRequest, RenderContext, build_export
 from .pdf_exporter import ResumePDFError
@@ -53,12 +46,15 @@ from .resume.resume_labels import DEFAULT_RESUME_LANGUAGE
 from .resume.resume_record import record_format_config
 from .resume.resume_template_store import resolve_style_config, resolve_style_template
 from .resume.resume_templates import DEFAULT_FONT_SCALE, DEFAULT_PAGE_LIMIT
+from .share_package_paths import (
+    SHARE_PACKAGES_DIR,
+    package_directory,
+    share_root,
+)
+from .share_package_views import share_package_brief, share_package_out
 
 logger = logging.getLogger(__name__)
 
-# 分享包落在数据目录下（与 captures 同级），天然不进仓库、不进备份。文件型 SQLite
-# 时进一步落到数据库同目录：测试库（临时目录）自动隔离，不会写进仓库的 backend/data。
-SHARE_PACKAGES_DIR = DATA_DIR / "share_packages"
 
 MAX_SHARE_PACKAGE_LIST = 500
 
@@ -77,40 +73,48 @@ class SharePackageError(Exception):
         self.status_code = status_code
 
 
-def _is_main_database(path: Path) -> bool:
-    """这个文件是不是 ``DATABASE_URL`` 指向的主数据。
+_SHARE_FOOTER_MARK = "<!--rf-share-footer-->"
 
-    判不出来时按"是"处理：那只会退回旧的路径规则，不会凭空改掉既有分享包的位置。
+# 页脚品牌标识：单色线稿，24px。内联 SVG 而不是引用图片文件——分享包要能离线双击打开，
+# `data:`/相对路径都可能被浏览器拦或丢，内联是唯一自带的形态。
+_SHARE_LOGO_SVG = (
+    '<svg width="24" height="24" viewBox="0 0 512 512" fill="none" '
+    'stroke="#16365c" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<rect x="11" y="11" width="490" height="490" rx="55" stroke-width="12"/>'
+    '<path stroke-width="14" d="M326 100C379 107 431 111 464 116C476 118 482 128 478 139'
+    "C437 245 388 355 335 454C330 464 320 469 310 466C268 455 221 440 186 431"
+    "C149 395 98 384 43 360C34 356 29 346 35 335C87 246 135 144 168 59C173 47 183 42 194 46"
+    'C223 57 289 79 326 100Z"/>'
+    '<path stroke-width="12" d="M326 100C316.6 130 305.7 161 293.9 192.3'
+    'M251.7 295.7C230.4 344.2 207.9 390.6 186 431"/>'
+    "</svg>"
+)
+
+
+def _with_share_footer(content: bytes, created_at: datetime) -> bytes:
+    """在分享版 HTML 末尾追加「由简历通生成 · 日期」页脚（WF-18）。
+
+    只动分享包这一份产物：简历导出的 PDF/Word **不加任何 logo**（用户 2026-11-19 选的口径），
+    分享包里的 ``resume.pdf`` 也保持干净。所以注入点必须在这里，而不是 ``export_pipeline``。
+
+    找不到 ``</body>`` 就原样返回：宁可没有页脚，也不要把一份能正常打开的 HTML 改坏。
     """
-    try:
-        return path == configured_database_file()
-    except Exception:  # noqa: BLE001 - 拿不到配置时保持既有行为
-        return True
-
-
-def share_root(bind) -> Path:
-    """分享包根目录：文件型 SQLite 落在数据库同目录，其余回退到数据目录。
-
-    **非主数据额外带一层库文件名。** 多个数据集共用 ``data/datasets/`` 这一个目录，而分享包
-    的 id 是每个库各自自增的——一律用 ``<库目录>/share_packages/<id>`` 的话，数据集 A 的第 1 份
-    与数据集 B 的第 1 份会落到同一个目录里，后建的那份把先建的**覆盖掉**（同一个坑在导出
-    备份那边也踩过一次：多份数据集共用一个文件系统命名空间）。
-
-    主数据保持原路径不变：它下面可能已经有用户的分享包，平白迁走等于让那些文件消失。
-    路径改变对非主数据是安全的——文件缺了会按库里的快照重新生成（见 ``ensure_package_files``）。
-    """
-    url = getattr(bind, "url", None)
-    database = getattr(url, "database", None)
-    if database and database != ":memory:" and Path(database).is_absolute():
-        resolved = Path(database).resolve()
-        root = resolved.parent / "share_packages"
-        return root if _is_main_database(resolved) else root / resolved.stem
-    return SHARE_PACKAGES_DIR
-
-
-def package_directory(bind, share_id: int) -> Path:
-    """某个分享包的本地目录：``<share_root>/<id>``（见 ``share_root`` 的数据集隔离规则）。"""
-    return share_root(bind) / str(share_id)
+    footer = (
+        f'<footer class="rf-share-footer" style="margin:28px auto 18px;max-width:720px;'
+        f"display:flex;align-items:center;justify-content:center;gap:8px;"
+        f"font-family:inherit;font-size:12px;line-height:1.6;color:#8a94a6;"
+        f"border-top:1px solid #e7ebf0;padding-top:12px;\">"
+        f"{_SHARE_LOGO_SVG}"
+        f"<span>由简历通生成 · {created_at:%Y-%m-%d}</span>"
+        f"</footer>{_SHARE_FOOTER_MARK}"
+    )
+    text = content.decode("utf-8", errors="replace")
+    lower = text.lower()
+    index = lower.rfind("</body>")
+    if index < 0:
+        return content
+    patched = f"{text[:index]}{footer}{text[index:]}"
+    return patched.encode("utf-8")
 
 
 def _write_atomically(path: Path, content: bytes) -> None:
@@ -327,7 +331,14 @@ def create_share_package(
         "created_at": utcnow().isoformat(),
     }
     files = [
-        _file_entry(directory, _HTML_FILE, html_artifact.content, "html"),
+        # 分享版**只有这一份**带「由简历通生成」页脚（WF-18）：导出接口与分享包里的
+        # resume.pdf 都不加 logo，所以注入点必须在这里而不是 export_pipeline。
+        _file_entry(
+            directory,
+            _HTML_FILE,
+            _with_share_footer(html_artifact.content, utcnow()),
+            "html",
+        ),
         _file_entry(directory, _PDF_FILE, pdf_artifact.content, "pdf"),
         _text_file_entry(
             directory,
@@ -372,56 +383,22 @@ def list_share_packages(db: Session, *, keyword: str = "", limit: int = 200) -> 
     )
 
 
+def list_share_package_briefs(
+    db: Session, *, keyword: str = "", limit: int = 200
+) -> list[SharePackageBrief]:
+    """分享包列表的响应视图（列表页与助手动作 ``list_share_packages`` 共用）。
+
+    查询口径在 :func:`list_share_packages`，这里只补"行 -> ``SharePackageBrief``"的投影：
+    两处各写一遍列表推导时，改一个字段（例如标题回落到文件名）就会只改到其中一处。
+    """
+    return [
+        share_package_brief(item) for item in list_share_packages(db, keyword=keyword, limit=limit)
+    ]
+
+
 def share_package_or_none(db: Session, share_id: int) -> SharePackage | None:
     """取一条分享包；已在回收站里的当作不存在。"""
     return trash.get_live(db, SharePackage, share_id)
-
-
-def _download_url(package: SharePackage, name: str) -> str:
-    return f"/api/share-packages/{package.id}/files/{name}"
-
-
-def share_package_brief(package: SharePackage) -> SharePackageBrief:
-    """分享包的列表摘要视图。"""
-    return SharePackageBrief(
-        id=package.id,
-        title=package.title,
-        resume_id=package.resume_id,
-        job_id=package.job_id,
-        permission=package.permission,
-        file_count=len(package.files or []),
-        created_at=package.created_at,
-        updated_at=package.updated_at,
-    )
-
-
-def share_package_out(package: SharePackage) -> SharePackageOut:
-    """分享包详情视图：文件清单（含下载地址）与脱敏快照、权限、token。"""
-    files = [
-        ShareFileOut(
-            name=str(item.get("name", "")),
-            path=str(item.get("path", "")),
-            format=str(item.get("format", "")),
-            size=int(item.get("size", 0)),
-            sha256=str(item.get("sha256", "")),
-            download_url=_download_url(package, str(item.get("name", ""))),
-        )
-        for item in (package.files or [])
-    ]
-    return SharePackageOut(
-        id=package.id,
-        title=package.title,
-        resume_id=package.resume_id,
-        job_id=package.job_id,
-        permission=package.permission,
-        files=files,
-        snapshot=package.snapshot or {},
-        comments_file=package.comments_file or "",
-        share_token=package.share_token or "",
-        redaction_config=package.redaction_config or {},
-        created_at=package.created_at,
-        updated_at=package.updated_at,
-    )
 
 
 def read_comments(package: SharePackage) -> ShareCommentsOut:
@@ -476,6 +453,7 @@ __all__ = [
     "create_share_token",
     "ensure_package_files",
     "import_comments",
+    "list_share_package_briefs",
     "list_share_packages",
     "package_directory",
     "read_comments",

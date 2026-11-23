@@ -21,6 +21,16 @@ const update = {
   "update.confirm.ok": "重启并安装",
   "update.confirm.cancel": "稍后安装",
   "update.card.title": "软件更新",
+  "update.inApp.checking": "正在检查更新",
+  "update.inApp.noTranslation": "此版本尚未提供中文说明",
+  "update.inApp.downloading": "正在下载安装包",
+  "update.inApp.verifying": "正在校验安装包",
+  "update.inApp.installing": "正在重启并安装",
+  "update.inApp.viewProgress": "查看更新进度",
+  "update.inApp.restartHint": "校验通过后将自动安装并重启，简历、岗位和设置会保留",
+  "update.inApp.incomplete": "发布包尚未齐备，请稍后重新检查",
+  "update.inApp.stalled": "下载已停滞，请检查网络并重试",
+  "update.inApp.interrupted": "上次更新未完成，可以重新检查",
   "update.field.channel": "更新方式",
   "update.side.title": "版本信息",
   "update.field.latest": "最新版本",
@@ -46,6 +56,25 @@ const update = {
   "update.field.published": "发布时间",
   /** 上游没给发布时间时的占位（不是"去检查"，因为结论已经有了）。 */
   "update.value.noDate": "未提供",
+  /**
+   * 检查过、但这次没问出"有没有新版本"时的占位。
+   *
+   * 与「未提供」刻意分开：「未提供」是上游没给这个信息，「本次未能确认」是我们没问到。
+   * 桌面壳有自己的出网链路，可能同时刻已经查到新版本并弹窗，设置页不能反过来断言
+   * "没有这个信息"（403 降级把两者同屏过一次）。
+   */
+  "update.value.unconfirmed": "本次未能确认",
+  /** 结论条：这次检查没得出有没有新版本（原因在后端给的 message 里）。 */
+  "update.result.unconfirmed": "本次检查未能确认版本",
+  /**
+   * 结论未确认时的补充说明（仅桌面形态）。
+   *
+   * 桌面壳的更新通道不在页面里，它的检查走 Chromium，代理与限流都和这里不同；所以
+   * 页面能说的只有"以壳为准"，不能替它宣布结论。
+   */
+  "update.desktop.preferShell": "桌面应用会自己检查更新，结论以它的提示为准。",
+  /** 桌面卡片：壳层这次也没能确认有没有新版本（不写「未提供」，理由同上）。 */
+  "update.desktop.checkFailed": "桌面应用这次没能确认有没有新版本。",
   /** 发布说明块的标题。 */
   "update.notes.title": "更新说明",
   /** 展开 / 收起发布说明；默认收起，长公告不把卡片撑长。 */
@@ -74,15 +103,46 @@ const update = {
   // 张卡片里跑，所以这里必须写清"谁在检查 + 手动入口在哪"。标题与第一段正文是
   // `zh-CN.ts` 里的 `update.desktop.title` / `update.desktop.description`（既有 key，
   // 改文案就地改值，不新建）。
-  /** ② 手动检查的两个固定入口。 */
+  /** ② 手动检查入口；update.cmd 仅适用于 Windows。 */
   "update.desktop.manual":
-    "想手动检查有两个入口：菜单里的「帮助 → 检查更新」，或双击安装目录下的 update.cmd。",
-  /** ③ 保底出口：发布页手动下载安装包。链接本身在卡片里紧跟这句。 */
-  "update.desktop.releaseHint": "也可以在发布页面下载 Setup.exe，双击手动安装。",
+    "可在菜单「帮助 → 检查更新」手动检查；Windows 也可双击安装目录中的 update.cmd。",
+  /** ③ 保底出口：发布页提供各平台安装包。链接本身在卡片里紧跟这句。 */
+  "update.desktop.releaseHint": "发布页提供各平台安装包，可按系统选择后手动安装。",
   /** 「重新检查」的 60 秒冷却态；`{seconds}` 是剩余秒数（见 UpdateCard 的最小点击间隔）。 */
   "update.action.recheckIn": "重新检查（{seconds} 秒）",
   /** 桌面壳里「检查更新」走 IPC：结果由主进程用系统弹窗给出，页面里没有进度可看。 */
   "update.toast.desktopStarted": "已在桌面应用中检查，结果会弹窗告知",
+
+  // ── 启动更新弹窗（UP-01） ────────────────────────────────────
+  /** 弹窗标题；`{version}` 是远端最新版本号。 */
+  "update.startup.title": "发现新版本 {version}",
+  "update.startup.current": "当前版本",
+  "update.startup.latest": "最新版本",
+  "update.startup.size": "安装包大小",
+  /** 发布说明区的标题。 */
+  "update.startup.notes": "更新内容",
+  "update.startup.expand": "展开全部",
+  "update.startup.collapse": "收起",
+  "update.startup.noNotes": "这个版本没有提供发布说明。",
+  "update.startup.updateNow": "立即更新",
+  "update.startup.later": "稍后",
+  /** 「稍后」按钮的悬浮说明：让 24 小时这个承诺可见。 */
+  "update.startup.laterHint": "24 小时内不再提醒",
+  "update.startup.skip": "跳过此版本",
+  "update.startup.skipHint": "这个版本以后不再提醒",
+  /** 下载中唯一的出口：只关窗，后台继续下载。 */
+  "update.startup.hide": "隐藏",
+  "update.startup.ready": "更新包已下载，SHA-256 校验通过",
+  "update.startup.readyHint": "重启后只替换程序文件，data/ 中的岗位、简历、对话和设置不会改动。",
+  "update.startup.install": "重启并安装",
+  /** 桌面安装壳：主按钮接壳的原生更新流程（检查 → 确认 → 下载 → 安装）。 */
+  "update.startup.openUpdater": "去更新",
+  /** 展开态内容区还有内容在视口外时的静态提示（不做成交互）。 */
+  "update.startup.scrollHint": "下面还有内容，向下滚动查看",
+  "update.startup.downloadPackage": "下载安装包",
+  "update.startup.release": "去发布页",
+  /** 非 Windows：没有应用内安装通道，只能手动装。 */
+  "update.startup.unsupported": "当前平台不支持应用内安装，请下载安装包后手动更新。",
 } as const;
 
 export default update;

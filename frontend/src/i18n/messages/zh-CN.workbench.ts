@@ -54,14 +54,17 @@ const workbench = {
   "workbench.group.template": "模板",
   "workbench.group.page": "版面",
   "workbench.group.style": "样式",
-  // 板块显隐（移植自 1.x：隐藏 = section.hidden=true，数据保留、不上面）。
+  /** 5.1：照片（原独立页签）并入排版参数，作为第四组。 */
+  "workbench.group.photo": "照片",
+  // 板块显隐（移植自 1.x：隐藏 = section.hidden=true，数据保留、不上纸面）。
   "workbench.sectionsVisibility.trigger": "板块",
   "workbench.sectionsVisibility.syncProfile": "按资料顺序同步",
   "workbench.sectionsVisibility.hideTechStack": "隐藏全部技术栈",
   "workbench.sectionsVisibility.showTechStack": "显示全部技术栈",
   "workbench.sectionsVisibility.title": "显示板块",
   "workbench.sectionsVisibility.count": "已隐藏 {hidden}/{total}",
-  "workbench.sectionsVisibility.hint": "关掉的板块不上纸面，内容仍保留在本份简历里，随时可以再打开。",
+  "workbench.sectionsVisibility.hint":
+    "关掉的板块不上纸面，内容仍保留在本份简历里，随时可以再打开。",
   "workbench.sectionsVisibility.hide": "隐藏「{label}」",
   "workbench.sectionsVisibility.show": "显示「{label}」",
   "workbench.sectionsVisibility.keepOne": "至少保留一个显示板块",
@@ -88,6 +91,7 @@ const workbench = {
   "workbench.param.section-title-scale": "小节标题大小",
   /** `entry_gap`：同一区块内条目之间的距离（`section_gap` 管区块之间）。 */
   "workbench.param.entry-gap": "条目间距",
+  "workbench.param.header-rule-gap": "页眉线位置",
   /** `section_gap`：两个区块之间的距离。标签优先取目录 `format_fields` 的同名字段，
    *  这里只是旧后端没下发时的回落（不能是空串，否则那一行的行首会空白）。 */
   "workbench.param.section-gap": "区块间距",
@@ -117,6 +121,14 @@ const workbench = {
   /** 颜色行的值列：无覆盖时这一格写的不是色值而是状态。**最多 3 个字**——
       参数栏里这一格是 44px（14px 字号 × 3 = 42），4 个汉字会溢出（问题 21）。 */
   "workbench.color.followTemplate": "随模板",
+  /** 外观第 5 格「条目标题」未单独设色时的状态：条目标题继承正文色。
+      与「随模板」同长（3 字），参数栏那一格不会溢出。 */
+  "workbench.color.followBody": "随正文",
+  /** 第 5 格的 ⓘ：说明它写的是角色级覆盖，以及单条覆盖为什么优先。 */
+  "workbench.color.entryTitleHint":
+    "默认跟随正文颜色；与「角色样式 → 条目标题」同一个值。单条设过色的以单条为准。",
+  /** 上面那句 ⓘ 的无障碍名。 */
+  "workbench.color.entryTitleHintAria": "条目标题颜色说明",
   "workbench.param.paletteAria": "展开{label}的色板",
 
   // ── 编辑器（中栏与弹窗共用）────────────────────────────────
@@ -147,6 +159,16 @@ const workbench = {
   "workbench.action.publish": "保存到简历中心",
   /** 草稿态下标题旁的浅色提示：说清"现在还看不见它"。 */
   "workbench.draft.hint": "未保存，保存后才会出现在简历中心",
+  /** QW-2：部分成功提示里的动作——只重试正文那一步（版式已落库）。 */
+  "workbench.action.retry-content": "重试正文",
+  /** QW-5：会话草稿条上的基准版本。 */
+  "workbench.draft.baseline": "暂存于第 {revision} 版",
+  /** QW-5：服务端版本已前进时，恢复后保存会先走冲突处理（不静默覆盖）。 */
+  "workbench.draft.revision-ahead": "服务端已有更新版本，保存时会先处理冲突",
+  /** QW-5：超出预算不截短，明确告知"未能暂存"。 */
+  "workbench.draft.too-large": "草稿超过 256 KB，未能暂存；改动还在这张页面里",
+  /** QW-5：存储不可用时同样明确告知（与通用表单的静默降级不同）。 */
+  "workbench.draft.unavailable": "浏览器不允许暂存草稿，改动还在这张页面里",
 
   // ── 编辑器的 8 个标签页（与弹窗逐字一致）───────────────────
   "editor.tab.basic": "基本信息",
@@ -171,6 +193,13 @@ const workbench = {
   "resume.measure.fontSizeDecrease": "缩小字号",
   "resume.measure.fontSizeIncrease": "放大字号",
   "resume.measure.fontSizeSliderAria": "字号（拖动调整，方向键微调）",
+  /** QW-4：直接输入字号的提示（0.1px 精度，px 是纸面字号，不是 pt/mm）。 */
+  "resume.measure.fontSizeInputAria": "字号数值（可输入，回车确认）",
+  "resume.measure.fontSizeInputHint": "可直接输入字号，回车确认",
+  /** 空输入不是一个值：提示后不写入（不要当成 0）。 */
+  "resume.measure.fontSizeInputEmpty": "请输入字号",
+  /** 非法值（非数字 / 越界）提示：`{min}`、`{max}` 是允许范围。 */
+  "resume.measure.fontSizeInputInvalid": "字号需在 {min} 到 {max}px 之间",
   /** 字号过小的打印提示：`{px}` 是最小安全字号。 */
   "resume.measure.fontTooSmall": "小于 {px}px 打印可能看不清",
   /** 「字体」这一行的标签（`ResumeFontControl` 的自有文案不动）。 */

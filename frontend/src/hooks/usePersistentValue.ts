@@ -34,7 +34,9 @@ export function usePersistentValue<T>(
   // hydrate 通常是行内箭头函数，每次渲染都是新引用。放进 set 的依赖里会让
   // set 每渲染一次就换一个身份，而它会被传给 memo 过的子组件——用 ref 取最新那份。
   const hydrateRef = useRef(hydrate);
-  hydrateRef.current = hydrate;
+  useEffect(() => {
+    hydrateRef.current = hydrate;
+  }, [hydrate]);
 
   const set = useCallback(
     (next: T) => {

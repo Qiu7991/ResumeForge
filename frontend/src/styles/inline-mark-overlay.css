@@ -1,0 +1,168 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/**
+ * 行内标记遮罩层（I-26）：`InlineMarkOverlay` + `AutoGrowValueTextArea` 专用。
+ *
+ * 三件事在这里定死，改动前先看全：
+ *
+ * 1. **两层共用 `.rf-inline-mark-layer` 承担字体度量**（字号/行高/内边距/换行规则/滚动条占位）。
+ *    任何一条度量只写在其中一层上，两层立刻错位——而错位不会报错，只会让光标落在两个字的缝隙里。
+ *    文本域那条用 `.ant-input.rf-inline-mark-layer`（再加一条三类的兜底）：antd 运行期注入的
+ *    `.ant-input` / `.ant-input-sm` 与我们同特异性或更晚注入，单类选择器压不住。
+ * 2. **文本域文字透明但占位**（仅当值含标记、遮罩层已挂载 → `.is-masked`）：字形由下层画，
+ *    光标与选区仍由文本域负责（`caret-color` 可见）。普通值不加 `.is-masked`，字照常可见。
+ * 3. **选区必须半透明**：文本域在下层之上，不透明的高亮会把下层文字整片盖住。
+ */
+.rf-inline-mark-layer,
+.ant-input.rf-inline-mark-layer,
+.ant-input.rf-value-textarea.rf-inline-mark-layer {
+  box-sizing: border-box;
+  padding: 4px 7px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 4;
+  /* 滚动条占位：文本域出现竖向滚动条时会吃掉约 15px 内容宽度，下层没有滚动条就会少算，
+     换行位置随即不同。两层都预留同一条槽位，谁的滚动条在不在都不影响宽度。 */
+  scrollbar-gutter: stable;
+}
+
+/* 文本域：光标与选区由它自己画；字形透明**只在挂了遮罩层时**才生效（见下一条）。 */
+.ant-input.rf-inline-mark-layer,
+.ant-input.rf-value-textarea.rf-inline-mark-layer {
+  position: relative;
+  z-index: 1;
+  caret-color: var(--rf-text-body);
+  background: transparent;
+}
+
+/* 字形透明的**唯一**开关：`InlineMarkTextArea` 只在值真的含标记（遮罩层已挂载）时加
+   `is-masked`。写在基础规则里会让普通值"上层透明 + 下层不存在" = 输入框一片空白。 */
+.ant-input.rf-inline-mark-layer.is-masked,
+.ant-input.rf-value-textarea.rf-inline-mark-layer.is-masked {
+  color: transparent;
+}
+
+/* 选区：**不再由文本域画底色**（DF-4）。文本域的选区是源串偏移，`{@color=…}` 那 20 个
+   隐形字符也会被染上，于是选中一段带颜色的文字时会拉出一条没有文字的空蓝带。底色改由
+   遮罩层按**可见文字**自绘（`.rf-inline-mark-selection`）；文本域只保留"字色透明"，
+   否则两层会叠出第二条带。 */
+.ant-input.rf-inline-mark-layer.is-masked::selection,
+.ant-input.rf-value-textarea.rf-inline-mark-layer.is-masked::selection {
+  background: transparent;
+  color: transparent;
+}
+
+/* 遮罩层自绘的选区高亮：只覆盖可见字符，颜色与原来的 26% 底色一致。 */
+.rf-inline-mark-selection {
+  background: color-mix(in srgb, var(--rf-info) 26%, transparent);
+  border-radius: 2px;
+}
+
+/* 容器：遮罩层与文本域的公共定位上下文。 */
+.rf-inline-mark-field {
+  position: relative;
+}
+
+/* 没有行内标记时容器不参与布局：DOM 结构保持稳定（否则挂上第一个标记时文本域会重挂、丢焦点），
+   但排版与"没有这一层"逐像素相同。 */
+.rf-inline-mark-field.is-plain {
+  display: contents;
+}
+
+/* 遮罩层：在文本域**下面**，不接管任何指针事件（选区、点击、拖高手柄都还给文本域）。 */
+.rf-inline-mark-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  /* `overflow: hidden` 让它成为滚动容器，`scrollbar-gutter` 才会真的预留槽位——
+     它要和文本域那条 `scrollbar-gutter: stable` 成对出现，宽度才对得上。 */
+  overflow: hidden;
+  scrollbar-gutter: stable;
+  pointer-events: none;
+  background: var(--rf-surface);
+  border-radius: var(--rf-radius-control);
+}
+
+/* 内容镜像：滚动同步靠父组件传下来的 transform，盒子本身不动。 */
+.rf-inline-mark-mirror {
+  min-height: 100%;
+  border: 1px solid transparent;
+  will-change: transform;
+}
+
+.rf-inline-mark-segment {
+  white-space: pre-wrap;
+}
+
+/* 标记语法：占位但不可见（`visibility: hidden` 保留前进宽度，`display: none` 会破坏对齐）。 */
+.rf-inline-mark-hidden {
+  visibility: hidden;
+}
+
+/* 加粗：**只服务静态块**（`.rf-inline-mark-static`）。遮罩层不再加这个类——描边模拟是
+   "为了不改字宽"的妥协，静态块不在文本域下面，可以直接用真实字重。 */
+.rf-inline-mark-bold {
+  font-weight: 700;
+}
+
+/* 链接：只加下划线，颜色交给用户设置的 `color`（没设置时跟随正文色，与导出的 a 标签不同色，
+   但遮罩层不该替用户决定强调色）。 */
+.rf-inline-mark-link {
+  text-decoration: underline;
+}
+
+/* 输入法组合期：预编辑串只画在文本域上，必须显形，否则拼音/候选词看不见。
+   此时遮罩层让位（标记会短暂可见——可用性优先，理由见组件注释）。 */
+.rf-inline-mark-field.is-composing .rf-inline-mark-overlay {
+  opacity: 0;
+}
+
+.rf-inline-mark-field.is-composing .ant-input.rf-inline-mark-layer {
+  color: var(--rf-text-body);
+}
+
+/* 组合期遮罩层让位，选区反馈必须交回文本域——否则打拼音时看不到自己选了哪些字。
+   这是 `.is-masked::selection` 透明化的唯一例外（DF-4）。 */
+.rf-inline-mark-field.is-composing .ant-input.rf-inline-mark-layer::selection,
+.rf-inline-mark-field.is-composing .ant-input.rf-value-textarea.rf-inline-mark-layer::selection {
+  background: color-mix(in srgb, var(--rf-info) 26%, transparent);
+  color: inherit;
+}
+
+/* ===== 静态预览块（T01：开关 `editor_inline_format_preview`） ===== */
+
+/**
+ * 未编辑 + 有格式时的富文本预览。**度量必须与 `.rf-inline-mark-layer` 同源**：
+ * 字体、字号、行高、内边距、圆角、min-height 全部复用同一组值——否则点进点出会跳高，
+ * 而跳高会被用户读成"内容变了"。
+ *
+ * `overflow: auto` + `max-height: 40vh`：超长字段不把整栏顶开；滚动发生在这一层内部。
+ */
+.rf-inline-mark-static {
+  box-sizing: border-box;
+  padding: 4px 7px;
+  min-height: 30px;
+  max-height: 40vh;
+  overflow: auto;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 4;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: var(--rf-radius-control);
+  background: var(--rf-surface);
+  color: var(--rf-text-body);
+  cursor: text;
+  user-select: text;
+}
+
+.rf-inline-mark-static:focus-visible {
+  outline: 2px solid var(--rf-info);
+  outline-offset: -1px;
+}

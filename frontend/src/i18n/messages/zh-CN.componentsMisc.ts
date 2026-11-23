@@ -66,6 +66,15 @@ const componentsMisc = {
   "componentsMisc.theme.light": "浅色",
   "componentsMisc.theme.dark": "深色",
   "componentsMisc.theme.system": "跟随系统",
+
+  // ── 提示模式（I-18：Alt+H 把本页 ⓘ 展开；I-28 补本页计数） ────────────
+  /** 徽标的模式名；后半句原本也在这里，I-28 起挪到计数句里（两行才读得顺）。 */
+  "helpMode.badge": "提示模式",
+  /** I-28：本页有几条可展开的说明（`HintDetail` 挂载即登记，不是进入模式才数）。 */
+  "helpMode.badgeCount": "本页 {count} 条说明 · Esc 退出",
+  "helpMode.badgeEmpty": "本页没有可展开的说明 · Esc 退出",
+  /** 徽标上那个按钮的名字（可见文字就是它的无障碍名）。 */
+  "helpMode.exit": "退出提示模式",
 } as const;
 
 export default componentsMisc;

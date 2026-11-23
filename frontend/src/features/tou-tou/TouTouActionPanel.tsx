@@ -20,6 +20,8 @@ import { Button, Input } from "antd";
 import type { InputRef } from "antd";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/i18nContext";
+import { formatShortcut } from "../shortcuts/matchShortcut";
+import { useShortcutSettings } from "../shortcuts/useShortcutKeymap";
 import type { TouTouAction } from "./touTouPageContext";
 import { searchTouTouActions } from "./touTouActions";
 import {
@@ -59,7 +61,7 @@ interface PanelItem {
   selectionAction?: TouTouSelectionActionId;
 }
 
-const FOCUSABLE = "input, textarea, button:not([disabled])";
+const FOCUSABLE = 'input, textarea, button:not([disabled]), [role="option"][tabindex]';
 
 /** 面板分区的固定顺序与标题 key。分区 id 是内部协议值（不是界面文案）。 */
 const SECTION_ORDER: readonly PanelItem["section"][] = ["selection", "page", "search"];
@@ -82,6 +84,11 @@ export default function TouTouActionPanel({
   onClose,
 }: TouTouActionPanelProps) {
   useLocale();
+  const shortcuts = useShortcutSettings();
+  /** 划词动作的组合键：面板底部的「球的用法」要原样给出用户当前配置的键。 */
+  const selectionShortcut = (shortcuts.bindings.selectionPanel ?? [])
+    .map((key) => formatShortcut(key))
+    .join(" / ");
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<InputRef | null>(null);
   const [query, setQuery] = useState("");
@@ -95,9 +102,24 @@ export default function TouTouActionPanel({
   const autoAskStartedRef = useRef(false);
 
   useEffect(() => {
-    // 打开后把焦点放进面板：键盘用户从第一个可操作元素开始。
     searchRef.current?.focus();
-  }, []);
+    // 长按松手可能把焦点还给球按钮：下一帧再移入，并在捕获阶段保证 Esc 可关闭。
+    const frame = requestAnimationFrame(() => {
+      dialogRef.current?.focus();
+      searchRef.current?.focus();
+    });
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener("keydown", onEscape, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onEscape, true);
+    };
+  }, [onClose]);
 
   const items = useMemo<PanelItem[]>(() => {
     const list: PanelItem[] = [];
@@ -194,12 +216,6 @@ export default function TouTouActionPanel({
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      onClose();
-      return;
-    }
     if (event.key === "Tab") {
       event.preventDefault();
       cycleFocus(event.shiftKey);
@@ -242,12 +258,18 @@ export default function TouTouActionPanel({
                 key={item.key}
                 id={itemId(index)}
                 role="option"
+                tabIndex={-1}
                 aria-selected={index === active}
                 aria-label={t(item.labelKey)}
                 className={`tt-panel-item${index === active ? " is-active" : ""}`}
                 onMouseEnter={() => setActiveIndex(index)}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => runItem(item)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  runItem(item);
+                }}
               >
                 {t(item.labelKey)}
               </div>
@@ -264,6 +286,7 @@ export default function TouTouActionPanel({
         ref={dialogRef}
         className="tt-panel"
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-label={t("touTou.panel.title")}
         onKeyDown={handleKeyDown}
@@ -315,6 +338,15 @@ export default function TouTouActionPanel({
             </div>
 
             <div className="tt-panel-side-ask">
+              {/* I-17：球那四条动作原来只存在于悬浮球的 55 字 tooltip 里（悬停才看得见，
+                  移开就没了）。长文案搬到面板常驻，与首次进入的一次性说明同源
+                  （`touTou.orb.help`），两处不会漂。 */}
+              <div className="tt-panel-orb-help" role="note" aria-label={t("touTou.orb.helpTitle")}>
+                <p className="tt-panel-orb-help-title">{t("touTou.orb.helpTitle")}</p>
+                <p className="tt-panel-orb-help">
+                  {t("touTou.orb.help", { shortcut: selectionShortcut })}
+                </p>
+              </div>
               <p className="tt-panel-hint">{t("touTou.panel.sideAskHint")}</p>
               <Input.TextArea
                 value={question}

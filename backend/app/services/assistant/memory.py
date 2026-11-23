@@ -23,9 +23,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ...models.assistant import ChatMessage
 from ...models.assistant_memory import (
-    MEMORY_KIND_LABELS,
     MEMORY_KINDS,
     MEMORY_SOURCE_EXTRACTED,
     MEMORY_SOURCE_MANUAL,
@@ -33,16 +31,40 @@ from ...models.assistant_memory import (
     MEMORY_STATUS_ACTIVE,
     MEMORY_STATUS_DELETED,
     MEMORY_STATUS_SUPERSEDED,
+    MEMORY_STATUS_SUPPRESSED,
     AssistantMemory,
+)
+from ...models.assistant_memory_event import (
+    MEMORY_EVENT_CREATE,
+    MEMORY_EVENT_DELETE,
+    MEMORY_EVENT_RESTORE,
+    MEMORY_EVENT_SUPERSEDE,
+    MEMORY_EVENT_SUPPRESS,
+    MEMORY_EVENT_UPDATE,
 )
 from ...models.profile import utcnow
 from ...models.setting import AppSetting
+from . import memory_events
+from .memory_injection import (
+    INJECT_SETTING_KEY,
+    INJECTION_TOP_N,
+    active_memories,
+    conversation_memory_off,
+    injected_memories,
+    latest_user_message,
+    relevant_memories,
+    render_memory_block,
+)
+from .memory_injection import (
+    memory_injection_enabled as _memory_injection_enabled,
+)
+from .memory_injection import (
+    set_memory_injection as _set_memory_injection,
+)
 
 #: 单条记忆内容上限（一句话事实，不是笔记）。
 MAX_MEMORY_VALUE_CHARS = 200
 MAX_MEMORY_KEY_CHARS = 128
-#: 注入上限（#31B）：按当前用户消息相关性取 top 5，不全塞。
-INJECTION_TOP_N = 5
 #: 自动抽取开关的 AppSetting key 与会话空闲秒数（#31A）。
 AUTO_EXTRACT_SETTING_KEY = "assistant_memory_auto_extract"
 AUTO_EXTRACT_IDLE_SECONDS = 300
@@ -55,6 +77,45 @@ _SECRET = re.compile(r"(sk-[A-Za-z0-9_-]{8,}|api[_-]?key\s*[:=])", re.IGNORECASE
 
 class MemoryValidationError(ValueError):
     """记忆内容不合法（kind 不在白名单 / 空值 / 疑似敏感信息）。"""
+
+
+#: 一次性动作的引导词。用户说「帮我看看这份作品集」时，抽取器容易把动作本身
+#: 记成 value（如「目标岗位：投递后端开发岗位」），之后每一轮都可能被注入。
+ACTION_LEAD_WORDS = ("投递", "申请", "应聘", "帮我", "看看", "这份", "那份", "改一下")
+#: 稳定描述的标志词：出现任一个就说明这是可复用的偏好，不按动作丢弃。
+#: 判据必须两条同时满足才丢——「投递后端开发（长期方向）」是合法边界样例。
+STABLE_MARKERS = (
+    "长期",
+    "一直",
+    "目前",
+    "现在",
+    "目标",
+    "稳定",
+    "优先",
+    "倾向",
+    "不考虑",
+    "只看",
+    "只想",
+    "一律",
+    "每次",
+    "通常",
+    "希望",
+    "打算",
+)
+
+
+def is_one_off_action(value: str) -> bool:
+    """value 是不是"一次性动作"而不是稳定偏好。
+
+    保守判据：以动作词开头 **且** 不含任何稳定描述标志。整条丢弃，不裁剪成半句
+    ——把「投递后端开发岗位」裁成「后端开发岗位」等于替用户改事实，宁可这次不记。
+    """
+    text = " ".join(str(value or "").split())
+    if not text:
+        return False
+    if not text.startswith(ACTION_LEAD_WORDS):
+        return False
+    return not any(marker in text for marker in STABLE_MARKERS)
 
 
 def _clean(value: Any, *, limit: int) -> str:
@@ -78,14 +139,6 @@ def validate_memory(kind: str, value: str, key: str = "") -> tuple[str, str, str
         raise MemoryValidationError("记忆里不含手机号、身份证号或密钥一类敏感信息")
     cleaned_key = _clean(key, limit=MAX_MEMORY_KEY_CHARS)
     return cleaned_kind, cleaned_key, cleaned_value
-
-
-def active_memories(db: Session, *, kinds: list[str] | None = None) -> list[AssistantMemory]:
-    """当前生效（status=active）的记忆；可按 kind 收窄。"""
-    query = db.query(AssistantMemory).filter(AssistantMemory.status == MEMORY_STATUS_ACTIVE)
-    if kinds:
-        query = query.filter(AssistantMemory.kind.in_(kinds))
-    return query.order_by(AssistantMemory.updated_at.desc(), AssistantMemory.id.desc()).all()
 
 
 def list_memories(
@@ -122,6 +175,18 @@ def _find_active(db: Session, kind: str, key: str) -> AssistantMemory | None:
     query = db.query(AssistantMemory).filter(
         AssistantMemory.kind == kind,
         AssistantMemory.status == MEMORY_STATUS_ACTIVE,
+    )
+    if key:
+        query = query.filter(AssistantMemory.key == key)
+    return query.order_by(AssistantMemory.id.desc()).first()
+
+
+def _find_suppressed(db: Session, kind: str, key: str, value: str) -> AssistantMemory | None:
+    """同类同键同值、且被用户停用的行（用于"停用过的别再抽出来"）。"""
+    query = db.query(AssistantMemory).filter(
+        AssistantMemory.kind == kind,
+        AssistantMemory.status == MEMORY_STATUS_SUPPRESSED,
+        AssistantMemory.value == value,
     )
     if key:
         query = query.filter(AssistantMemory.key == key)
@@ -183,6 +248,21 @@ def create_memory(
             db.refresh(existing)
             return existing
         _supersede(existing, now=now)
+        memory_events.record_event(
+            db, existing.id, MEMORY_EVENT_SUPERSEDE, before=existing.value, after=cleaned_value
+        )
+    else:
+        # 手填的正是之前被「永不使用」的那条同一事实：恢复它，别新开一行。
+        suppressed = _find_suppressed(db, cleaned_kind, cleaned_key, cleaned_value)
+        if suppressed is not None:
+            suppressed.status = MEMORY_STATUS_ACTIVE
+            suppressed.updated_at = now
+            memory_events.record_event(
+                db, suppressed.id, MEMORY_EVENT_RESTORE, after=suppressed.value
+            )
+            db.commit()
+            db.refresh(suppressed)
+            return suppressed
     memory = _add(
         db,
         kind=cleaned_kind,
@@ -193,6 +273,8 @@ def create_memory(
         conversation_id=conversation_id,
         message_id=message_id,
     )
+    db.flush()  # 拿到 id 才能写事件
+    memory_events.record_event(db, memory.id, MEMORY_EVENT_CREATE, after=cleaned_value)
     db.commit()
     db.refresh(memory)
     return memory
@@ -210,8 +292,13 @@ def update_memory(
     target_value = memory.value if value is None else value
     target_key = memory.key if key is None else key
     _kind, cleaned_key, cleaned_value = validate_memory(memory.kind, target_value, target_key)
+    previous_value = memory.value
     memory.key = cleaned_key
     memory.value = cleaned_value
+    if previous_value != cleaned_value:
+        memory_events.record_event(
+            db, memory.id, MEMORY_EVENT_UPDATE, before=previous_value, after=cleaned_value
+        )
     if confidence is not None:
         memory.confidence = max(0.0, min(1.0, float(confidence)))
     memory.updated_at = utcnow()
@@ -221,14 +308,35 @@ def update_memory(
 
 
 def delete_memory(db: Session, memory: AssistantMemory) -> None:
-    """用户删除 / 标「永不使用」：软删（status=deleted），不物理删除。
+    """用户删除：软删（status=deleted），不物理删除。
 
-    删除与「永不使用」都只是不再注入；区别仅在设置页展示（删除从列表消失）。
-    保留行是为了"当时助手记过什么"可回溯，符合 #31E 的版本可追溯要求。
+    「永不使用」不再是删除的别名（F33）——那会把"停用"和"忘记"混成一件事，
+    用户既看不出区别，也没法把停用的条目恢复回来。停用走 `suppress_memory`。
     """
     memory.status = MEMORY_STATUS_DELETED
     memory.updated_at = utcnow()
+    memory_events.record_event(db, memory.id, MEMORY_EVENT_DELETE, before=memory.value)
     db.commit()
+
+
+def suppress_memory(db: Session, memory: AssistantMemory) -> AssistantMemory:
+    """「永不使用」：停用但保留在列表（status=suppressed），之后可恢复。"""
+    memory.status = MEMORY_STATUS_SUPPRESSED
+    memory.updated_at = utcnow()
+    memory_events.record_event(db, memory.id, MEMORY_EVENT_SUPPRESS, before=memory.value)
+    db.commit()
+    db.refresh(memory)
+    return memory
+
+
+def restore_memory(db: Session, memory: AssistantMemory) -> AssistantMemory:
+    """「恢复使用」：只对 suppressed 生效；deleted 行不允许复活（与删除语义一致）。"""
+    memory.status = MEMORY_STATUS_ACTIVE
+    memory.updated_at = utcnow()
+    memory_events.record_event(db, memory.id, MEMORY_EVENT_RESTORE, after=memory.value)
+    db.commit()
+    db.refresh(memory)
+    return memory
 
 
 def apply_operations(
@@ -247,8 +355,11 @@ def apply_operations(
 
     任何一条不合法（kind 不在白名单 / 敏感内容）都只跳过这一条并计数，
     不影响同一批其他条——一次抽取里混进一条脏数据不该让整次学习失败。
+
+    一次性动作（「帮我看看这份作品集」）在这里整条丢弃：提示词已经要求模型只写
+    名词性偏好，但模型偶尔仍会把动作记成 value，落库前再拦一道更可靠。
     """
-    counts = {"add": 0, "update": 0, "supersede": 0, "noop": 0, "invalid": 0}
+    counts = {"add": 0, "update": 0, "supersede": 0, "noop": 0, "invalid": 0, "dropped": 0}
     now = utcnow()
     for operation in operations:
         if not isinstance(operation, dict):
@@ -265,10 +376,17 @@ def apply_operations(
         except MemoryValidationError:
             counts["invalid"] += 1
             continue
+        if is_one_off_action(value):
+            counts["dropped"] += 1
+            continue
         if op == "NOOP":
             counts["noop"] += 1
             continue
         existing = _find_active(db, kind, key)
+        # 停用过的同一事实不许被再次抽取出来：否则「永不使用」只生效到下一次对话。
+        if existing is None and _find_suppressed(db, kind, key, value) is not None:
+            counts["noop"] += 1
+            continue
         if op == "UPDATE" and existing is not None:
             existing.value = value
             existing.confidence = max(existing.confidence, float(confidence or 0.6))
@@ -283,6 +401,9 @@ def apply_operations(
             continue
         if existing is not None:
             _supersede(existing, now=now)
+            memory_events.record_event(
+                db, existing.id, MEMORY_EVENT_SUPERSEDE, before=existing.value, after=value
+            )
         _add(
             db,
             kind=kind,
@@ -296,72 +417,6 @@ def apply_operations(
         counts["supersede" if existing is not None else "add"] += 1
     db.commit()
     return counts
-
-
-def _tokens(text: str) -> list[str]:
-    """相关性判定用的最小词元：整句 + 双字滑窗（中文无空格时最便宜的近似）。"""
-    term = (text or "").strip().casefold()
-    if not term:
-        return []
-    tokens = [term] if len(term) <= 6 else []
-    tokens.extend(term[index : index + 2] for index in range(max(0, len(term) - 1)))
-    return list(dict.fromkeys(tokens))
-
-
-def relevant_memories(
-    db: Session, message: str, *, top: int = INJECTION_TOP_N
-) -> list[AssistantMemory]:
-    """#31B：按当前用户消息挑 top N 条记忆；一条都不相关时返回空（不全塞）。
-
-    相关 = 消息词元命中记忆的 kind 展示名 / key / value。排序：命中数降序，
-    同分时最近的在前。空消息或没有生效记忆都返回空列表。
-    """
-    tokens = _tokens(message)
-    if not tokens:
-        return []
-    scored: list[tuple[int, AssistantMemory]] = []
-    for memory in active_memories(db):
-        label = MEMORY_KIND_LABELS.get(memory.kind, memory.kind)
-        haystack = f"{label} {memory.key} {memory.value}".casefold()
-        score = sum(1 for token in tokens if token in haystack)
-        if score > 0:
-            scored.append((score, memory))
-    scored.sort(key=lambda row: (-row[0], -row[1].updated_at.timestamp(), -row[1].id))
-    return [memory for _score, memory in scored[: max(1, top)]]
-
-
-def latest_user_message(db: Session, conversation_id: int | None) -> ChatMessage | None:
-    if conversation_id is None:
-        return None
-    return (
-        db.query(ChatMessage)
-        .filter(ChatMessage.conversation_id == conversation_id, ChatMessage.role == "user")
-        .order_by(ChatMessage.id.desc())
-        .first()
-    )
-
-
-def render_memory_block(db: Session, conversation_id: int | None) -> str:
-    """把相关记忆渲染成系统提示里的固定区块；没有相关记忆时返回空串。
-
-    位置在系统提示的 base 段（求职偏好之后、本地时间之前）：它是"用户说过的事实"，
-    不是系统规则，也不是技能规范。
-    """
-    message = latest_user_message(db, conversation_id)
-    if message is None:
-        return ""
-    memories = relevant_memories(db, message.content or "")
-    if not memories:
-        return ""
-    lines = [
-        "【关于用户的长期记忆】",
-        "以下是用户此前明确表达过的偏好或约束（按与本条消息的相关性挑选，最多 5 条）。",
-        "只在与当前任务相关时参考，不要罗列、不要主动复述；与本轮无关的条目直接忽略。",
-    ]
-    for memory in memories:
-        label = MEMORY_KIND_LABELS.get(memory.kind, memory.kind)
-        lines.append(f"- {label}：{memory.value}")
-    return "\n".join(lines)
 
 
 def auto_extract_enabled(db: Session) -> bool:
@@ -387,24 +442,43 @@ def set_auto_extract(db: Session, enabled: bool) -> bool:
     return bool(enabled)
 
 
+def memory_injection_enabled(db: Session) -> bool:
+    """记忆注入总开关（T23）的再导出壳。
+
+    实现在 ``memory_injection``（读轴）：那边不能反过来 import 本模块（写入轴已 import
+    它），而设置接口按 ``memory.xxx`` 取用是既有习惯，所以这里留一层薄委托。
+    """
+    return _memory_injection_enabled(db)
+
+
+def set_memory_injection(db: Session, enabled: bool) -> bool:
+    """打开/关闭记忆注入（设置页开关）。返回保存后的值。"""
+    return _set_memory_injection(db, enabled)
+
+
 __all__ = [
     "AUTO_EXTRACT_IDLE_SECONDS",
     "AUTO_EXTRACT_SETTING_KEY",
     "INJECTION_TOP_N",
+    "INJECT_SETTING_KEY",
     "MAX_MEMORY_KEY_CHARS",
     "MAX_MEMORY_VALUE_CHARS",
     "MemoryValidationError",
     "active_memories",
     "apply_operations",
     "auto_extract_enabled",
+    "conversation_memory_off",
     "create_memory",
     "delete_memory",
+    "injected_memories",
     "latest_user_message",
     "list_memories",
+    "memory_injection_enabled",
     "memory_or_none",
     "relevant_memories",
     "render_memory_block",
     "set_auto_extract",
+    "set_memory_injection",
     "update_memory",
     "validate_memory",
 ]

@@ -12,6 +12,69 @@ STAGED_TS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|ts
 
 FAIL=0
 
+# 分批调用：读 stdin 的路径列表，每 $1 个一批执行剩下的命令。
+#
+# 为什么不用 `xargs -n N`：MSYS2 / Git-Bash 的 xargs 在环境变量很大时会直接断言崩溃
+# （`assertion "bc_ctl.arg_max >= LINE_MAX" failed: xargs.c:512`），退出码非 0 又被
+# `|| FAIL=1` 当成 lint 失败——2026-11-18 实测一次 14 个文件的提交被它拦下，ruff 与
+# eslint 一个字都没输出，看起来像"代码有问题"，实际是工具链自己崩了。分批仍然保留：
+# 大批量提交（几百个文件）铺进 argv 会撞命令行长度上限，报的是 "Argument list too long"。
+run_batched() {
+  _limit=$1
+  shift
+  _buf=""
+  _n=0
+  while IFS= read -r _f; do
+    [ -z "$_f" ] && continue
+    _buf="$_buf $_f"
+    _n=$((_n + 1))
+    if [ "$_n" -ge "$_limit" ]; then
+      # shellcheck disable=SC2086  # 故意按空白切分：这里就是一串路径
+      "$@" $_buf || return 1
+      _buf=""
+      _n=0
+    fi
+  done
+  if [ -n "$_buf" ]; then
+    # shellcheck disable=SC2086
+    "$@" $_buf || return 1
+  fi
+  return 0
+}
+
+# 0) 行尾：暂存的文本文件必须是 LF（.gitattributes 的 `* text=auto eol=lf`）
+#
+# 2026-11-16 实测：457 个已跟踪文本文件在工作区是 CRLF（索引与提交内容一直是 LF，
+# 所以 CI 全绿），本机 `npm run format:check` 却报 65 个文件"格式不对"——实际 diff 是
+# "整个文件每行都变了、肉眼看不出区别"。根因是本机 core.autocrlf=true 且文件在
+# .gitattributes 生效前就 checkout 过。这种"假红"很容易被当成格式跑偏去批量重排，
+# 所以把它变成提交时的硬检查：几百毫秒，比事后诊断便宜得多。
+STAGED_TEXT=$(git diff --cached --name-only --diff-filter=ACMR \
+  | grep -viE '\.(bat|cmd|png|jpe?g|gif|ico|icns|webp|pdf|zip|woff2?|ttf|otf|eot|mp4|webm|wav|mp3|db|sqlite3?|pyc|bin|so|dll|dylib|exe|jar|7z|gz|tar)$' \
+  || true)
+if [ -n "$STAGED_TEXT" ]; then
+  # 用 `git ls-files --eol` 而不是 `grep '\r'`：Windows 的 Git Bash 里 grep 处于文本模式，
+  # 会把行尾的 CR 吃掉（实测 `grep -c "$(printf '\r')"` 对 CRLF 文件返回 0），这条检查会
+  # 变成永远通过的空转守卫。git 自己算的 eol 没有这个问题。
+  # `attr/text eol=crlf` 的文件（*.bat / *.cmd）本来就以 CRLF 检出，必须放行：
+  # eol 属性与平台无关，干净检出后它们永远是 w/crlf，一刀切会让每次改 .cmd 都被拦。
+  # `i/crlf` 仍然一律算违规（`text` 属性要求入库 LF）。
+  CRLF_FILES=$(git ls-files --eol -- $STAGED_TEXT 2>/dev/null \
+    | awk '{ line = $0
+             if (line ~ /i\/crlf/) { print; next }
+             if (line ~ /w\/crlf/ && line !~ /attr\/text eol=crlf/) { print } }' \
+    | awk -F'\t' '{print $NF}')
+  if [ -n "$CRLF_FILES" ]; then
+    echo "[pre-commit] 行尾必须是 LF（.gitattributes: * text=auto eol=lf）。以下暂存文件含 CRLF:"
+    printf '%s\n' "$CRLF_FILES" | sed 's/^/  - /'
+    echo "  诊断：一整个文件「每行都改了」但肉眼看不出区别 = 行尾，不是格式。"
+    echo "  处理：git add --renormalize <file>（内容零差异，只是刷新索引与工作区）；"
+    echo "        长期：git config core.autocrlf false（本仓库的 .gitattributes 已经声明 eol=lf）。"
+    echo "  禁止用 prettier --write / ruff format 去「修」它：内容不会变，只会掩盖问题。"
+    FAIL=1
+  fi
+fi
+
 # 1) Ruff on staged Python files
 if [ -n "$STAGED_P" ]; then
   RUFF=""
@@ -21,12 +84,12 @@ if [ -n "$STAGED_P" ]; then
     echo "[pre-commit] ruff check..."
     # 逐批传参：暂存文件多时（如批量加了文件头）一次性把路径铺进 argv 会撞
     # Windows 的命令行长度上限，报 "Argument list too long" 而不是真的 lint 失败。
-    printf '%s\n' "$STAGED_P" | xargs -n 200 "$RUFF" check || FAIL=1
+    printf '%s\n' "$STAGED_P" | run_batched 200 "$RUFF" check || FAIL=1
     # 格式检查只覆盖本次新增的文件。仓库存量代码有数百个文件不符合
     # `ruff format`（2026-10-20 实测 HEAD 就有 462 个），对「批量改已有文件」
     # 一律要求格式化，会把无关的格式 churn 混进提交。新文件仍必须格式化。
     if [ -n "$STAGED_P_NEW" ]; then
-      printf '%s\n' "$STAGED_P_NEW" | xargs -n 200 "$RUFF" format --check || FAIL=1
+      printf '%s\n' "$STAGED_P_NEW" | run_batched 200 "$RUFF" format --check || FAIL=1
     fi
   else
     echo "[pre-commit] WARNING: ruff not found, skipped"
@@ -40,8 +103,8 @@ for f in $STAGED_TS; do
 done
 if [ -n "$STAGED_TS_REL" ] && [ -d "frontend/node_modules" ]; then
   echo "[pre-commit] eslint on staged files..."
-  # 同上，分批传参避免 argv 超长
-  printf '%s\n' $STAGED_TS_REL | (cd frontend && xargs -n 100 ./node_modules/.bin/eslint) || FAIL=1
+  # 同上：不用 xargs（MSYS2 下会断言崩溃），改成 shell 内分批。
+  printf '%s\n' $STAGED_TS_REL | (cd frontend && run_batched 100 ./node_modules/.bin/eslint) || FAIL=1
 fi
 
 # 3) Backend structural guards (fast tests)

@@ -83,6 +83,25 @@ describe("动作面板", () => {
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("closes on Escape even when the orb kept focus after pointer release", () => {
+    const { props } = setup();
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+    fireEvent.keyDown(outside, { key: "Escape" });
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes action items in the Tab loop and runs them from the keyboard", () => {
+    const { props } = setup();
+    const search = screen.getByRole("combobox");
+    search.focus();
+    fireEvent.keyDown(search, { key: "Tab" });
+    expect(screen.getAllByRole("option")[0]).toHaveFocus();
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "Enter" });
+    expect(props.onRunAction).toHaveBeenCalledWith("open-assistant");
+  });
+
   it("Tab 不逃出面板：焦点始终在面板内循环", () => {
     setup();
     const inside = () => {
@@ -137,5 +156,12 @@ describe("动作面板", () => {
     const { props } = setup({ mutedCount: 2 });
     fireEvent.click(screen.getByRole("button", { name: t("touTou.panel.restoreMuted") }));
     expect(props.onRestoreMuted).toHaveBeenCalledTimes(1);
+  });
+
+  it("常驻「球的用法」：四条动作不再只活在悬浮球的长 tooltip 里（I-17）", () => {
+    setup();
+    const note = screen.getByRole("note", { name: t("touTou.orb.helpTitle") });
+    // 划词键按用户当前配置渲染（这里是默认值），所以断言也用同一份插值。
+    expect(note).toHaveTextContent(t("touTou.orb.help", { shortcut: "Ctrl+K" }));
   });
 });

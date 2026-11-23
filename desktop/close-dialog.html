@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- 自绘关闭卡片（Q11）：原生 MessageBox 的标题栏/图标/按钮全由系统画，
+         参数里没有任何旋钮能改外观，所以只能自己开一个无边框窗口。
+         这里只有一个窗口、两个视图：视图 1 主问，视图 2 二次确认（只在"勾了记住 + 选退出"时出现）。
+         排版（2026-11-20 重排）：三段结构 —— 标题+正文 / 选项行 / 分隔线+操作区。
+         操作区 `margin-top:auto` 沉底右对齐，卡片高度变化时不会"悬在中间"。
+         文案跟随应用内语言：壳层语言由主进程拼进 URL（?locale=zh|en，见 lib/close-dialog.js），
+         页面内联 zh/en 两份表选定一份；缺省英文（静态 HTML 也是英文，避免非中文环境闪一下中文）。 -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+    <title>Close ResumeForge</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #1f2328;
+        --muted: #5c6672;
+        --border: #e3e6ea;
+        --primary: #1668dc;
+        --primary-fg: #ffffff;
+        --danger: #d4380d;
+        --danger-border: #f2c9ba;
+        --danger-hover: #fdf1ec;
+        --label: #3f4854;
+        --hint: #8a94a0;
+      }
+      /* 深色：跟随系统（与 nativeTheme.shouldUseDarkColors 同源）。 */
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1c1f24;
+          --fg: #e6e8eb;
+          --muted: #9aa4b2;
+          --border: #2f343c;
+          --primary: #3c89f0;
+          --primary-fg: #0b1220;
+          --danger: #ff7a45;
+          --danger-border: #6f3a24;
+          --danger-hover: #2b1e19;
+          --label: #c3cbd6;
+          --hint: #7d8794;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        padding: 20px 22px 16px;
+        font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        color: var(--fg);
+        background: var(--bg);
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      /* 两个视图都是"整卡三段"：内容在上、操作区用 margin-top:auto 沉底。 */
+      #ask, #confirm {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 15.5px;
+        line-height: 21px;
+        font-weight: 600;
+        letter-spacing: 0.1px;
+      }
+      p { margin: 0; font-size: 12.5px; line-height: 1.65; color: var(--muted); }
+
+      /* 选项行：左「记住我的选择」，右 Esc 提示 —— 合并成一行，提示不再像 checkbox 的注解。 */
+      .options {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 14px;
+      }
+      .remember {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12.5px;
+        color: var(--label);
+        cursor: default;
+      }
+      .remember input {
+        width: 13px;
+        height: 13px;
+        margin: 0;
+        accent-color: var(--primary);
+      }
+      .hint { font-size: 11.5px; color: var(--hint); white-space: nowrap; }
+
+      /* 操作区：分隔线 + 沉底右对齐。 */
+      .actions {
+        margin-top: auto;
+        padding-top: 13px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      button {
+        height: 30px;
+        min-width: 88px;
+        padding: 0 14px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-family: inherit;
+        font-size: 12.5px;
+        font-weight: 500;
+        color: var(--fg);
+        background: var(--bg);
+        cursor: pointer;
+      }
+      button.primary {
+        border-color: var(--primary);
+        color: var(--primary-fg);
+        background: var(--primary);
+        box-shadow: 0 1px 2px rgba(22, 104, 220, 0.28);
+      }
+      /* 危险项默认只描边（红字 + 浅红边），hover 才泛红底。 */
+      button.danger { color: var(--danger); border-color: var(--danger-border); background: transparent; }
+      button.danger:hover { background: var(--danger-hover); }
+      button:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+      /* 主按钮本身就是实心蓝：焦点环改成外发光，避免"双蓝边"。 */
+      button.primary:focus-visible {
+        outline: none;
+        box-shadow: 0 1px 2px rgba(22, 104, 220, 0.28), 0 0 0 3px rgba(22, 104, 220, 0.3);
+      }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <!-- 视图 1：主问。按钮顺序：危险项在左、安全项（主按钮）贴右下角。 -->
+    <section id="ask">
+      <h1 id="ask-title">Close ResumeForge?</h1>
+      <p id="ask-detail"></p>
+      <div class="options">
+        <label class="remember">
+          <input id="remember" type="checkbox" />
+          <span id="remember-label">Remember my choice</span>
+        </label>
+        <span class="hint" id="ask-hint"></span>
+      </div>
+      <div class="actions">
+        <button id="quit" class="danger" type="button"></button>
+        <button id="hide" class="primary" type="button"></button>
+      </div>
+    </section>
+
+    <!-- 视图 2：二次确认（勾了记住 + 选了退出） -->
+    <section id="confirm" hidden>
+      <h1>Closing the window will quit the app from now on</h1>
+      <p>Any generation or collection in progress will be interrupted. You can turn "Ask when closing the window" back on in the tray menu at any time.</p>
+      <div class="actions">
+        <button id="confirm-quit" class="danger" type="button">Quit and remember</button>
+        <button id="confirm-once" class="primary" type="button">Just this time</button>
+      </div>
+    </section>
+
+    <script>
+      // 内联的 zh/en 两份文案表：本窗口不加载 React，拿不到前端语言包，所以由主进程
+      // 把壳层语言拼进 URL（lib/close-dialog.js: ?locale=zh|en），这里按 location.search 选。
+      // 缺省英文：静态 HTML 的默认文案也是英文，非中文环境不会先闪一段中文。
+      // 已打开的卡片不热切换（语言变更只影响下一次打开）——有意取舍：简单、无闪烁。
+      var COPY = {
+        en: {
+          lang: "en",
+          title: "Close ResumeForge",
+          askTitle: "Close ResumeForge?",
+          hideMinimize: "Minimize to tray",
+          hideClose: "Close window",
+          quit: "Quit app",
+          detailMinimize:
+            "The app keeps running in the background after minimizing; reopen it from the tray icon. " +
+            "Quitting stops the local service and interrupts any generation or collection in progress.",
+          detailClose:
+            "The app stays in the Dock and menu bar after closing the window and can be reopened. " +
+            "Quitting stops the local service and interrupts any generation or collection in progress.",
+          hintMinimize: "Press Esc to minimize to tray",
+          hintClose: "Press Esc to close the window",
+          remember: "Remember my choice",
+          confirmTitle: "Closing the window will quit the app from now on",
+          confirmBody:
+            'Any generation or collection in progress will be interrupted. ' +
+            'You can turn "Ask when closing the window" back on in the tray menu at any time.',
+          confirmQuit: "Quit and remember",
+          confirmOnce: "Just this time",
+        },
+        zh: {
+          lang: "zh-CN",
+          title: "关闭简历通",
+          askTitle: "关闭简历通？",
+          hideMinimize: "最小化到托盘",
+          hideClose: "关闭窗口",
+          quit: "退出应用",
+          detailMinimize:
+            "最小化后仍会继续在后台运行，可从托盘图标重新打开；" +
+            "退出应用会停止本地服务，正在进行的生成/采集会中断。",
+          detailClose:
+            "关闭窗口后应用仍会留在 Dock 与菜单栏，可重新打开；" +
+            "退出应用会停止本地服务，正在进行的生成/采集会中断。",
+          hintMinimize: "按 Esc 等于最小化到托盘",
+          hintClose: "按 Esc 等于关闭窗口",
+          remember: "记住我的选择",
+          confirmTitle: "以后关闭窗口将直接退出应用",
+          confirmBody:
+            "正在进行的生成或采集会被中断。" +
+            "随时可以在托盘菜单里重新打开「关闭窗口时询问」。",
+          confirmQuit: "退出并记住",
+          confirmOnce: "只退出这次",
+        },
+      };
+
+      function resolveLocale() {
+        var params = new URLSearchParams(window.location.search);
+        return params.get("locale") === "zh" ? "zh" : "en";
+      }
+
+      var copy = COPY[resolveLocale()];
+      document.documentElement.lang = copy.lang;
+      document.title = copy.title;
+      // 视图 2 是隐藏的，但文字先写好：二次确认是"误勾一次会长期失去保护"的补救，
+      // 不能等用户点出来才拼文案。
+      document.querySelector("#confirm h1").textContent = copy.confirmTitle;
+      document.querySelector("#confirm p").textContent = copy.confirmBody;
+      document.getElementById("confirm-quit").textContent = copy.confirmQuit;
+      document.getElementById("confirm-once").textContent = copy.confirmOnce;
+      document.getElementById("remember-label").textContent = copy.remember;
+
+      var api = window.closeDialog;
+      var ask = document.getElementById("ask");
+      var confirm = document.getElementById("confirm");
+      var remember = document.getElementById("remember");
+      var hideButton = document.getElementById("hide");
+      var action = "hide";
+
+      // 平台口径由主进程给：macOS 没有"最小化到托盘"的惯例，退化为「关闭窗口」。
+      api
+        .platform()
+        .then(function (isMac) {
+          document.getElementById("ask-title").textContent = copy.askTitle;
+          hideButton.textContent = isMac ? copy.hideClose : copy.hideMinimize;
+          document.getElementById("quit").textContent = copy.quit;
+          document.getElementById("ask-detail").textContent = isMac
+            ? copy.detailClose
+            : copy.detailMinimize;
+          document.getElementById("ask-hint").textContent = isMac ? copy.hintClose : copy.hintMinimize;
+        })
+        .catch(function () {
+          // 主进程没回平台口径也不能留空白按钮：按 Windows 惯例填上（可关闭/可退出）。
+          document.getElementById("ask-title").textContent = copy.askTitle;
+          hideButton.textContent = copy.hideMinimize;
+          document.getElementById("quit").textContent = copy.quit;
+          document.getElementById("ask-detail").textContent = copy.detailMinimize;
+          document.getElementById("ask-hint").textContent = copy.hintMinimize;
+        })
+        .then(function () {
+          // 默认焦点落在安全动作上：Enter 与 Esc 因此都"最小化"而不是误退出。
+          // Tab 顺序 = checkbox → 退出应用 → 最小化（由 DOM 顺序决定）。
+          hideButton.focus();
+        });
+
+      function finish(payload) {
+        api.resolve(payload);
+      }
+
+      // 两个按钮都读「记住我的选择」：勾了就记下本次动作（ask=false + action），
+      // 下次点 × 直接执行，不再询问。Esc 例外 —— 它永远不记录。
+      hideButton.addEventListener("click", function () {
+        finish({ action: "hide", remember: remember.checked });
+      });
+      document.getElementById("quit").addEventListener("click", function () {
+        if (!remember.checked) {
+          finish({ action: "quit", remember: false });
+          return;
+        }
+        // 视图 2：误勾一次会长期失去保护，所以"记住 + 退出"必须再确认一遍。
+        action = "quit";
+        ask.hidden = true;
+        confirm.hidden = false;
+        document.getElementById("confirm-once").focus();
+      });
+      document.getElementById("confirm-quit").addEventListener("click", function () {
+        finish({ action: action, remember: true });
+      });
+      document.getElementById("confirm-once").addEventListener("click", function () {
+        finish({ action: action, remember: false });
+      });
+
+      // Esc = 安全默认（最小化 / 关闭窗口），绝不等于退出，也绝不记录偏好。
+      window.addEventListener("keydown", function (event) {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        finish({ action: "hide", remember: false });
+      });
+    </script>
+  </body>
+</html>

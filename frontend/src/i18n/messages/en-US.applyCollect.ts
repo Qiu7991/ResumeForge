@@ -11,12 +11,26 @@ const applyCollect = {
   "applyCollect.source.search": "Keyword search",
   "applyCollect.source.interest": "My interests",
   "applyCollect.hint.interest":
-    "\"My interests\" is your personal Job list on BOSS; no keywords or city needed. Jobs are staged together with their full descriptions.",
+    '"My interests" is your personal Job list on BOSS; no keywords or city needed. Jobs are staged together with their full descriptions.',
   "applyCollect.field.interestScanLimit": "Newest N favorites only",
   "applyCollect.hint.interestScanLimit":
     "Counts from the newest favorite down; skipped ones still use a slot. 0 = check all. Keeps a run from scanning hundreds of old favorites just to find a few new ones.",
   "applyCollect.field.interestMaxPages": "Interest pages limit",
   "applyCollect.hint.interestMaxPages": "15 Jobs per page; 10 pages ≈ 150 Jobs.",
+  "applyCollect.group.search": "Search conditions",
+  "applyCollect.group.rhythm": "Collection timing",
+  "applyCollect.group.searchHint":
+    "Fill in at least one of keywords and city; results land in Collected records first, and only checked ones enter the job board.",
+  "applyCollect.group.rhythmHint":
+    "Shorter intervals hit rate limits sooner; jitter keeps the gaps from looking mechanical.",
+  "applyCollect.field.history": "Saved conditions",
+  "applyCollect.unit.perBatch": "per batch",
+  "applyCollect.unit.seconds": "s",
+  "applyCollect.footer.summary":
+    "About {count} jobs · every {interval} ± {jitter}s · roughly {minutes} min",
+  "applyCollect.filters.selected": "{count} selected",
+  "applyCollect.flow.summary": "Collect results → Import jobs → Add to application queue",
+  "applyCollect.flow.instructions": "View instructions",
   "applyCollect.field.keywords": "Keywords",
   "applyCollect.hint.keywords": "Up to 10; fill in at least one keyword or a city.",
   "applyCollect.placeholder.keywords": "e.g. marketing, finance and accounting",
@@ -25,6 +39,9 @@ const applyCollect = {
   "applyCollect.field.perTaskLimit": "Batch limit",
   "applyCollect.field.intervalSeconds": "Job interval (seconds)",
   "applyCollect.field.jitterSeconds": "Random jitter (seconds)",
+  "applyCollect.rhythm.summary": "{interval}s interval · {jitter}s jitter · roughly {minutes} min",
+  "applyCollect.rhythm.adjust": "Adjust",
+  "applyCollect.rhythm.collapse": "Collapse",
   "applyCollect.field.saveSamples":
     "Save the raw site responses from this run (for debugging parsing issues)",
   "applyCollect.hint.saveSamples":
@@ -38,8 +55,7 @@ const applyCollect = {
   "applyCollect.outcome.interest.invalid": "Skipped {count} expired Jobs",
   "applyCollect.outcome.interest.scan":
     "Checked {scanned} favorite Jobs this run; {known} were already collected earlier (not added twice)",
-  "applyCollect.outcome.interest.scanHint":
-    "Lower \"Newest N favorites only\" to check fewer.",
+  "applyCollect.outcome.interest.scanHint": 'Lower "Newest N favorites only" to check fewer.',
   "applyCollect.outcome.pagination.title":
     "The later pages repeat earlier results exactly, so paging stopped early at page {page}",
   "applyCollect.outcome.pagination.description":

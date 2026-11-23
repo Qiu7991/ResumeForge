@@ -110,7 +110,7 @@ class TrackRecordIn(BaseModel):
     @field_validator("status")
     @classmethod
     def status_must_be_known(cls, value: str) -> str:
-        from ..models.tracker import STATUSES
+        from ..vocabulary.tracker import STATUSES
 
         cleaned = (value or "").strip()
         if cleaned not in STATUSES:
@@ -151,7 +151,7 @@ class TrackCreate(TrackRecordIn):
     @field_validator("channel")
     @classmethod
     def channel_must_be_known(cls, value: str) -> str:
-        from ..models.tracker import CHANNELS
+        from ..vocabulary.tracker import CHANNELS
 
         cleaned = (value or "").strip() or "unknown"
         if cleaned not in CHANNELS:
@@ -173,6 +173,12 @@ class TrackOut(TrackCreate):
     resume_title: str = ""
     created_at: datetime
     updated_at: datetime
+
+
+class TrackCreateOut(TrackOut):
+    """POST result distinguishes a new row from an unchanged existing row."""
+
+    created: bool
 
 
 class TrackListOut(BaseModel):
@@ -254,7 +260,7 @@ class TrackApplyRequest(BaseModel):
     @field_validator("source")
     @classmethod
     def source_must_be_known(cls, value: str) -> str:
-        from ..models.tracker import SOURCES
+        from ..vocabulary.tracker import SOURCES
 
         cleaned = (value or "").strip() or "recognized"
         if cleaned not in SOURCES:
@@ -277,6 +283,66 @@ class TrackApplyOut(BaseModel):
     unchanged: int
 
 
+# ===== 申请状态回读（R-15 C）=====
+
+
+class TrackProbeItem(BaseModel):
+    """一条记录的回读结果。`outcome` 四值：changed / unchanged / skipped / failed。"""
+
+    track_id: int
+    company: str
+    title: str
+    url: str = ""
+    platform: str = ""
+    outcome: str
+    before: str
+    before_label: str
+    after: str
+    after_label: str
+    note: str = ""
+
+
+class TrackProbeOut(BaseModel):
+    items: list[TrackProbeItem]
+    changed: int = 0
+    unchanged: int = 0
+    skipped: int = 0
+    failed: int = 0
+    #: 本次是否真的执行了（`/probe/daily` 在未到期时返回 `skipped=False`+`due=False`）。
+    ran: bool = True
+    due: bool = True
+
+
+class TrackProbeSettingsOut(BaseModel):
+    enabled: bool = False
+    has_cookie: bool = False
+    last_run: str = ""
+    due: bool = False
+    interval_hours: int
+    #: 常用的投递记录页（空串 = 没配）。
+    page_url: str = ""
+
+
+class TrackProbeSettingsIn(BaseModel):
+    """只改传了的字段：省略 = 不动；`cookie` / `page_url` 传空串 = 清除。"""
+
+    enabled: bool | None = None
+    cookie: str | None = Field(default=None, max_length=8192)
+    page_url: str | None = Field(default=None, max_length=2048)
+
+
+class TrackProbeRequest(BaseModel):
+    track_ids: list[int] = Field(default_factory=list)
+    limit: int = Field(default=8, ge=1, le=50)
+
+
+class TrackProbePageRequest(BaseModel):
+    """一次读整个投递记录页。`url` 必填——它就是用户提供的那个状态页。"""
+
+    url: str = Field(min_length=8, max_length=2048)
+    track_ids: list[int] = Field(default_factory=list)
+
+
 __all__ = [
     "MAX_TRACK_RECORDS",
     "RETIRED_TRACK_FAILURE_KEYS",
@@ -288,6 +354,12 @@ __all__ = [
     "TrackMergePreview",
     "TrackOut",
     "TrackParseOut",
+    "TrackProbeItem",
+    "TrackProbeOut",
+    "TrackProbeRequest",
+    "TrackProbeSettingsIn",
+    "TrackProbePageRequest",
+    "TrackProbeSettingsOut",
     "TrackParseRequest",
     "TrackRecordIn",
     "TrackStatsOut",

@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,21 +22,29 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ...models.assistant import ChatConversation, ChatMessage
-from ...models.setting import AppSetting
 from ..llm import create_provider
 from ..llm.base import BaseLLMProvider
+from ..model_context_windows import configured_model_window
+from ..session_scope import fresh_session
 from ..settings_service import get_llm_config
 from . import assistant_compaction as core
 from . import assistant_compaction_summary as summary_ops
 from .assistant_compaction_plan import CompactionLimits, plan_compaction
+from .assistant_compaction_settings import (
+    COMPACTION_MODEL_KEY,
+    MASK_PERCENT_KEY,
+    SUMMARY_PERCENT_KEY,
+    CompactionSettings,
+    get_compaction_settings,
+    save_compaction_settings,
+)
+from .assistant_compaction_skills import (
+    attach_compaction_skill_prompt,
+    build_compaction_skill_prompt,
+)
 from .assistant_persistence import history_snapshot
 
 logger = logging.getLogger(__name__)
-
-# --- AppSetting 的 key（KV 表，值统一 JSON 编码） ---
-COMPACTION_MODEL_KEY = "assistant_compaction_model"
-MASK_PERCENT_KEY = "assistant_compaction_mask_percent"
-SUMMARY_PERCENT_KEY = "assistant_compaction_summary_percent"
 
 #: 摘要调用的硬超时。它是一次全量输入的调用，比普通对话更慢，但也不能无限等——
 #: 等太久会把整条流的时间预算吃掉，而压缩本来是为了让对话继续。
@@ -49,84 +56,6 @@ PREVIEW_SUMMARY_TOKENS = 400
 
 class CompactionUnavailable(RuntimeError):
     """摘要不可用（超时 / 非法 JSON / 调用失败）。API 层转成 503，流内转成降级。"""
-
-
-@dataclass(frozen=True)
-class CompactionSettings:
-    """三个设置项的运行时值。"""
-
-    model: str = ""
-    mask_percent: int = core.DEFAULT_MASK_PERCENT
-    summary_percent: int = core.DEFAULT_SUMMARY_PERCENT
-
-    @property
-    def limits(self) -> CompactionLimits:
-        return CompactionLimits(
-            mask_percent=self.mask_percent, summary_percent=self.summary_percent
-        )
-
-
-# ===== 设置读写 =====
-
-
-def _read_int(db: Session, key: str, default: int) -> int:
-    row = db.get(AppSetting, key)
-    if row is None:
-        return default
-    try:
-        value = json.loads(row.value)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("上下文压缩设置 %s 数据损坏，已按默认值处理", key)
-        return default
-    # bool 是 int 的子类：`true` 若被当成 1%，每次请求都会压缩。
-    if isinstance(value, bool) or not isinstance(value, int):
-        logger.warning("上下文压缩设置 %s 类型不对，已按默认值处理", key)
-        return default
-    if not core.MIN_THRESHOLD_PERCENT <= value <= core.MAX_THRESHOLD_PERCENT:
-        logger.warning("上下文压缩设置 %s 越界（%s），已按默认值处理", key, value)
-        return default
-    return value
-
-
-def _read_str(db: Session, key: str) -> str:
-    row = db.get(AppSetting, key)
-    if row is None:
-        return ""
-    try:
-        value = json.loads(row.value)
-    except (json.JSONDecodeError, TypeError):
-        return ""
-    return value.strip() if isinstance(value, str) else ""
-
-
-def _write(db: Session, key: str, value: Any) -> None:
-    serialized = json.dumps(value, ensure_ascii=False)
-    row = db.get(AppSetting, key)
-    if row is None:
-        db.add(AppSetting(key=key, value=serialized))
-    else:
-        row.value = serialized
-    db.commit()
-
-
-def get_compaction_settings(db: Session) -> CompactionSettings:
-    """读三个设置项；缺失 / 损坏 / 越界一律回默认（宁可回到已验证的默认值）。"""
-    return CompactionSettings(
-        model=_read_str(db, COMPACTION_MODEL_KEY),
-        mask_percent=_read_int(db, MASK_PERCENT_KEY, core.DEFAULT_MASK_PERCENT),
-        summary_percent=_read_int(db, SUMMARY_PERCENT_KEY, core.DEFAULT_SUMMARY_PERCENT),
-    )
-
-
-def save_compaction_settings(db: Session, settings: CompactionSettings) -> CompactionSettings:
-    """保存三个设置项；越界由请求模型拒绝（422），这里不做静默夹取。"""
-    for value in (settings.mask_percent, settings.summary_percent):
-        if not core.MIN_THRESHOLD_PERCENT <= value <= core.MAX_THRESHOLD_PERCENT:
-            raise ValueError("压缩阈值必须在 1 到 99 之间")
-    _write(db, COMPACTION_MODEL_KEY, settings.model.strip())
-    _write(db, MASK_PERCENT_KEY, int(settings.mask_percent))
-    _write(db, SUMMARY_PERCENT_KEY, int(settings.summary_percent))
-    return settings
 
 
 # ===== 会话状态读写（chat_conversation.compaction） =====
@@ -182,6 +111,7 @@ def compaction_state_out(payload: dict[str, Any]) -> dict[str, Any]:
         "model": str(payload.get("model") or ""),
         "created_at": str(payload.get("created_at") or ""),
         "masked_tool_results": int(last_mask.get("count") or 0),
+        "summary": summary_ops.summary_text(summary),
     }
 
 
@@ -253,7 +183,10 @@ def _apply_stored_summary(
     ]
     covered = state.get("covered_until_message_id")
     prefix = core.covered_prefix_length(history_slice, covered) if same else 0
-    return summary_ops.apply_summary(messages, summary, cut_index=1 + prefix)
+    applied = summary_ops.apply_summary(messages, summary, cut_index=1 + prefix)
+    # T24：摘要生成时按"本会话最近用过的技能"记了一段提示（见 assistant_compaction_skills）；
+    # 它每轮都要跟着摘要块一起补回，否则压缩后的追问会失去技能约束。
+    return attach_compaction_skill_prompt(applied, str(state.get("skill_prompt") or ""))
 
 
 def _persist_mask_stats(
@@ -286,6 +219,7 @@ async def compact_before_model(
     provider: BaseLLMProvider | None,
     window_tokens: int,
     percent: float | None,
+    limits: CompactionLimits | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """流内唯一入口：返回（这一轮真正要发给模型的 messages, 标记）。
 
@@ -305,7 +239,7 @@ async def compact_before_model(
         history,
         window_tokens=window_tokens,
         percent=percent,
-        limits=settings.limits,
+        limits=limits or settings.limits,
         state=state,
         history_count=history_count,
     )
@@ -339,6 +273,12 @@ async def compact_before_model(
         turns=plan.summary_region.turns,
     )
     current = summary_ops.apply_summary(current, merged, cut_index=plan.summary_cut_index)
+    # T24：摘要会压掉旧轮次的用户消息，连带压掉它们的技能提示；这里按"本会话最近
+    # 用过的技能"重新挂一段（常量口径见 assistant_compaction_skills），并写进压缩状态，
+    # 后续每轮由 _apply_stored_summary 跟着摘要块补回。
+    with factory() as db:
+        skill_prompt = build_compaction_skill_prompt(db, conversation_id)
+    current = attach_compaction_skill_prompt(current, skill_prompt)
     tokens_after = core.messages_tokens(current)
     payload = {
         "summary": merged,
@@ -348,6 +288,8 @@ async def compact_before_model(
         "model": _provider_model(provider, settings.model),
         "created_at": _now_iso(),
     }
+    if skill_prompt:
+        payload["skill_prompt"] = skill_prompt
     if isinstance(state.get("last_mask"), dict):
         payload["last_mask"] = state["last_mask"]
     with factory() as db:
@@ -376,21 +318,42 @@ def _latest_usage(db: Session, conversation_id: int) -> dict[str, Any]:
     return usage if isinstance(usage, dict) else {}
 
 
-async def run_manual_compaction(
-    conversation_id: int,
-    db: Session,
-    *,
-    dry_run: bool,
-) -> dict[str, Any]:
-    """用户主动压缩：先 dry-run 出预估，确认后才真跑（真跑会消耗一次模型调用）。
+@dataclass(frozen=True)
+class ManualCompactionPlan:
+    """手动压缩的**准备段**产物。
 
-    ``dry_run=True`` 时**不写库、不调模型**：返回的 ``percent_after`` 是按状态卡
-    中位大小估的，界面必须标「预计」，不能当成实测。
+    ``result`` 非空表示"不用调模型"：``dry_run`` 预估或没有可摘要的内容，直接就是响应体；
+    否则由调用方 ``await summarize_region(provider, region)``，再交回
+    :func:`persist_manual_compaction` 落库。
+
+    这里只带纯数据（payload/region/previous/last_mask/provider）——摘要是长调用，
+    期间请求会话已经归还，带 ORM 行过来只会在 worker 之外撞 ``DetachedInstanceError``。
+    """
+
+    conversation_id: int
+    result: dict[str, Any] | None = None
+    provider: BaseLLMProvider | None = None
+    region: Any = None
+    payload: dict[str, Any] | None = None
+    previous_summary: dict[str, Any] | None = None
+    last_mask: dict[str, Any] | None = None
+    window_tokens: int = 0
+    tokens_before: int = 0
+    settings_model: str = ""
+
+
+def plan_manual_compaction(
+    db: Session, conversation_id: int, *, dry_run: bool
+) -> ManualCompactionPlan:
+    """同步准备段：读设置/历史/用量，算出预估；``dry_run`` 时就直接给出响应体。
+
+    ``dry_run=True`` 路径**不调模型、不写库**（与改造前同一语义）；真跑路径在这里只
+    准备好 provider 与待摘要区间，然后归还请求连接。
     """
     settings = get_compaction_settings(db)
     state = load_compaction(db, conversation_id)
     history = history_snapshot(db, conversation_id)
-    window_tokens = int(getattr(get_llm_config(db), "context_window_tokens", 0) or 0)
+    window_tokens = configured_model_window(get_llm_config(db)).tokens
     usage = _latest_usage(db, conversation_id)
     tokens_before = int(usage.get("total") or 0)
     if tokens_before <= 0:
@@ -403,7 +366,7 @@ async def run_manual_compaction(
     covered = state.get("covered_until_message_id")
     region = core.summary_region(history, covered_until_message_id=covered)
     percent_before = _percent(tokens_before, window_tokens)
-    payload: dict[str, Any] = {
+    base_payload: dict[str, Any] = {
         "dry_run": dry_run,
         "percent_before": percent_before,
         "percent_after": percent_before,
@@ -416,39 +379,71 @@ async def run_manual_compaction(
         "compaction": compaction_state_out(state) or None,
         "reason": "",
     }
-    if not region.message_ids:
-        payload["reason"] = "nothing_to_summarize"
-        return payload
-    estimated_after = max(0, tokens_before - region.tokens + PREVIEW_SUMMARY_TOKENS)
-    payload["percent_after"] = _percent(estimated_after, window_tokens)
-    if dry_run:
-        return payload
     try:
-        base_provider = create_provider(get_llm_config(db))
-    except Exception as exc:  # noqa: BLE001 - 没有可用配置时按"摘要不可用"处理
-        raise CompactionUnavailable("尚未配置大模型 API") from exc
-    provider = resolve_summary_provider(db, base_provider, settings)
-    parsed = await summarize_region(provider, region)
-    previous = state.get("summary") if isinstance(state.get("summary"), dict) else None
+        if not region.message_ids:
+            base_payload["reason"] = "nothing_to_summarize"
+            return ManualCompactionPlan(conversation_id=conversation_id, result=base_payload)
+        estimated_after = max(0, tokens_before - region.tokens + PREVIEW_SUMMARY_TOKENS)
+        base_payload["percent_after"] = _percent(estimated_after, window_tokens)
+        if dry_run:
+            return ManualCompactionPlan(conversation_id=conversation_id, result=base_payload)
+        try:
+            base_provider = create_provider(get_llm_config(db))
+        except Exception as exc:  # noqa: BLE001 - 没有可用配置时按"摘要不可用"处理
+            raise CompactionUnavailable("尚未配置大模型 API") from exc
+        provider = resolve_summary_provider(db, base_provider, settings)
+        return ManualCompactionPlan(
+            conversation_id=conversation_id,
+            provider=provider,
+            region=region,
+            payload=base_payload,
+            previous_summary=(
+                state.get("summary") if isinstance(state.get("summary"), dict) else None
+            ),
+            last_mask=state.get("last_mask") if isinstance(state.get("last_mask"), dict) else None,
+            window_tokens=window_tokens,
+            tokens_before=tokens_before,
+            settings_model=settings.model,
+        )
+    finally:
+        db.close()
+
+
+def persist_manual_compaction(plan: ManualCompactionPlan, parsed: Any) -> dict[str, Any]:
+    """同步落库段：合并摘要、算真实 token、写 ``compaction`` 列，拼出响应体。
+
+    **自己开会话**：准备段 ``plan_manual_compaction`` 已经把请求会话还回去了，模型
+    调用又在那之后，所以这里不能再要一个"调用方给的会话"（它多半已经关了或过期）。
+    """
+    region = plan.region
+    payload = dict(plan.payload or {})
     merged = summary_ops.merge_summary(
-        previous, parsed, message_ids=region.message_ids, turns=region.turns
+        plan.previous_summary,
+        parsed,
+        message_ids=region.message_ids,
+        turns=region.turns,
     )
     summary_tokens = summary_ops.summary_block_tokens(merged)
-    tokens_after = max(0, tokens_before - region.tokens + summary_tokens)
+    tokens_after = max(0, plan.tokens_before - region.tokens + summary_tokens)
     stored = {
         "summary": merged,
         "covered_until_message_id": region.until_message_id,
-        "tokens_before": tokens_before,
+        "tokens_before": plan.tokens_before,
         "tokens_after": tokens_after,
-        "model": _provider_model(provider, settings.model),
+        "model": _provider_model(plan.provider, plan.settings_model),
         "created_at": _now_iso(),
     }
-    if isinstance(state.get("last_mask"), dict):
-        stored["last_mask"] = state["last_mask"]
-    save_compaction(db, conversation_id, stored)
+    if plan.last_mask is not None:
+        stored["last_mask"] = plan.last_mask
+    with fresh_session() as db:
+        # T24：手动压缩同样要重挂"最近用过的技能"——摘要落库后每轮都跟着摘要块下发。
+        skill_prompt = build_compaction_skill_prompt(db, plan.conversation_id)
+        if skill_prompt:
+            stored["skill_prompt"] = skill_prompt
+        save_compaction(db, plan.conversation_id, stored)
     payload.update(
         {
-            "percent_after": _percent(tokens_after, window_tokens),
+            "percent_after": _percent(tokens_after, plan.window_tokens),
             "model": stored["model"],
             "created_at": stored["created_at"],
             "covered_until_message_id": region.until_message_id,
@@ -478,6 +473,7 @@ __all__ = [
     "CompactionSettings",
     "CompactionUnavailable",
     "MASK_PERCENT_KEY",
+    "ManualCompactionPlan",
     "SUMMARY_PERCENT_KEY",
     "SUMMARY_TIMEOUT_SECONDS",
     "clear_compaction",
@@ -485,8 +481,9 @@ __all__ = [
     "compaction_state_out",
     "get_compaction_settings",
     "load_compaction",
+    "persist_manual_compaction",
+    "plan_manual_compaction",
     "resolve_summary_provider",
-    "run_manual_compaction",
     "save_compaction",
     "save_compaction_settings",
     "summarize_region",

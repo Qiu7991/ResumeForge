@@ -173,8 +173,11 @@ describe("ApplyQueuePanel 准入徽标", () => {
 
     renderPanel();
 
-    expect(await screen.findByText("需确认")).toBeInTheDocument();
-    expect(screen.getByText("需逐条确认")).toBeInTheDocument();
+    // 合并成「匹配」列后，结论与「需逐条确认」在同一行内（一个 12px 文本节点，
+    // 用「·」连接）：既保留原来两条信息，也顺带钉住 tone 落到 warn 档。
+    const admission = await screen.findByText("需确认 · 需逐条确认");
+    expect(admission).toBeInTheDocument();
+    expect(admission.dataset.tone).toBe("needs_confirm");
   });
 
   it("队列里没有待投条目时禁用开始投递", async () => {
@@ -425,19 +428,11 @@ describe("ApplyQueuePanel 分页与刷新", () => {
  * 3. 后端退回默认招呼语（`source: "default"`）不算成功：那正是用户要避免的群发话术。
  */
 describe("ApplyQueuePanel 批量生成招呼语", () => {
-  function renderPanel() {
-    return render(
-      <AntdApp>
-        <ContextMenuHost>
-          <ApplyQueuePanel disabled={false} onStarted={vi.fn()} />
-        </ContextMenuHost>
-      </AntdApp>,
-    );
-  }
-
   function checkAllRows() {
     // 第一列是行选择复选框（表头那个是全选，这里用「全选队列」按钮更直白）。
-    fireEvent.click(screen.getByRole("button", { name: translate("zh-CN", "applyQueue.filter.selectAll") }));
+    fireEvent.click(
+      screen.getByRole("button", { name: translate("zh-CN", "applyQueue.filter.selectAll") }),
+    );
   }
 
   it("只给「没有招呼语」的选中条目生成，且落库为未确认草稿", async () => {
@@ -447,14 +442,19 @@ describe("ApplyQueuePanel 批量生成招呼语", () => {
         { ...BASE_ITEM, id: 2, job_id: 12, job_title: "Job B", greeting: "existing draft" },
       ]),
     );
-    apiMocks.previewGreeting.mockResolvedValue({ greeting: "freshly generated greeting", source: "generated" });
+    apiMocks.previewGreeting.mockResolvedValue({
+      greeting: "freshly generated greeting",
+      source: "generated",
+    });
     apiMocks.updateQueueItem.mockResolvedValue({ ...BASE_ITEM, id: 1 });
 
     renderPanel();
     await screen.findByText("Job A");
     checkAllRows();
 
-    fireEvent.click(screen.getByRole("button", { name: translate("zh-CN", "applyQueue.action.batchGreeting") }));
+    fireEvent.click(
+      screen.getByRole("button", { name: translate("zh-CN", "applyQueue.action.batchGreeting") }),
+    );
 
     await waitFor(() => expect(apiMocks.updateQueueItem).toHaveBeenCalled());
     // 只有 A 岗位（没有招呼语）发了生成请求。
@@ -481,7 +481,9 @@ describe("ApplyQueuePanel 批量生成招呼语", () => {
     await screen.findByText("Job A");
     checkAllRows();
 
-    fireEvent.click(screen.getByRole("button", { name: translate("zh-CN", "applyQueue.action.batchGreeting") }));
+    fireEvent.click(
+      screen.getByRole("button", { name: translate("zh-CN", "applyQueue.action.batchGreeting") }),
+    );
 
     await waitFor(() => expect(apiMocks.previewGreeting).toHaveBeenCalled());
     // 默认话术群发正是用户要避免的：不落库。

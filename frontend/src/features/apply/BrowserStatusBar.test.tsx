@@ -91,6 +91,8 @@ beforeEach(() => {
   apiState.data = null;
   apiState.loading = false;
   apiState.error = null;
+  localStorage.removeItem("resumeforge.apply.browser_hint_seen");
+  localStorage.removeItem("resumeforge.apply.browser_hint_seen");
 });
 
 // 项目未开启 vitest globals，自动清理不会生效，必须显式注册，
@@ -104,8 +106,12 @@ describe("BrowserStatusBar", () => {
     apiState.data = STOPPED;
     renderBar();
 
-    expect(screen.getByRole("button", { name: /启动浏览器/ })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: /打开招聘网站/ })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: new RegExp(t("browserStatus.action.start")) }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: new RegExp(t("browserStatus.action.openSite")) }),
+    ).not.toBeInTheDocument();
   });
 
   it("浏览器运行中时「打开招聘网站」可用，点击会请求后端导航", async () => {
@@ -113,7 +119,9 @@ describe("BrowserStatusBar", () => {
     apiMocks.openBrowserSite.mockResolvedValue(RUNNING_WITH_ENTRY);
     renderBar();
 
-    const openButton = screen.getByRole("button", { name: /打开招聘网站/ });
+    const openButton = screen.getByRole("button", {
+      name: new RegExp(t("browserStatus.action.openSite")),
+    });
     expect(openButton).toBeEnabled();
 
     fireEvent.click(openButton);
@@ -125,7 +133,9 @@ describe("BrowserStatusBar", () => {
     apiState.data = { ...RUNNING_WITH_ENTRY, entry_url: "" };
     renderBar();
 
-    expect(screen.getByRole("button", { name: /打开招聘网站/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: new RegExp(t("browserStatus.action.openSite")) }),
+    ).toBeDisabled();
   });
 
   it("展示站点入口地址，让用户知道这个窗口会去哪里", async () => {
@@ -152,7 +162,9 @@ describe("BrowserStatusBar", () => {
       screen.getByRole("menuitem", { name: new RegExp(t("browserStatus.help.trigger")) }),
     );
 
-    expect(await screen.findByText(/使用浏览器/)).toHaveTextContent("Google Chrome");
+    expect(await screen.findByText(t("browserStatus.browser"), { exact: false })).toHaveTextContent(
+      "Google Chrome",
+    );
   });
 
   it("三段说明默认不在页面上（首屏让给队列表格），只留在使用说明里", () => {
@@ -238,5 +250,93 @@ describe("BrowserStatusBar", () => {
 
     expect(screen.getByText("调试端口 9333")).toBeInTheDocument();
     expect(screen.queryByText("正在刷新")).not.toBeInTheDocument();
+  });
+
+  it("首次使用展开扫码提示，收起后记录偏好", () => {
+    apiState.data = RUNNING_WITH_ENTRY;
+    renderBar();
+    expect(document.querySelector(".apply-browser-expanded")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("browserStatus.hint.collapse") }));
+    expect(document.querySelector(".apply-browser-compact")).toBeInTheDocument();
+    expect(localStorage.getItem("resumeforge.apply.browser_hint_seen")).toBe("1");
+  });
+
+  it("错误态保留完整状态说明", () => {
+    apiState.data = RUNNING_WITH_ENTRY;
+    apiState.error = "status polling failed";
+    renderBar();
+    expect(document.querySelector(".apply-browser-compact")).toBeNull();
+  });
+
+  /**
+   * I-16：首屏第一帧的地位。
+   *
+   * 此前这一帧被当成「状态未知」渲染——第二行整块不存在（卡片只有一行高），数据回来
+   * 之后再长出来，高度跳一下；而「启动浏览器」在没有任何状态数据时就能点，等于在猜。
+   */
+  it("首屏数据未到时先给骨架，状态写「正在读取…」，动作全部不可点", () => {
+    apiState.data = null;
+    apiState.loading = true;
+    const view = renderBar();
+
+    // 骨架的宽度在 `styles/apply.css` 里按容器百分比给（60%），不写死 220px。
+    expect(screen.getByTestId("browser-status-skeleton")).toBeInTheDocument();
+    // 「正在读取…」不是「状态未知」：一个是等待，一个是读不到。
+    expect(screen.getByText(t("browserStatus.state.loading"))).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: new RegExp(t("browserStatus.action.start")) }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("browserStatus.more.aria") })).toBeDisabled();
+    expect(view.container.querySelector(".apply-browser-bar")).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("数据到位后骨架消失，第二行换成真实端口，动作恢复可用", () => {
+    apiState.data = null;
+    apiState.loading = true;
+    const view = renderBar();
+    expect(screen.getByTestId("browser-status-skeleton")).toBeInTheDocument();
+
+    apiState.data = RUNNING_WITH_ENTRY;
+    apiState.loading = false;
+    view.rerender(
+      <AntdApp>
+        <BrowserStatusBar />
+      </AntdApp>,
+    );
+
+    expect(screen.queryByTestId("browser-status-skeleton")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(t("browserStatus.port", { port: RUNNING_WITH_ENTRY.port })),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: new RegExp(t("browserStatus.action.openSite")) }),
+    ).toBeEnabled();
+    expect(view.container.querySelector(".apply-browser-bar")).not.toHaveAttribute("aria-busy");
+  });
+
+  it("骨架与真实第二行同高：数据到位前后状态条高度不跳变", () => {
+    apiState.data = null;
+    apiState.loading = true;
+    const view = renderBar();
+    const pendingRow = view.container.querySelector<HTMLElement>(".apply-browser-meta");
+    expect(pendingRow).not.toBeNull();
+    const pendingHeight = (pendingRow as HTMLElement).getBoundingClientRect().height;
+
+    apiState.data = RUNNING_WITH_ENTRY;
+    apiState.loading = false;
+    view.rerender(
+      <AntdApp>
+        <BrowserStatusBar />
+      </AntdApp>,
+    );
+    const settledRow = view.container.querySelector<HTMLElement>(".apply-browser-meta");
+    expect(settledRow).not.toBeNull();
+
+    // jsdom 没有排版引擎，两个高度在这里都是 0，所以这条断言本身很弱；真正的保证是
+    // 两分支共用 `.apply-browser-meta` 这一行容器（`styles/apply.css` 里给了 18px 行高）。
+    // 留这条是为了让「某一支偷偷加了 margin/padding」在 CI 的 ui-quality 之前先被看见。
+    expect(
+      Math.abs((settledRow as HTMLElement).getBoundingClientRect().height - pendingHeight),
+    ).toBeLessThanOrEqual(1);
   });
 });

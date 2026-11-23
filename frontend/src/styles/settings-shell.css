@@ -1,0 +1,195 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 设置页外壳：左侧九组竖向导航 + 右侧内容区（F38，2026-11）。
+   原先是一条横排的 antd Tabs；九组之后一行放不下，改成"目录式"浏览。
+
+   两档形态：
+   - 宽档（容器 > 900px）：左 180px 导航常驻，搜索框压在导航上方；
+   - 窄档（容器 ≤ 900px）：导航换成一个 Select、叠在内容之上，右侧单列。
+   断点挂在 `.settings-page` 的容器查询上，不是视口宽度——设置页在侧栏折叠、
+   任务条展开时可用宽度会变，用视口判断会在这些中间态错档。 */
+
+.settings-page {
+  /* 容器查询的锚点：容器查询只认最近的容器祖先的 inline-size。 */
+  container-type: inline-size;
+}
+
+.settings-shell {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+/* 导航常驻：滚动容器是 `.app-content`（base-shell.css 的 P1-2 两层高度链），
+   侧栏在它里面吸顶，往下翻卡片时仍能看见当前分组与搜索框。 */
+.settings-sidebar {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-search {
+  width: 100%;
+}
+
+/* 设置项搜索是常驻可输入的框，不属于"未点编辑前不显示占位符"的只读表单；
+   form-state.css 里 `.settings-page:not(.is-editing)` 的隐藏规则会一并命中它，
+   这里把占位符恢复成三级文字色。 */
+/* antd-override: 只覆盖 antd 占位符的可见性，无对应 token */
+.settings-page .settings-search .ant-select-placeholder {
+  color: var(--rf-text-tertiary) !important;
+  opacity: 1 !important;
+}
+
+/* 导航本体：三档分组标题 + 九项，没有边框和底色——它是一份"目录"，不该和右侧的
+   卡片抢视觉重量。当前项靠浅品牌底 + 加粗标识，与选中页签的观感一致。 */
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  /* I-01：组间距 16 → 20，让"分组"比"组内项"更像一层结构。 */
+  gap: 20px;
+}
+
+.settings-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* T11：标题靠"字号 + 发丝线"分层，不靠"小一号 + 加宽字距"。
+   旧版把 11px/加宽字距/左色条三件套一起用，看起来像模板站的分区标签。现在只留两件：
+   12px 的 secondary 文字 + 后面一条 1px 发丝线（把标题和它下面那组项连成一段）。 */
+.settings-nav-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--rf-text-secondary);
+}
+
+.settings-nav-group-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--rf-border-subtle);
+}
+
+.settings-nav-item {
+  /* T11：左侧 12px 是**固定标记槽**（未选中时透明），所以切换项时文字不会位移。
+     不再用 `border-left`：它会参与盒模型，选中/未选中各差 3px，鼠标划过整列会抖。 */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--rf-text-body);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.settings-nav-item::before {
+  content: "";
+  flex: 0 0 12px;
+  height: 2px;
+  border-radius: 1px;
+  background: transparent;
+}
+
+.settings-nav-item:hover {
+  background: var(--rf-fill-secondary);
+}
+
+/* 选中态只有两种手段：字重 600 + 12×2px 品牌短横线。**不要**再加底色/左边框/
+   品牌色文字——四重标注就是这套导航"AI 味"的来源（T11 的验收按 CSS 属性数数）。 */
+.settings-nav-item[aria-current="page"] {
+  font-weight: 600;
+  color: var(--rf-text-body);
+}
+
+.settings-nav-item[aria-current="page"]::before {
+  background: var(--rf-brand);
+}
+
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--rf-focus-visible);
+  outline-offset: 1px;
+}
+
+/* 窄档的 Select 形态：宽档恒藏，避免出现两套同时可点的导航。 */
+.settings-nav-mobile {
+  display: none;
+}
+
+.settings-nav-mobile-select {
+  width: 100%;
+}
+
+.settings-body {
+  min-width: 0;
+  /* 切组时内容区会滚到顶部：留一点余量，分组标题不会被滚动容器上沿切掉。 */
+  scroll-margin-top: 16px;
+}
+
+/* 分组标题 + 一句说明：与原先每页顶部的说明同一位置，只是标题从页签搬到了内容区。 */
+.settings-section-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+/* 未选中的分组用 `hidden` 属性留在 DOM 里（保留各自的取数状态与未保存输入）。
+   显式写这条规则：一旦某张卡自己声明了 `display`，UA 的 `[hidden]{display:none}`
+   会被作者样式盖掉，那一组就会在下面继续显示。 */
+.settings-section[hidden] {
+  display: none;
+}
+
+/* 搜索命中后的 2 秒高亮：只描一圈边，不改盒模型（否则整页会轻微跳动）。 */
+.settings-card-target {
+  border-radius: 10px;
+  animation: settings-card-target 2s ease-out;
+}
+
+@keyframes settings-card-target {
+  from {
+    box-shadow: 0 0 0 3px var(--rf-focus-ring);
+  }
+
+  to {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
+@container (max-width: 900px) {
+  .settings-shell {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  /* 窄档是单列：导航换成顶部一个 Select，跟着内容一起滚走。
+     吸顶会让卡片从它下面穿过（侧栏没有底色，文字会透出来叠在一起）。 */
+  .settings-sidebar {
+    position: static;
+  }
+
+  .settings-nav {
+    display: none;
+  }
+
+  .settings-nav-mobile {
+    display: block;
+  }
+}

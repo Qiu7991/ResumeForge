@@ -7,10 +7,16 @@
 锚定**（见 ``text_extraction._anchor_text``：图片只能靠模型自己抄录一遍再对照，天然更弱）。
 
 **扫描页例外（T03）**：PDF 里没有文字层的页（< 30 字符判为图片页）提取不出文字，
-会把整页渲染成位图、作为图片附件发给所配置的模型服务商识别——与用户手动上传的
-截图**同路径、同预算**（``attachments.MAX_ATTACHMENTS_TOTAL_BYTES``）。这是"扫描件
-可识别"能力的必要条件，主理人已确认该语义；界面不单独弹窗，但警告文案会明确写
-"已按图片识别"。纯文字 PDF 的行为与此前完全一致，仍不发出任何原始文件。
+按"识别引擎"设置走两条路之一（默认 ``auto``）：
+
+- 配了 DeepSeek Key → 扫描页发给 **DeepSeek OCR**，按页计费，返回逐页文本；
+- 没配 Key、或把引擎设为"只用视觉模型" → 整页渲染成位图，作为图片附件发给**用户
+  自己配置的模型服务商**识别——与用户手动上传的截图同路径、同预算
+  （``attachments.MAX_ATTACHMENTS_TOTAL_BYTES``）。
+
+两条路都是"把原件发给第三方"，所以警告文案必须如实写明是**哪一家**、是否计费（见
+``ocr.policy`` 的 ``OCR_USED_WARNING`` 与 ``pdf_page_images`` 的说明）。纯文字 PDF
+的行为与此前完全一致，仍不发出任何原始文件。
 
 解析的是不可信输入，所以每条限制都有理由：页数、字符数、体积都封顶，PDF 走 pypdf，
 DOCX 只读白名单成员，绝不 ``extractall``。任何解析失败都转成面向用户的中文提示。
@@ -18,20 +24,19 @@ DOCX 只读白名单成员，绝不 ``extractall``。任何解析失败都转成
 
 from __future__ import annotations
 
-import io
 import logging
-import zipfile
 from collections.abc import Sequence
 from typing import Any, NamedTuple
-from xml.etree import ElementTree
-
-from pypdf import PdfReader
 
 from .attachments import (
     DOCX_MIME,
     MAX_ATTACHMENTS_TOTAL_BYTES,
     document_source,
 )
+from .document_text_parse import _docx_text, _pdf_page_split, _pdf_page_texts, _pdf_text
+from .ocr.client import OcrError
+from .ocr.policy import OcrContext
+from .ocr.scan import extract_scan_pages, user_message_for
 from .pdf_page_images import (
     MAX_PDF_IMAGE_PAGES,
     page_image_data_url,
@@ -41,13 +46,6 @@ from .resume.resume_rich_text import strip_markers
 
 logger = logging.getLogger(__name__)
 
-# 一份文档最多读多少页。简历和招聘信息没有超过这个数的正当理由，而页数直接决定
-# 解析耗时。
-MAX_PDF_PAGES = 30
-# 单页字符数低于该阈值判为"图片页"（扫描页）：正常文本页哪怕只有几行也远超这个数，
-# 而扫描页经 OCR 侧的提取通常只给出空串或页码水印。超过 MAX_PDF_PAGES 的部分本就
-# 不参与解析，图片页判定只覆盖前 MAX_PDF_PAGES 页。
-IMAGE_PAGE_MIN_CHARS = 30
 # 一次识别里所有文档提取出的纯文字上限（不是每份文档各一份）。超过后截断并明确告知
 # 用户，不做静默丢弃。
 #
@@ -56,9 +54,6 @@ IMAGE_PAGE_MIN_CHARS = 30
 # 文本 35,000 字只要 0.13 秒）。一份简历或招聘信息的正文远用不到 20,000 字，
 # 把上限留在这个量级可以避免一次上传让请求卡住十几秒。
 MAX_DOCUMENT_TEXT_CHARS = 20_000
-
-_DOCX_DOCUMENT_XML = "word/document.xml"
-_DOCX_WORD_NAMESPACE = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 _TRUNCATED_WARNING = "文档内容较长，本次只识别了前一部分；其余内容请复制为文本粘贴。"
 _EMPTY_TEXT_MESSAGE = (
@@ -99,53 +94,18 @@ def _truncate(text: str) -> tuple[str, list[str]]:
     return text[:MAX_DOCUMENT_TEXT_CHARS], [_TRUNCATED_WARNING]
 
 
-def _pdf_text(raw: bytes) -> str:
-    try:
-        reader = PdfReader(io.BytesIO(raw))
-        # 空密码是某些导出工具的常见情况，能打开就不该拦。
-        if reader.is_encrypted and not reader.decrypt(""):
-            raise ValueError("文件有密码保护，请先解除限制后再上传")
-        pages = reader.pages[:MAX_PDF_PAGES]
-        return "\n".join(page.extract_text() or "" for page in pages)
-    except ValueError:
-        raise
-    except Exception as exc:  # noqa: BLE001 - 第三方解析器抛出的异常类型不固定
-        logger.warning("PDF 文字提取失败：%s", type(exc).__name__)
-        raise ValueError("文件无法解析，可能已损坏或不是真正的 PDF") from exc
-
-
-def _pdf_page_texts(raw: bytes) -> list[str]:
-    """逐页提取 PDF 文字（最多前 ``MAX_PDF_PAGES`` 页）；失败转成用户可读的 ``ValueError``。"""
-    try:
-        reader = PdfReader(io.BytesIO(raw))
-        if reader.is_encrypted and not reader.decrypt(""):
-            raise ValueError("文件有密码保护，请先解除限制后再上传")
-        return [page.extract_text() or "" for page in reader.pages[:MAX_PDF_PAGES]]
-    except ValueError:
-        raise
-    except Exception as exc:  # noqa: BLE001 - 第三方解析器抛出的异常类型不固定
-        logger.warning("PDF 文字提取失败：%s", type(exc).__name__)
-        raise ValueError("文件无法解析，可能已损坏或不是真正的 PDF") from exc
-
-
-def _pdf_page_split(page_texts: list[str]) -> tuple[str, list[int]]:
-    """逐页切分：返回（文字页的正文, 文字层过少、按扫描页处理的页码）。"""
-    image_page_numbers = [
-        number
-        for number, text in enumerate(page_texts, start=1)
-        if len(text.strip()) < IMAGE_PAGE_MIN_CHARS
-    ]
-    scanned = set(image_page_numbers)
-    text = "\n".join(
-        page_text for number, page_text in enumerate(page_texts, start=1) if number not in scanned
-    )
-    return text, image_page_numbers
-
-
 def _pdf_extract_with_images(
-    raw: bytes, image_budget_bytes: int, page_texts: list[str] | None = None
+    raw: bytes,
+    image_budget_bytes: int,
+    page_texts: list[str] | None = None,
+    ocr: OcrContext | None = None,
+    filename: str = "document.pdf",
 ) -> tuple[str, list[tuple[str, int]], list[str]]:
-    """PDF 逐页提取：文本页贡献文字，图片页（扫描页）渲染成位图走图片识别。
+    """PDF 逐页提取：文本页贡献文字，图片页（扫描页）交给 OCR 或视觉模型。
+
+    ``ocr`` 非空且允许时，扫描页先走 DeepSeek OCR（一次请求拿回逐页文本，不受
+    "最多 8 页 / 5 MB"的位图预算限制）；OCR 成功就不再渲染位图——同一份内容不该
+    付两次钱。只有 OCR 未启用或失败时，才回落到渲染位图的老路。
 
     ``image_budget_bytes`` 是本次请求剩余的附件体积预算：渲染出的页超出预算时
     **按页跳过并警告**，不做静默丢弃。渲染整体失败时回退为纯文字行为（没有文字
@@ -160,6 +120,24 @@ def _pdf_extract_with_images(
     text, image_page_numbers = _pdf_page_split(page_texts)
 
     warnings: list[str] = []
+    if image_page_numbers and ocr is not None:
+        try:
+            outcome = extract_scan_pages(
+                raw,
+                page_texts,
+                ocr,
+                filename=filename,
+                page_count=len(page_texts),
+            )
+        except OcrError as exc:
+            # engine=ocr：用户明确选了只用 OCR，失败就必须说清原因，不能偷偷换服务商。
+            raise ValueError(user_message_for(exc)) from exc
+        if outcome is not None and outcome.ok:
+            # OCR 已完成逐页替换（含文字层页的原有文本），不需要再发任何位图。
+            return outcome.text, [], [*outcome.warnings]
+        if outcome is not None:
+            warnings.extend(outcome.warnings)
+
     if image_page_numbers:
         if not text.strip():
             warnings.append(_PURE_IMAGE_PDF_WARNING)
@@ -190,30 +168,6 @@ def _pdf_extract_with_images(
     return text, rendered, warnings
 
 
-def _docx_text(raw: bytes) -> str:
-    try:
-        # 只读白名单成员，不走 extractall：docx 是 zip，解压路径由上传者控制。
-        with (
-            zipfile.ZipFile(io.BytesIO(raw)) as archive,
-            archive.open(_DOCX_DOCUMENT_XML) as stream,
-        ):
-            tree = ElementTree.parse(stream)
-    except KeyError as exc:
-        raise ValueError("文件不是有效的 docx（缺少正文），请另存为 .docx 后重新上传") from exc
-    except (zipfile.BadZipFile, ElementTree.ParseError, OSError) as exc:
-        raise ValueError("文件无法解析，可能已损坏或不是真正的 DOCX") from exc
-
-    paragraphs: list[str] = []
-    for paragraph_element in tree.iter(f"{_DOCX_WORD_NAMESPACE}p"):
-        # 表格单元格里也是 w:p，所以按文档顺序遍历段落就能同时覆盖正文与表格。
-        text = "".join(
-            node.text or "" for node in paragraph_element.iter(f"{_DOCX_WORD_NAMESPACE}t")
-        )
-        if text.strip():
-            paragraphs.append(text.strip())
-    return "\n".join(paragraphs)
-
-
 def extract_document_text(name: str, mime_type: str, data: str) -> ExtractedDocument:
     """校验并提取一份文档的文字。
 
@@ -235,7 +189,9 @@ def extract_document_text(name: str, mime_type: str, data: str) -> ExtractedDocu
     )
 
 
-def extract_documents_text(documents: Sequence[Any]) -> ExtractedDocuments:
+def extract_documents_text(
+    documents: Sequence[Any], ocr: OcrContext | None = None
+) -> ExtractedDocuments:
     """把若干份文档提取成一段可解析文本，供岗位/资料识别使用。
 
     **不插入任何来源标记**：这段文字要和粘贴文本一样喂给本地规则，而规则会把开头的
@@ -245,10 +201,10 @@ def extract_documents_text(documents: Sequence[Any]) -> ExtractedDocuments:
     所有文档都会被校验，即使前面的文档已经用完了字符预算——否则一份损坏的文件会因为
     排在后面而被静默忽略。
 
-    PDF 的扫描页会渲染成图片（见 ``_pdf_extract_with_images``）：图片字节数计入
-    ``size_bytes``，最终由调用方的 ``assert_attachment_budget`` 一并把关；渲染端用
-    ``MAX_ATTACHMENTS_TOTAL_BYTES`` 减去已累计的文档字节做逐页预算，超出的页跳过并
-    警告，绝不静默丢弃。
+    PDF 的扫描页优先走 OCR（见 ``_pdf_extract_with_images``）：识别出的文字直接并进
+    ``text``，因此扫描件也能享受与文本页**同一套原文锚定**。``ocr`` 为空或未启用时
+    保持改造前的行为——渲染位图，字节数计入 ``size_bytes``，由调用方的
+    ``assert_attachment_budget`` 一并把关。
     """
     blocks: list[str] = []
     warnings: list[str] = []
@@ -268,7 +224,10 @@ def extract_documents_text(documents: Sequence[Any]) -> ExtractedDocuments:
             body, doc_warnings = _truncate(text)
         else:
             text, doc_images, doc_warnings = _pdf_extract_with_images(
-                raw, MAX_ATTACHMENTS_TOTAL_BYTES - total_bytes
+                raw,
+                MAX_ATTACHMENTS_TOTAL_BYTES - total_bytes,
+                ocr=ocr,
+                filename=safe_name,
             )
             # 渲染成功时纯图片 PDF 也能识别（文字为空但图片非空）；两者皆空才报错，
             # 与此前的"提取不到文字就算失败"语义对齐。
@@ -321,15 +280,26 @@ def _decode_plain_text(raw: bytes) -> str:
 # ``kind`` 只表示"放哪一侧"（界面左右栏），不再决定收什么格式。
 # 图片不走这里（图片识别在 ``services/interview/interview_material.py``）。
 MATERIAL_TEXT_SUFFIXES = frozenset({"pdf", "txt", "md", "markdown", "docx"})
-# 单份材料文件上限：10 MB。JD 与简历都在这个量级以内，超过它的基本是整本手册。
+# 单份材料文件上限：10 MB（**面试材料那一档**）。JD 与简历都在这个量级以内。
 MAX_MATERIAL_FILE_BYTES = 10 * 1024 * 1024
+# 资料箱那一档的上限：50 MB。**两档刻意不同**——面试材料是"当场读一遍就进对话"，
+# 资料箱是"存起来以后还能取用"，而扫描件体积主要来自位图（一页 300dpi 彩色 300–800 KB）。
+# 上限值本身住在 `api/materials.py`（端点校验），这里只提供解析层要认的那个数，
+# 两处必须同源，否则会出现"传输通过了、解析层又按 10 MB 顶回来"（T02 返工 1 的成因）。
+MAX_LOOSE_MATERIAL_BYTES = 50 * 1024 * 1024
 # 文字层少于这个字数就按"扫描件"处理：渲染前 8 页走图片识别。
 # 正常带文字层的 JD / 简历哪怕只有几行也远超 200 字，而扫描件经 pypdf 只能拿到空串
 # 或页码水印。阈值写死是为了让**正常 PDF 不会每次都多花一次模型调用**——
 # 有文字层的文件永远走不到视觉分支，未配置模型也照常可用。
 MATERIAL_SCAN_TEXT_THRESHOLD = 200
 
-_MATERIAL_TOO_LARGE = "文件超过 10 MB，无法导入"
+
+def material_too_large_message(limit_bytes: int) -> str:
+    """体积超限的用户文案。按**实际生效的上限**生成：两档上限不同，写死 10 MB 会撒谎。"""
+    return f"文件超过 {limit_bytes // (1024 * 1024)} MB，无法导入"
+
+
+_MATERIAL_TOO_LARGE = material_too_large_message(MAX_MATERIAL_FILE_BYTES)
 # 两侧共用同一句：类型不再按侧别区分，写死"岗位材料 / 简历截图"会撒谎。
 MATERIAL_UNSUPPORTED = "这份文件不支持导入，可换成图片 / PDF / TXT / Word / Markdown"
 MATERIAL_LEGACY_DOC = "Word 2003 的 .doc 格式读不了，另存为 .docx 后再导入"
@@ -353,12 +323,16 @@ class MaterialText(NamedTuple):
     ``images`` 非空表示这是**扫描件 PDF**：文字层几乎空白，需要调用方拿这些页面走一次
     视觉识别。``scan_warnings`` 只在那件事真的做成之后才成立，所以与 ``warnings`` 分开
     存——识别失败时不能对用户说"已按图片识别"。
+
+    ``parser`` 记录正文是**怎么来的**：``text`` 本机文字层、``ocr`` DeepSeek OCR、
+    ``vision`` 视觉模型（由调用方在识别后改写）。界面按它决定是否提示"已发往第三方"。
     """
 
     text: str
     warnings: list[str]
     images: tuple[str, ...] = ()
     scan_warnings: tuple[str, ...] = ()
+    parser: str = "text"
 
 
 def material_suffix(name: str) -> str:
@@ -373,8 +347,16 @@ def _truncate_material(text: str) -> tuple[str, list[str]]:
     return text[:MAX_DOCUMENT_TEXT_CHARS], [MATERIAL_TRUNCATED_WARNING]
 
 
-def _extract_pdf_material(raw: bytes, render_scan_pages: bool = True) -> MaterialText:
-    """PDF 材料：文字层够用就只返回文字，几乎空白且存在扫描页才渲染图片交给调用方识别。
+def _extract_pdf_material(
+    raw: bytes,
+    render_scan_pages: bool = True,
+    ocr: OcrContext | None = None,
+    filename: str = "material.pdf",
+) -> MaterialText:
+    """PDF 材料：文字层够用就只返回文字，几乎空白且存在扫描页才交给 OCR 或位图。
+
+    ``ocr`` 非空且允许时先走 DeepSeek OCR：识别成功就直接拿到整份正文（不再需要
+    调用方做视觉识别），资料箱那种"明确不做视觉识别"的调用方也因此能读到扫描件。
 
     ``render_scan_pages=False`` 时**不渲染扫描页**（资料箱附件链路：不做视觉识别）：
     返回已经提取到的文字（可能为空）+ 一条常驻警告，由调用方决定怎么呈现。
@@ -387,6 +369,18 @@ def _extract_pdf_material(raw: bytes, render_scan_pages: bool = True) -> Materia
             raise ValueError(_MATERIAL_NO_TEXT)
         truncated, warnings = _truncate_material(body)
         return MaterialText(truncated, warnings)
+    if ocr is not None:
+        try:
+            outcome = extract_scan_pages(
+                raw, page_texts, ocr, filename=filename, page_count=len(page_texts)
+            )
+        except OcrError as exc:
+            raise ValueError(user_message_for(exc)) from exc
+        if outcome is not None and outcome.ok:
+            truncated, warnings = _truncate_material(outcome.text)
+            return MaterialText(
+                truncated, [*warnings, *outcome.warnings], parser="ocr"
+            )
     if not render_scan_pages:
         # 扫描件但没有视觉识别：不能假装提取成功，也不能把空文本当失败（原件仍可另存为）。
         truncated, warnings = _truncate_material(body)
@@ -410,13 +404,19 @@ def _extract_pdf_material(raw: bytes, render_scan_pages: bool = True) -> Materia
 
 
 def extract_material_text(
-    name: str, raw: bytes, *, render_scan_pages: bool = True
+    name: str,
+    raw: bytes,
+    *,
+    render_scan_pages: bool = True,
+    ocr: OcrContext | None = None,
+    max_bytes: int | None = None,
 ) -> MaterialText:
     """把用户导入的材料文件（PDF / TXT / Markdown / Word）提取成纯文本。
 
     与 :func:`preview_text_of_file` 的区别是**用途不同所以口径不同**：这里是"用户主动
-    上传的一份新材料"，所以要卡体积（10 MB）、只认上面那组扩展名、并且把"没提到文字"
-    说成"可能是扫描件"——那是用户真正需要知道的事。
+    上传的一份新材料"，所以要卡体积（默认 10 MB，资料箱档通过 ``max_bytes`` 放宽到
+    50 MB）、只认上面那组扩展名、并且把"没提到文字"说成"可能是扫描件"——那是用户
+    真正需要知道的事。
 
     ``.doc``（Word 2003 二进制格式）单独给一句"另存为 .docx"：读不了就不假装能读。
 
@@ -424,8 +424,13 @@ def extract_material_text(
     不渲染、不抛"没文字"失败，而是返回空文本 + 常驻警告，让用户仍能另存为原件。
     默认 ``True`` 保持面试材料链路的既有行为不变。
 
+    ``max_bytes`` 缺省取 :data:`MAX_MATERIAL_FILE_BYTES`（10 MB）。资料箱传
+    :data:`MAX_LOOSE_MATERIAL_BYTES`（50 MB）——**上限必须由调用方显式传入**，
+    否则会出现"端点放行 50 MB、解析层仍按 10 MB 拒绝"的错配。
+
     失败一律抛 ``ValueError``，文案是面向用户的**原因**（动作由前端补）。
     """
+    limit = MAX_MATERIAL_FILE_BYTES if max_bytes is None else max_bytes
     suffix = material_suffix(name)
     if suffix == ".doc":
         raise ValueError(MATERIAL_LEGACY_DOC)
@@ -433,11 +438,11 @@ def extract_material_text(
         raise ValueError(MATERIAL_UNSUPPORTED)
     if not raw:
         raise ValueError(_MATERIAL_EMPTY_FILE)
-    if len(raw) > MAX_MATERIAL_FILE_BYTES:
-        raise ValueError(_MATERIAL_TOO_LARGE)
+    if len(raw) > limit:
+        raise ValueError(material_too_large_message(limit))
 
     if suffix == ".pdf":
-        return _extract_pdf_material(raw, render_scan_pages=render_scan_pages)
+        return _extract_pdf_material(raw, render_scan_pages=render_scan_pages, ocr=ocr, filename=name)
 
     if suffix == ".docx":
         body = strip_markers(_docx_text(raw)).strip()

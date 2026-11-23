@@ -22,17 +22,23 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import sys
 import time
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import unquote
 
 import httpx
 
-from ..config import get_settings
+from ..config import get_settings, is_desktop_shell
 from ..schemas.update import UpdateCheckResult
+
+# 从 net_proxy 的 re-export 取工厂，**不要**写成 `from .net_client import build_async_client`：
+# `net_client` 顶层就 `from . import net_proxy`，而 `net_proxy` 末尾又 re-export 工厂——两者
+# 互相 import。只有从 `net_proxy` 侧进入（net_proxy 先跑完、末尾再去 import net_client）
+# 才保证 net_client 已经完整执行；直取那个名字会让 `import app.services.update_check` 当场
+# ImportError（2.2.2 改走工厂时引入，`update_sources` 同批同款）。
+from .net_proxy import build_async_client
+from .update_check_assets import _AssetChoice, select_asset
 from .update_check_degrade import build_api_error, degraded_available_message
 
 logger = logging.getLogger(__name__)
@@ -70,7 +76,17 @@ _cache: dict[str, tuple[float, UpdateCheckResult]] = {}
 
 
 def repository() -> str:
-    return os.environ.get(REPOSITORY_ENV_VAR, "").strip() or DEFAULT_REPOSITORY
+    """检查更新时查询的 ``owner/repo``。
+
+    优先级：环境变量（开发/自建部署的显式覆盖）→ 设置页「外部连接 → 更新源」→
+    内置默认。设置页那一档让用户不必改环境变量就能换自托管发行源。
+    """
+    explicit = os.environ.get(REPOSITORY_ENV_VAR, "").strip()
+    if explicit:
+        return explicit
+    from .system_sources import update_repository
+
+    return update_repository()
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:
@@ -94,14 +110,6 @@ def _is_newer(latest: str, current: str) -> bool:
     return latest_tuple + (0,) * (size - len(latest_tuple)) > current_tuple + (0,) * (
         size - len(current_tuple)
     )
-
-
-_PLATFORM_TOKENS: dict[str, frozenset[str]] = {
-    "windows": frozenset({"windows", "win", "win32", "win64"}),
-    "macos": frozenset({"macos", "mac", "osx", "darwin"}),
-    "linux": frozenset({"linux"}),
-}
-_PLATFORM_LABELS = {"windows": "Windows", "macos": "macOS", "linux": "Linux"}
 
 
 def _platform_tag() -> str | None:
@@ -129,114 +137,16 @@ def _install_supported() -> bool:
     return os.name == "nt"
 
 
-@dataclass(frozen=True)
-class _AssetChoice:
-    """从 Release 的附件里挑出来的那个安装包。"""
-
-    url: str
-    name: str
-    size: int | None
-    checksum_url: str
-    installable: bool
-    reason: str
-
-
-def _asset_platform(name: str) -> str | None:
-    """附件名里的平台词 → 平台；没有平台词时 ``None``（通用包）。"""
-    stem = name.lower()
-    if stem.endswith(".zip"):
-        stem = stem[: -len(".zip")]
-    tokens = {token for token in re.split(r"[-_.]+", stem) if token}
-    for key, aliases in _PLATFORM_TOKENS.items():
-        if tokens & aliases:
-            return key
-    return None
-
-
-def _checksum_url_for(assets: object, name: str) -> str:
-    """同名的 ``.sha256`` 附件地址（发布脚本会一并生成）。"""
-    if not isinstance(assets, list):
-        return ""
-    wanted = f"{name}.sha256"
-    for item in assets:
-        if not isinstance(item, dict) or str(item.get("name") or "") != wanted:
-            continue
-        url = str(item.get("browser_download_url") or "")
-        if url.startswith("https://"):
-            return url[:1024]
-    return ""
-
-
 def _select_asset(data: dict) -> _AssetChoice:
-    """挑出**适用于当前平台**的安装包，不看附件列表的顺序。
+    """挑出**适用于当前平台与形态**的安装包（实现与平台词表在 ``update_check_assets``）。
 
-    发行版挂的是 `ResumeForge-<版本>-windows.zip` 与 `…-macos.zip` 两个包（各带一份
-    `.sha256`）。这里原先按文件名排序取第一个 `.zip`——`macos` < `windows`，于是
-    Windows 用户永远下到 macOS 包，而那个包里只有 `start.command`、没有 `start.cmd`，
-    校验必然失败：按钮摆在那里，一点就报错（2026-10-01 实测确认）。
+    形态决定扩展名：桌面壳要的是 `ResumeForge-Setup-<版本>.exe`（下载、校验、静默安装
+    都在壳里），控制台与便携版要的是 `-windows.zip`（`update_download` 覆盖安装读的就是
+    压缩包）。这个错配的代价不对称——桌面拿到 zip 只会覆盖 `resources/payload`，
+    `app.asar` 一个字节都不动，装完半新半旧（2026-11-20 实机确认）。
     """
-    platform = _platform_tag()
-    wanted = _PLATFORM_TOKENS.get(platform or "", frozenset())
-    assets = data.get("assets")
-
-    best_rank = 0
-    best_name = ""
-    best_item: dict | None = None
-    foreign: set[str] = set()
-
-    if isinstance(assets, list):
-        for item in assets:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "")
-            url = str(item.get("browser_download_url") or "")
-            # `.zip.sha256` 不以 `.zip` 结尾，天然被排除。
-            if not name.lower().endswith(".zip") or not url.startswith("https://"):
-                continue
-            asset_platform = _asset_platform(name)
-            if asset_platform is not None and asset_platform in wanted:
-                rank = 2
-            elif asset_platform is None and name.lower().startswith("resumeforge"):
-                # 不带平台词的通用包（以后若只挂一个包，走这条）。
-                rank = 1
-            else:
-                if asset_platform is not None:
-                    foreign.add(asset_platform)
-                continue
-            if rank > best_rank or (rank == best_rank and name < best_name):
-                best_rank, best_item, best_name = rank, item, name
-
-    if best_item is not None:
-        size = best_item.get("size")
-        return _AssetChoice(
-            url=str(best_item.get("browser_download_url") or ""),
-            name=best_name[:256],
-            size=int(size) if isinstance(size, int) and size >= 0 else None,
-            checksum_url=_checksum_url_for(assets, best_name),
-            installable=True,
-            reason="",
-        )
-
-    if foreign:
-        labels = "、".join(sorted(_PLATFORM_LABELS.get(key, key) for key in foreign))
-        reason = f"这个版本只上传了 {labels} 安装包，没有适用于当前系统的"
-    else:
-        reason = "这个版本没有上传安装包"
-
-    # 最后一条出路：GitHub 给每个 tag 自带一份源码包，它同样含 `start.cmd` 与
-    # `backend/app/main.py`，校验与安装都过得去。保留它是有意的——去掉它会让"维护者
-    # 忘了传某个平台的包"从"照常更新"直接变成"更新按钮彻底不可用"。
-    source_url = str(data.get("zipball_url") or "")
-    if source_url.startswith("https://"):
-        return _AssetChoice(
-            url=source_url,
-            name="GitHub 源码包.zip",
-            size=None,
-            checksum_url="",
-            installable=True,
-            reason=f"{reason}，这次用源码包更新" if foreign else "",
-        )
-    return _AssetChoice(url="", name="", size=None, checksum_url="", installable=False, reason=reason)
+    prefer = "installer" if is_desktop_shell() else "zip"
+    return select_asset(data, _platform_tag(), prefer)
 
 
 def _github_error_message(status_code: int, repo: str) -> str:
@@ -263,9 +173,13 @@ async def _fetch_latest_release(repo: str) -> dict:
         "Accept": "application/vnd.github+json",
         "User-Agent": _USER_AGENT,
     }
+    url = RELEASES_API.format(repo=repo)
+    # 走 net_client 的工厂，不自己建客户端：代理只由它决定（设置里的 proxy_mode → 环境
+    # 变量 → 系统代理）。此前直接 `httpx.AsyncClient(trust_env)` 只认环境变量，用户开着
+    # 系统代理、或在设置页选了代理，这条"检查更新"照样裸奔直连。
     async with (
-        httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False) as client,
-        client.stream("GET", RELEASES_API.format(repo=repo), headers=headers) as response,
+        build_async_client(url=url, timeout=_TIMEOUT, follow_redirects=False) as client,
+        client.stream("GET", url, headers=headers) as response,
     ):
         if response.status_code == 404:
             raise LookupError("仓库还没有发布任何 Release")
@@ -289,7 +203,9 @@ async def _fetch_latest_tag_via_redirect(repo: str) -> str:
     返回形如 ``v0.12.0``；拿不到就抛错，由调用方决定怎么措辞。
     """
     url = RELEASES_REDIRECT.format(repo=repo)
-    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False) as client:
+    # 同 `_fetch_latest_release`：备用探测也要走同一条出网口径，否则「API 被拦、改走
+    # github.com」这条出路在代理环境里同样是直连。
+    async with build_async_client(url=url, timeout=_TIMEOUT, follow_redirects=False) as client:
         response = await client.get(url, headers={"User-Agent": _USER_AGENT})
     if response.status_code == 404:
         raise LookupError("仓库还没有发布任何 Release")
@@ -382,6 +298,11 @@ async def check_for_update(*, refresh: bool = False) -> UpdateCheckResult:
                         f"（{fallback_exc}），稍后再点一次通常就好了；"
                         f"也可以到 {RELEASES_PAGE.format(repo=repo)} 手动查看"
                     )[:1000],
+                    # 这一条必须标出来：它和"上游确实没给版本号"在 `latest_version`
+                    # 上长得一样（都是空串），但界面该说的话完全不同——"本次没能确认"
+                    # 而不是「未提供」。桌面壳可能同时刻查到新版并弹窗，不能让设置页
+                    # 用一句「未提供」去和它唱反调。
+                    degraded=True,
                 ),
             )
         latest = tag.lstrip("vV") or current
@@ -413,11 +334,20 @@ async def check_for_update(*, refresh: bool = False) -> UpdateCheckResult:
         available = _is_newer(tag or latest, current)
         notes = str(data.get("body") or "").strip()
         choice = _select_asset(data)
-        installable = choice.installable and available and _install_supported()
+        desktop = is_desktop_shell()
+        # 桌面形态恒不可安装（2026-11-20）：壳有一套完整链路（updater.js 下载 Setup.exe +
+        # sha256 + 静默安装），页内那套只会覆盖 `resources/payload`。之前这里只看系统不看
+        # 形态，Windows 桌面上 `installable` 恒为 true，界面弹窗于是把用户引到半更新那条路。
+        installable = choice.installable and available and _install_supported() and not desktop
         if not available:
             message = f"已是最新版本（{current}）"
         elif not choice.installable:
             message = f"有新版本 {latest}，但{choice.reason}；请到发布页手动下载"
+        elif desktop:
+            # 前端凭 `installable=false` 把主按钮换成「去更新」（走壳）。这里说清原因，
+            # 免得用户以为是按钮坏了；形态退让（只有便携包）也一并带出去。
+            extra = f"；{choice.reason}" if choice.reason else ""
+            message = f"有新版本 {latest} 可用；桌面版请使用应用内更新器{extra}"
         elif not _install_supported():
             # 挑得到包、但这台机器不走应用内安装（目前只有 Windows 那条链路）。按钮会
             # 隐藏，所以得在这里说清"更新是有的，只是要换种方式"，否则界面看起来像没反应。
@@ -434,6 +364,14 @@ async def check_for_update(*, refresh: bool = False) -> UpdateCheckResult:
             release_url=str(data.get("html_url") or RELEASES_PAGE.format(repo=repo))[:512],
             published_at=str(data.get("published_at") or "")[:64],
             notes=_truncate_notes(notes),
+            # `release_body` 承载**完整原文**，前端靠它挑语言段（`selectReleaseNotes`）。
+            # 以前只在 `len(notes) > NOTES_BUDGET` 时才填，理由是"没截断就不用第二份"——
+            # 但那让"挑语言"这件事取决于一张与语言无关的截断开关：任何一次调整
+            # `NOTES_BUDGET`（或放开 `_truncate_notes` 的行数策略）都会让中文段落在截断点
+            # 之后，`notes` 里没有、`release_body` 又是空的，中文模式静默退回英文。
+            # 现在无条件填：131072 远大于任何正常公告，`notes` 的 4000 截断照旧留给
+            # 老客户端与数据库字段。
+            release_body=notes[:131072],
             download_url=choice.url[:1024],
             download_size=choice.size,
             asset_name=choice.name,
@@ -455,6 +393,9 @@ def _unreachable_result(current: str, repo: str) -> UpdateCheckResult:
     return UpdateCheckResult(
         current_version=current,
         message="无法连接 GitHub 检查更新，请确认网络后重试",
+        # 连不上同样"没得出有没有新版本的结论"，与上面备用探测失败同属一类：
+        # 界面要说的是"本次没能确认"，不是「未提供」。
+        degraded=True,
     )
 
 

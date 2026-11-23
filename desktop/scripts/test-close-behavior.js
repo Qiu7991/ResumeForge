@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * lib/close-behavior.js 的离线用例（问题清单 §18.4）。
+ * lib/close-behavior.js 的离线用例（问题清单 §18 + 2026-11-20 的真开关）。
  *
  * 这些分支全部是"不可逆"或"看起来没反应"的：选「退出应用」时先置 quitting 再
- * app.quit()（否则无限弹窗）、记忆文件损坏时必须当作没记住（宁可多问一次）、
+ * app.quit()（否则无限弹窗）、偏好文件损坏时必须当作"还要询问"（宁可多问一次）、
  * 弹窗未关闭时连点 × 不能叠出第二个框。用**假 dialog / 假 window** 把这些性质
  * 变成字面量断言，而不是靠手点。
+ *
+ * 2026-11-20 起偏好模型是 `{ ask, action }`（不再是单一的 `remembered`）：
+ * 托盘里那项是真开关，关掉询问但没记住动作时**最小化到托盘**。
  *
  * Run with: node --test "scripts/test-*.js"
  */
@@ -19,43 +22,49 @@ const {
   PREFERENCE_FILE,
   REMEMBER_MINIMIZE,
   REMEMBER_QUIT,
-  clearPreference,
   createCloseBehavior,
   createPreferenceStore,
-  normalizeRemembered,
-  readPreference,
-  writePreference,
+  normalizeAction,
+  normalizeState,
+  readState,
+  rememberAction,
+  writeAsk,
+  writeState,
 } = require("../lib/close-behavior");
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 function makeMemoryStore(initial = null) {
-  let remembered = initial;
+  let state = initial ? { ...initial } : { ask: true, action: null };
   const calls = [];
   return {
-    read: () => remembered,
-    save: (choice) => {
-      remembered = choice;
-      calls.push(["save", choice]);
+    readState: () => ({ ...state }),
+    writeAsk: (ask) => {
+      state = { ask: Boolean(ask), action: state.action };
+      calls.push(["ask", state.ask]);
       return true;
     },
-    clear: () => {
-      remembered = null;
-      calls.push(["clear"]);
+    rememberAction: (choice) => {
+      state = { ask: false, action: choice };
+      calls.push(["remember", choice]);
+      return true;
     },
+    getAsk: () => state.ask,
+    getAction: () => state.action,
     calls,
+    read: () => ({ ...state }),
   };
 }
 
-/** 假 dialog：按队列依次返回 {response, checkboxChecked}；队列空了给"最小化"。 */
-function makeDialog(queue = []) {
+/** 假的自绘关闭卡片：队列里写用户最终点了什么（与 close-dialog.html 的回执同形）。 */
+function makePromptDial(queue = []) {
   const calls = [];
   return {
     calls,
-    showMessageBox: (parent, options) => {
+    promptClose: (parent, options) => {
       calls.push({ parent, options });
-      const next = queue.length > 0 ? queue.shift() : { response: 0, checkboxChecked: false };
-      return Promise.resolve(next);
+      const next = queue.length > 0 ? queue.shift() : { action: "hide", remember: false };
+      return Promise.resolve({ action: next.action, remember: Boolean(next.remember) });
     },
   };
 }
@@ -75,8 +84,8 @@ function makeWindow() {
 
 function makeBehavior(options = {}) {
   const win = options.win || makeWindow();
-  const store = options.store || makeMemoryStore(options.remembered ?? null);
-  const dialog = options.dialog || makeDialog(options.queue || []);
+  const store = options.store || makeMemoryStore(options.state || null);
+  const dialog = options.dialog || makePromptDial(options.queue || []);
   const events = { order: [], preferenceChanged: 0, log: [] };
   let quitting = false;
   const behavior = createCloseBehavior({
@@ -85,7 +94,8 @@ function makeBehavior(options = {}) {
         events.order.push("app.quit");
       },
     },
-    dialog,
+    // 用箭头包一层：假 dialog 里 `this.calls.push(...)` 依赖 this，解构出来会丢。
+    promptClose: (parent, opts) => dialog.promptClose(parent, opts),
     getWindow: () => win,
     isQuitting: () => quitting,
     setQuitting: (value) => {
@@ -116,9 +126,7 @@ const closeEvent = () => {
 
 test("quitting 为真：不弹窗、不 preventDefault，放行默认关闭", async () => {
   // 先用一次 close + 「退出应用」响应把 quitting 置真（与真实退出流程一致）。
-  const { behavior, dialog } = makeBehavior({
-    queue: [{ response: 1, checkboxChecked: false }],
-  });
+  const { behavior, dialog } = makeBehavior({ queue: [{ action: "quit", remember: false }] });
   behavior.handleClose(closeEvent());
   await flush();
   const before = dialog.calls.length;
@@ -135,21 +143,16 @@ test("普通 close：preventDefault + 带父窗口的二选一对话框（Esc = 
   assert.equal(event.prevented, 1);
   assert.equal(dialog.calls.length, 1);
 
-  const { parent, options } = dialog.calls[0];
-  assert.equal(parent, win, "showMessageBox 必须带父窗口（§18.5）");
-  assert.deepEqual([...options.buttons], ["最小化到托盘", "退出应用"]);
-  assert.equal(options.defaultId, 0, "默认 = 最小化（安全默认）");
-  assert.equal(options.cancelId, 0, "Esc = 最小化（安全默认）");
-  assert.equal(options.checkboxLabel, "记住我的选择");
-  assert.equal(options.checkboxChecked, false);
+  const { parent } = dialog.calls[0];
+  assert.equal(parent, win, "自绘卡片必须带父窗口（§18.5，父窗口关闭时连带销毁）");
 
   await flush();
-  assert.equal(win.hidden, 1, "默认响应 0 = 最小化到托盘");
+  assert.equal(win.hidden, 1, "默认响应 = 最小化到托盘");
 });
 
 test("选「退出应用」：先 setQuitting(true) 再 app.quit()，且之后的 close 不再弹窗", async () => {
   const { behavior, events, win, getQuitting } = makeBehavior({
-    queue: [{ response: 1, checkboxChecked: false }],
+    queue: [{ action: "quit", remember: false }],
   });
   behavior.handleClose(closeEvent());
   await flush();
@@ -166,7 +169,7 @@ test("弹窗未关闭时再次触发 close：不产生第二个 dialog", async (
   let release;
   const dialog = {
     calls: [],
-    showMessageBox(parent, options) {
+    promptClose(parent, options) {
       this.calls.push({ parent, options });
       return new Promise((resolve) => {
         release = resolve;
@@ -179,25 +182,24 @@ test("弹窗未关闭时再次触发 close：不产生第二个 dialog", async (
   behavior.handleClose(closeEvent());
   assert.equal(dialog.calls.length, 1, "连点 × 只能叠出一个对话框");
   assert.equal(behavior.isPromptOpen(), true);
-  release({ response: 0, checkboxChecked: false });
+  release({ action: "hide", remember: false });
   await flush();
   assert.equal(behavior.isPromptOpen(), false);
 });
 
-test("macOS：按钮退化为「关闭窗口 / 退出应用」，文案按平台分支", async () => {
-  const { behavior, dialog } = makeBehavior({ platform: "darwin" });
+test("macOS：交给卡片的是 isMac=true（口径退化为「关闭窗口」，不是托盘）", async () => {
+  const { behavior, dialog, win } = makeBehavior({ platform: "darwin" });
   behavior.handleClose(closeEvent());
   const { options } = dialog.calls[0];
-  assert.deepEqual([...options.buttons], ["关闭窗口", "退出应用"]);
-  assert.match(options.detail, /Dock/);
-  assert.doesNotMatch(options.detail, /托盘/);
+  assert.equal(options.isMac, true);
   await flush();
+  assert.equal(win.hidden, 1, "安全默认仍是隐藏/关闭窗口，不是退出");
 });
 
 test("对话框抛错：退化为最小化到托盘，绝不把窗口留在关不掉的状态", async () => {
   const dialog = {
     calls: [],
-    showMessageBox() {
+    promptClose() {
       return Promise.reject(new Error("dialog blocked by policy"));
     },
   };
@@ -211,35 +213,34 @@ test("对话框抛错：退化为最小化到托盘，绝不把窗口留在关�
   assert.equal(behavior.isPromptOpen(), false);
 });
 
-// ---- 记忆分支 ---------------------------------------------------------------
+// ---- 偏好分支（ask / action） -----------------------------------------------
 
-test("记住 minimize：下次 close 不弹窗、直接 hide", async () => {
+test("记住 minimize：卡片两个按钮都生效，落盘 {ask:false, action:minimize}", async () => {
   const { behavior, win, store, events } = makeBehavior({
-    queue: [{ response: 0, checkboxChecked: true }],
+    queue: [{ action: "hide", remember: true }],
   });
   behavior.handleClose(closeEvent());
   await flush();
-  assert.equal(store.read(), REMEMBER_MINIMIZE);
-  assert.equal(events.preferenceChanged, 1, "记忆变化后要刷新托盘勾选态");
+  assert.deepEqual(store.read(), { ask: false, action: REMEMBER_MINIMIZE });
+  assert.equal(events.preferenceChanged, 1, "偏好变化后要刷新托盘");
   assert.equal(win.hidden, 1);
 
   const again = closeEvent();
   behavior.handleClose(again);
   assert.equal(again.prevented, 1);
-  assert.equal(win.hidden, 2);
+  assert.equal(win.hidden, 2, "已记住「最小化」：直接 hide，不再弹窗");
   assert.equal(behavior.isPromptOpen(), false);
 });
 
-test("记住 quit：二次确认通过才落盘；下次 close 直接退出不弹窗", async () => {
+test("记住 quit：卡片确认后落盘 {ask:false, action:quit}，下次 close 直接退出不弹窗", async () => {
+  // 二次确认现在折叠在卡片里（视图 2），close-behavior 只看最终结果：
+  // `{action:"quit", remember:true}` = 用户已经在卡片上确认过"退出并记住"。
   const { behavior, events, store, getQuitting } = makeBehavior({
-    queue: [
-      { response: 1, checkboxChecked: true },
-      { response: 0, checkboxChecked: false },
-    ],
+    queue: [{ action: "quit", remember: true }],
   });
   behavior.handleClose(closeEvent());
   await flush();
-  assert.equal(store.read(), REMEMBER_QUIT);
+  assert.deepEqual(store.read(), { ask: false, action: REMEMBER_QUIT });
   assert.equal(getQuitting(), true);
   assert.deepEqual(events.order, ["setQuitting", "app.quit"]);
 
@@ -247,83 +248,111 @@ test("记住 quit：二次确认通过才落盘；下次 close 直接退出不�
   assert.equal(behavior.handleClose(closeEvent()), true);
 });
 
-test("记住 quit 的二次确认里选「只退出这次」：不写记忆，但仍然退出", async () => {
-  const { behavior, store } = makeBehavior({
-    queue: [
-      { response: 1, checkboxChecked: true },
-      { response: 1, checkboxChecked: false },
-    ],
-  });
+test("卡片上选「只退出这次」：不写偏好，但仍然退出", async () => {
+  const { behavior, store } = makeBehavior({ queue: [{ action: "quit", remember: false }] });
   behavior.handleClose(closeEvent());
   await flush();
-  assert.equal(store.read(), null, "取消二次确认时不得记住 quit");
-  assert.equal(store.calls.some(([kind]) => kind === "save"), false);
-  assert.equal(behavior.getRemembered(), null);
+  assert.deepEqual(store.read(), { ask: true, action: null });
+  assert.equal(store.calls.some(([kind]) => kind === "remember"), false);
+  assert.equal(behavior.getAsk(), true);
 });
 
-test("记忆文件损坏 / 字段非法：当作未记住，恢复询问（宁可多问一次，不要误退）", () => {
-  assert.equal(normalizeRemembered("minimize"), "minimize");
-  assert.equal(normalizeRemembered("quit"), "quit");
-  assert.equal(normalizeRemembered("Minimize"), null);
-  assert.equal(normalizeRemembered(1), null);
-  assert.equal(normalizeRemembered(null), null);
+test("取消勾选「关闭窗口时询问」后仍然无勾（不再是勾不掉的镜像）", () => {
+  const store = makeMemoryStore();
+  const { behavior } = makeBehavior({ store });
+  assert.equal(behavior.getAsk(), true);
+  assert.equal(behavior.setAsk(false), true);
+  assert.equal(behavior.getAsk(), false);
+  assert.equal(store.read().ask, false, "取消勾选是真写盘，不是刷新回真相");
+  assert.equal(behavior.getAction(), null, "只关询问、没指定动作");
+});
+
+test("ask=false 且没有动作时点 × 直接最小化到托盘（不弹卡、不退出）", async () => {
+  const store = makeMemoryStore({ ask: false, action: null });
+  const { behavior, win, dialog, events } = makeBehavior({ store });
+  const event = closeEvent();
+  assert.equal(behavior.handleClose(event), false);
+  assert.equal(event.prevented, 1, "仍然 preventDefault（否则窗口直接消失）");
+  assert.equal(dialog.calls.length, 0, "不询问");
+  assert.equal(win.hidden, 1);
+  assert.equal(events.order.includes("app.quit"), false, "没有动作时绝不能退出");
+});
+
+test("重新勾上「关闭窗口时询问」会再问（ask 是唯一判据）", async () => {
+  const store = makeMemoryStore({ ask: false, action: REMEMBER_MINIMIZE });
+  const { behavior, win, dialog } = makeBehavior({ store });
+  // 先确认关掉询问时直接最小化。
+  behavior.handleClose(closeEvent());
+  assert.equal(win.hidden, 1);
+  assert.equal(dialog.calls.length, 0);
+
+  behavior.setAsk(true);
+  behavior.handleClose(closeEvent());
+  assert.equal(dialog.calls.length, 1, "重新打开询问后必须弹卡");
+  await flush();
+});
+
+test("旧文件迁移：{remembered} → {ask:false, action}；损坏/缺失 → 询问", () => {
+  assert.equal(normalizeAction("minimize"), "minimize");
+  assert.equal(normalizeAction("quit"), "quit");
+  assert.equal(normalizeAction("Minimize"), null);
+  assert.equal(normalizeAction(1), null);
+  assert.equal(normalizeAction(null), null);
+  assert.deepEqual(normalizeState(null), { ask: true, action: null });
+  assert.deepEqual(normalizeState("nope"), { ask: true, action: null });
+  assert.deepEqual(normalizeState({ remembered: "quit" }), { ask: false, action: "quit" });
+  assert.deepEqual(normalizeState({ remembered: "explode" }), { ask: true, action: null });
+  assert.deepEqual(normalizeState({ ask: "no", action: "quit" }), { ask: true, action: "quit" });
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rf-close-behavior-"));
   const file = path.join(dir, PREFERENCE_FILE);
   try {
-    assert.equal(readPreference(file), null, "文件不存在 = 未记住");
+    assert.deepEqual(readState(file), { ask: true, action: null }, "文件不存在 = 询问");
     fs.writeFileSync(file, "{not json", "utf8");
-    assert.equal(readPreference(file), null, "JSON 损坏 = 未记住");
-    fs.writeFileSync(file, JSON.stringify({ remembered: "explode" }), "utf8");
-    assert.equal(readPreference(file), null, "非法字段 = 未记住");
-    fs.writeFileSync(file, JSON.stringify({ remembered: "minimize" }), "utf8");
-    assert.equal(readPreference(file), "minimize");
+    assert.deepEqual(readState(file), { ask: true, action: null }, "JSON 损坏 = 询问");
+    // 真机升级路径：旧版本只写过 remembered。
+    fs.writeFileSync(file, JSON.stringify({ remembered: "quit" }), "utf8");
+    assert.deepEqual(readState(file), { ask: false, action: "quit" }, "旧格式必须迁移");
+    fs.writeFileSync(file, JSON.stringify({ ask: false }), "utf8");
+    assert.deepEqual(readState(file), { ask: false, action: null });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("托盘「关闭窗口时询问」勾上 = 清掉记忆、恢复弹窗", async () => {
-  const store = makeMemoryStore(REMEMBER_MINIMIZE);
-  const { behavior, dialog } = makeBehavior({ store });
-  // 有记忆时直接执行，不弹窗。
-  behavior.handleClose(closeEvent());
-  assert.equal(dialog.calls.length, 0);
-  behavior.clearRemembered();
-  assert.equal(store.read(), null);
-  behavior.handleClose(closeEvent());
-  assert.equal(dialog.calls.length, 1, "清掉记忆后必须恢复询问");
-  await flush();
-});
-
-test("写/读/清记忆文件：落盘位置由 store 注入，坏路径不抛", () => {
+test("写/读偏好文件：ask 与 action 分开写，坏路径不抛", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rf-close-behavior-"));
   const file = path.join(dir, "nested", PREFERENCE_FILE);
   try {
-    assert.equal(writePreference(file, REMEMBER_QUIT), true);
-    assert.equal(readPreference(file), REMEMBER_QUIT);
-    assert.equal(writePreference(file, "bogus"), false, "非法值不写");
-    assert.equal(clearPreference(file), true);
-    assert.equal(readPreference(file), null);
+    assert.equal(rememberAction(file, REMEMBER_QUIT), true);
+    assert.deepEqual(readState(file), { ask: false, action: REMEMBER_QUIT });
+    assert.equal(writeAsk(file, true), true);
+    assert.deepEqual(readState(file), { ask: true, action: REMEMBER_QUIT }, "写开关不丢已记住的动作");
+    assert.equal(rememberAction(file, "bogus"), false, "非法动作不写");
+    assert.equal(writeState(file, { ask: false, action: "explode" }), true);
+    assert.deepEqual(readState(file), { ask: false, action: null }, "非法动作被收敛成 null");
     // 把文件当目录用：写入失败必须返回 false 而不是抛。
     const blocked = path.join(dir, "blocked");
     fs.writeFileSync(blocked, "x", "utf8");
-    assert.equal(writePreference(path.join(blocked, PREFERENCE_FILE), REMEMBER_MINIMIZE), false);
+    assert.equal(writeAsk(path.join(blocked, PREFERENCE_FILE), false), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("createPreferenceStore：文件固定在 userData 根（与 window-state.json 同处）", () => {
+test("createPreferenceStore：文件固定在 userData 根，接口是新契约", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rf-close-store-"));
   try {
     const store = createPreferenceStore({ app: { getPath: () => dir } });
-    assert.equal(store.read(), null);
-    assert.equal(store.save(REMEMBER_MINIMIZE), true);
+    assert.equal(store.getAsk(), true);
+    assert.equal(store.getAction(), null);
+    assert.equal(store.rememberAction(REMEMBER_MINIMIZE), true);
     assert.equal(fs.existsSync(path.join(dir, PREFERENCE_FILE)), true);
-    assert.equal(store.read(), REMEMBER_MINIMIZE);
-    store.clear();
-    assert.equal(store.read(), null);
+    assert.equal(store.getAsk(), false);
+    assert.equal(store.getAction(), REMEMBER_MINIMIZE);
+    assert.equal(store.writeAsk(true), true);
+    assert.equal(store.getAsk(), true);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, PREFERENCE_FILE), "utf8")).ask, true);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

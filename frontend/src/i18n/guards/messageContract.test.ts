@@ -17,6 +17,9 @@ const EXEMPT_FIXTURES = {
   "research.publications.doiPlaceholder": "10.1000/xyz123",
   "research.publications.volumePagesPlaceholder": "Vol 12, 1-15",
   "typography.inline.linkPlaceholder": "https://example.com",
+  "structure.layout.gapMillimeters": "{value} mm",
+  "trackProbe.pageUrlExample": "https://acme.jobs.feishu.cn/.../applications",
+  "trackProbe.cookieExample": "session=...; other=...",
   "versions.variants.exportOption": "{name}{job}{layout}",
   "versions.variants.exportOption.job": " · {job}",
   "provenance.usage.tokens": "token",
@@ -26,14 +29,24 @@ const EXEMPT_FIXTURES = {
   "appConfig.preset.openai": "OpenAI",
   "appConfig.preset.xai": "xAI Grok",
   "appConfig.preset.mistral": "Mistral AI",
+  "voiceInput.settings.protocol.deepseek": "DeepSeek",
   "userGuide.setupProfile.step1.point9.lead": "API Key",
   "interviewPage.interviewerName": "Jane",
+  // 记忆历史一行只有两个用户值 + 箭头，不是句子（登记在 equalityExemptions）。
+  "assistantMemory.history.changed": "{before} → {after}",
+  // 记忆行的元信息：来源 + 更新时间，两个都已翻译，中间只有一个分隔符。
+  "assistantMemory.meta.line": "{source} · {updated}",
+  // 复盘查看态头部副信息：只有两个已翻译插值 + 分隔符（登记在 equalityExemptions）。
+  "interviewReview.header.meta": "{time} · {target}",
   // 品牌名：两种语言写法相同（登记在 equalityExemptions）。
   "searchCard.source.deepseek": "DeepSeek",
   "searchCard.source.tavily": "Tavily",
   "searchCard.source.jina": "Jina",
   // 版本号是记号（v1 / v2 …），两种语言写法相同。
   "writing.version.label": "v{index}",
+  // 合成服务档位与转写服务商都是品牌名：中文界面同样写 "DeepSeek"。
+  "ttsProvider.deepseek": "DeepSeek",
+  "voiceInput.settings.provider.deepseek": "DeepSeek",
 } satisfies Record<keyof typeof EQUALITY_EXEMPT_KEYS, string>;
 
 describe("message contract failure fixtures", () => {

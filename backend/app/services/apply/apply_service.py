@@ -40,6 +40,7 @@ from ._queue import (
     count_queue,
     job_apply_site,  # noqa: F401 - 历史导出
     list_queue,
+    queue_overview,
     remove_queue_item,
     reorder_queue,
     resolve_greeting,
@@ -56,6 +57,7 @@ from ._records import (
     list_records,
     mark_queue_done,
     mark_queue_failed,
+    record_batch_page,
     select_retryable_items,
     write_back_job_status,
 )
@@ -86,6 +88,7 @@ from ._tasks import (
     get_task_detail,
     list_apply_tasks,
     list_apply_tasks_page,
+    list_task_items,
 )
 
 __all__ = [
@@ -119,13 +122,16 @@ __all__ = [
     "get_browser_manager",
     "get_collect_config",
     "count_queue",
+    "queue_overview",
     "get_task_detail",
     "list_apply_tasks",
     "list_apply_tasks_page",
+    "list_task_items",
     "latest_match",
     "list_batch_items",
     "list_queue",
     "list_record_batches",
+    "record_batch_page",
     "list_records",
     "list_sites",
     "mark_queue_done",

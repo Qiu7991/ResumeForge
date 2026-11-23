@@ -30,6 +30,8 @@
  * 症状，而它一旦出现，用户会以为导出也会这样。
  */
 import { clamp } from "../../ai-polish/overlayGeometry";
+import { renderRichValue } from "../inline/richRuns";
+import type { RichValue } from "../inline/richRuns";
 
 /** 加粗标记。与后端 `resume_rich_text.MARKER` 同一串。 */
 export const RICH_MARKER = "**";
@@ -50,18 +52,104 @@ export interface RichRun {
 }
 
 /**
- * 右键加粗的最小契约（宿主实现，预览只调用）。
+ * 纸面右键菜单的最小契约（宿主实现，预览只调用）。
  *
- * 三个方法都**必须**在拿不到当前值时给出空结果而不是抛错：菜单是一次点击，抛错会让整个
- * 预览白屏，而用户只是右键了一下。
+ * I-13 起**读写都是结构化值**（`value` 纯文本 + `rich.runs`）：菜单改的是样式，不再拼
+ * `**` / `{@` 标记串。三个方法都必须在拿不到当前值时给出空结果而不是抛错：菜单是一次点击，
+ * 抛错会让整个预览白屏，而用户只是右键了一下。
  */
 export interface RichTextEditAdapter {
-  /** 读这条路径当前的源串（含 `**`）。读不到返回 `null`（菜单不劫持原生右键）。 */
-  read: (path: string) => string | null;
-  /** 写入新的源串；`base` 是加粗前的原文，宿主用它判断"这条 overlay 是否已过期"。 */
-  toggle: (path: string, next: string, base: string) => void;
+  /** 读这条路径当前的值（纯文本 + runs）。读不到返回 `null`（菜单不劫持原生右键）。 */
+  read: (path: string) => RichValue | null;
+  /** 写入新的值；`base` 是改动前的值，宿主用它判断"这条 overlay 是否已过期"。 */
+  write: (path: string, next: RichValue, base: RichValue) => void;
   /** 菜单里的「编辑这一栏」。缺省时退化为宿主的 `onPickField`（同一个动作）。 */
   onPick?: (path: string) => void;
+}
+
+/** 行内样式标记 `{@…}…{@}` 的合法属性（与后端 `resume_inline_style.parse_style` 同规则）。 */
+function isValidStyleAttrs(attrs: string): boolean {
+  let found = false;
+  for (const piece of attrs.split(",")) {
+    const text = piece.trim();
+    if (!text) continue;
+    const equal = text.indexOf("=");
+    if (equal < 0) return false;
+    const key = text.slice(0, equal).trim().toLowerCase();
+    const value = text.slice(equal + 1).trim();
+    if (key === "size") {
+      const number = Number(value);
+      if (!Number.isFinite(number) || number < 0.5 || number > 1.6) return false;
+      found = true;
+      continue;
+    }
+    if (key === "color") {
+      if (!/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value)) return false;
+      found = true;
+      continue;
+    }
+    return false;
+  }
+  return found;
+}
+
+/**
+ * 样式标记占的区间（`{@size=0.9}` 与收口的 `{@}` 都算），这些字符**不可见**。
+ *
+ * 必须与后端一致：只有"合法属性 + 有收口"才隐藏；未闭合或属性非法时按字面文本处理，
+ * 否则预览的可见长度会比导出的少一截，点选定位就会整体错位。
+ */
+export function hiddenRanges(raw: string): Array<[number, number]> {
+  const tokens: Array<[number, number]> = [];
+  let depth = 0;
+  let cursor = 0;
+  while (cursor < raw.length) {
+    if (raw.startsWith("{@}", cursor)) {
+      if (depth > 0) {
+        tokens.push([cursor, cursor + 3]);
+        depth -= 1;
+      }
+      cursor += 3;
+      continue;
+    }
+    if (raw.startsWith("{@", cursor)) {
+      const close = raw.indexOf("}", cursor + 2);
+      if (close > 0 && isValidStyleAttrs(raw.slice(cursor + 2, close))) {
+        tokens.push([cursor, close + 1]);
+        depth += 1;
+        cursor = close + 1;
+        continue;
+      }
+    }
+    cursor += 1;
+  }
+  // 未配平（有开没收）时后端整段按字面处理，这里也必须一个字都不藏。
+  return depth === 0 ? tokens : [];
+}
+
+/** 从 span 列表里剔除不可见区间（样式标记只影响可见文本，不影响源串偏移）。 */
+function withoutHidden(spans: RichSpan[], hidden: Array<[number, number]>): RichSpan[] {
+  if (hidden.length === 0) return spans;
+  const kept: RichSpan[] = [];
+  for (const span of spans) {
+    let pieces: Array<[number, number]> = [[span.start, span.end]];
+    for (const [from, to] of hidden) {
+      const next: Array<[number, number]> = [];
+      for (const [start, end] of pieces) {
+        if (to <= start || from >= end) {
+          next.push([start, end]);
+          continue;
+        }
+        if (from > start) next.push([start, from]);
+        if (to < end) next.push([to, end]);
+      }
+      pieces = next;
+    }
+    for (const [start, end] of pieces) {
+      if (end > start) kept.push({ start, end, bold: span.bold });
+    }
+  }
+  return kept;
 }
 
 /** `**` 在文中的起点（按出现顺序，互不重叠）。与后端 `_marker_positions` 同规则。 */
@@ -99,7 +187,7 @@ export function parseSpans(raw: string): RichSpan[] {
     index += 2;
   }
   if (cursor < raw.length) spans.push({ start: cursor, end: raw.length, bold: false });
-  return spans;
+  return withoutHidden(spans, hiddenRanges(raw));
 }
 
 /** 把源串切成 `(片段, 是否加粗)`；**不修改文本**。 */
@@ -112,7 +200,7 @@ export function parseRuns(raw: string): RichRun[] {
 
 /** 移除**成对**的加粗标记，落单的星号原样保留。 */
 export function stripMarkers(raw: string): string {
-  if (!raw.includes(RICH_MARKER)) return raw;
+  if (!raw.includes(RICH_MARKER) && !raw.includes("{@")) return raw;
   return parseRuns(raw)
     .map((run) => run.text)
     .join("");
@@ -222,6 +310,53 @@ function isBoldSource(spans: RichSpan[], first: number, second: number): boolean
  * 只增删标记，可见文本一个字节都不变，也不会留下空标记（`****`）；相邻同态区间自动合并，
  * 免得产出 `**a****b**` 这种"能解析但看起来像坏了"的东西。
  */
+/** 行内样式标记（R-11）：小一号与强调色。属性串与后端逐字一致。 */
+export const STYLE_OPENERS = {
+  small: "{@size=0.9}",
+  emphasis: "{@color=#c0392b}",
+} as const;
+
+/**
+ * 在**可见选区**上切换一种行内样式（R-11）。
+ *
+ * 与 `toggleBold` 的差别：样式标记是"不可见的属性"，所以切换后**可见区间不变**
+ * （`range` 仍是 `[first, second]`），只有源串前后各多/少一段 `{@…}` / `{@}`。
+ * 已经包住同一开标记时去掉（与加粗的"再点一次取消"一致）。
+ */
+export function toggleStyle(
+  raw: string,
+  start: number,
+  end: number,
+  opener: string,
+): { next: string; range: [number, number] } {
+  const total = visibleLength(raw);
+  const first = clamp(Math.min(start, end), 0, total);
+  const second = clamp(Math.max(start, end), 0, total);
+  if (first === second) return { next: raw, range: [first, second] };
+  const map = renderIndexToSource(raw);
+  const sourceFirst = map[first];
+  const sourceSecond = map[second - 1] + 1;
+  const before = raw.slice(Math.max(0, sourceFirst - opener.length), sourceFirst);
+  const after = raw.slice(sourceSecond, sourceSecond + STYLE_CLOSE.length);
+  if (before === opener && after === STYLE_CLOSE) {
+    const next =
+      raw.slice(0, sourceFirst - opener.length) +
+      raw.slice(sourceFirst, sourceSecond) +
+      raw.slice(sourceSecond + STYLE_CLOSE.length);
+    return { next, range: [first, second] };
+  }
+  const next =
+    raw.slice(0, sourceFirst) +
+    opener +
+    raw.slice(sourceFirst, sourceSecond) +
+    STYLE_CLOSE +
+    raw.slice(sourceSecond);
+  return { next, range: [first, second] };
+}
+
+/** 样式收口标记（与 `resume_inline_style.STYLE_CLOSE` 同一串）。 */
+export const STYLE_CLOSE = "{@}";
+
 export function toggleBold(
   raw: string,
   start: number,
@@ -295,4 +430,17 @@ export function paintRichField(element: Element | null, raw: string): void {
   const doc = element.ownerDocument;
   while (element.firstChild) element.removeChild(element.firstChild);
   element.appendChild(renderRichFragment(doc, raw));
+}
+
+/**
+ * I-13：把一份**结构化值**就地画进纸面元素（菜单点完立刻看到结果，不等整份重渲染）。
+ *
+ * 与 `paintRichField` 的差别只在于数据来源：那条走标记串，这条走 runs。两条都不会把
+ * 标记字符写进 DOM——纸面上露出 `{@` 是"解析漏了一段"最直观的症状。
+ */
+export function paintRichValue(element: Element | null, value: RichValue): void {
+  if (!element || !element.isConnected) return;
+  const doc = element.ownerDocument;
+  while (element.firstChild) element.removeChild(element.firstChild);
+  element.appendChild(renderRichValue(doc, value));
 }

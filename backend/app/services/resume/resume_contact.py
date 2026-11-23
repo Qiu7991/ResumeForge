@@ -33,11 +33,28 @@ contact_breaks = ["email", "github"]   # 键取自 CONTACT_FIELDS；在列出的
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import TypeVar
 
 from ...schemas.resume import ResumeContent
 
+# 分组函数对**任何**带 `path` / `text` 属性的段类型都成立：HTML/PDF/DOCX 各有一套段类型，
+# 泛型让三个调用点各自拿到自己的类型，而不是把 `object` 带进下游（pyright 在
+# `docx_document_parts` 里就撞上了 `list[object]` 不能赋给 `list[Inline]`）。
+_ContactSegment = TypeVar("_ContactSegment")
+
 #: `format_config` 里的键名（与前端 `CONTACT_BREAKS_KEY` 逐字一致）。
 CONTACT_BREAKS_KEY = "contact_breaks"
+
+#: 联系方式**字段之间**用什么分隔（与 `contact_breaks` 正交：那个管换行，这个管同行间隔）。
+#:
+#: `space` = 历史行为（HTML 靠 CSS 间距、PDF 四空格、Word 两空格），不写这个键时逐字节
+#: 等于改动前；`bar` / `dot` 让用户在"联系方式之间有明显分隔符"的版式里选。
+CONTACT_SEPARATOR_KEY = "contact_separator"
+CONTACT_SEPARATOR_STYLES: tuple[str, ...] = ("space", "bar", "dot")
+
+#: 分档 → 同一行里字段之间的**可见文本**。空串 = 沿用各渲染器的历史分隔符。
+#: 用 `\u00b7` 转义而不是直接写「·」：代码文件默认 ASCII（AGENTS.md）。
+_SEPARATOR_TEXT: dict[str, str] = {"bar": " | ", "dot": " \u00b7 "}
 
 #: 页眉联系方式的字段顺序。HTML / PDF / Word 三处都读这一份；新增字段只改这里。
 CONTACT_FIELDS: tuple[str, ...] = (
@@ -84,6 +101,21 @@ def validate_contact_breaks(raw: object) -> list[str]:
     wanted = {str(item).strip() for item in candidates}
     # 按字段顺序输出，而不是用户输入顺序：字段顺序是固定的，用户只决定"在哪一行开始"。
     return [key for key in CONTACT_FIELDS if key in wanted]
+
+
+def validate_contact_separator(raw: object) -> str:
+    """把用户输入白名单化成 `space | bar | dot`；任何其它形状一律回落到 `space`。
+
+    `format_config` 是用户可以随手改的 JSON：未知值不该让渲染 500，也不该猜成某种
+    不存在的分隔符。回落值与"从未设置"同义，因此旧数据产物逐字节不变。
+    """
+    text = str(raw or "").strip().lower()
+    return text if text in CONTACT_SEPARATOR_STYLES else "space"
+
+
+def contact_separator_text(style: object) -> str:
+    """分档 → 同行字段之间的可见文本（空串 = 沿用各渲染器的历史分隔符）。"""
+    return _SEPARATOR_TEXT.get(validate_contact_separator(style), "")
 
 
 def contact_entries(resume: ResumeContent, labels: dict[str, str]) -> list[tuple[str, str]]:
@@ -150,6 +182,18 @@ def contact_lines(items: list[dict], separator: str) -> list[str]:
     return [separator.join(group) for group in contact_groups(items)]
 
 
+def group_fields_by_line(fields, packed):
+    """把扁平字段按装行结果切成"每行一组"（QW-6：按段写 run 时按行取字段）。
+
+    ``packed`` 是 ``pack_contact_lines`` 返回的每行文本，长度即该行字段数。
+    """
+    groups, cursor = [], 0
+    for line in packed:
+        groups.append(fields[cursor : cursor + len(line)])
+        cursor += len(line)
+    return groups
+
+
 def pack_contact_lines(
     groups: Sequence[Sequence[str]],
     width: float,
@@ -202,16 +246,57 @@ def pack_contact_lines(
     return result
 
 
+def contact_field_groups(segments: Sequence[_ContactSegment]) -> list[list[_ContactSegment]]:
+    """一行段 → **字段**分组（QW-6：同一字段的标签段与值段并成一组）。
+
+    `plan_header` 把「电话：」与号码拆成两段并共用同一条路径，好让两半各自取样式。
+    但"字段"仍是装行与分隔的最小单元：两半之间不能插分隔符、也不能在中间换行。
+    本函数按 `path` 合并相邻段，是 HTML 模板（同一条路径不插 `<wbr>`）、PDF、Word
+    三处共用的唯一判据。
+    """
+    groups: list[list[_ContactSegment]] = []
+    last_path: str | None = None
+    for segment in segments:
+        path = getattr(segment, "path", None)
+        text = str(getattr(segment, "text", "") or "")
+        if groups and path and path == last_path:
+            groups[-1].append(segment)
+            continue
+        if not text.strip():
+            # 空段不建组：字段文本为空时 PDF/Word 都不该多出一个分隔符。
+            last_path = path
+            continue
+        groups.append([segment])
+        last_path = path
+    return groups
+
+
+def contact_field_texts(segments: Sequence[object]) -> list[str]:
+    """一行段 → 每个**字段**的展示文本（标签段 + 值段拼回一整串）。"""
+    texts: list[str] = []
+    for group in contact_field_groups(segments):
+        text = "".join(str(getattr(seg, "text", "") or "") for seg in group).strip()
+        if text:
+            texts.append(text)
+    return texts
+
+
 __all__ = [
     "CONTACT_BREAKS_KEY",
+    "CONTACT_SEPARATOR_KEY",
+    "CONTACT_SEPARATOR_STYLES",
     "CONTACT_FIELDS",
     "LABELLED_FIELDS",
     "PDF_SEPARATOR",
     "WORD_SEPARATOR",
     "contact_entries",
+    "contact_field_groups",
+    "contact_field_texts",
+    "contact_separator_text",
     "contact_groups",
     "contact_items",
     "contact_lines",
     "pack_contact_lines",
     "validate_contact_breaks",
+    "validate_contact_separator",
 ]

@@ -4,79 +4,178 @@
  * 作用范围段控（整条 / 条目头 / 正文 / 灰字）、行清单随范围过滤、按范围读写与恢复、
  * 无关项隐藏/灰显、探针落到正确元素、以及"固定当前样式"按范围回调。
  */
-import { App as AntdApp } from "antd";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { t } from "../../../i18n";
-import { TEMPLATE_CATALOG } from "../../../test/resumeFixtures";
 import type { ResumeLayout } from "../../../types";
-import type { ResumeEntry } from "../../../types/resumeDocument";
-import { entry, fieldItem, listItem } from "../document/documentFixtures";
+import { fieldItem } from "../document/documentFixtures";
 import { readStyleDomains } from "./styleOverrides";
-import { makePreviewRef } from "./ResumeLayoutControls.testkit";
-import ObjectStylePanel from "./ObjectStylePanel";
-
-const OBJECT_ID = "exp_12345678";
-const OTHER_ID = "prj_87654321";
-
-const LAYOUT: ResumeLayout = {
-  template: "classic",
-  format_name: "",
-  page_limit: 1,
-  font_scale: "standard",
-  format_config: {
-    accent: "#123456",
-    roles: { version: 1, body: { line_height: 1.55 } },
-    objects: { version: 1, [OTHER_ID]: { bullet: "none" } },
-  } as never,
-};
-
-function editableEntry(overrides: Partial<ResumeEntry> = {}): ResumeEntry {
-  return entry({
-    id: OBJECT_ID,
-    items: [
-      fieldItem({ id: "ob_item0001", placement: "title", value: "Star River" }),
-      fieldItem({ id: "ob_item0002", placement: "meta", value: "2020" }),
-      listItem({ id: "ob_item0003", placement: "body" }),
-    ],
-    ...overrides,
-  });
-}
-
-function renderPanel(
-  props: Partial<ComponentProps<typeof ObjectStylePanel>> = {},
-  onChange = vi.fn(),
-) {
-  render(
-    <AntdApp>
-      <ObjectStylePanel
-        layout={LAYOUT}
-        catalog={TEMPLATE_CATALOG}
-        objectId={OBJECT_ID}
-        objectLabel="Star River"
-        entry={editableEntry()}
-        onChange={onChange}
-        {...props}
-      />
-    </AntdApp>,
-  );
-  return onChange;
-}
-
-function lastLayout(onChange: ReturnType<typeof vi.fn>): ResumeLayout {
-  const calls = onChange.mock.calls;
-  return calls[calls.length - 1]?.[0] as ResumeLayout;
-}
-
-function rowTestId(prop: string): string {
-  return `[data-testid="style-row-object-${prop}"]`;
-}
+import {
+  LAYOUT,
+  OBJECT_ID,
+  OTHER_ID,
+  editableEntry,
+  lastLayout,
+  renderPanel,
+  rowTestId,
+} from "./ObjectStylePanel.testkit";
 
 afterEach(() => {
   cleanup();
   document.body.innerHTML = "";
   vi.restoreAllMocks();
+});
+
+describe("ObjectStylePanel · 页眉字段（QW-6）", () => {
+  const HEADER_ID = "hd_12345678";
+  const HEADER_PATH = `header.${HEADER_ID}`;
+
+  it("没有作用范围切换，只有「字段值 / 字段名」两个目标", () => {
+    renderPanel({
+      objectId: HEADER_PATH,
+      headerField: { id: HEADER_ID, label: "13800000000" },
+      pickedPath: HEADER_PATH,
+      defaultScope: "field",
+      fieldRole: "meta",
+      entry: null,
+    });
+    expect(
+      screen.queryByRole("radio", { name: t("typography.entryStyle.scope.object") }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("radio", { name: t("typography.fieldStyle.target.value") }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("radio", { name: t("typography.fieldStyle.target.label") }),
+    ).toBeTruthy();
+  });
+
+  it("改字段值写 meta，改字段名写 field_label，都不碰 objects", async () => {
+    const onChange = renderPanel({
+      objectId: HEADER_PATH,
+      headerField: { id: HEADER_ID, label: "13800000000" },
+      pickedPath: HEADER_PATH,
+      defaultScope: "field",
+      fieldRole: "meta",
+      entry: null,
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("typography.row.increaseAria", { label: t("typography.prop.font_scale") }),
+      }),
+    );
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    let domains = readStyleDomains(lastLayout(onChange).format_config);
+    expect(domains.objectRoles[`${HEADER_PATH}:meta`]).toMatchObject({ font_scale: 1.02 });
+    expect(domains.objects[HEADER_PATH]).toBeUndefined();
+
+    fireEvent.click(screen.getByRole("radio", { name: t("typography.fieldStyle.target.label") }));
+    await waitFor(() => expect(screen.getByTestId("style-row-object-font_scale")).toBeTruthy());
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("typography.row.increaseAria", { label: t("typography.prop.font_scale") }),
+      }),
+    );
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
+    domains = readStyleDomains(lastLayout(onChange).format_config);
+    expect(domains.objectRoles[`${HEADER_PATH}:field_label`]).toHaveProperty("font_scale");
+  });
+
+  it("没有标签段的字段禁用「字段名」，并给出可操作说明", () => {
+    renderPanel({
+      objectId: HEADER_PATH,
+      headerField: { id: HEADER_ID, label: "139 0176 4428", hasLabel: false },
+      pickedPath: HEADER_PATH,
+      defaultScope: "field",
+      fieldRole: "meta",
+      entry: null,
+    });
+    expect(screen.getByText(t("typography.headerStyle.noLabel"))).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: t("typography.fieldStyle.target.label") }),
+    ).toBeDisabled();
+  });
+
+  it("页眉字段不出现「日期位置」（没有条目头 flex 容器）", () => {
+    renderPanel({
+      objectId: HEADER_PATH,
+      headerField: { id: HEADER_ID, label: "13800000000" },
+      pickedPath: HEADER_PATH,
+      defaultScope: "field",
+      fieldRole: "meta",
+      entry: null,
+    });
+    expect(screen.queryByTestId("style-row-object-meta_align")).toBeNull();
+  });
+});
+
+describe("ObjectStylePanel · 单字段（I-28）", () => {
+  it("字段作用域下可切换「字段值 / 字段名」，两者行清单不同", async () => {
+    renderPanel({ defaultScope: "field", pickedPath: "exp_12345678.ob_item0002", lockScope: true });
+
+    // 默认是字段值：正文类属性（缩进）在清单里。
+    expect(screen.getByTestId("style-row-object-indent")).toBeTruthy();
+    expect(
+      screen.getByRole("radio", { name: t("typography.fieldStyle.target.value") }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("radio", { name: t("typography.fieldStyle.target.label") }));
+
+    // 切到字段名：角色变 field_label（只有字号/颜色/加粗/字距），缩进必须消失。
+    await waitFor(() => expect(screen.queryByTestId("style-row-object-indent")).toBeNull());
+    expect(screen.getByTestId("style-row-object-font_scale")).toBeTruthy();
+  });
+
+  it("非字段作用域不出现这个切换", () => {
+    renderPanel({ defaultScope: "body" });
+    expect(
+      screen.queryByRole("radio", { name: t("typography.fieldStyle.target.label") }),
+    ).toBeNull();
+  });
+});
+
+describe("ObjectStylePanel · 字段作用域的落点（DF-8）", () => {
+  it("正文字段：缩进 / 项目符号留在清单里（草稿已有 li / p 落点）", () => {
+    renderPanel({
+      defaultScope: "field",
+      pickedPath: `${OBJECT_ID}.ob_item0003`,
+      lockScope: true,
+    });
+    expect(document.querySelector(rowTestId("indent"))).not.toBeNull();
+    expect(document.querySelector(rowTestId("bullet"))).not.toBeNull();
+  });
+
+  it("灰字字段：字段层没有条目头容器，「日期位置」不出现（即使条目里真有灰字）", () => {
+    renderPanel({
+      defaultScope: "field",
+      fieldRole: "meta",
+      pickedPath: `${OBJECT_ID}.ob_item0002`,
+      lockScope: true,
+    });
+    // entry 里有 placement=meta 的字段（hasMeta=true），隐藏它的不是可用性判断而是属性清单。
+    expect(document.querySelector(rowTestId("meta_align"))).toBeNull();
+    expect(document.querySelector(rowTestId("color"))).not.toBeNull();
+  });
+
+  it("字段缩进写到该字段路径的 object_roles，不碰条目 objects", async () => {
+    const fieldPath = `projects.${OBJECT_ID}.ob_item0003`;
+    const onChange = renderPanel({
+      objectId: fieldPath,
+      defaultScope: "field",
+      pickedPath: fieldPath,
+      lockScope: true,
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("typography.row.increaseAria", { label: t("typography.prop.indent") }),
+      }),
+    );
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    const domains = readStyleDomains(lastLayout(onChange).format_config);
+    expect(domains.objectRoles[`${fieldPath}:body`]).toMatchObject({ indent: expect.any(Number) });
+    expect(domains.objects[fieldPath]).toBeUndefined();
+    expect(domains.objects[OBJECT_ID]).toBeUndefined();
+  });
 });
 
 describe("ObjectStylePanel · 作用范围（Q12）", () => {
@@ -200,64 +299,5 @@ describe("ObjectStylePanel · 无关项（Q12）", () => {
     expect([...bulletRowButtons].every((button) => (button as HTMLButtonElement).disabled)).toBe(
       true,
     );
-  });
-});
-
-describe("ObjectStylePanel · 探针与固定（Q14）", () => {
-  it("缩进探针落到 ul / .body-paragraph（不是条目根）", () => {
-    const { ref, setLiveProbe } = makePreviewRef();
-    const layout = {
-      ...LAYOUT,
-      format_config: {
-        ...LAYOUT.format_config,
-        objects: { version: 1, [OBJECT_ID]: { indent: 0.5 } },
-      },
-    } as unknown as ResumeLayout;
-    renderPanel({ previewRef: ref, layout });
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: t("typography.row.increaseAria", { label: t("typography.prop.indent") }),
-      }),
-    );
-    expect(setLiveProbe).toHaveBeenCalledWith(
-      `  [data-object-id="${OBJECT_ID}"] ul, [data-object-id="${OBJECT_ID}"] .body-paragraph { padding-left: calc(var(--fs) * 0.55) !important; }`,
-    );
-  });
-
-  it("固定当前样式按当前作用范围回调宿主", () => {
-    const onFreeze = vi.fn();
-    renderPanel({ onFreeze });
-    fireEvent.click(screen.getByRole("button", { name: t("typography.painter.freeze") }));
-    expect(onFreeze).toHaveBeenCalledWith("object");
-    fireEvent.click(screen.getByText(t("typography.entryStyle.scope.body")));
-    fireEvent.click(screen.getByRole("button", { name: t("typography.painter.freeze") }));
-    expect(onFreeze).toHaveBeenLastCalledWith("body");
-  });
-});
-
-describe("ObjectStylePanel · 对象层写入（既有行为不回归）", () => {
-  it("改一个属性只写 objects[该条]，角色覆盖与其它条目不丢", async () => {
-    const layout = {
-      ...LAYOUT,
-      format_config: {
-        ...LAYOUT.format_config,
-        objects: {
-          version: 1,
-          [OTHER_ID]: { bullet: "none" },
-          [OBJECT_ID]: { indent: 0.5 },
-        },
-      },
-    } as unknown as ResumeLayout;
-    const onChange = renderPanel({ layout });
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: t("typography.row.increaseAria", { label: t("typography.prop.indent") }),
-      }),
-    );
-    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
-    const domains = readStyleDomains(lastLayout(onChange).format_config);
-    expect(domains.objects[OBJECT_ID]).toMatchObject({ indent: 0.55 });
-    expect(domains.objects[OTHER_ID]).toEqual({ bullet: "none" });
-    expect(domains.roles.body).toEqual({ line_height: 1.55 });
   });
 });

@@ -21,13 +21,13 @@ from ...models.job import Job
 from ...models.profile import UserProfile
 from ...schemas.profile import ProfileOut
 from ...schemas.profile_projection import ConsumedProfile
-from ..apply import apply_service
 from ..profile.ai_profile import load_ai_profile
 from ..profile.profile_service import (
     legacy_profile_is_empty,
     project_legacy_profile_from_consumed,
     to_profile_out,
 )
+from .job_match_sources import resolve_match_resume
 
 
 def _is_empty_user_profile(profile: UserProfile) -> bool:
@@ -82,9 +82,6 @@ def resume_prompt_text(
 
     ``job_payload_data`` 非空时，会把「项目经历」按与这份 JD 的相关度重排并标注第一名
     （见 :mod:`jd_relevance`）；传 None（匹配分析等场景）保持简历原本的顺序。
-
-    ``db`` 为空（纯函数上下文/脚本）时无法解析自定义字段定义，仍走 document_io 的
-    默认转换路径；它只影响自定义字段的落位，不影响"内容是否完整"。
     """
     from ..resume.document_io import document_for_record, ensure_document_version
     from ..resume.markdown_export import export_markdown
@@ -105,10 +102,8 @@ def resume_prompt_text(
             format_config=getattr(record, "format_config", None) or {},
         )
     except Exception:  # noqa: BLE001 - 渲染失败不能连带把招呼语/匹配打断
-        # 兜底：至少把纯文本字段捞出来，别让整次调用因为渲染异常而失败。
         body = json.dumps(content, ensure_ascii=False)
     if job_payload_data:
-        # 按 JD 相关度重排项目：模型对"排在前面的内容"有强烈偏好，实测会举错项目。
         from .jd_relevance import reorder_projects_by_relevance
 
         body = reorder_projects_by_relevance(body, job_payload_data)
@@ -120,25 +115,28 @@ def resume_prompt_text(
     return f"{header}\n\n{body}".strip()
 
 
-def job_resume_text(db: Session, job: Job) -> str:
+def job_resume_text(db: Session, job: Job, resume_id: int | None = None) -> str:
     """岗位对应简历（绑定/默认）的序列化文本；没有简历时是空串。
 
     单岗匹配与批量匹配共用这一处序列化，避免两条链路对"模型看到的简历"出现差异。
-    产出的是**紧凑 markdown**（见 :func:`resume_prompt_text`），不是 JSON ——
-    JSON 会在调用方的 8000 字预算里被截掉大半，模型看不到后面的项目。
+    产出的是**紧凑 markdown**（见 :func:`resume_prompt_text`），不是 JSON。
     """
-    resume = apply_service.resolve_resume(db, job.id, None)
+    resume = resolve_match_resume(db, job, resume_id)
     if resume is None:
         return ""
     return resume_prompt_text(db, resume)
 
 
 def match_source_texts(
-    db: Session, job: Job, *, profile: ProfileOut | UserProfile | None = None
+    db: Session,
+    job: Job,
+    *,
+    profile: ProfileOut | UserProfile | None = None,
+    resume_id: int | None = None,
 ) -> tuple[ProfileOut | UserProfile, str, str]:
     """返回岗位匹配所需的资料文本与岗位对应简历文本（当前组 + 去隐藏）。"""
     current = profile or load_ai_profile(db)
-    return current, profile_text(current), job_resume_text(db, job)
+    return current, profile_text(current), job_resume_text(db, job, resume_id)
 
 
 __all__ = [

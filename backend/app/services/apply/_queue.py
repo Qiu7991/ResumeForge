@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any, get_args
 
 from sqlalchemy import func
@@ -15,26 +14,54 @@ from ...models.apply import (
     QUEUE_STATUS_PENDING,
     ApplyQueueItem,
     ApplyTaskItem,
+    JobMatchAnalysis,
 )
 from ...models.job import Job
 from ...models.profile import utcnow
-from ...models.resume import ResumeRecord, saved_only
-from ...schemas.apply import ApplyConfigIn, ApplyQueueItemOut, QueueStatus
-from .. import trash
-from ..profile.profile_service import project_legacy_profile
+from ...models.resume import ResumeRecord
+from ...schemas.apply import ApplyQueueItemOut, ApplyQueueListOut, QueueStatus, TaskItemStatus
 from ..sites.base import SiteAdapter
 from ..sites.registry import get_registry
 from ._base import ApplyConflict, ApplyNotFound, ApplyServiceError, _clip_greeting
 from ._config import get_apply_config
 from ._match import _admission_of_match, _blocking_gaps, _match_requires_confirm, latest_match
+from ._queue_resolve import (
+    _job_specific_resume,
+    _jobs_by_id,
+    _last_apply_results,
+    _matches_by_job_id,
+    _resume_titles,
+    build_apply_data,
+    queued_job_ids,
+    resolve_greeting,
+    resolve_resume,
+)
 from .blocklist import load_blocklist
 from .lifecycle import job_history
 from .signals import favorite_of, reference_score
+
+__all__ = [
+    "MAX_QUEUE_LIST",
+    "add_to_queue",
+    "build_apply_data",
+    "count_queue",
+    "job_apply_site",
+    "list_queue",
+    "queue_overview",
+    "queued_job_ids",
+    "remove_queue_item",
+    "reorder_queue",
+    "resolve_greeting",
+    "resolve_resume",
+    "unsupported_site_message",
+    "update_queue_item",
+]
 
 # 队列列表的兜底上限（P2-2）：超过后前端按 total/truncated 如实提示。
 MAX_QUEUE_LIST = 500
 
 _QUEUE_STATUS_VALUES: tuple[QueueStatus, ...] = get_args(QueueStatus)
+_TASK_ITEM_STATUS_VALUES: tuple[TaskItemStatus, ...] = get_args(TaskItemStatus)
 
 
 def _as_queue_status(value: str) -> QueueStatus:
@@ -48,6 +75,11 @@ def _as_queue_status(value: str) -> QueueStatus:
     return value
 
 
+def _as_task_item_status(value: str) -> TaskItemStatus:
+    """模型层 ``ApplyTaskItem.status`` 收窄为 schema 的 ``TaskItemStatus``。"""
+    if value not in _TASK_ITEM_STATUS_VALUES:
+        raise ValueError(f"未知的投递子项状态：{value!r}")
+    return value
 
 
 def job_apply_site(job: Job | None) -> SiteAdapter | None:
@@ -72,35 +104,6 @@ def unsupported_site_message(job: Job) -> str:
     )
 
 
-def _last_apply_results(
-    db: Session, job_ids: Sequence[int | None]
-) -> dict[int, ApplyTaskItem]:
-    """每个岗位**最近一次**投递记录（一次查询，避免逐行 N+1）。
-
-    按 `finished_at` 倒序取，同岗位只留第一条。`finished_at` 为空（还没跑完）的跳过——
-    那是"正在投"，没有结果可说。
-    """
-    ids = sorted({job_id for job_id in job_ids if job_id})
-    if not ids:
-        return {}
-    rows = (
-        db.query(ApplyTaskItem)
-        .filter(
-            ApplyTaskItem.job_id.in_(ids),
-            ApplyTaskItem.deleted_at.is_(None),
-            ApplyTaskItem.finished_at.isnot(None),
-        )
-        .order_by(ApplyTaskItem.finished_at.desc(), ApplyTaskItem.id.desc())
-        .all()
-    )
-    latest: dict[int, ApplyTaskItem] = {}
-    for row in rows:
-        if row.job_id is None or row.job_id in latest:
-            continue
-        latest[row.job_id] = row
-    return latest
-
-
 def _queue_out(
     db: Session,
     item: ApplyQueueItem,
@@ -108,32 +111,46 @@ def _queue_out(
     last_apply: ApplyTaskItem | None = None,
     *,
     cache: dict[str, Any] | None = None,
+    resume_titles: dict[int, str] | None = None,
+    matches: dict[int, JobMatchAnalysis] | None = None,
 ) -> ApplyQueueItemOut:
     """队列条目的出口结构：准入摘要 + 能否投递 + 参考分/收藏（14B）+ 生命周期（15A/15B）。
 
     ``cache`` 只用于列表批量出口时复用"资料文本"（见 ``signals.reference_score``）与
     "采样序列"（见 ``lifecycle.job_history``）；单条出口（入队、改招呼语）不传，
     省一次字典分配也不影响正确性。
+
+    ``resume_titles`` / ``matches`` 是**批量出口专用**的预取字典（见 :func:`_resume_titles`
+    与 :func:`_matches_by_job_id`）：传了就只查字典，不传就按单条口径各查一次。
+    两者都**不改变结果**——批量版与单条版读的是同一份数据、同一个唯一约束。
     """
-    match = latest_match(db, item.job_id)
+    if matches is not None:
+        match = matches.get(item.job_id) if item.job_id is not None else None
+    else:
+        match = latest_match(db, item.job_id)
     admission = _admission_of_match(match) if match is not None else None
     hard_gate = match.hard_gate if match is not None and match.hard_gate in HARD_GATES else None
     # 15A/15B：僵尸分与 JD 变更都来自同一份采集历史，一次读库（见 lifecycle.job_history）。
     history = job_history(db, job, cache=cache)
-    # 这个条目**实际会投哪份**简历：岗位专属 → 默认简历。输出的 id 也用它，
-    # 编辑弹窗据此直接预选（不用逐条手点）；未保存前不写回队列，解析始终跟着设置走。
-    effective_resume = resolve_resume(db, item.job_id, item.resume_id)
+    # 这个条目**实际会投哪份**简历：岗位专属 → 默认简历。已显式选定且命中预取字典时直接用预取标题。
+    if item.resume_id is not None and resume_titles is not None and item.resume_id in resume_titles:
+        effective_resume_id: int | None = item.resume_id
+        effective_resume_title = resume_titles[item.resume_id]
+    else:
+        effective_resume = resolve_resume(db, item.job_id, item.resume_id)
+        effective_resume_id = (
+            item.resume_id
+            if item.resume_id is not None
+            else (effective_resume.id if effective_resume is not None else None)
+        )
+        effective_resume_title = effective_resume.title if effective_resume is not None else ""
     return ApplyQueueItemOut(
         id=item.id,
         job_id=item.job_id,
         job_title=item.job_title,
         company=item.company,
-        resume_id=(
-            item.resume_id
-            if item.resume_id is not None
-            else (effective_resume.id if effective_resume is not None else None)
-        ),
-        resume_title=effective_resume.title if effective_resume is not None else "",
+        resume_id=effective_resume_id,
+        resume_title=effective_resume_title,
         greeting=item.greeting,
         greeting_confirmed=bool(item.greeting_confirmed),
         sort_order=item.sort_order,
@@ -150,7 +167,9 @@ def _queue_out(
         # 15A：忽略开关随行走（前端据此决定显示「忽略」还是「恢复」，以及徽标是否静音）。
         ghost_ignored=bool(getattr(job, "ghost_ignored", False)),
         jd_changed=history["jd_changed"],
-        last_apply_status=last_apply.status if last_apply is not None else None,
+        last_apply_status=_as_task_item_status(last_apply.status)
+        if last_apply is not None
+        else None,
         last_apply_at=last_apply.finished_at if last_apply is not None else None,
         last_failure_category=(last_apply.failure_category if last_apply is not None else ""),
         created_at=item.created_at,
@@ -175,6 +194,10 @@ def list_queue(db: Session, limit: int = MAX_QUEUE_LIST) -> list[ApplyQueueItemO
     )
     # 岗位一次性取回，避免每行一次查询（队列条数不多，但这属于该顺手做对的事）。
     jobs = _jobs_by_id(db, [item.job_id for item in items])
+    # 简历标题与匹配结论同样整页一次取回（原先每行各一次 db.get / latest_match）：
+    # 500 条队列 = 1000 次多余的主键/单行查询，而这两份数据在出口处只用于填充字段。
+    resume_titles = _resume_titles(db, [item.resume_id for item in items])
+    matches = _matches_by_job_id(db, [item.job_id for item in items])
     # 参考分要现算：资料文本整页只读一次，简历文本逐岗位不同（见 signals.reference_score）。
     cache: dict[str, Any] = {}
     # 最近一次投递结果同样批量取：每行都回答"投了没有、成没成、什么时候投的"。
@@ -187,6 +210,8 @@ def list_queue(db: Session, limit: int = MAX_QUEUE_LIST) -> list[ApplyQueueItemO
             jobs.get(item.job_id) if item.job_id is not None else None,
             last_applies.get(item.job_id) if item.job_id is not None else None,
             cache=cache,
+            resume_titles=resume_titles,
+            matches=matches,
         )
         for item in items
     ]
@@ -197,12 +222,16 @@ def count_queue(db: Session) -> int:
     return int(db.query(func.count(ApplyQueueItem.id)).scalar() or 0)
 
 
-def _jobs_by_id(db: Session, job_ids: Sequence[int | None]) -> dict[int, Job]:
-    """按 id 批量取岗位；缺失（已删除）的不在返回里。"""
-    ids = sorted({job_id for job_id in job_ids if job_id})
-    if not ids:
-        return {}
-    return {job.id: job for job in db.query(Job).filter(Job.id.in_(ids)).all()}
+def queue_overview(db: Session) -> ApplyQueueListOut:
+    """队列列表的响应体：一页条目 + 全量总数 + 是否被上限截断。
+
+    ``GET /api/apply/queue`` 与助手动作 ``list_apply_queue`` 都调这里：截断判据
+    （``len(items) < total``）只有一处实现，不会出现"一侧如实标记、另一侧静默全量"的
+    两种口径。
+    """
+    items = list_queue(db)
+    total = count_queue(db)
+    return ApplyQueueListOut(items=items, total=total, truncated=len(items) < total)
 
 
 def add_to_queue(db: Session, request: Any) -> list[ApplyQueueItemOut]:
@@ -364,102 +393,27 @@ def reorder_queue(db: Session, order: list[int]) -> list[ApplyQueueItemOut]:
     ``order`` 是**界面显示顺序**（从上到下）。与 ``list_queue`` 的倒序口径配对：
     显示在越前面的 ``sort_order`` 越大，这样后导入（``sort_order`` 取最大）的条目
     才会自然排到最上面。
+
+    **条目一次批量取回**（原先逐条 ``db.get``：拖 50 行就是 50 条 SELECT，而这只为了在
+    内存里写一个整数）。语义逐条保持：
+
+    - 缺失的 id 跳过，但 ``total`` 仍是 ``len(order)``（含缺失项）——序号按界面给的槽位算；
+    - 重复 id 由**靠后的那次**覆盖（与逐条 ``db.get`` 拿到同一对象、后写覆盖前写一致）；
+    - ``updated_at`` 逐行刷新、单次 commit、出口仍是 :func:`list_queue`。
     """
     total = len(order)
+    # ``order`` 为空时不发查询：``in_([])`` 会退化成恒假条件，白跑一次还多一条 SQL。
+    by_id: dict[int, ApplyQueueItem] = {}
+    if order:
+        ids = sorted({int(item_id) for item_id in order})
+        by_id = {
+            row.id: row for row in db.query(ApplyQueueItem).filter(ApplyQueueItem.id.in_(ids)).all()
+        }
     for index, item_id in enumerate(order):
-        item = db.get(ApplyQueueItem, item_id)
+        item = by_id.get(item_id)
         if item is None:
             continue
         item.sort_order = total - index
         item.updated_at = utcnow()
     db.commit()
     return list_queue(db)
-
-
-# ===== 简历与招呼语解析 =====
-
-
-def _job_specific_resume(db: Session, job_id: int | None) -> ResumeRecord | None:
-    """该岗位最近一份岗位版简历（不含"默认简历"回落）。"""
-    if job_id is None:
-        return None
-    return (
-        db.query(ResumeRecord)
-        # 只挑**已保存**的简历：草稿里的内容用户还没认可，拿去投递是不可接受的（0051）。
-        .filter(trash.live_only(ResumeRecord), saved_only(), ResumeRecord.job_id == job_id)
-        .order_by(ResumeRecord.created_at.desc(), ResumeRecord.id.desc())
-        .first()
-    )
-
-
-def resolve_resume(db: Session, job_id: int | None, resume_id: int | None) -> ResumeRecord | None:
-    """确定本岗位用哪份简历：显式指定 → 该岗位最近一份岗位版 → 设置里的默认简历。
-
-    「默认简历」是为了不用逐条手选：绝大多数岗位没有专属简历时，自动落到用户指定的
-    那份通用简历上；它在投递设置里随时可改，已经入队的条目也跟着走（解析在运行时做，
-    不把默认值固化进队列）。
-    """
-    if resume_id is not None:
-        return db.get(ResumeRecord, resume_id)
-    specific = _job_specific_resume(db, job_id)
-    if specific is not None:
-        return specific
-    default_id = get_apply_config(db).default_resume_id
-    if default_id is None:
-        return None
-    return (
-        db.query(ResumeRecord)
-        .filter(
-            trash.live_only(ResumeRecord),
-            saved_only(),
-            ResumeRecord.id == default_id,
-        )
-        .first()
-    )
-
-
-def resolve_greeting(item: ApplyQueueItem | None, config: ApplyConfigIn) -> str:
-    """本岗位招呼语：条目值优先，为空则退回默认招呼语。"""
-    if item is not None and item.greeting.strip():
-        return item.greeting.strip()
-    return config.default_greeting.strip()
-
-
-def build_apply_data(db: Session, resume: ResumeRecord | None) -> dict[str, Any]:
-    """构造供通用表单引擎映射的字段数据（只取投递必需的展示字段，不含完整资料）。"""
-    profile = project_legacy_profile(db)
-    data: dict[str, Any] = {
-        "name": profile.name,
-        "phone": profile.phone,
-        "email": profile.email,
-        "city": profile.target_city or profile.city,
-        "job_intent": profile.job_intent,
-        "summary": profile.summary,
-    }
-    if resume is not None and resume.title:
-        data["job_intent"] = data.get("job_intent") or resume.job_title
-    return {key: value for key, value in data.items() if value}
-
-
-def queued_job_ids(db: Session, job_ids: Sequence[int | None]) -> set[int]:
-    """这批岗位里**哪些已经在投递队列里**（2026-11-10）。
-
-    调用方是采集结果面板：它要标出"这条岗位是不是已经在投递台了"。
-
-    一次 `WHERE job_id IN (...)` 查完，不在 Python 里逐条查：采集结果一次可能列上百条，
-    逐条查询会让"打开采集结果"这个动作随条数线性变慢。
-
-    为什么不复用候选的 `imported_job_id` 判断：那只说明"导入过岗位广场"，而用户关心的是
-    "有没有进投递台"。导入之后被移出队列的岗位必须显示成"没进队列"，这个差别只有
-    队列表能答。
-
-    ``None`` 与假值一律忽略（手动粘贴的候选没有 ``imported_job_id``；队列条目的
-    ``job_id`` 也可空，表示岗位已被删除）。
-    """
-    wanted = {int(job_id) for job_id in job_ids if job_id}
-    if not wanted:
-        return set()
-    rows = (
-        db.query(ApplyQueueItem.job_id).filter(ApplyQueueItem.job_id.in_(wanted)).all()
-    )
-    return {int(row[0]) for row in rows if row[0] is not None}

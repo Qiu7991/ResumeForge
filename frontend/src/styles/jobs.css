@@ -1,6 +1,38 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+@import "./job-hunt.css";
+/* 筛选栏尾槽（I-39）：外层原来是一个带 `marginBottom: 16` 的行内样式 div，
+   换成共享的 FilterResetSlot 后把这条间距搬到这里，布局与改动前一致。
+   行内对齐由 FilterResetSlot 自己的 `.filter-row` 负责。 */
+.jobs-filter-row {
+  margin-bottom: 16px;
+}
+
 .jobs-filter-bar {
   width: 100%;
+}
+
+/* 筛选栏控件统一 40px 高：antd 的 size="small" 只给到 30px，整条工具栏比表格行还瘦。
+   只提高度、不动 size——换成 middle 会把按钮左右内边距从 7px 抬到 15px，1440 下必折行。
+   antd 的行内样式与 css-in-js 会顶掉普通规则，所以每条都带 !important。 */
+.jobs-filter-bar .ant-btn {
+  height: 40px !important;
+  padding-inline: 10px !important;
+}
+
+.jobs-filter-bar .ant-input-affix-wrapper {
+  height: 40px !important;
+  padding-inline: 10px !important;
+}
+
+.jobs-filter-bar .ant-select {
+  height: 40px !important;
+}
+
+/* antd 6 的单选下拉内部是 .ant-select-content（v5 叫 .ant-select-selector），
+   它自己带 min-height，撑满外层高度并把文字垂直居中。 */
+.jobs-filter-bar .ant-select .ant-select-content {
+  height: 100% !important;
+  align-items: center;
 }
 
 /* 备选岗位卡片网格：antd Card 自身不带下间距，裸堆会一张贴一张；用 grid gap 拉开。 */
@@ -9,17 +41,49 @@
   gap: 16px;
 }
 
-/* 搜索框可伸缩：260 是舒适宽，160 是"还能看清关键词"的下限。
+/* 搜索框可伸缩：240 是舒适宽，160 是"还能看清关键词"的下限。
    真正参与收缩的是它外面的 .ant-space-item——.jobs-search-input 自己不是 flex 项，
-   只写 flex 会静默失效（这是 768–991 把筛选行挤成两行的直接原因）。 */
-.jobs-filter-bar > .ant-space-item:has(> .jobs-search-input) {
+   只写 flex 会静默失效（这是 768–991 把筛选行挤成两行的直接原因）。
+   F04 起搜索框多包了一层筛簇（`.jobs-filter-group-filters`），所以选择器跟着下沉一层；
+   不写这一条的话搜索框会退回 antd 的默认宽，整簇重新挤在一起。 */
+.jobs-filter-group-filters > .ant-space-item:has(> .jobs-search-input) {
   flex: 1 1 200px;
   min-width: 160px;
-  max-width: 260px;
+  max-width: 240px !important;
+}
+
+/* 1366 及以下：控件加高到 40px 后一行更挤，搜索框先让出 80px，别整行折行。 */
+@media (max-width: 1366px) {
+  .jobs-filter-group-filters > .ant-space-item:has(> .jobs-search-input) {
+    max-width: 160px !important;
+  }
 }
 
 .jobs-search-input {
   width: 100%;
+}
+
+/* ===== F04：四簇分组（筛选｜AI｜导入｜新增）=====
+ * 间距原先由单一 `Space size={2}` 统一给定：10 个控件几乎相接，谁也看不出哪几个是一组。
+ * 现在簇内 6px、簇间 8px + 一条竖线。簇本身不参与 flex 分配（按内容宽度排），
+ * 只有筛选簇里的搜索框按上面那条规则伸缩——否则外层会把「新增」也拉成一整段空白。 */
+.jobs-filter-bar .jobs-filter-divider {
+  /* antd 的 vertical divider 是 `height: 0.9em` 且带 -0.06em 上移：夹在 40px 控件之间
+     会显得又短又飘。固定 20px（约半控件高）并归零位移；左右 2px 叠上 8px 间距 = 18px，
+     仍是簇内 6px 的三倍。 */
+  height: 20px;
+  margin-inline: 2px;
+  top: 0;
+}
+
+/* 「导入 + 新增」合并成一个 flex 项（见 JSX 注释）：外层因此只有三个 flex 项，
+   宽屏一行四簇，1440/1080 折成两行各两簇——而不是把「手动添加」单独甩到第二行。
+   内层间距与外层一致（8px），折行后两簇仍按同一节奏排。 */
+.jobs-filter-bar .jobs-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .table-text-link {
@@ -148,136 +212,92 @@
   width: 100%;
 }
 
-/* ---- AI 求职：采集筛选表单（方案 A：分区 + 行内固定标签）----
- *
- * 为什么要自定义而不是纯靠 antd Space：控件宽度各不相同（关键词要宽、经验中等、
- * 复选框最窄），Space 的自动排布会让它们挤成不同宽度的一排——那就是用户说的
- * 「撕裂」。固定标签列 + 两列网格把左边缘拉成一条竖线，观感就整齐了。
- */
-.hunt-filters {
+/* ===== 从链接导入弹窗的表单区（F27）=====
+ * 原先五个块塞在一个 `Flex wrap` 里：420+180+220+120+110 ≈ 1098px > 弹窗内容区，
+ * 必然折行；`align="flex-end"` 又会把没有说明文字的「抓取方式」压低 18px。
+ * 现在按内容分成两行：第一行只放输入与主按钮，第二行走栅格。 */
+.jobs-import-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
-/* 一行「标签 + 控件」。标签固定 88px，控件占满剩余宽度。 */
-.hunt-field {
+.jobs-import-url-row {
   display: flex;
-  align-items: center;
   gap: 12px;
-  min-width: 0;
+  align-items: flex-end;
 }
 
-.hunt-field-label {
-  flex: 0 0 88px;
-  color: var(--rf-text-secondary, rgba(0, 0, 0, 0.65));
-  font-size: 13px;
-  line-height: 32px;
-  /* 标签不换行：换行会让同一行的控件基线错开，正是「撕裂」的来源之一。 */
-  white-space: nowrap;
-}
-
-.hunt-field-control {
+/* `min-width: 0` 让输入框在窄弹窗里真的能缩，而不是撑出横向滚动。 */
+.jobs-import-url {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-/* 5 个筛选 + 「最新优先」按两列排。窄屏自动变一列。
- *
- * 用 `max-content` 兜住标签列 + `minmax(0,1fr)` 分控件：两列的"标签+控件"总宽
- * 一致，左边缘才对得整齐。之前纯 1fr 平分时，关键词那一行是整宽的，跟下面的
- * 两列宽度对不上，视觉上宽窄不一。 */
-.hunt-filter-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 32px;
-  /* 与关键词那一行的左边缘对齐（关键词行没有第二列，靠这个内边距补齐视觉重心）。 */
-  max-width: 1100px;
-}
-
-@media (max-width: 767px) {
-  .hunt-filter-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  /* 窄屏标签不再固定宽度：88px 会把控件压得只剩一小条。 */
-  .hunt-field-label {
-    flex-basis: 72px;
-  }
-}
-
-/* ---- 分区容器：把「搜索条件」与「数据源」用细分隔线断开 ----
- *
- * 用户反馈「撕裂」的根因之一是两排控件之间没有任何视觉区分，但语义完全不同
- * （搜什么 vs 去哪搜）。细线 + 间距是最低成本的分离，不需要额外的卡片边框。
- */
-.hunt-section {
+.jobs-import-field {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 0;
+  gap: 4px;
+  min-width: 0;
 }
 
-.hunt-section + .hunt-section {
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-.hunt-section-title {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-/* 数据源那一行：平台/城市/翻页数/分数线 四项。
- *
- * 用固定 4 列而不是 auto-fit：`auto-fit + minmax(220px, 1fr)` 在 1200px 宽度下
- * 会算成 5 列，于是分数线被挤到下一行、右边留一大片空白——那就是「撕裂感」的
- * 另一种表现。固定 4 列让它们始终在同一行、等宽对齐。 */
-.hunt-source-row {
+/* 三列参数：每列「标签 → 控件 → 说明」纵向堆叠，说明跟着自己的控件。 */
+.jobs-import-params {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px 20px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: start;
+  margin-top: 4px;
 }
 
-/* 分数线不需要和别人一样宽，但也不该被拉成一整条：给它一个上限，剩下的留白。 */
-.hunt-field--narrow .hunt-field-control {
-  max-width: 96px;
+.jobs-import-hint {
+  font-size: 12px;
 }
 
-/* 窄屏：4 列变 2 列，再窄变 1 列。
- * 断点用 theme/breakpoints.ts 的标准值（1092 = narrow、767 = phone），不写就地微调值：
- * 这两个数值就是"内容盒放不下 4 列"的判定点，自定值只会让同一屏里两套阈值打架。 */
-@media (max-width: 1092px) {
-  .hunt-source-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+/* 识别警告逐条一行（I-34）：原先 join("；") 会把自带句号的几条拼成「。；」。 */
+.job-recognition-warnings {
+  margin: 0;
+  padding-inline-start: 18px;
 }
 
-@media (max-width: 767px) {
-  .hunt-source-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.job-recognition-warnings > li {
+  margin: 0;
 }
 
-/* ---- 薪资区间输入：两个数字框 + 连字符 + 单位 ----
- *
- * 为什么不用下拉：BOSS 的薪资筛选只有 6 个粗档（3-5K / 5-10K / 10-20K …），
- * 而用户要的是「8-12K」这种精确区间。双输入让区间随手可填。
- */
-.hunt-salary-range {
+.job-recognition-warnings > li + li {
+  margin-top: 4px;
+}
+
+/* 识别结果逐字段落位（I-35）：拿到值的字段亮 400ms 的浅底。
+   用 box-shadow 而不是 padding/background 铺满：外扩的 halo 不改变任何盒尺寸，
+   逐个高亮时整页不会跟着抖。底色走 color-mix + token，深浅色都成立。 */
+.job-form-field {
+  border-radius: 8px;
+  transition:
+    box-shadow 200ms ease,
+    background-color 200ms ease;
+}
+
+.job-form-field.is-filling {
+  background: color-mix(in srgb, var(--rf-accent, #1677ff) 8%, transparent);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--rf-accent, #1677ff) 8%, transparent);
+}
+
+/* 等待期的秒数：按钮左边的一枚小读数。 */
+.job-parse-elapsed {
+  font-variant-numeric: tabular-nums;
+  color: var(--rf-text-secondary);
+}
+
+/* 空态改成居中的整块，高度与只有表头时的预览区接近，避免"抓取前后页面跳一下"。 */
+.jobs-import-empty {
   display: flex;
   align-items: center;
-  gap: 6px;
-}
-
-.hunt-salary-dash {
-  color: var(--rf-text-secondary, rgba(0, 0, 0, 0.45));
-  flex: 0 0 auto;
-}
-
-.hunt-salary-unit {
-  color: var(--rf-text-secondary, rgba(0, 0, 0, 0.45));
-  font-size: 12px;
-  flex: 0 0 auto;
+  justify-content: center;
+  min-height: 160px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px dashed var(--rf-border);
+  border-radius: 8px;
+  text-align: center;
 }

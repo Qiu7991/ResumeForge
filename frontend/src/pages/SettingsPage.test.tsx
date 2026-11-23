@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+// 注：Base URL 的 label 里嵌了 ⓘ 按钮（`HintLabel`），`<label>` 内因此有两个
+// 可标注控件，`getByLabelText("Base URL")` 会报 multiple elements；改按占位符取。
 import { App as AntdApp } from "antd";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +22,15 @@ const apiMocks = vi.hoisted(() => ({
   getNavigationVisibility: vi.fn(),
   getReminderPopupSetting: vi.fn(),
   getSearchConfig: vi.fn(),
+  // T01：模型配置弹窗会读「模型窗口参考」；mock 必须给出这个导出，否则整页
+  // 在渲染时抛 "No getModelWindowReference export is defined on the mock"。
+  getModelWindowReference: vi.fn(() =>
+    Promise.resolve({
+      default_tokens: 128_000,
+      entries: [],
+      current: { model: "", label: null, tokens: 128_000, source: "fallback" },
+    }),
+  ),
   getUpdateDownloadStatus: vi.fn(),
   getUpdateInstallResult: vi.fn(),
   installDownloadedUpdate: vi.fn(),
@@ -236,7 +247,7 @@ describe("SettingsPage 新建配置记录", () => {
     await openCreateModal();
 
     fireEvent.change(screen.getByLabelText("配置名称"), { target: { value: "Ollama 本地" } });
-    fireEvent.change(screen.getByLabelText("Base URL"), {
+    fireEvent.change(screen.getByPlaceholderText("https://api.deepseek.com"), {
       target: { value: "http://localhost:11434/v1" },
     });
     fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "qwen3:8b" } });
@@ -265,7 +276,7 @@ describe("SettingsPage 新建配置记录", () => {
     renderSettingsPage();
     await openCreateModal();
 
-    fireEvent.change(screen.getByLabelText("Base URL"), {
+    fireEvent.change(screen.getByPlaceholderText("https://api.deepseek.com"), {
       target: { value: "http://localhost:11434/v1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "保存记录" }));
@@ -347,12 +358,12 @@ describe("SettingsPage 编辑使用中的记录", () => {
 });
 
 describe("SettingsPage 快捷键设置", () => {
-  it("在外观与交互页签挂载快捷键设置卡", async () => {
+  it("在操作习惯组挂载快捷键设置卡", async () => {
     renderSettingsPage();
     await waitFor(() => expect(apiMocks.getLLMConfig).toHaveBeenCalledOnce());
 
-    // 快捷键从原来的「应用」页签迁到「外观与交互」（它管的就是"按什么键"）。
-    fireEvent.click(screen.getByRole("tab", { name: "外观与交互" }));
+    // 快捷键在「操作习惯」组（它管的就是"按什么键"），与批量操作同一组。
+    fireEvent.click(screen.getByRole("button", { name: "操作习惯" }));
 
     // 卡片标题 + 动作表第一行（撤回）都在，说明整张卡真的挂上了。
     expect(await screen.findByText("快捷键")).toBeInTheDocument();

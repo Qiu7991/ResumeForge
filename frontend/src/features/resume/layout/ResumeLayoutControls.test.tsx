@@ -207,7 +207,8 @@ describe("生成配置页 · 分边页边距只在制作台出现（P0-6）", ()
     // 分边控件（折叠标题 + 四条支路）整块不出现。
     expect(document.querySelector(".resume-margin-sides")).toBeNull();
 
-    // 五个度量行：行距 / 页边距 / 字号 / 字体 / 照片。分边若被渲染出来会是第 6 个直接子项。
+    // 五个度量行：行距 / 页边距 / 字号 / 字体 / 照片（WF-13 把「照片大小」与「照片框」
+    // 并成一格：一个「照片」标签 + 第二行的「边框与位置」按钮）。分边若被渲染出来会是第 6 个。
     const grid = document.querySelector(".resume-measure-grid");
     expect(grid).not.toBeNull();
     expect(grid!.children).toHaveLength(5);

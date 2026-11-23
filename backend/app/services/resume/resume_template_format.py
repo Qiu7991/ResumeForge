@@ -4,7 +4,13 @@
 from __future__ import annotations
 
 from .resume_config_domains import DOMAIN_KEYS, HEX_COLOR_RE, domain_version, is_supported
-from .resume_contact import CONTACT_BREAKS_KEY, validate_contact_breaks
+from .resume_contact import (
+    CONTACT_BREAKS_KEY,
+    CONTACT_SEPARATOR_KEY,
+    validate_contact_breaks,
+    validate_contact_separator,
+)
+from .resume_format_groups import PHOTO_FIELD_KEYS, format_field_group
 from .resume_layout_overrides import (
     EXTRA_FORMAT_KEYS,
     PAGE_MARGIN_KEYS,
@@ -78,18 +84,102 @@ FORMAT_FIELDS: tuple[dict, ...] = (
         # **自动一页仍然只到 0.88**（见 `resume_fit.AUTO_FIT_MIN_ADJUST`），
         # 放宽字段范围不等于让自动一页把字缩到看不清。
         "min": 0.35,
-        "max": 1.16,
+        "max": 2.40,
         "step": 0.02,
         "description": "在所选字号档位上再乘一个系数",
         "description_en": "Multiplies the selected font size",
+    },
+    {
+        "key": "photo_border_width",
+        "label": "照片边框粗细",
+        "label_en": "Photo border width",
+        "type": "number",
+        # 0–8px：模板默认 1px（`.profile-photo { border: 1px solid var(--line) }`），
+        # 0 = 明确"不要边框"。上限 8px 时边框仍不会盖住五官。
+        "min": 0,
+        "max": 16,
+        "step": 1,
+        "description": "照片边框的粗细（像素），0 为无边框",
+        "description_en": "Photo border width in px; 0 removes it",
+    },
+    {
+        "key": "photo_border_color",
+        "label": "照片边框颜色",
+        "label_en": "Photo border color",
+        "type": "color",
+        "description": "照片边框颜色，默认跟随分隔线色",
+        "description_en": "Photo border color; defaults to the divider color",
+    },
+    {
+        "key": "photo_radius",
+        "label": "照片圆角",
+        "label_en": "Photo corner radius",
+        "type": "number",
+        "min": 0,
+        "max": 48,
+        "step": 1,
+        "description": "照片框圆角（像素），模板默认 4",
+        "description_en": "Photo corner radius in px; templates default to 4",
+    },
+    {
+        # I-31：页眉线相对**文字底边**的下移量。模板没有页眉线（modern / minimal /
+        # split / scholar）时它不起作用，前端按 `requires` 置灰。
+        "key": "header_rule_gap",
+        "label": "页眉线位置",
+        "label_en": "Header rule offset",
+        "type": "number",
+        "min": 0.0,
+        "max": 12.0,
+        "step": 0.5,
+        "description": "线相对文字底边的下移量（mm）；模板没有页眉线时不起作用",
+        "description_en": "Millimetres below the text. Ignored when the template has no header rule.",
+        "requires": "header_border",
+    },
+    {
+        "key": "photo_offset_x",
+        "label": "照片左右偏移",
+        "label_en": "Photo offset X",
+        "type": "number",
+        # ±20mm：照片框本身约 30–45mm 宽，20mm 已能把照片推到另一侧边缘；
+        # 再大就一定压到姓名，所以上限停在"还能读"的位置。
+        "min": -40,
+        "max": 40,
+        "step": 0.5,
+        "description": "照片相对模板位置的左右偏移（毫米）",
+        "description_en": "Horizontal photo offset in mm",
+    },
+    {
+        "key": "photo_offset_y",
+        "label": "照片上下偏移",
+        "label_en": "Photo offset Y",
+        "type": "number",
+        "min": -40,
+        "max": 40,
+        "step": 0.5,
+        "description": "照片相对模板位置的上下偏移（毫米）",
+        "description_en": "Vertical photo offset in mm",
+    },
+    {
+        "key": "skill_columns",
+        "label": "技能每行个数",
+        "label_en": "Skills per row",
+        "type": "number",
+        # 1–4：小于 1 没有意义（一行至少一个标签），大于 4 时标签被压到读不清；
+        # 上限与前端分段控件（1/2/3/4）逐项一致。
+        "min": 1,
+        "max": 4,
+        "step": 1,
+        "css": "--skill-columns",
+        "description": "技能标签一行最多排几个",
+        "description_en": "Maximum skill tags per row",
     },
     {
         "key": "line_height",
         "label": "行高",
         "label_en": "Line height",
         "type": "number",
-        "min": 1.2,
-        "max": 2.2,
+        "min": 0.90,
+        "max": 3.00,
         # 0.05 → 0.01（2026-10-21 用户要求）：行距常常差 0.05 就压不进一页，
         # 粗档位下只能靠 ± 按钮一点点蹭。前端 `LINE_HEIGHT_STEP` 必须与这里一致。
         "step": 0.01,
@@ -114,8 +204,8 @@ FORMAT_FIELDS: tuple[dict, ...] = (
         "label": "区块间距",
         "label_en": "Section spacing",
         "type": "number",
-        "min": 0.6,
-        "max": 2.2,
+        "min": 0.3,
+        "max": 3.0,
         "step": 0.1,
         "css_rule": ".section { margin-bottom: calc(var(--fs) * %s) !important; }",
     },
@@ -185,8 +275,8 @@ def validated_format_config(raw: dict | None) -> dict:
     * ``section_order``（分区顺序，列表）与 ``font``（这份简历用哪个字体文件）——各有自己的
       校验函数；
     * ``EXTRA_FORMAT_KEYS``：四条分边页边距 + ``photo_scale`` + 三个系数（``name_scale`` /
-      ``section_title_scale`` / ``entry_gap``）。走 ``extra_bounds`` 的区间，
-      **越界丢弃**（与 ``page_padding`` 及 ``test_format_config_is_whitelisted`` 同一条契约）。
+      ``section_title_scale`` / ``entry_gap``）。走 ``extra_bounds`` 的区间，**越界夹到边界**（I-32；旧口径是丢弃，用户拖到上限
+      松手后跳回去，看起来像控件坏了）。
     """
     if not isinstance(raw, dict):
         return {}
@@ -200,6 +290,12 @@ def validated_format_config(raw: dict | None) -> dict:
             font_name = _validated_font_name(value)
             if font_name is not None:
                 result[FONT_KEY] = font_name
+            continue
+        if str(key) == CONTACT_SEPARATOR_KEY:
+            # 联系方式同行分隔符：未知值回落到 space（＝不写这个键），旧产物逐字节不变。
+            style = validate_contact_separator(value)
+            if style != "space":
+                result[CONTACT_SEPARATOR_KEY] = style
             continue
         if str(key) == CONTACT_BREAKS_KEY:
             # #3：联系方式强制换行的字段白名单。空列表 = 空域（不写这个键），与"从未设置"
@@ -222,8 +318,9 @@ def validated_format_config(raw: dict | None) -> dict:
             except (TypeError, ValueError):
                 continue
             low, high = extra_bounds(str(key))
-            if low <= number <= high:
-                result[str(key)] = round(number, 3)
+            # I-32：越界夹到边界并保留（不再丢键）。读取侧口径一致，旧文档里的
+            # 越界值在界面上显示的就是渲染实际用的值。
+            result[str(key)] = round(min(max(number, low), high), 3)
             continue
         field = _format_field(str(key))
         if field is None or value in (None, ""):
@@ -237,8 +334,9 @@ def validated_format_config(raw: dict | None) -> dict:
             number = float(value)
         except (TypeError, ValueError):
             continue
-        if float(field.get("min", 0)) <= number <= float(field.get("max", 1)):
-            result[field["key"]] = round(number, 3)
+        low = float(field.get("min", 0))
+        high = float(field.get("max", 1))
+        result[field["key"]] = round(min(max(number, low), high), 3)
     return result
 
 
@@ -268,6 +366,42 @@ def format_css(config: dict | None) -> str:
             root_parts.append(f"{field['css']}: {value};")
         if field.get("css_rule"):
             extra_rules.append(field["css_rule"] % f"{value:g}")
+    # 技能标签的"每行最多 N 个"：`max-width` 让第 N+1 个标签必然换行。
+    # 用 flex/flow 的 max-width 而不是 `grid-template-columns: repeat(N,1fr)`——
+    # 后者强制等宽，长标签会被压扁到同一宽度里（2026-11 用户明确否决过 grid 方案）。
+    # 未设这个键时**一个字都不写**：存量简历的技能标签排版逐字节不变。
+    columns = values.get("skill_columns")
+    if isinstance(columns, (int, float)) and columns >= 1:
+        count = int(columns)
+        extra_rules.append(
+            f":root {{ --skill-columns: {count}; }}"
+            " .skill-list li { max-width: calc((100% - var(--fs) * (var(--skill-columns) - 1))"
+            " / var(--skill-columns)); }"
+        )
+    # 照片框（R-07/R-10）：边框粗细/颜色/圆角与 X/Y 偏移。
+    # **只有用户设过这五项之一时才写规则**——模板自身已经是「1px + var(--line) + 4px」，
+    # 默认态写一遍只会制造无意义 diff，也会让旧简历的 HTML 变成"另一份产物"。
+    # 五项定义在 `resume_format_groups.PHOTO_FIELD_KEYS`：编辑器同组，两处读同一份清单。
+    if PHOTO_FIELD_KEYS & set(values):
+        width = float(values.get("photo_border_width", 1) or 0)
+        radius = float(values.get("photo_radius", 4) or 0)
+        color = values.get("photo_border_color")
+        offset_x = float(values.get("photo_offset_x", 0) or 0)
+        offset_y = float(values.get("photo_offset_y", 0) or 0)
+        declarations = [f"border-radius: {radius:g}px"]
+        if width <= 0:
+            declarations.insert(0, "border: 0")
+        elif color:
+            declarations.insert(0, f"border: {width:g}px solid {color}")
+        else:
+            declarations.insert(0, f"border: {width:g}px solid var(--line)")
+        if offset_x or offset_y:
+            declarations.append(f"transform: translate({offset_x:g}mm, {offset_y:g}mm)")
+        extra_rules.append(".profile-photo { " + "; ".join(declarations) + " }")
+    # I-31：页眉线微调。只在非 0 时写变量，默认产物逐字节不变。
+    header_rule_gap = values.get("header_rule_gap")
+    if isinstance(header_rule_gap, (int, float)) and float(header_rule_gap) > 0:
+        root_parts.append(f"--header-rule-gap: {float(header_rule_gap):g}mm;")
     # 四条边合成一条规则（四边相等 → 单值形态，与历史产物逐字一致）。
     padding = page_padding_rule(values)
     if padding is not None:
@@ -294,6 +428,10 @@ def format_field_options() -> list[dict]:
     ``label`` / ``description`` 是中文正名，**保持原样**；``label_en`` /
     ``description_en`` 是同一项的英文名，只是附加键：zh 侧读法不变，旧前端忽略即可。
     英文为空串时前端回落 ``label``（见 ``frontend/src/utils/resumeFormatLabels.ts``）。
+
+    ``group`` / ``group_en`` 是编辑器分区（定义见 ``resume_format_groups``）：``group``
+    既是中文分组正名也是分区键。本函数是**显式白名单**——不在下面字典里点名的键，
+    加进 ``FORMAT_FIELDS`` 也会静默失传。
     """
     return [
         {
@@ -301,6 +439,7 @@ def format_field_options() -> list[dict]:
             "label": field["label"],
             "label_en": field.get("label_en", ""),
             "type": field["type"],
+            **format_field_group(field["key"]),
             **(
                 {"min": field["min"], "max": field["max"], "step": field.get("step", 0.1)}
                 if field["type"] == "number"
@@ -308,6 +447,7 @@ def format_field_options() -> list[dict]:
             ),
             "description": field.get("description", ""),
             "description_en": field.get("description_en", ""),
+            **({"requires": field["requires"]} if field.get("requires") else {}),
         }
         for field in FORMAT_FIELDS
     ]

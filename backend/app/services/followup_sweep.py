@@ -65,6 +65,11 @@ from ..models.tracker import (
     FOLLOWUP_SILENCE_DAYS,
     ApplicationTrack,
 )
+from .followup_decisions import (
+    FollowupDecisionError,
+    FollowupDecisionResult,
+    decide_followups,
+)
 from .settings_service import get_agent_task_events_enabled
 
 logger = logging.getLogger(__name__)
@@ -393,6 +398,9 @@ __all__ = [
     "MAX_TRACKS_PER_BUCKET",
     "RECENT_DECISION_WINDOW",
     "REQUIRED_FRAGMENT",
+    "FollowupDecisionError",
+    "FollowupDecisionResult",
     "check_step_text",
+    "decide_followups",
     "scan_stalled_tracks",
 ]

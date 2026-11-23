@@ -24,7 +24,11 @@ $ForbiddenInArchive = @(
     "^frontend/node_modules/",
     "^runtime/",
     "(^|/)\.env(\.|$)",
-    "(^|/)__pycache__/"
+    "(^|/)__pycache__/",
+    # One dependency tree, one lockfile (npm -> pnpm, 2026-11-16). A package
+    # carrying both lets pnpm-lock.yaml win while the stale npm resolution
+    # travels along, which is exactly the state the migration removed.
+    "(^|/)package-lock\.json$"
 )
 # .env.example ships on purpose (backend/ and frontend/ both have one).
 # frontend/.env.demo also ships on purpose: it is the demo build-mode switch
@@ -134,6 +138,76 @@ try {
     Assert-ReleaseTest `
         -Condition ($nonAsciiBytes -eq 0) `
         -Message "Build-Release.ps1 must stay pure ASCII (found $nonAsciiBytes non-ASCII bytes)."
+
+    # --- desktop AppImage artifact naming ---
+    #
+    # AppImage is a Linux-only format, so the artifact name must not repeat a
+    # "-linux-" segment: the AppImage directory expects names like
+    # "App-1.0-x86_64.AppImage" and flags the extra segment as a WARNING rather
+    # than an error, so such a regression could sit there unnoticed. The .sha256
+    # sidecar glob in build-desktop-linux.sh must match the same name -- a rename
+    # that misses it silently drops every sidecar.
+    $desktopBuilderPath = Join-Path $ProjectRoot "desktop/electron-builder.yml"
+    $desktopBuilderContent = Read-TextFileAsUtf8 -Path $desktopBuilderPath
+    $linuxArtifactNames = @(
+        [regex]::Matches($desktopBuilderContent, '(?m)^\s*artifactName:\s*(\S+)\s*$') |
+            ForEach-Object { $_.Groups[1].Value } |
+            Where-Object { $_ -match '-linux-' }
+    )
+    Assert-ReleaseTest -Condition ($linuxArtifactNames.Count -eq 0) -Message "desktop/electron-builder.yml artifactName must not carry a '-linux-' segment; the AppImage is ResumeForge-<version>-<arch>.AppImage (offending: $($linuxArtifactNames -join ', '))."
+    $linuxBuildScriptContent = Read-TextFileAsUtf8 -Path (Join-Path $ProjectRoot "scripts/build-desktop-linux.sh")
+    Assert-ReleaseTest -Condition ($linuxBuildScriptContent -match 'ResumeForge-"\$VERSION"-\*\.AppImage') -Message "scripts/build-desktop-linux.sh must glob ResumeForge-<version>-<arch>.AppImage; a stale pattern silently drops the .sha256 sidecars."
+
+    # --- macOS microphone usage declaration (I-08) ---
+    #
+    # macOS 的麦克风是 TCC 级别的系统权限：第一次 getUserMedia 时系统弹窗里那句说明就是
+    # Info.plist 的 NSMicrophoneUsageDescription，缺这个键时系统直接拒绝授权（Electron
+    # 文档，严重时进程退出）。这个缺陷**只在 mac 上可见**——Windows/Linux 全绿，用户装完
+    # 才发现录不了音。维护者没有 Mac，所以这条闸门只能钉住"声明在不在、值是不是空的、
+    # 有没有写进 mac: 段的 extendInfo"；真机行为（plutil 能读到、弹窗文案正常）未验证。
+    #
+    # 三件事分开断言，因为三处失败方式各不相同：
+    #   * 键写在 win:/linux: 下 → 永远进不了 Info.plist（mac 段才是 Info.plist 的来源）；
+    #   * 写成 `>-` 折叠块 → 断言读到的"值"会变成 `>-` 本身，等于闸门放空；
+    #   * 值留空 → 系统弹窗里没有理由，用户看到的就是"被拒绝"。
+    $builderLines = $desktopBuilderContent -split "`r?`n"
+    $macStart = -1
+    for ($lineIndex = 0; $lineIndex -lt $builderLines.Count; $lineIndex++) {
+        if ($builderLines[$lineIndex] -match '^mac:\s*$') {
+            $macStart = $lineIndex
+            break
+        }
+    }
+    Assert-ReleaseTest `
+        -Condition ($macStart -ge 0) `
+        -Message "desktop/electron-builder.yml has no top-level 'mac:' section."
+    $macBlockLines = @()
+    for ($lineIndex = $macStart + 1; $lineIndex -lt $builderLines.Count; $lineIndex++) {
+        # 顶格的下一行就是下一个顶层键（dmg: / linux: 等）。
+        if ($builderLines[$lineIndex] -match '^\S') { break }
+        $macBlockLines += $builderLines[$lineIndex]
+    }
+    $macBlock = $macBlockLines -join "`n"
+    # 只认**代码行**：注释里提到这个键不算声明，否则"在 mac 段写一句注释"就能让闸门放空，
+    # 而真正的键仍然缺失。`extendInfo:` 上方那段解释性注释正好先提到键名，用整段 `IndexOf`
+    # 比先后顺序会判反（2026-11-16 实测：idxMic 265 < idxExt 639，闸门对着正确的文件报红）。
+    $macCode = @($macBlockLines | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+    $extendInfoIndex = $macCode.IndexOf("extendInfo:")
+    $micUsageIndex = $macCode.IndexOf("NSMicrophoneUsageDescription")
+    Assert-ReleaseTest `
+        -Condition ($extendInfoIndex -ge 0 -and $micUsageIndex -gt $extendInfoIndex) `
+        -Message "desktop/electron-builder.yml must declare NSMicrophoneUsageDescription under mac.extendInfo; declared anywhere else it never reaches Info.plist and macOS denies the first microphone request."
+    $micUsage = [regex]::Match(
+        $macCode,
+        '(?m)^\s+NSMicrophoneUsageDescription:\s*[''"]?(?<value>[^''"\r\n]*)'
+    )
+    Assert-ReleaseTest `
+        -Condition ($micUsage.Success) `
+        -Message "desktop/electron-builder.yml mac.extendInfo is missing NSMicrophoneUsageDescription."
+    $micUsageValue = $micUsage.Groups["value"].Value.Trim()
+    Assert-ReleaseTest `
+        -Condition ($micUsageValue.Length -gt 0) `
+        -Message "desktop/electron-builder.yml NSMicrophoneUsageDescription must carry a non-empty reason; an empty value leaves macOS with nothing to show and the request gets denied."
 
     # --- the packaging run itself ---
     # A thrown error inside the build script propagates and fails this test; the
@@ -316,6 +390,32 @@ try {
             -Condition $covered `
             -Message "Build-Release.ps1 does not require '$expected', but the app refuses to start without it."
     }
+
+    # The production dependency lock cannot be covered by the loop above: it is
+    # deliberately NOT a preflight requirement (the app boots fine without it --
+    # only the installers read it), so preflight never names it. It is still
+    # load-bearing for a *fresh install*: scripts/{macos,linux}/start.sh and the
+    # Windows first run install from it with --require-hashes and fail closed when
+    # it is missing, so a package that ships without it is a package that cannot be
+    # installed. Pin it from the AST here, and pin that it appears exactly once --
+    # a duplicated entry would mean the list was edited in a hurry.
+    $runtimeLockRelative = "backend/requirements.runtime.lock.txt"
+    $lockEntries = @($buildRequiredFiles | Where-Object { $_ -eq $runtimeLockRelative })
+    Assert-ReleaseTest `
+        -Condition ($lockEntries.Count -eq 1) `
+        -Message "Build-Release.ps1 must list '$runtimeLockRelative' exactly once in `$RequiredFiles (found $($lockEntries.Count)); every first-run installer installs from that lock and fails closed without it."
+
+    # The inverse of the $RequiredFiles checks above: a path that must NEVER ship.
+    # Pinning it from the AST matters because $ForbiddenPatterns is what makes the
+    # packager *delete* a bad archive instead of publishing it -- deleting the
+    # entry would leave every other assertion green while the gate quietly stopped
+    # guarding. The runtime loop further up already exercises it on a real archive;
+    # this one keeps the entry itself from disappearing.
+    $buildForbidden = Get-ScriptArrayValues -Ast $buildAst -Name '$ForbiddenPatterns'
+    $packageLockPatterns = @($buildForbidden | Where-Object { $_ -match 'package-lock' })
+    Assert-ReleaseTest `
+        -Condition ($packageLockPatterns.Count -eq 1) `
+        -Message "Build-Release.ps1 must keep a package-lock.json entry in `$ForbiddenPatterns (found $($packageLockPatterns.Count)); npm and pnpm lockfiles must never ship together."
 
     # --- the three per-platform archives the website serves ---
     #

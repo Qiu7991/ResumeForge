@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+// 注：Base URL 的 label 里嵌了 ⓘ 按钮（`HintLabel`），`<label>` 内因此有两个
+// 可标注控件，`getByLabelText("Base URL")` 会报 multiple elements；改按占位符取。
 import { App as AntdApp } from "antd";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +24,15 @@ const apiMocks = vi.hoisted(() => ({
   getNavigationVisibility: vi.fn(),
   getReminderPopupSetting: vi.fn(),
   getSearchConfig: vi.fn(),
+  // T01：模型配置弹窗会读「模型窗口参考」；mock 必须给出这个导出，否则整页
+  // 在渲染时抛 "No getModelWindowReference export is defined on the mock"。
+  getModelWindowReference: vi.fn(() =>
+    Promise.resolve({
+      default_tokens: 128_000,
+      entries: [],
+      current: { model: "", label: null, tokens: 128_000, source: "fallback" },
+    }),
+  ),
   getUpdateDownloadStatus: vi.fn(),
   getUpdateInstallResult: vi.fn(),
   installDownloadedUpdate: vi.fn(),
@@ -182,7 +193,7 @@ describe("SettingsPage 记录编辑参数往返", () => {
       </MemoryRouter>,
     );
     fireEvent.click(await screen.findByRole("button", { name: /新建配置/ }));
-    fireEvent.change(screen.getByLabelText("Base URL"), {
+    fireEvent.change(screen.getByPlaceholderText("https://api.deepseek.com"), {
       target: { value: " https://models.example.com/v1 " },
     });
     fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: " fake-new-key " } });
@@ -257,7 +268,8 @@ describe("SettingsPage 提醒弹窗开关", () => {
     );
     await waitFor(() => expect(apiMocks.getLLMConfig).toHaveBeenCalledOnce());
     // 提醒弹窗开关从「应用」迁到「更新与帮助」（它是应用行为，不是外观）。
-    fireEvent.click(screen.getByRole("tab", { name: "更新与帮助" }));
+    // F38 起导航是左侧竖向按钮，不再是 antd Tabs 的 role="tab"。
+    fireEvent.click(screen.getByRole("button", { name: "更新与帮助" }));
   }
 
   it("toggles the startup reminder popup switch", async () => {
@@ -283,8 +295,8 @@ describe("SettingsPage 投投悬浮球开关", () => {
       </MemoryRouter>,
     );
     await waitFor(() => expect(apiMocks.getLLMConfig).toHaveBeenCalledOnce());
-    // 悬浮球属于"助手行为"，从「应用」迁到「助手与 AI 行为」。
-    fireEvent.click(screen.getByRole("tab", { name: "助手与 AI 行为" }));
+    // 悬浮球属于"界面上多一个球"，在「外观与语言」组里。
+    fireEvent.click(screen.getByRole("button", { name: "外观与语言" }));
   }
 
   it("toggles and persists the assistant orb switch", async () => {

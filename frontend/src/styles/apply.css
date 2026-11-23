@@ -4,7 +4,9 @@
 .apply-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  /* 12 而不是 16：页头 + 浏览器卡 + 页签 + 工具栏已经占了首屏 300px 里的大半，
+     再按普通页面的 16 排，空队列时队列区顶部会落到 306（smoke 首屏预算 300）。 */
+  gap: 12px;
 }
 
 .apply-page-head {
@@ -217,8 +219,10 @@
 }
 
 /* #14G 浏览器说明 Popover：三段说明各带一个小标题，段间距比段落内大一点。 */
+/* I-14：这一段原属 Popover（#14G），升格成 Modal 后 420px 的约束没撤，右侧恒空约 152px。
+   Modal 宽度同时收到 520（两处必须同批改）。 */
 .apply-browser-help {
-  max-width: 420px;
+  max-width: 100%;
 }
 
 /* #14F 页头漏斗条：四个指标贴在一起，点击下钻。 */
@@ -455,6 +459,12 @@
 }
 
 .apply-records-batch-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* F11：padding 只跟着"展开时才有"的内容走，收起态不再留 20px 空白。 */
+.apply-records-batch-body-inner {
   padding: 8px 12px 12px;
 }
 

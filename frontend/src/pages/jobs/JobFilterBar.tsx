@@ -10,16 +10,15 @@ import {
   InboxOutlined,
   PlusOutlined,
   ReloadOutlined,
-  UndoOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
-import { Button, Input, Select, Space, Tooltip } from "antd";
+import { Button, Divider, Input, Select, Space, Tooltip } from "antd";
+import { FilterResetSlot } from "../../components/common/FilterResetSlot";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { t } from "../../i18n";
 import { JOB_STATUS_LABEL_KEYS, JOB_TYPE_LABEL_KEYS } from "../../i18n/enum/jobs";
 import { useLocale } from "../../i18n/i18nContext";
-import type { JobSortState } from "../../utils/jobSort";
-import { DEFAULT_JOB_SORT_STATE, isDefaultJobSort } from "../../utils/jobSort";
 import type { BatchAction } from "./jobFilterOptions";
 import { SOURCE_KIND_OPTIONS } from "./jobFilterOptions";
 
@@ -41,10 +40,10 @@ export function JobFilterBar({
   setCandidatesOpen,
   setFormOpen,
   onImportCsv,
-  sortState,
-  applySort,
   selectionMode = false,
   enterSelectionMode,
+  extraActions,
+  sortReset,
 }: {
   keyword: string;
   setKeyword: (value: string) => void;
@@ -63,9 +62,6 @@ export function JobFilterBar({
   setCandidatesOpen: (value: boolean) => void;
   setFormOpen: (value: boolean) => void;
   onImportCsv: () => void;
-  /** 当前排序（E）：只存在页面状态里，用于「恢复默认排序」的禁用态。 */
-  sortState: JobSortState;
-  applySort: (next: JobSortState) => void;
   /**
    * 是否处于多选态。默认 `false`（既有调用方与单测都不用改）。
    *
@@ -75,15 +71,16 @@ export function JobFilterBar({
    * 非多选态下这颗按钮照旧出现。
    */
   selectionMode?: boolean;
-  /**
-   * 进入多选态（2026-11-10 用户要求："做个复选框，这样我能多选添加进投递台，
-   * 不然一个一个点太麻烦了"）。
-   *
-   * 这个入口以前**只藏在行的右键菜单里**（注释原文"进入选择模式的入口在行右键菜单"），
-   * 用户根本发现不了，只能一个一个点。现在工具栏上给一颗显式按钮。
-   * 不传时按钮不渲染（既有调用方与单测不用改）。
-   */
+  /** 进入多选态（工作通二开：工具栏显式入口）。 */
   enterSelectionMode?: () => void;
+  extraActions?: ReactNode;
+  /**
+   * 排序复位（I-39）：只在"已离开默认排序"时出现，位置是这一行的**最右**。
+   *
+   * 做成可选对象而不是两个必填 prop：`JobFilterBar.test.tsx` 的三处 harness 不必改，
+   * 代价是"漏传 = 静默没有按钮"，所以页面级测试里断言了"排序后按钮出现"。
+   */
+  sortReset?: { changed: boolean; onReset: () => void };
 }) {
   useLocale();
   // 搜索框受控：本地镜像同步外部 keyword（URL 带参等外部变化能回填输入框），
@@ -107,152 +104,177 @@ export function JobFilterBar({
   }));
 
   return (
-    <div style={{ marginBottom: 16 }}>
-      <Space wrap className="jobs-filter-bar">
-        <Input.Search
-          className="jobs-search-input"
-          placeholder={t("jobsPage.filter.searchPlaceholder")}
-          allowClear
-          disabled={batchAction !== null}
-          value={searchText}
-          onChange={(event) => {
-            const value = event.target.value;
-            setSearchText(value);
-            if (value === "" && keyword !== "") {
-              setKeyword("");
-              setPage(1);
-            }
-          }}
-          onSearch={(value) => {
-            setSearchText(value);
-            setKeyword(value);
-            setPage(1);
-          }}
-        />
-        <Select
-          aria-label={t("jobsPage.filter.jobTypeAria")}
-          placeholder={t("jobsPage.filter.jobTypePlaceholder")}
-          allowClear
-          disabled={batchAction !== null}
-          style={{ width: 110 }}
-          value={jobType || undefined}
-          onChange={(value) => {
-            setJobType(value ?? "");
-            setPage(1);
-          }}
-          options={jobTypeOptions}
-        />
-        <Select
-          aria-label={t("jobsPage.filter.statusAria")}
-          placeholder={t("jobsPage.filter.statusPlaceholder")}
-          allowClear
-          disabled={batchAction !== null}
-          style={{ width: 110 }}
-          value={status || undefined}
-          onChange={(value) => {
-            setStatus(value ?? "");
-            setPage(1);
-          }}
-          options={statusOptions}
-        />
-        <Select
-          aria-label={t("jobsPage.filter.sourceAria")}
-          placeholder={t("jobsPage.filter.sourcePlaceholder")}
-          allowClear
-          disabled={batchAction !== null}
-          style={{ width: 120 }}
-          value={sourceKind || undefined}
-          onChange={(value) => {
-            setSourceKind((value ?? "") as "" | "collected" | "manual");
-            setPage(1);
-          }}
-          options={SOURCE_KIND_OPTIONS.map((option) => ({
-            value: option.value,
-            label: t(option.labelKey),
-          }))}
-        />
-        {/* 多选入口（2026-11-10）：以前只藏在右键菜单里，用户发现不了，只能一个一个点。
-            多选态下不渲染它——已经在选了，再显示"批量选择"只会让人以为还有另一种模式。
-            退出选择在 BatchToolbar（用户要求，两行各归其位）。 */}
-        {selectionMode || !enterSelectionMode ? null : (
-          <Button
-            icon={<CheckSquareOutlined />}
-            disabled={batchAction !== null}
-            onClick={enterSelectionMode}
-          >
-            {t("jobsPage.filter.selectMode")}
-          </Button>
-        )}
-        {/* 开始分析在面板里确认（设置视图有「开始分析」按钮）；分析一律走后台任务，
-            关掉面板/切页都不会中断，无需单独的"后台运行"入口。 */}
-        <Button
-          type="primary"
-          disabled={batchAction !== null}
-          onClick={() => openMatchBatch("setup")}
-        >
-          {t("jobsPage.filter.analyzeMatch")}
-        </Button>
-        {/* 多选态不渲染「分析记录」（用户要求）：勾选中这一栏只服务批量动作，
-            历史记录请到「AI 对比选岗 / 批量匹配分析」界面看。非多选态保留入口（深链也仍然可达）。 */}
-        {selectionMode ? null : (
-          <Button
-            icon={<HistoryOutlined />}
-            disabled={batchAction !== null}
-            onClick={() => openMatchBatch("history")}
-          >
-            {t("jobsPage.filter.matchHistory")}
-          </Button>
-        )}
-        <Button
-          icon={<InboxOutlined />}
-          disabled={batchAction !== null}
-          onClick={() => setCandidatesOpen(true)}
-        >
-          {t("jobsPage.filter.candidates")}
-        </Button>
-        {emptyDescriptionJobIds.length > 0 && (
-          // 只在有 JD 为空的岗位时才出现——否则按钮点了什么也不会发生。
-          // 显式 aria-label：antd 会给纯中文按钮做字距处理，用文本当查询条件可能找不到。
-          <Button
-            icon={<ReloadOutlined />}
-            aria-label={t("jobsPage.filter.backfill")}
-            disabled={batchAction !== null}
-            loading={backfilling}
-            onClick={() => void backfillDetails()}
-          >
-            {t("jobsPage.filter.backfill")}
-          </Button>
-        )}
-        <Button icon={<UploadOutlined />} disabled={batchAction !== null} onClick={onImportCsv}>
-          {t("jobsPage.filter.importCsv")}
-        </Button>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          disabled={batchAction !== null}
-          onClick={() => setFormOpen(true)}
-        >
-          {t("jobsPage.filter.addManual")}
-        </Button>
-        {/* 恢复默认排序（E）：排序一旦点上列头就没有"取消"的可视入口，这里给一个
-            明确的退路；点击同时回到第 1 页（停在第 3 页看默认排序的前几条没有意义）。 */}
-        <Tooltip
-          title={
-            isDefaultJobSort(sortState)
-              ? t("jobsPage.filter.sortResetHintDefault")
-              : t("jobsPage.filter.sortResetHint")
-          }
-        >
-          <Button
-            icon={<UndoOutlined />}
-            aria-label={t("jobsPage.filter.sortReset")}
-            disabled={batchAction !== null || isDefaultJobSort(sortState)}
-            onClick={() => applySort(DEFAULT_JOB_SORT_STATE)}
-          >
-            {t("jobsPage.filter.sortReset")}
-          </Button>
-        </Tooltip>
-      </Space>
-    </div>
+    <FilterResetSlot
+      className="jobs-filter-row"
+      changed={Boolean(sortReset?.changed)}
+      hint={t("jobsPage.filter.sortResetHint")}
+      label={t("jobsPage.filter.sortReset")}
+      onReset={() => sortReset?.onReset()}
+      bar={
+        <>
+          <Space wrap size={8} align="center" className="jobs-filter-bar">
+            <Space
+              wrap
+              size={6}
+              align="center"
+              className="jobs-filter-group jobs-filter-group-filters"
+            >
+              <Input.Search
+                size="small"
+                className="jobs-search-input"
+                placeholder={t("jobsPage.filter.searchPlaceholder")}
+                allowClear
+                disabled={batchAction !== null || undefined}
+                value={searchText}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setSearchText(value);
+                  if (value === "" && keyword !== "") {
+                    setKeyword("");
+                    setPage(1);
+                  }
+                }}
+                onSearch={(value) => {
+                  setSearchText(value);
+                  setKeyword(value);
+                  setPage(1);
+                }}
+              />
+              <Select
+                size="small"
+                aria-label={t("jobsPage.filter.jobTypeAria")}
+                placeholder={t("jobsPage.filter.jobTypePlaceholder")}
+                allowClear
+                disabled={batchAction !== null || undefined}
+                style={{ width: 90 }}
+                value={jobType || undefined}
+                onChange={(value) => {
+                  setJobType(value ?? "");
+                  setPage(1);
+                }}
+                options={jobTypeOptions}
+              />
+              <Select
+                size="small"
+                aria-label={t("jobsPage.filter.statusAria")}
+                placeholder={t("jobsPage.filter.statusPlaceholder")}
+                allowClear
+                disabled={batchAction !== null || undefined}
+                style={{ width: 90 }}
+                value={status || undefined}
+                onChange={(value) => {
+                  setStatus(value ?? "");
+                  setPage(1);
+                }}
+                options={statusOptions}
+              />
+              <Select
+                size="small"
+                aria-label={t("jobsPage.filter.sourceAria")}
+                placeholder={t("jobsPage.filter.sourcePlaceholder")}
+                allowClear
+                disabled={batchAction !== null || undefined}
+                style={{ width: 90 }}
+                value={sourceKind || undefined}
+                onChange={(value) => {
+                  setSourceKind((value ?? "") as "" | "collected" | "manual");
+                  setPage(1);
+                }}
+                options={SOURCE_KIND_OPTIONS.map((option) => ({
+                  value: option.value,
+                  label: t(option.labelKey),
+                }))}
+              />
+              {selectionMode || !enterSelectionMode ? null : (
+                <Button
+                  size="small"
+                  icon={<CheckSquareOutlined />}
+                  disabled={batchAction !== null || undefined}
+                  onClick={enterSelectionMode}
+                >
+                  {t("jobsPage.filter.selectMode")}
+                </Button>
+              )}
+            </Space>
+            <Divider orientation="vertical" className="jobs-filter-divider" />
+            <Space wrap size={6} align="center" className="jobs-filter-group jobs-filter-group-ai">
+              <Button
+                size="small"
+                disabled={batchAction !== null || undefined}
+                onClick={() => openMatchBatch("setup")}
+              >
+                {t("jobsPage.filter.analyzeMatch")}
+              </Button>
+              {selectionMode ? null : (
+                <Button
+                  size="small"
+                  icon={<HistoryOutlined />}
+                  disabled={batchAction !== null || undefined}
+                  onClick={() => openMatchBatch("history")}
+                >
+                  {t("jobsPage.filter.matchHistory")}
+                </Button>
+              )}
+              <Button
+                size="small"
+                icon={<InboxOutlined />}
+                disabled={batchAction !== null || undefined}
+                onClick={() => setCandidatesOpen(true)}
+              >
+                {t("jobsPage.filter.candidates")}
+              </Button>
+              {emptyDescriptionJobIds.length > 0 && (
+                <Tooltip title={t("jobsPage.filter.backfill")}>
+                  <Button
+                    size="small"
+                    icon={<ReloadOutlined />}
+                    aria-label={t("jobsPage.filter.backfill")}
+                    disabled={batchAction !== null || undefined}
+                    loading={backfilling}
+                    onClick={() => void backfillDetails()}
+                  />
+                </Tooltip>
+              )}
+            </Space>
+            <Divider orientation="vertical" className="jobs-filter-divider" />
+            <div className="jobs-filter-actions">
+              <Space
+                wrap
+                size={6}
+                align="center"
+                className="jobs-filter-group jobs-filter-group-import"
+              >
+                {extraActions}
+                <Button
+                  size="small"
+                  icon={<UploadOutlined />}
+                  disabled={batchAction !== null || undefined}
+                  onClick={onImportCsv}
+                >
+                  {t("jobsPage.filter.importCsv")}
+                </Button>
+              </Space>
+              <Divider orientation="vertical" className="jobs-filter-divider" />
+              <Space
+                wrap
+                size={6}
+                align="center"
+                className="jobs-filter-group jobs-filter-group-add"
+              >
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  disabled={batchAction !== null || undefined}
+                  onClick={() => setFormOpen(true)}
+                >
+                  {t("jobsPage.filter.addManual")}
+                </Button>
+              </Space>
+            </div>
+          </Space>
+        </>
+      }
+    />
   );
 }

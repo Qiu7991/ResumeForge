@@ -19,8 +19,13 @@
 // Everything it needs from the manager (spawnFn / execFileFn / verifyProcessFn /
 // exitConfirmTimeoutMs / the adopted record) is read off `manager`, so the
 // manager keeps owning the lifecycle while this module owns the decisions.
+//
+// A1（2026-11-21）：探测到端口仍 OPEN 时不再只是"再等一会儿"——先反查监听进程
+// （lib/port-listener.js），身份校验通过就补杀一次，然后再探测。判定与副作用在
+// lib/backend-listener-rescue.js，这里只把探测/终止/时间线注入进去。
 
 const processIdentity = require("./process-identity");
+const { rescueOrphanListener, urlPort } = require("./backend-listener-rescue");
 const net = require("net");
 
 // Three-state port probe (R3). A single `connect` attempt used to answer a
@@ -33,28 +38,41 @@ const net = require("net");
 const PORT_STATE_OPEN = "open";
 const PORT_STATE_CLOSED = "closed";
 const PORT_STATE_UNKNOWN = "unknown";
+// 同一组状态交给 lib/backend-listener-rescue.js：状态名只在这里定义一次。
+const PORT_STATES = { OPEN: PORT_STATE_OPEN, CLOSED: PORT_STATE_CLOSED, UNKNOWN: PORT_STATE_UNKNOWN };
 
 // ~0/250/750ms: a backend that is really gone refuses the very first connect;
 // the retries exist for a socket that is still unwinding after the kill.
 const PORT_PROBE_DELAYS_MS = [0, 250, 750];
+const LISTENER_DRAIN_DELAYS_MS = [500, 1000, 1500, 1500];
 const PORT_PROBE_TIMEOUT_MS = 1000;
 
-// errno values that mean "nothing is listening (any more)" rather than
-// "we cannot tell". Kept as a Set so probePortOnce stays a pure lookup.
-const PORT_CLOSED_ERROR_CODES = new Set([
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "EPIPE",
-  "ETIMEDOUT",
-  "EHOSTUNREACH",
-  "ENETUNREACH",
-  "EADDRNOTAVAIL",
-]);
+// Exit-confirmation cadence on the quit path (R3-B). taskkill has already been
+// asked to kill the tree, so it is typically gone within a frame or two; a flat
+// 300ms poll made every quit wait for a tick that had nothing left to observe.
+// The first four polls run at 50ms, the long tail falls back to 300ms.
+const EXIT_CONFIRM_POLL = { intervalMs: 300, fastIntervalMs: 50, fastAttempts: 4 };
 
 function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+// 等待的注入点（默认真等）。连续 OPEN 时那条探测序列要真等 5.5 秒，而"仍然 blocked"
+// 的用例关心的只是判定，不该为此变慢；生产里没有这一项，行为与之前逐字一致。
+function pause(manager, ms) {
+  const sleepFn = manager && manager.sleepFn;
+  return typeof sleepFn === "function" ? sleepFn(ms) : sleep(ms);
+}
+
+// Quit timing (R3 acceptance evidence): lib/quit-lifecycle hands a recorder down
+// through `manager.quitTimeline`, so each stop stage can stamp itself without
+// this module owning a logger. Optional everywhere -- a manager without one
+// (unit tests, a stop outside a quit) simply records nothing.
+function markQuitTimeline(manager, label) {
+  const timeline = manager && manager.quitTimeline;
+  if (timeline && typeof timeline.mark === "function") timeline.mark(label);
 }
 
 // One probe attempt. Resolves to { state, detail } -- never rejects.
@@ -87,7 +105,7 @@ function probePortOnce(rawUrl) {
     socket.once("error", (error) => {
       const code = error && error.code;
       finish(
-        PORT_CLOSED_ERROR_CODES.has(code) ? PORT_STATE_CLOSED : PORT_STATE_UNKNOWN,
+        code === "ECONNREFUSED" ? PORT_STATE_CLOSED : PORT_STATE_UNKNOWN,
         `error ${code || (error && error.message) || "unknown"}`,
       );
     });
@@ -111,30 +129,41 @@ function normalizeProbeResult(result) {
 // `manager.portOpenFn` keeps its original boolean contract and is deliberately
 // NOT retried: existing tests assert one probe per stop.
 async function probeBackendPort(manager, attemptFn) {
-  if (!manager.url) return { state: PORT_STATE_CLOSED, detail: "后端地址未知（尚未启动）" };
+  if (!manager.url) {
+    // Fail-closed（2026-11-23）：没有地址 = **不知道**后端在哪，不是"已经没了"。
+    // 这里以前返回 CLOSED，等于把"我不知道"读成"它停了"：stopBackend 的 `if (outcome.ok)`
+    // 一拿到 CLOSED 就整条链路"确认已停"，before-quit 随即放行，壳 177ms 退出，而真
+    // uvicorn 还活着（2.3.1 门禁 run 45017991307，Linux 四个矩阵全红）。
+    // 三态里 UNKNOWN 早就存在，stopBackend 对它的处理也早就存在：退出不因此卡住，
+    // 但这次停止**不算已核验**（安装更新会被拦住），并留下一行证据。
+    return { state: PORT_STATE_UNKNOWN, detail: "后端地址未知（尚未启动或交接未记录），无法探测" };
+  }
   if (!attemptFn && manager.portOpenFn) {
     const open = await manager.portOpenFn(manager.url);
     return { state: open ? PORT_STATE_OPEN : PORT_STATE_CLOSED, detail: "测试注入 portOpenFn" };
   }
-  let sawUnknown = false;
-  let lastDetail = "";
-  for (let attempt = 0; attempt < PORT_PROBE_DELAYS_MS.length; attempt += 1) {
-    const delay = PORT_PROBE_DELAYS_MS[attempt];
-    if (delay > 0) await sleep(delay);
+  const delays = [...PORT_PROBE_DELAYS_MS];
+  let refused = 0;
+  let last = { state: PORT_STATE_UNKNOWN, detail: "" };
+  for (const [attempt, delay] of delays.entries()) {
+    if (delay > 0) await pause(manager, delay);
     const attemptResult = attemptFn
       ? normalizeProbeResult(await attemptFn(manager, attempt))
       : await probePortOnce(manager.url);
-    lastDetail = `第 ${attempt + 1} 次探测 "${attemptResult.state}"${
+    const detail = `第 ${attempt + 1} 次探测 "${attemptResult.state}"${
       attemptResult.detail ? `（${attemptResult.detail}）` : ""
     }`;
-    if (attemptResult.state === PORT_STATE_OPEN) {
-      return { state: PORT_STATE_OPEN, detail: lastDetail };
+    last = { state: attemptResult.state, detail };
+    refused = last.state === PORT_STATE_CLOSED ? refused + 1 : 0;
+    // Windows can accept one more connection just after taskkill reports the
+    // root gone. Give the listener time to drain, then require two refusals.
+    if (attempt < PORT_PROBE_DELAYS_MS.length - 1 && last.state === PORT_STATE_OPEN &&
+        delays.length === PORT_PROBE_DELAYS_MS.length) {
+      delays.push(...LISTENER_DRAIN_DELAYS_MS);
     }
-    if (attemptResult.state !== PORT_STATE_CLOSED) sawUnknown = true;
+    if (attempt >= PORT_PROBE_DELAYS_MS.length - 1 && refused >= 2) return last;
   }
-  // Every attempt refused the connection -> closed. Any attempt we could not
-  // judge -> unknown (the caller warns instead of failing the quit).
-  return { state: sawUnknown ? PORT_STATE_UNKNOWN : PORT_STATE_CLOSED, detail: lastDetail };
+  return last.state === PORT_STATE_OPEN ? last : { ...last, state: PORT_STATE_UNKNOWN };
 }
 
 // What the backend's own command line looks like, mirrored from the launchers
@@ -142,6 +171,9 @@ async function probeBackendPort(manager, attemptFn) {
 // RF_BACKEND_COMMAND_PATTERN in scripts/macos/start.sh). A recorded pid whose
 // command line does not match this is never treated as ours.
 const BACKEND_COMMAND_PATTERNS = ["uvicorn\\s+app\\.main:app"];
+
+// 探测到 OPEN 之后的补救步骤（A1）住在 lib/backend-listener-rescue.js：这里只把它
+// 需要的判定器注入进去，两个模块因此不互相 require。
 
 // A pid we spawned is ours by construction (the child handle pins it), but it
 // is still re-checked against the identity snapshot taken at spawn before the
@@ -207,15 +239,52 @@ async function stopBackend(manager) {
     // (spawnFn / killFn / processExistsFn / portOpenFn) so the three states can
     // be exercised without a real socket.
     const probe = await probeBackendPort(manager, manager.portProbeFn);
+    markQuitTimeline(manager, "port probe");
     if (probe.state === PORT_STATE_OPEN) {
-      // Still reachable: fail closed, exactly as before (an update must not be
-      // installed over a backend that is demonstrably alive).
-      outcome = {
-        ok: false,
-        reason: "根进程已退出，但后端端口仍可连接，无法确认后代进程已停止",
-        verified: false,
-        detail: probe.detail,
-      };
+      // A1：端口还通不再等于"到此为止"。先问 OS 是谁在听：确认是我们的后端就补杀
+      // 一次，再探测；查不到、不是我们的、补杀后还通，一律保持 blocked（fail-closed）。
+      const rescue = await rescueOrphanListener(manager, urlPort(manager.url), probe.detail, {
+        portStates: PORT_STATES,
+        commandPatterns: BACKEND_COMMAND_PATTERNS,
+        confirmTermination,
+        probeBackendPort,
+        markQuitTimeline,
+      });
+      if (rescue.state === PORT_STATE_CLOSED) {
+        // 补杀成功：这一次的停止是有证据的（进程身份校验过 + 端口已关闭）。
+        outcome = {
+          ok: true,
+          reason: "",
+          verified: true,
+          rescued: true,
+          detail: rescue.detail,
+          // 那一行证据由壳写进 desktop-main.log（quit-lifecycle 的 logLine）；
+          // backend-manager.js / main.js 都贴着 500 行预算，不再加注入点。
+          rescueLog: rescue.log,
+        };
+      } else if (rescue.state === PORT_STATE_UNKNOWN) {
+        // 补杀后探测读不出结论：与普通 unknown 同一口径 —— 退出不为此卡住，
+        // 但这次停止**不算已核验**，安装更新仍会被拦住。
+        outcome = {
+          ok: true,
+          reason: "",
+          verified: false,
+          rescued: true,
+          warning: "补杀后端口探测未能确认后端已停止",
+          detail: rescue.detail,
+          rescueLog: rescue.log,
+        };
+      } else {
+        outcome = {
+          ok: false,
+          reason: `根进程已退出，但后端端口仍可连接，无法确认后代进程已停止${
+            rescue.reason ? `（${rescue.reason}）` : ""
+          }`,
+          verified: false,
+          detail: rescue.detail || probe.detail,
+          rescueLog: rescue.log,
+        };
+      }
     } else if (probe.state === PORT_STATE_UNKNOWN) {
       // Cannot tell (timeout / unexpected errno). A quit must not be held
       // hostage by an unreadable socket, but the stop is NOT verified -- the
@@ -288,11 +357,14 @@ async function confirmTermination(manager, pid, child) {
       }
       setTimeout(() => done(null), 8000).unref();
     });
+    markQuitTimeline(manager, "taskkill exit");
     const gone = await processIdentity.waitForProcessExit(pid, {
+      ...EXIT_CONFIRM_POLL,
       timeoutMs: manager.exitConfirmTimeoutMs,
       existsFn: manager.processExistsFn,
     });
     if (gone) {
+      markQuitTimeline(manager, "process gone");
       return { ok: true, reason: "", verified: true };
     }
     return {
@@ -335,10 +407,14 @@ async function confirmTermination(manager, pid, child) {
     }
   }
   const gone = await processIdentity.waitForProcessExit(pid, {
+    ...EXIT_CONFIRM_POLL,
     timeoutMs: manager.exitConfirmTimeoutMs,
     existsFn: manager.processExistsFn,
   });
-  if (gone) return { ok: true, reason: "", verified: true };
+  if (gone) {
+    markQuitTimeline(manager, "process gone");
+    return { ok: true, reason: "", verified: true };
+  }
   if (!child) {
     // Adopted pid, still alive after SIGTERM: escalate once, then re-check.
     try {
@@ -347,10 +423,14 @@ async function confirmTermination(manager, pid, child) {
       // Raced with the exit.
     }
     const killed = await processIdentity.waitForProcessExit(pid, {
+      ...EXIT_CONFIRM_POLL,
       timeoutMs: manager.exitConfirmTimeoutMs,
       existsFn: manager.processExistsFn,
     });
-    if (killed) return { ok: true, reason: "", verified: true };
+    if (killed) {
+      markQuitTimeline(manager, "process gone");
+      return { ok: true, reason: "", verified: true };
+    }
   }
   return { ok: false, reason: `进程 ${pid} 在停止请求后仍然存在`, verified: false };
 }
@@ -359,6 +439,7 @@ module.exports = {
   BACKEND_COMMAND_PATTERNS,
   confirmTermination,
   probeBackendPort,
+  rescueOrphanListener,
   stopAdoptedBackend,
   stopBackend,
   verifySpawnedChild,

@@ -68,8 +68,8 @@ const params = {
   "resumes.copy.row": "复制整行为一行（可直接粘进表格）",
   /** 复制成功：`{field}` 是字段名（标题 / 目标岗位 / 公司名 / 备注 / 整行）。 */
   "resumes.copy.done": "已复制{field}",
-  /** 复制失败：说清下一步（手选文字），不谎报成功。 */
-  "resumes.copy.failed": "复制失败，请在浏览器里手动选中文字复制",
+  /** 复制失败：说清下一步（桌面端没有"浏览器"可打开，手动选中后按快捷键）。 */
+  "resumes.copy.failed": "复制失败，请手动选中文字后按 Ctrl+C",
   /** 提示语里用到的字段名（与菜单文案分开：这里是"复制了什么"，不是"点哪个按钮"）。 */
   "resumes.copy.field.title": "标题",
   "resumes.copy.field.job": "目标岗位",
@@ -109,6 +109,7 @@ const params = {
   // ── 联系方式换行（#3）──────────────────────────────────────
   /** 排版参数里的控件名：可选"在某个字段前强制换行"。 */
   "workbench.contactBreak.label": "联系方式换行",
+  "workbench.contactSeparator.label": "联系方式分隔",
   /** 说明默认行为：字段整体不拆行，只在字段之间换行。 */
   "workbench.contactBreak.hint":
     "默认每个字段整体不拆行、字段之间自动换行；选中某个字段表示在它前面强制换行",

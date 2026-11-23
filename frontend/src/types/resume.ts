@@ -58,6 +58,23 @@ export interface ResumeTemplateOption {
    * 而不是对所有模板都摆一条与事实无关的提示。旧后端不下发时按 `false`（不提示）。
    */
   serif_heading?: boolean;
+  /**
+   * 这个模板**真实用的四色**（I-09）：左栏「外观」组的 2×2 色卡在"随模板"时显示它们。
+   *
+   * 后端从 `app/templates/resume_*.html.j2` 的 `:root` 镜像而来（`--accent` / `--text` /
+   * `--muted` / `--line`），与纸面用色同源。**可能缺省或为 `null`**：自制模板的 HTML 由
+   * 用户自己写，后端读不到 `:root`；旧后端也不下发。两种情况前端都按"没有配色数据"
+   * 处理（斜纹占位 + 「随模板」），不编造假色值。
+   */
+  palette?: ResumeTemplatePalette | null;
+}
+
+/** 模板配色的四个键（与 `FORMAT_FIELDS` 里 `type: "color"` 的四项同名同序）。 */
+export interface ResumeTemplatePalette {
+  accent: string;
+  text_color: string;
+  muted_color: string;
+  line_color: string;
 }
 
 export interface ResumeFontScaleOption {
@@ -72,24 +89,9 @@ export interface ResumeFontScaleOption {
 }
 
 /** 版式的一项可调参数（后端 FORMAT_FIELDS）。 */
-export interface ResumeFormatField {
-  key: string;
-  label: string;
-  /**
-   * 英文显示名（后端附加键，旧目录没有）。
-   *
-   * 只在英文界面用，取不到回落 `label`——判断只有一处，见
-   * `utils/resumeFormatLabels.ts::formatFieldLabel`。
-   */
-  label_en?: string;
-  type: "color" | "number";
-  min?: number;
-  max?: number;
-  step?: number;
-  description?: string;
-  /** `description` 的英文版，规则同 `label_en`。 */
-  description_en?: string;
-}
+import type { ResumeFormatField } from "./resumeFormat";
+
+export type { ResumeFormatField };
 
 export interface ResumeStyleField {
   key: string;
@@ -159,7 +161,19 @@ export interface ResumeTemplateCatalog {
    */
   template_layouts?: Record<
     string,
-    { line_height: number; padding_mm: number; section_gap: number }
+    {
+      line_height: number;
+      padding_mm: number;
+      section_gap: number;
+      /**
+       * 该模板页眉线的粗细（px，0 = 没有页眉线）。
+       *
+       * 「版式编辑器」靠它判断 `requires: "header_border"` 的参数（页眉线位置）能不能用，
+       * 与 `test_layout_overrides` 里那条"线宽唯一来源"是同一个字段。旧后端不下发时按 0 处理，
+       * 但**不能因此禁用控件**——缺字段不等于"没有线"（见 `FormatTemplateEditorModal`）。
+       */
+      header_border_width?: number;
+    }
   >;
   /** 模板市场预设（R-19）：映射既有模板 + 版式 + 建议字号。 */
   market: TemplateMarketPreset[];

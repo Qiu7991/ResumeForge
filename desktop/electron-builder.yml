@@ -20,6 +20,13 @@ files:
   - preload.js
   - splash.html
   - icon.png
+  # 启动页的开场动画（splash.html 里 <img src="icon-intro.svg">）。splash.html 位于
+  # asar 根目录，两者是同级，所以这份素材**只能**留在 asar 内（不要挪去
+  # extraResources，原因见 extraResources: 段末尾的说明）。
+  - icon-intro.svg
+  # 暗色启动动画（WF-20）：splash.html 按 ?theme=dark 换成这一枚。与 icon-intro.svg
+  # 同理只能留在 asar 内，不能进 extraResources（见下面的排除规则说明）。
+  - icon-intro-dark.svg
   - backend-manager.js
   # 运行期可写位置的裁决（诊断 P0）：安装目录只读，日志/pid 记录只能落在用户
   # 目录。backend-manager.js 与 lib/preflight.js 都 require 它，漏打包即崩。
@@ -28,6 +35,14 @@ files:
   - lib/preflight.js
   # 窗口 × 二选一 + 记住选择的关闭行为（§18）：main.js 顶层 require。
   - lib/close-behavior.js
+  # Q11：自绘关闭卡片（无边框窗口 + 视图 2 二次确认）。**这三个文件漏一个就是
+  # dev 能跑、安装版白窗**——main.js 顶层 require close-dialog.js，该文件再按
+  # 相对路径加载 html 与 preload。
+  - lib/close-dialog.js
+  - close-dialog.html
+  - close-dialog-preload.js
+  # Q11：关闭行为 + 托盘装配（main.js 只剩一次调用），顶层 require。
+  - lib/window-shell.js
   # 自绘标题栏的窗口壳层（§19）：titleBarStyle / titleBarOverlay 配色与窗口状态推送。
   - lib/titlebar.js
   # 标题栏菜单的主进程动作表（§19）：编辑/视图/窗口/目录/外链，只认固定动作 id。
@@ -35,17 +50,48 @@ files:
   # 「帮助 → 复制诊断信息」（#34D）的日志侧：desktop-shell-ipc.js 顶层 require 它，
   # 漏打包会让这个菜单项在安装版里抛 MODULE_NOT_FOUND（同 updater.js 当年那类事故）。
   - lib/diagnostic-summary.js
-  # 托盘菜单（§18 的「关闭窗口时询问」恢复入口，§19 保持原生 Menu）。
+  # 托盘菜单（§18 的「关闭窗口时询问」恢复入口）。2026-11-20 起右键菜单是**自绘**的：
+  # 模型在 lib/tray-menu.js，窗口壳在 lib/tray-menu-window.js，页面与 preload 与
+  # main.js 同层（asar 根）。这四个漏一个 = 右键托盘没反应或白框。
   - lib/tray-menu.js
+  - lib/tray-menu-window.js
+  - tray-menu.html
+  - tray-menu-preload.js
   # 媒体权限（麦克风）：语音输入在桌面壳里要用它，策略与理由见该文件；main.js 一行 require。
   - lib/media-permissions.js
   # 标题栏 IPC 注册与发送方校验（§19）：main.js 顶层 require。
   - lib/desktop-shell-ipc.js
+  - lib/desktop-update-session.js
   # 启动失败的可操作对话框（从 main.js 下沉）：main.js 顶层 require。
   - lib/startup-failure.js
+  # 壳层文案双语（批 2 A）：应用内语言 -> 托盘/菜单/对话框/关闭卡片。
+  - lib/shell-locale.js
+  - lib/shell-dialogs.js
+  - lib/shell-locale-runtime.js
   # Quit lifecycle (before-quit / stop / installer spawn) lifted out of main.js
   # for the 500-line budget; main.js requires it at top level.
   - lib/quit-lifecycle.js
+  # will-quit 的同步兜底（quit-lifecycle.js 顶层 require 它）：壳退出前给记录中的
+  # 后端补一刀 SIGTERM。漏打包 = 那条 require 直接抛，安装版启动即崩。
+  - lib/backend-emergency-stop.js
+  # 「更新尝试」标记 + 下次启动对账（第 9.2 条）：updater.js 顶层 require 它，
+  # 漏打包 = 安装版启动即崩，而更新器正是唯一能救回这种包的东西，
+  # 所以必须列进来（scripts/check-asar-deps.js 会拦）。
+  - lib/update-attempt.js
+  # 更新过程给用户的反馈（第 9.2 9.3 9.4 条：六个原生对话框 + 任务栏进度条 +
+  # 启动对账）与安装器命令构造（第 9.1 条的 `--force-run`）。两者都是 updater.js
+  # 顶层 require——行数预算的下沉，漏打包同样等于"安装版启动即崩"。
+  - lib/update-feedback.js
+  - lib/installer-command.js
+  # 发布元数据的纯函数（版本比较 / 资产 URL 归属 / 挑资产）：2026-11-21 从 updater.js
+  # 搬出（500 行预算），同样是顶层 require——漏打包等于安装版一启动就崩。
+  - lib/update-release.js
+  # 更新器的出网层（白名单 fetch / net.fetch 系统代理 / 重定向模式）：同一天从
+  # updater.js 搬出，同样是顶层 require，漏打包 = 安装版启动即崩。
+  - lib/update-net.js
+  # 下载执行层（AbortSignal / 停滞看门狗 / 流式落盘 / SHA-256）：2026-11-21 从 updater.js
+  # 搬出（500 行预算），也是顶层 require，漏打包 = 安装版一启动就 MODULE_NOT_FOUND。
+  - lib/update-download.js
   # 更新原子化的文件系统底座（任务 11，本次不接线）：独立库，随包发行以便下一步
   # 把 NSIS 覆盖安装换成 versions/ + current 指针。
   - lib/update-apply.js
@@ -56,6 +102,14 @@ files:
   # 窗口尺寸/位置/缩放的持久化（2026-10-23 适配）：main.js 顶层 require，
   # 漏打包会让 createWindow 直接崩（和 updater.js 当年同一类事故）。
   - lib/window-state.js
+  # 启动页最短可见 1.0s（T05）：main.js 顶层 require，漏打包 = 安装版启动即崩。
+  - lib/splash-timing.js
+  # 壳层主题裁决（splash 主题 / 窗口图标）：main.js 顶层 require，漏打包 =
+  # 安装版启动即崩（守卫 tests/test_desktop_asar_deps_check.py 抓到过这条）。
+  - lib/shell-theme.js
+  # 开机自启的应用内开关（WF-08）：desktop-shell-ipc.js 的 deps 由 main.js 注入它，
+  # 漏打包 = 设置卡永远"不支持"，守卫 scripts/check-asar-deps.js 会拦。
+  - lib/launch-at-login.js
   # SQLite snapshot helpers used by lib/data-migration.js (RR-06).
   - lib/sqlite-snapshot.js
   # Runtime unpacking / log rotation used by backend-manager.js (line-budget split).
@@ -65,6 +119,10 @@ files:
   - lib/backend-logs.js
   # Stop/kill decisions (identity re-verification) used by backend-manager.js.
   - lib/backend-stop.js
+  # A1（2026-11-22）：端口还通时的反查与补杀。backend-stop.js 顶层 require 这两个文件，
+  # 漏打包 = 安装版一停止后端就 MODULE_NOT_FOUND（scripts/check-asar-deps.js 会拦）。
+  - lib/port-listener.js
+  - lib/backend-listener-rescue.js
   - lib/backend-startup.js
   # 后端进程 env 构造（RF_DATA_DIR / RF_DESKTOP_LOG_DIR）与桌面日志目录裁决——
   # backend-manager.js 顶层 require 它，漏打包即崩（行数预算的下沉，同 backend-logs.js）。
@@ -97,6 +155,16 @@ extraResources:
     to: payload
   - from: icon.png
     to: icon.png
+  # 托盘图标（2026-11-20）：多尺寸 tray.ico（16/20/24/32/48/64），内容 = icon.png 的
+  # 浅色版。**固定只这一枚**，不再按任务栏明暗换图。和 icon.png 一样放 resources/：
+  # 打包态按 process.resourcesPath 取它（Tray 读 asar 内的 ICO 不可靠）。
+  - from: tray.ico
+    to: tray.ico
+  # ⚠️ icon-intro.svg **不能**放这里。electron-builder 会把 extraResources 的匹配项
+  # 当成 app 文件的排除项（platformPackager.js 的 excludePatterns），结果就是
+  # files: 里那一行被静默吃掉、asar 里没有这个文件，而 splash.html 在 asar 根目录，
+  # `src="icon-intro.svg"` 直接 404 → 静默退回静态 PNG，看起来像"动画没做"。
+  # 实测（2026-11-19，--win --dir）：加在这里时 resources/ 有它、app.asar 里没有。
 
 win:
   icon: icon.png
@@ -119,10 +187,31 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   # DeepSeek-style guard: refuse to install while a copy is still running.
-  shortcutName: 简历通
+  #
+  # 快捷方式名按**系统语言**解析：`$(RF_SHORTCUT)` 是 NSIS 的 LangString 引用（运行期
+  # 按 `$LANGUAGE` 取值），条目定义在 `nsis/legacy-data-rescue.nsh` 的 `customHeader`
+  # 宏里——那之外没有可用的编译期钩子（`include` 指定的脚本被放在生成脚本最顶端，
+  # 早于 MUI2 的语言加载，直接写 LangString 会报 "language not loaded"）。
+  # ⚠️ 那 26 条 LangString 与 electron-builder 默认打包的 26 种语言一一对应；**将来
+  # 收窄 `installerLanguages` 时必须同步收窄那份列表**——实测未定义的语言会把
+  # `$(RF_SHORTCUT)` 解析成空串（快捷方式变成 ".lnk"）。
+  shortcutName: "$(RF_SHORTCUT)"
   artifactName: ResumeForge-Setup-${version}.${ext}
+  # 品牌（WF-07）：资源放在 desktop/ 根目录（directories.buildResources: .），
+  # 不是默认的 build/。位图与 ICO 由 D:/rf_tools/WF-07/make_brand_assets.py 生成
+  # （脚本不入库，产物入库）——手工换品牌时重新跑一次，不要直接改 BMP。
+  # ICO 必须是"小尺寸 BMP 帧 + 256 PNG 帧"：设计稿给的三枚 ICO 所有帧都是 PNG，
+  # 在部分 Windows 资源管理器版本里会显示成空白。
+  installerIcon: installerIcon.ico
+  uninstallerIcon: uninstallerIcon.ico
+  installerHeaderIcon: installerHeaderIcon.ico
+  installerSidebar: installerSidebar.bmp
+  uninstallerSidebar: uninstallerSidebar.bmp
+  installerHeader: installerHeader.bmp
   # 旧版（payload-era）数据抢救：在调用旧卸载器之前把安装目录里的用户数据复制出来，
   # 装完再交回应用的 ADR-0004 迁移流程。守卫测试见 scripts/test-nsis-rescue.js。
+  # 该文件末尾 include 了 nsis/wizard.nsh（向导页序 + WF-08 八项）；electron-builder
+  # 的 include 只接受一个路径，所以两者共用这一个入口。
   include: nsis/legacy-data-rescue.nsh
 
 mac:
@@ -132,6 +221,19 @@ mac:
     - dir
   category: public.app-category.productivity
   artifactName: ResumeForge-${version}-${arch}.${ext}
+  # macOS 麦克风用途声明（I-08，**删掉它等于 mac 上没有语音输入**）。
+  #
+  # macOS 的麦克风是 TCC 级别的系统权限：第一次 getUserMedia 时系统弹窗里的那句说明
+  # 就是这里的 `NSMicrophoneUsageDescription`。缺这个键时 Electron 官方文档给的行为是
+  # "首次请求被系统拒绝"（部分版本直接让进程退出），而且**只在 mac 上暴露**——Windows
+  # 与 Linux 的测试全绿，用户装完才发现没法录音。所以 scripts/tests/Test-Build-Release.ps1
+  # 有一条断言钉着它：键必须在 mac: 段的 extendInfo 下、且值非空。
+  #
+  # 值写成**单行**中英双语：Info.plist 只有一份字符串，真正的本地化要 InfoPlist.strings
+  # （维护成本远高于收益）；单行还有一个更实际的理由——行内写 `>-` 折叠块时，那条断言
+  # 读到的"值"会变成 `>-` 本身，等于把闸门放空。
+  extendInfo:
+    NSMicrophoneUsageDescription: "语音输入与面试作答需要访问麦克风：录音只在你按下麦克风按钮时进行，音频仅发送到你配置的语音服务，本应用不保存录音。ResumeForge uses the microphone only while you use the voice button: audio goes to the voice service you configure and is never stored by this app."
 
 dmg:
   artifactName: ResumeForge-${version}-${arch}.${ext}
@@ -158,10 +260,23 @@ linux:
   # freedesktop 菜单分类。不写会落到 Utility，在多数桌面环境里被收进
   # "附属应用"，用户装完找不到启动项。
   category: Office
-  synopsis: 简历通 - 本地简历优化与求职管理
+  # `synopsis` 供 deb/rpm 的 Summary；`.desktop` 的默认 `Comment` 来自下面这个
+  # `description`（LinuxTargetHelper.getDescription）。两者都写英文：非中文环境必须
+  # 以英文出现，中文菜单文案由 `desktop.entry` 里的 `[zh_CN]` 键覆盖。
+  synopsis: ResumeForge - local resume editor and job-search workbench
   description: >-
-    简历通（ResumeForge）：本地运行的简历优化与求职管理工作台。
-    简历诊断、JD 对齐、面试演练与投递跟踪全部在你自己的电脑上完成。
-  # 与 mac 同一套命名体系（ResumeForge-<version>-<arch>），中间多一段 linux：
-  # 三种形态的产物会长在同一个 out/ 目录里，少这段就会互相覆盖。
-  artifactName: ResumeForge-${version}-linux-${arch}.${ext}
+    ResumeForge: a local workbench for resume tuning and job-search management.
+    Resume diagnosis, JD alignment, interview practice and application tracking
+    all run on your own computer.
+  # 菜单条目双语：默认 `Name` = productName（ResumeForge）、默认 `Comment` = 上面的
+  # description，所以只补中文键。（electron-builder 合并 `entry` 之后才写 `Comment`，
+  # 所以这里的 `Comment[zh_CN]` 与默认 `Comment` 是两个键，互不覆盖。）
+  desktop:
+    entry:
+      "Name[zh_CN]": 简历通
+      "Comment[zh_CN]": 简历通 - 本地简历优化与求职管理
+  # 与 mac 同一套命名体系（ResumeForge-<version>-<arch>）：AppImage 本身就是 Linux
+  # 专有格式，文件名里再写一段 linux 是冗余——AppImage 目录对命名的约定是
+  # App-1.0-x86_64.AppImage，多出的段会长期挂一条 WARNING。扩展名不同，与 mac 的
+  # dmg 落在同一个 out/ 目录也不会互相覆盖。
+  artifactName: ResumeForge-${version}-${arch}.${ext}

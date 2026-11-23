@@ -6,10 +6,10 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db, session_engine
+from ..runtime.blocking import run_sync
 from ..schemas.backup_status import BackupStatusOut
 from ..schemas.batch_operation import (
     BatchExportConfig,
@@ -20,6 +20,7 @@ from ..schemas.batch_operation import (
 )
 from ..schemas.generation_preferences import GenerationPreferences
 from ..schemas.setting import (
+    AgentTaskEventsSetting,
     AssistantLimitSetting,
     AssistantOrbSetting,
     AssistantRelaxedModeSetting,
@@ -64,7 +65,6 @@ from ..services.llm.model_catalog import list_available_models
 from ..services.llm.responses import ResponsesProvider, responses_unsupported_hint
 from ..services.llm.thinking import probe_thinking, thinking_support
 from ..services.llm.usage_tasks import (
-    DEFAULT_AUDIT_LANGUAGE,
     SETTINGS_PROBE_TOKEN_BUDGET,
     TASK_SETTINGS_PROBE,
     set_ambient_scope,
@@ -84,7 +84,8 @@ from ..services.settings_service import (
     get_reminder_popup_on_start,
     get_search_config,
     get_webform_relaxed_mode,
-    resolve_llm_config_api_key,
+    resolve_probe_config,
+    resolve_probe_config_with_locale,
     save_agent_task_events_enabled,
     save_assistant_orb_setting,
     save_assistant_relaxed_mode,
@@ -95,20 +96,26 @@ from ..services.settings_service import (
     save_search_config,
     save_webform_relaxed_mode,
 )
-from ..services.ui_locale import get_ui_locale
 from .assistant_compaction_api import register_compaction_setting_routes
+from .model_window_api import register_model_window_routes
+from .settings_inline_format_preview import router as inline_format_preview_router
+from .settings_reset_api import register_settings_reset_routes
+from .settings_tray_icon import router as tray_icon_router
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+# 行内格式预览的端点已拆到独立模块（见模块注释），这里挂回同一前缀。
+router.include_router(inline_format_preview_router)
+# 桌面版托盘图标跟随系统主题（WF-20）：同样拆成独立模块，本文件只留注册一行。
+router.include_router(tray_icon_router)
 # 上下文压缩的三个设置项（#10）单独一层模块：本文件已贴 500 行硬预算，只留注册一行。
 register_compaction_setting_routes(router)
-
-
-class AgentTaskEventsSetting(BaseModel):
-    """提醒到期自动生成任务卡开关（默认关；只建卡、不执行任何写操作）。"""
-
-    enabled: bool = False
+# 「模型窗口参考」只读列表（R-18 的旁路展示）：同样只留注册一行。
+register_model_window_routes(router)
+# 设置「恢复默认」与快照（I-10）：本文件已贴 500 行硬预算，同样只留注册一行。
+register_settings_reset_routes(router)
 
 
 def _is_loopback_request(request: Request) -> bool:
@@ -310,7 +317,8 @@ async def list_llm_models(payload: LLMModelsRequest, db: Session = Depends(get_d
     if not payload.base_url.strip():
         return LLMModelsResult(message="请先填写 Base URL")
     try:
-        resolved = resolve_llm_config_api_key(db, payload)
+        # 准备段（解析真实 Key）读库并归还连接，随后的目录请求是一次远端调用。
+        resolved = await run_sync(resolve_probe_config, db, payload)
     except ValueError as exc:
         return LLMModelsResult(message=str(exc))
     try:
@@ -333,7 +341,8 @@ async def check_llm_thinking(payload: LLMThinkingRequest, db: Session = Depends(
     if not payload.base_url.strip() or not payload.model.strip():
         return LLMThinkingResult(message="请先填写 Base URL 与模型名称")
     try:
-        resolved = resolve_llm_config_api_key(db, payload)
+        # 界面语言要读库，但 ContextVar 只能在事件循环上写：worker 只把值带回来。
+        resolved, ui_language = await run_sync(resolve_probe_config_with_locale, db, payload)
     except ValueError as exc:
         return LLMThinkingResult(message=str(exc))
     support = thinking_support(resolved)
@@ -353,7 +362,7 @@ async def check_llm_thinking(payload: LLMThinkingRequest, db: Session = Depends(
     set_ambient_scope(
         input_scope="none",
         masked=True,
-        language=get_ui_locale(db) or DEFAULT_AUDIT_LANGUAGE,
+        language=ui_language,
         budget=SETTINGS_PROBE_TOKEN_BUDGET,
     )
     probed = await probe_thinking(resolved)
@@ -373,7 +382,10 @@ async def test_llm(payload: LLMTestRequest, db: Session = Depends(get_db)):
     if not payload.base_url or not payload.model:
         return LLMTestResult(ok=False, message="请先填写 Base URL 与模型名称")
     try:
-        resolved_payload = resolve_llm_config_api_key(db, payload)
+        # 准备段：解析真实 Key + 读出界面语言（要读库），然后归还请求连接。
+        resolved_payload, ui_language = await run_sync(
+            resolve_probe_config_with_locale, db, payload
+        )
     except ValueError as exc:
         return LLMTestResult(ok=False, message=str(exc))
     # 不继承用户的思考参数；默认思考的已知模型由能力表显式关闭，未知服务商不加参数。
@@ -386,7 +398,7 @@ async def test_llm(payload: LLMTestRequest, db: Session = Depends(get_db)):
     set_ambient_scope(
         input_scope="none",
         masked=True,
-        language=get_ui_locale(db) or DEFAULT_AUDIT_LANGUAGE,
+        language=ui_language,
         budget=SETTINGS_PROBE_TOKEN_BUDGET,
     )
     # Responses 的已知不支持名单（Claude / Gemini / 硅基流动）先拦一道：

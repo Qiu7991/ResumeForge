@@ -9,7 +9,7 @@
  * （含「自定义…」输入分支与 probe 检测提示）、「不限制」最大输出勾选框的禁用联动、
  * 高级调整折叠区（Top P / Top K、惩罚项、随机种子、停止词、思考参数形态）。
  */
-import { ApiOutlined, QuestionCircleOutlined } from "@ant-design/icons";
+import { ApiOutlined } from "@ant-design/icons";
 import {
   Alert,
   Button,
@@ -23,16 +23,17 @@ import {
   Select,
   Slider,
   Space,
-  Tooltip,
 } from "antd";
 import type { FormInstance } from "antd";
 import { useState } from "react";
 import type { LLMModelsResult, LLMTestResult, LLMThinkingResult } from "../../types";
 import DraftRestoreBar from "../../components/common/DraftRestoreBar";
+import { HintDetail, HintLabel } from "../../components/common/HintDetail";
 import { useFormDraft } from "../../hooks/useFormDraft";
 import { MaxLengthHint } from "../../components/common/MaxLengthHint";
 import ModelCatalogField from "./llm/ModelCatalogField";
 import { AdvancedParamsSection } from "./llm/AdvancedParamsSection";
+import ContextWindowField from "./llm/ContextWindowField";
 import { ThinkingSection } from "./llm/ThinkingSection";
 import { useUnlimitedTokens } from "./llm/useUnlimitedTokens";
 import { MAX_MAX_TOKENS, MIN_MAX_TOKENS, PRESET_OPTIONS } from "./SettingsConfig";
@@ -265,9 +266,17 @@ export default function LLMRecordModal({
         <LLMProtocolField form={form} />
         <Form.Item
           name="base_url"
-          label="Base URL"
+          // I-17：54 字的「服务地址，通常形如…」原本是 `Form.Item tooltip`（悬停才看得见）。
+          // 技术名词 `Base URL` 走 `HintLabel` 的 `text` 属性（JSX 文本会被"新增界面文案"
+          // 棘轮当成未登记文案）。
+          label={
+            <HintLabel
+              text="Base URL"
+              detail={t("llmRecord.hint.baseUrl")}
+              hintLabel={t("llmRecord.aria.baseUrl")}
+            />
+          }
           rules={[{ required: true, message: t("llmRecord.required.field") }]}
-          tooltip={t("llmRecord.hint.baseUrl")}
         >
           <Input placeholder="https://api.deepseek.com" />
         </Form.Item>
@@ -281,13 +290,22 @@ export default function LLMRecordModal({
         />
         <Form.Item
           name="api_key"
+          // I-17：新增/编辑两种语义各有 50 字上下的说明（53 / 51），原本都是 `tooltip`。
+          // 文案仍按模式取原来的两条 key，只是载体换成 `ⓘ`。
           label={
-            mode === "create"
-              ? t("llmRecord.field.apiKeyOptional")
-              : t("llmRecord.field.apiKeyKeep")
-          }
-          tooltip={
-            mode === "create" ? t("llmRecord.hint.apiKeyCreate") : t("llmRecord.hint.apiKeyEdit")
+            <HintLabel
+              text={
+                mode === "create"
+                  ? t("llmRecord.field.apiKeyOptional")
+                  : t("llmRecord.field.apiKeyKeep")
+              }
+              detail={
+                mode === "create"
+                  ? t("llmRecord.hint.apiKeyCreate")
+                  : t("llmRecord.hint.apiKeyEdit")
+              }
+              hintLabel={t("llmRecord.aria.apiKey")}
+            />
           }
         >
           {/* 显隐开关只作用于本条刚输入的明文；已保存的密钥是脱敏引用，不存在可回显的本体。 */}
@@ -300,8 +318,16 @@ export default function LLMRecordModal({
           <Col xs={24} md={8}>
             <Form.Item
               name="temperature"
-              label={t("llmRecord.field.temperature")}
-              tooltip={t("llmRecord.hint.temperature")}
+              // I-17：48 字的创意度解释从 `tooltip` 换成 `ⓘ`（见文件上方 3 条同批改动）。
+              label={
+                <Space size={4} wrap={false}>
+                  {t("llmRecord.field.temperature")}
+                  <HintDetail
+                    detail={t("llmRecord.hint.temperature")}
+                    label={t("llmRecord.aria.temperature")}
+                  />
+                </Space>
+              }
             >
               {/* 两端 marks（严谨/发散）与手柄以轨道端点为中心渲染、会溢出 Slider 盒子
                   （mark 半宽 ~14px、handle 半径 ~7px）：外层 div 内缩 16px 把溢出全部吸收
@@ -324,36 +350,46 @@ export default function LLMRecordModal({
           <Col xs={24} md={8}>
             <Form.Item
               name="timeout_seconds"
-              label={t("llmRecord.field.timeout")}
-              tooltip={t("llmRecord.hint.timeout")}
+              // I-17：57 字的超时解释从 `tooltip` 换成 `ⓘ`。
+              label={
+                <Space size={4} wrap={false}>
+                  {t("llmRecord.field.timeout")}
+                  <HintDetail
+                    detail={t("llmRecord.hint.timeout")}
+                    label={t("llmRecord.aria.timeout")}
+                  />
+                </Space>
+              }
             >
               <InputNumber min={10} max={600} style={{ width: "100%" }} />
             </Form.Item>
           </Col>
           <Col xs={24} md={8}>
-            {/* 「不限制」放 label 右侧（用户要求），勾上后数字框禁用。问号解释字段本身，
-                勾选框自带另一份解释（勾选后不发参数的语义）。 */}
+            {/* 「不限制」放 label 右侧（用户要求），勾上后数字框禁用。
+                I-17：三条参数解释（最大输出 / 不限制 / 上下文窗口）原来各挂一个长 tooltip
+                （58 / 87 / 105 字）——悬停才看得见、移开就消失。现在统一换成 `ⓘ`：
+                点开是 Popover，提示模式（Alt+H）下原地展开。 */}
             <Form.Item
               name="max_tokens"
               label={
                 <Space size={4} wrap={false}>
                   {t("llmRecord.field.maxTokens")}
-                  <Tooltip title={t("llmRecord.hint.maxTokens")}>
-                    <QuestionCircleOutlined
-                      style={{ color: "var(--rf-text-description)", fontSize: 12 }}
-                      aria-label={t("llmRecord.aria.maxTokens")}
-                    />
-                  </Tooltip>
+                  <HintDetail
+                    detail={t("llmRecord.hint.maxTokens")}
+                    label={t("llmRecord.aria.maxTokens")}
+                  />
+                  <Checkbox
+                    checked={unlimitedTokens}
+                    onChange={(event) => setUnlimitedTokens(event.target.checked)}
+                  >
+                    {t("llmRecord.label.unlimited")}
+                  </Checkbox>
                   {/* 这一条的行为与直觉相反（"不限制"其实取决于服务商默认值，可能比
-                      手填的还小），勾选框悬停自带解释。 */}
-                  <Tooltip title={t("llmRecord.hint.unlimited")}>
-                    <Checkbox
-                      checked={unlimitedTokens}
-                      onChange={(event) => setUnlimitedTokens(event.target.checked)}
-                    >
-                      {t("llmRecord.label.unlimited")}
-                    </Checkbox>
-                  </Tooltip>
+                      手填的还小），所以解释跟在勾选框自己后面。 */}
+                  <HintDetail
+                    detail={t("llmRecord.hint.unlimited")}
+                    label={t("llmRecord.aria.unlimited")}
+                  />
                 </Space>
               }
             >
@@ -370,29 +406,10 @@ export default function LLMRecordModal({
           </Col>
         </Row>
 
-        {/* 上下文窗口（#5 的 5.3；#6 的百分比分母）。0 = 未知：助手不做累计上下文
-            限制、上下文面板也不显示百分比。**不预填**——填错比不填更糟（用户会以为
-            窗口真那么大），只把常见型号写在提示里。 */}
-        <Row gutter={16}>
-          <Col xs={24} md={8}>
-            <Form.Item
-              name="context_window_tokens"
-              label={
-                <Space size={4} wrap={false}>
-                  {t("llmRecord.field.contextWindow")}
-                  <Tooltip title={t("llmRecord.hint.contextWindow")}>
-                    <QuestionCircleOutlined
-                      style={{ color: "var(--rf-text-description)", fontSize: 12 }}
-                      aria-label={t("llmRecord.aria.contextWindow")}
-                    />
-                  </Tooltip>
-                </Space>
-              }
-            >
-              <InputNumber min={0} max={2_000_000} step={1024} style={{ width: "100%" }} />
-            </Form.Item>
-          </Col>
-        </Row>
+        {/* 上下文窗口（#5 的 5.3；#6 的百分比分母）：值与落库都在表单链路上，
+            控件是同形下拉 + 自定义输入，**不预填**——留空 = 跟随型号参考值
+            （未知型号按 128,000）。型号命中参考表时旁边给「填入参考值」。 */}
+        <ContextWindowField form={form} />
         {/* 用户反馈：三列行（Form.Item 默认 marginBottom 24）与思考模式行之间太空，收紧 12px。 */}
         <div style={{ marginBottom: -12 }} />
 

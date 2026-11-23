@@ -71,6 +71,12 @@ const componentsMisc = {
   "componentsMisc.theme.light": "Light",
   "componentsMisc.theme.dark": "Dark",
   "componentsMisc.theme.system": "System",
+
+  // Hint mode (I-18: Alt+H expands every ⓘ in place; I-28 counts this page's hints).
+  "helpMode.badge": "Hint mode",
+  "helpMode.badgeCount": "{count} hints on this page · Esc to exit",
+  "helpMode.badgeEmpty": "No expandable hints on this page · Esc to exit",
+  "helpMode.exit": "Exit hint mode",
 } as const;
 
 export default componentsMisc;

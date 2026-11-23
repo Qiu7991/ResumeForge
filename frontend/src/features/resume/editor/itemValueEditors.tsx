@@ -12,7 +12,10 @@ import type { DocumentFieldCatalog } from "../../../types/resumeDocument";
 import type { AuthorsItem, FieldItem, ListItem } from "../../../types/resumeDocument";
 import { enumOptionsOf } from "../document/fieldCatalog";
 import { joinDateRange, splitDateRange } from "../document/format";
-import ResizableValueTextArea from "./ResizableValueTextArea";
+import InlineMarkTextArea from "./InlineMarkTextArea";
+import AutoGrowValueTextArea from "./AutoGrowValueTextArea";
+import { readRichValue, richItemPatch } from "./inlineMarkWrite";
+import { registerInlineMarkField } from "./useInlineMarkRange";
 
 interface FieldValueProps {
   item: FieldItem;
@@ -49,6 +52,7 @@ export function FieldValueEditor({
           aria-label={t("document.field.dateStart")}
           placeholder={t("document.field.dateStart")}
           value={start}
+          onFocus={registerInlineMarkField}
           onChange={(event) => onChange({ value: joinDateRange(event.target.value, end) })}
         />
         <span className="document-field-sep" aria-hidden="true">
@@ -59,6 +63,7 @@ export function FieldValueEditor({
           aria-label={t("document.field.dateEnd")}
           placeholder={t("document.field.datePresent")}
           value={end}
+          onFocus={registerInlineMarkField}
           onChange={(event) => onChange({ value: joinDateRange(start, event.target.value) })}
         />
       </div>
@@ -72,8 +77,8 @@ export function FieldValueEditor({
       return (
         <div className="document-field-row">
           <span className="document-field-label">{t("document.field.value")}</span>
-          {/* 问题 8：单行语义 + 可拖高的文本域（自由输入的枚举字段同样要能看全文）。 */}
-          <ResizableValueTextArea
+          {/* 问题 8 / I-14：单行语义 + 按内容自适应（1–4 行），自由输入的枚举字段同样要能看全文。 */}
+          <AutoGrowValueTextArea
             ariaLabel={t("document.field.value")}
             placeholder={t("document.field.enumPlaceholder")}
             value={item.value}
@@ -103,26 +108,39 @@ export function FieldValueEditor({
       ? t("document.field.urlPlaceholder")
       : t("document.field.valuePlaceholder");
   const multiline = item.placement === "body";
+  /**
+   * I-13：文本值的读写都走结构化模型（`value` 纯文本 + `rich.runs`）。
+   * 旧文档没有 `rich` 时 `readRichValue` 会把标记串换算过来（兼容读，勿删）。
+   */
+  const richValue = readRichValue(item);
+  const rich = {
+    runs: richValue.runs,
+    onChange: (next: typeof richValue) => onChange(richItemPatch(next)),
+  };
   return (
     <div className="document-field-row">
       <span className="document-field-label">{t("document.field.value")}</span>
       {multiline ? (
-        <Input.TextArea
-          disabled={disabled || undefined}
-          aria-label={t("document.field.value")}
+        // I-26：正文（`placement === "body"`）是加字号/颜色最多的字段，必须和单行值一样走
+        // 行内标记遮罩层；差别只在"自动长高"（`autoSize`）而不是"右下角可拖"。
+        <InlineMarkTextArea
+          disabled={disabled}
+          ariaLabel={t("document.field.value")}
           placeholder={t("document.field.textPlaceholder")}
           autoSize={{ minRows: 2, maxRows: 8 }}
-          value={item.value}
-          onChange={(event) => onChange({ value: event.target.value })}
+          value={richValue.text}
+          rich={rich}
+          onChange={(value) => onChange({ value })}
         />
       ) : (
-        // 问题 8：单行值也换成"一行高、可拖高"的文本域。
-        // 多行字段（`placement === "body"`）仍然走上面的 `autoSize`——那里**要**自动长高，
-        // 与"可拖手柄"互斥，两者各自服务不同的语义。
-        <ResizableValueTextArea
+        // 问题 8 / I-14：单行值同样用文本域，但走"按内容自适应（1–4 行）"而不是 `rows={1}`——
+        // 后者会把长值压在 30px 里，第二行起藏进框内滚动且没有任何提示。
+        // 多行字段（`placement === "body"`）仍然走上面的 `autoSize 2..8`：那是字段语义。
+        <AutoGrowValueTextArea
           ariaLabel={t("document.field.value")}
           placeholder={placeholder}
-          value={item.value}
+          value={richValue.text}
+          rich={rich}
           disabled={disabled}
           onChange={(value) => onChange({ value })}
         />
@@ -154,6 +172,7 @@ export function ListValuesEditor({ item, disabled = false, onChange }: ListValue
             aria-label={t("document.field.valueAria", { index: index + 1 })}
             placeholder={t("document.field.listPlaceholder")}
             value={value}
+            onFocus={registerInlineMarkField}
             onChange={(event) => update(index, event.target.value)}
           />
           <Tooltip title={t("document.field.removeValue")}>
@@ -211,6 +230,7 @@ export function AuthorsValuesEditor({ item, disabled = false, onChange }: Author
             aria-label={t("document.field.authorName")}
             placeholder={t("document.field.authorNamePlaceholder")}
             value={author.name}
+            onFocus={registerInlineMarkField}
             onChange={(event) => update(index, { name: event.target.value })}
           />
           <Checkbox

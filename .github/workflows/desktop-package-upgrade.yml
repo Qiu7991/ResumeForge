@@ -1,0 +1,248 @@
+name: macOS and Linux package upgrade
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        default: candidate
+      platform:
+        type: string
+        default: ""
+      candidate_tag:
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Publicly download the current Latest release.
+        type: choice
+        options: [public]
+        default: public
+      platform:
+        description: Platform to test.
+        type: choice
+        options: [all, macos, linux]
+        default: all
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    if: ${{ github.event_name != 'release' || (!github.event.release.prerelease && startsWith(github.event.release.tag_name, 'v')) }}
+    runs-on: windows-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      mode: ${{ steps.plan.outputs.mode }}
+      target: ${{ steps.plan.outputs.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve published package baselines and target
+        id: plan
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REQUESTED_MODE: ${{ inputs.mode }}
+          REQUESTED_PLATFORM: ${{ inputs.platform }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          CALLER_PLATFORM: ${{ inputs.platform }}
+        run: |
+          ./scripts/tests/Test-DesktopPackageUpgrade.ps1
+          if ($LASTEXITCODE) { throw 'Desktop package release contract tests failed' }
+          Import-Module ./scripts/tests/DesktopPackageUpgrade.psm1
+          $repo = $env:GITHUB_REPOSITORY
+          $mode = if ($env:EVENT_NAME -eq 'release') { 'public' } else { $env:REQUESTED_MODE }
+          $target = if ($env:EVENT_NAME -eq 'release') { $env:RELEASE_TAG } elseif ($mode -eq 'candidate') { $env:CANDIDATE_TAG } else { '' }
+          if ($mode -notin @('candidate', 'public')) { throw "Unsupported upgrade mode: $mode" }
+          if ($mode -eq 'candidate' -and !$target) { throw 'Candidate tag is required' }
+          if ($mode -eq 'public' -and !$target) {
+            $target = gh api "repos/$repo/releases/latest" --jq .tag_name
+            if ($LASTEXITCODE) { throw 'Could not resolve GitHub Latest' }
+          }
+          if ($mode -eq 'public') {
+            $release = gh api "repos/$repo/releases/latest" | ConvertFrom-Json
+            if ($LASTEXITCODE) { throw 'Could not inspect the public Latest release' }
+          }
+          $platforms = if ($mode -eq 'candidate') {
+            @($env:CALLER_PLATFORM)
+          } elseif ($env:EVENT_NAME -eq 'workflow_dispatch' -and $env:REQUESTED_PLATFORM -in @('macos', 'linux')) {
+            @($env:REQUESTED_PLATFORM)
+          } else {
+            @('macos', 'linux')
+          }
+          foreach ($platform in $platforms) {
+            foreach ($architecture in @('x64', 'arm64')) {
+              if ($mode -eq 'public') {
+                Assert-DesktopPackageReleaseReady $release $repo $target $platform $architecture
+              }
+            }
+          }
+          $publishedTags = @(gh api --paginate "repos/$repo/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')
+          if ($LASTEXITCODE) { throw 'Could not list published releases' }
+          $baselines = @(Get-DesktopUpgradeBaselines -TargetTag $target -PublishedTags $publishedTags)
+          foreach ($baseline in $baselines) {
+            $baselineRelease = gh api "repos/$repo/releases/tags/$baseline" | ConvertFrom-Json
+            if ($LASTEXITCODE) { throw "Could not inspect baseline $baseline" }
+            foreach ($platform in $platforms) {
+              foreach ($architecture in @('x64', 'arm64')) {
+                Assert-DesktopPackageReleaseReady $baselineRelease $repo $baseline $platform $architecture
+              }
+            }
+          }
+          $matrix = @(foreach ($platform in $platforms) {
+            foreach ($architecture in @('x64', 'arm64')) {
+              $runner = Get-DesktopPackageRunnerLabel $platform $architecture
+              foreach ($baseline in $baselines) {
+                [pscustomobject]@{ platform = $platform; architecture = $architecture; runner = $runner; baseline = $baseline }
+              }
+            }
+          })
+          # -InputObject (not a pipeline) so an empty matrix serializes as `[]`.
+          # `-AsArray` must NOT be added: combined with -InputObject it wraps the
+          # whole collection one level deeper, so an empty matrix becomes `[[]]`
+          # (the `matrix != '[]'` skip guard below then never matches, and the job
+          # runs with an empty runs-on) and a one-entry matrix becomes `[[{...}]]`
+          # (`matrix.runner` resolves to nothing). Piping an empty array emits
+          # nothing at all, which is not valid JSON either.
+          "matrix=$(ConvertTo-Json -Compress -InputObject $matrix)" >> $env:GITHUB_OUTPUT
+          "mode=$mode" >> $env:GITHUB_OUTPUT
+          "target=$target" >> $env:GITHUB_OUTPUT
+          if ($matrix.Count -eq 0) {
+            # `public` rechecks the current public Latest. When Latest is itself
+            # the first release that supports in-app upgrade there is no older
+            # upgradeable release to start from, so an empty matrix is correct
+            # here - and the upgrade job must skip instead of erroring out.
+            $notice = "当前 Latest $target 就是首个支持应用内升级的版本，没有更早的可升级基线，因此 $mode 模式本次跳过 macOS/Linux 实装升级验证（upgrade 作业 skipped，不是失败）。"
+            Write-Warning $notice
+            if ($env:GITHUB_STEP_SUMMARY) {
+              # AppendAllText + 无 BOM 的 UTF8，而不是 Add-Content：这份 summary
+              # 由多个 step 依次追加，中途插入 BOM 会让后面的中文渲染成乱码
+              # （同 release-assets.yml 的处理）。
+              [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, "### 本次跳过 macOS/Linux 实装升级验证`n`n$notice`n", [System.Text.UTF8Encoding]::new($false))
+            }
+          }
+
+  upgrade:
+    name: ${{ matrix.platform }} ${{ matrix.architecture }} upgrade from ${{ matrix.baseline }} (${{ needs.plan.outputs.mode }})
+    needs: plan
+    # An empty matrix is not a silent skip on GitHub Actions: `include: []` fails
+    # the job with "Matrix must define at least one vector". `public` mode yields
+    # no baseline when the public Latest is still the first release supporting
+    # in-app upgrade (see the plan step), so decide the skip here. `always()` plus
+    # the explicit plan-result check preserves "skipped plan skips this job"
+    # (prerelease `release` events) while never evaluating fromJSON('').
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.matrix != '[]' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.21.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install the packaged app smoke driver
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile --registry=https://registry.npmjs.org
+      - name: Download candidate from the release build
+        if: ${{ needs.plan.outputs.mode == 'candidate' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ matrix.platform == 'macos' && 'macos-installers' || 'linux-appimages' }}
+          path: ${{ runner.temp }}/desktop-package-upgrade/candidate
+
+      - name: Check Linux AppImage runner dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          if ! command -v xvfb-run >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xvfb
+          fi
+
+      - name: Exercise the installed package and in-place upgrade
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          UPGRADE_MODE: ${{ needs.plan.outputs.mode }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+          BASELINE_TAG: ${{ matrix.baseline }}
+          TARGET_TAG: ${{ needs.plan.outputs.target }}
+          UPGRADE_ROOT: ${{ runner.temp }}/desktop-package-upgrade
+        shell: bash
+        run: |
+          set -euo pipefail
+          extension=dmg
+          asset_arch="$ARCHITECTURE"
+          if [ "$PLATFORM" = linux ]; then
+            extension=AppImage
+            [ "$ARCHITECTURE" != x64 ] || asset_arch=x86_64
+          fi
+          baseline="ResumeForge-$(printf '%s' "$BASELINE_TAG" | sed 's/^v//')-${asset_arch}.${extension}"
+          target="ResumeForge-$(printf '%s' "$TARGET_TAG" | sed 's/^v//')-${asset_arch}.${extension}"
+          mkdir -p "$UPGRADE_ROOT/baseline" "$UPGRADE_ROOT/public" "$UPGRADE_ROOT/download-logs"
+          fetch_public() {
+            url="https://github.com/$REPOSITORY/releases/download/$1/$2"
+            echo "::group::Download $2"
+            date -u '+download started %Y-%m-%dT%H:%M:%SZ'
+            curl --fail --show-error --location --retry 3 --retry-all-errors --connect-timeout 30 --max-time 900 --speed-time 90 --speed-limit 16384 \
+              --progress-bar \
+              "$url" --output "$UPGRADE_ROOT/public/$2"
+            date -u '+download finished %Y-%m-%dT%H:%M:%SZ'
+            echo "::endgroup::"
+          }
+          fetch_public "$BASELINE_TAG" "$baseline" > "$UPGRADE_ROOT/download-logs/baseline-package.log" 2>&1 &
+          baseline_pid=$!
+          fetch_public "$BASELINE_TAG" "$baseline.sha256" > "$UPGRADE_ROOT/download-logs/baseline-checksum.log" 2>&1 &
+          baseline_checksum_pid=$!
+          if [ "$UPGRADE_MODE" = candidate ]; then
+            cp "$UPGRADE_ROOT/candidate/$target" "$UPGRADE_ROOT/public/$target"
+            cp "$UPGRADE_ROOT/candidate/$target.sha256" "$UPGRADE_ROOT/public/$target.sha256"
+          else
+            fetch_public "$TARGET_TAG" "$target" > "$UPGRADE_ROOT/download-logs/target-package.log" 2>&1 &
+            target_pid=$!
+            fetch_public "$TARGET_TAG" "$target.sha256" > "$UPGRADE_ROOT/download-logs/target-checksum.log" 2>&1 &
+            target_checksum_pid=$!
+          fi
+          result=0
+          wait "$baseline_pid" || result=1
+          wait "$baseline_checksum_pid" || result=1
+          if [ "$UPGRADE_MODE" = public ]; then
+            wait "$target_pid" || result=1
+            wait "$target_checksum_pid" || result=1
+          fi
+          cat "$UPGRADE_ROOT"/download-logs/*.log
+          [ "$result" -eq 0 ] || exit "$result"
+          if [ "$PLATFORM" = macos ]; then
+            bash scripts/tests/Test-MacOSPackageUpgrade.sh "$ARCHITECTURE" "$UPGRADE_ROOT/public/$baseline" "$UPGRADE_ROOT/public/$target" "$UPGRADE_ROOT/work" desktop/scripts/verify-packaged-startup.js
+          else
+            xvfb-run --auto-servernum bash scripts/tests/Test-LinuxPackageUpgrade.sh "$ARCHITECTURE" "$UPGRADE_ROOT/public/$baseline" "$UPGRADE_ROOT/public/$target" "$UPGRADE_ROOT/work" desktop/scripts/verify-packaged-startup.js
+          fi
+      - name: Upload screenshots and package logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-package-upgrade-${{ matrix.platform }}-${{ matrix.architecture }}-${{ matrix.baseline }}-${{ needs.plan.outputs.mode }}
+          path: |
+            ${{ runner.temp }}/desktop-package-upgrade/**/*.png
+            ${{ runner.temp }}/desktop-package-upgrade/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7

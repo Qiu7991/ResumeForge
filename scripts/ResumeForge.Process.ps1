@@ -102,7 +102,7 @@ function Test-WarmStart {
     )
 
     # 热启动 = 上一次已经把依赖装好了。两个标记缺一不可：只有 venv 没有 node_modules
-    # 的话这次仍要跑一遍 npm ci，那就不能承诺"不用再装"。
+    # 的话这次仍要跑一遍 pnpm install --frozen-lockfile，那就不能承诺"不用再装"。
     #
     # 这条只用来决定**要不要多打几句提示**，不参与任何启动判断：说错了顶多多打或少打
     # 两行字，不会改变装什么、起什么。
@@ -192,7 +192,7 @@ function Resolve-FrontendMode {
                 throw ("--frontend-mode production 需要前端静态资产，但没有找到：$distIndex。`n" +
                     "怎么办：`n" +
                     "  1) 发布包（zip）自带 frontend\dist，重新下载完整安装包；`n" +
-                    "  2) 源码检出要先构建一次：在 frontend 目录执行 npm run build；`n" +
+                    "  2) 源码检出要先构建一次：在 frontend 目录执行 pnpm run build；`n" +
                     "  3) 只想本地开发：用默认的 auto，或显式 -FrontendMode dev。")
             }
             return $true
@@ -354,20 +354,53 @@ function Start-ResumeForge {
             if ($dependencyProbeExitCode -ne 0) {
                 # 依赖要现装，后面就不算热启动了——不能对用户说"这次不需要重新安装"。
                 $isWarmStart = $false
+                # 装的是**生产锁**（backend\requirements.runtime.lock.txt），不是
+                # requirements.txt：只有锁带逐包 SHA-256，--require-hashes 才会校验
+                # 每一个下载物；也只有锁钉住了整条闭包，用户机器上装出来的包集合才
+                # 与发布包/CI 审过的那一套一致。锁不可用时明确失败（Assert 抛错），
+                # 绝不悄悄退回 requirements.txt 重新解析——那正是"同一份代码在不同
+                # 机器装上不同版本"的来源。
+                . (Join-Path $PSScriptRoot "Project-RuntimeLock.ps1")
+                $runtimeLockPath = Get-RuntimeLockPath -BackendDirectory $BackendDirectory
+                Assert-RuntimeLockUsable -LockPath $runtimeLockPath | Out-Null
                 Write-Host "首次运行：正在安装后端依赖（约 40 个包，第一次要几分钟）..."
-                & $pythonExecutable -m pip install `
-                    --timeout 300 `
-                    --retries 10 `
-                    -r (Join-Path $BackendDirectory "requirements.txt")
-                if ($LASTEXITCODE -ne 0) {
-                    throw ("后端依赖安装失败。`n" +
-                        "最常见的原因是网络：默认走官方 PyPI，国内经常很慢或直接超时。`n" +
-                        "怎么办（按顺序试）：`n" +
-                        "  1) 换国内镜像重装（最有效）：`n" +
-                        "     backend\.venv\Scripts\python.exe -m pip install -i https://mirrors.aliyun.com/pypi/simple -r backend\requirements.txt`n" +
-                        "  2) 需要代理时，先在 PowerShell 里设好 `$env:HTTP_PROXY / `$env:HTTPS_PROXY 再重试；`n" +
-                        "  3) 确认能打开 https://mirrors.aliyun.com/pypi/simple/（打不开就是网络被拦了）；`n" +
-                        "  4) 仍失败：把上面 pip 的报错原文发到 GitHub Issues。")
+                # T06：把输出收进变量再分类——用户看到的标题是"这一次的原因"，不是一份
+                # 五步清单；原始输出落到 runtime/pip-install.log，不塞进错误标题。
+                . (Join-Path $PSScriptRoot "PipFailureHint.ps1")
+                $pipLines = @()
+                # `2>&1` 之后必须临时放开 ErrorActionPreference（与上面那段依赖探针同一个
+                # 理由）：pip 的下载进度条走 **stderr**，在 `Stop` 下 PowerShell 5.1 会把
+                # 第一条 stderr 记录变成终止性的 NativeCommandError——而进度条那条记录
+                # 只剩回车与空白，异常 Message 因此是空串，用户看到的是"启动失败。"后面
+                # 什么都没有。判定只看退出码，所以这里让 stderr 正常流过。
+                $pipPreference = $ErrorActionPreference
+                $ErrorActionPreference = "Continue"
+                try {
+                    & $pythonExecutable -m pip install `
+                        --require-hashes `
+                        --timeout 300 `
+                        --retries 10 `
+                        -r $runtimeLockPath 2>&1 | Tee-Object -Variable pipLines | Out-Host
+                    $pipExitCode = $LASTEXITCODE
+                }
+                finally {
+                    $ErrorActionPreference = $pipPreference
+                }
+                if ($pipExitCode -ne 0) {
+                    $pipText = ($pipLines | Out-String)
+                    $pipLogPath = Join-Path $RuntimeDirectory "pip-install.log"
+                    try {
+                        $pipText | Set-Content -Path $pipLogPath -Encoding utf8
+                    }
+                    catch {
+                        # 日志写不进去不能盖住真正的原因：路径改为"（日志写入失败）"。
+                        $pipLogPath = "（日志写入失败）"
+                    }
+                    $hint = Get-PipFailureHint -Output $pipText
+                    throw ("后端依赖安装失败：$($hint.Headline)`n" +
+                        "$($hint.Action)`n" +
+                        "安装用的是随仓库分发的生产锁 backend\$(Get-RuntimeLockFileName)（逐包 SHA-256 校验），不是顶层 requirements.txt。`n" +
+                        "pip 原始输出：$pipLogPath（分类：$($hint.Category)，退出码 $pipExitCode）")
                 }
             }
 
@@ -438,7 +471,7 @@ function Start-ResumeForge {
             }
             else {
                 $nodeRuntime = Ensure-NodeRuntime
-                $npmPath = $nodeRuntime.NpmPath
+                $pnpmLauncher = Resolve-PnpmLauncher -NodeRuntime $nodeRuntime
 
                 $viteCommandPath = Join-Path $FrontendDirectory "node_modules\.bin\vite.cmd"
                 if (-not (Test-Path -LiteralPath $viteCommandPath -PathType Leaf)) {
@@ -447,37 +480,24 @@ function Start-ResumeForge {
                     Write-Host "首次运行：正在安装前端依赖（几百个包，第一次要几分钟）..."
                     Push-Location -LiteralPath $FrontendDirectory
                     try {
-                        $packageLockPath = Join-Path $FrontendDirectory "package-lock.json"
-                        if (Test-Path -LiteralPath $packageLockPath) {
-                            # npm ci resolves package-lock.json relative to the current
-                            # directory; the launcher itself may be started elsewhere.
-                            & $npmPath ci `
-                                --fetch-timeout=1800000 `
-                                --fetch-retries=5 `
-                                --fetch-retry-mintimeout=20000 `
-                                --fetch-retry-maxtimeout=120000
-                        }
-                        else {
-                            # Older source archives may omit the lockfile. Bootstrap
-                            # once with npm install instead of failing with EUSAGE.
-                            Write-Warning "没有找到 frontend/package-lock.json，改用 npm install 现场生成一份（这样装出来的版本可能与发布时不同）。"
-                            & $npmPath install `
-                                --no-audit `
-                                --no-fund `
-                                --fetch-timeout=1800000 `
-                                --fetch-retries=5 `
-                                --fetch-retry-mintimeout=20000 `
-                                --fetch-retry-maxtimeout=120000
-                        }
+                        # 依赖真相只有 pnpm-lock.yaml：`--frozen-lockfile` 在锁文件缺失
+                        # 或与 package.json 不一致时直接报错，不会悄悄重解析出另一套版本。
+                        # 这里刻意没有"锁文件不存在就 npm install 兜底"的分支——那个兜底
+                        # 会生成 package-lock.json，让两套锁文件互相矛盾。
+                        & $pnpmLauncher.FilePath @($pnpmLauncher.PrefixArguments) install --frozen-lockfile `
+                            --fetch-timeout=1800000 `
+                            --config.fetch-retries=5 `
+                            --config.fetch-retry-mintimeout=20000 `
+                            --config.fetch-retry-maxtimeout=120000
                         if ($LASTEXITCODE -ne 0) {
                             throw ("前端依赖安装失败。`n" +
                         "可能原因：网络不通、npm 镜像不可达、或磁盘空间不足。`n" +
                         "怎么办：`n" +
                         "  1) 手动重试看完整报错：在 frontend 目录执行 `n" +
-                        "     npm install --registry=https://registry.npmmirror.com`n" +
+                        "     pnpm install --frozen-lockfile --registry=https://registry.npmmirror.com`n" +
                         "  2) 空间不足时先清理磁盘（node_modules 需要约 400 MB）；`n" +
                         "  3) 需要代理时先设好 `$env:HTTP_PROXY / `$env:HTTPS_PROXY；`n" +
-                        "  4) 仍失败：把上面 npm 的报错原文发到 GitHub Issues。")
+                        "  4) 仍失败：把上面 pnpm 的报错原文发到 GitHub Issues。")
                         }
                     }
                     finally {
@@ -488,14 +508,14 @@ function Start-ResumeForge {
                 # This process-local override keeps the Vite proxy bound to the backend
                 # started above without changing a user's tracked or local .env files.
                 $env:VITE_BACKEND_URL = $BackendUrl
-                # Hand npm.cmd to Start-Process as the program. PowerShell wraps a
-                # .cmd in cmd.exe itself and, unlike a hand-written
+                # Hand the package-manager shim to Start-Process as the program. PowerShell
+                # wraps a .cmd in cmd.exe itself and, unlike a hand-written
                 # "cmd /c ""<path>" args" line, does the quoting correctly: a path
                 # containing spaces used to arrive unquoted and cmd tried to run
                 # "C:\Program". The recorded process is still cmd.exe, so stop.cmd
                 # keeps recognising it.
-                $startedFrontend = Start-Process -FilePath $npmPath `
-                    -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", "$FrontendPort", "--strictPort") `
+                $startedFrontend = Start-Process -FilePath $pnpmLauncher.FilePath `
+                    -ArgumentList (@($pnpmLauncher.PrefixArguments) + @("run", "dev", "--", "--host", "127.0.0.1", "--port", "$FrontendPort", "--strictPort")) `
                     -WorkingDirectory $FrontendDirectory `
                     -WindowStyle Hidden `
                     -RedirectStandardOutput $frontendStandardOutputPath `

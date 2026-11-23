@@ -23,8 +23,9 @@ from ...schemas.webform import (
 from ...services import diagnostics
 from ...services import webform as webform_service
 from ...services.actions import add_action_route
-from ...services.actions.catalog import all_actions
+from ...services.actions.catalog import registered_action
 from ...services.settings_service import get_webform_relaxed_mode
+from ...services.webform.review_highlights import highlight_review
 from ._shared import _raise, logger
 
 router = APIRouter(prefix="/api/webform", tags=["webform"])
@@ -55,6 +56,25 @@ def take_snapshot(db: Session = Depends(get_db)):
     }
 
 
+def _prepare_ai_and_review(db: Session, *, want_ai: bool) -> tuple[Any, Any]:
+    """取 AI 调用器与评审用浏览器客户端，然后归还请求连接。
+
+    这三件事都碰请求会话（读模型配置、取浏览器单例、``close``），所以整段同步工作单元
+    一起下沉线程池：只要有一个 ``Session`` 方法留在事件循环线程上，模型调用期间的其它
+    请求就要排在这条 SQLite 连接后面等。
+    """
+    provider = webform_service.ai.build_provider(db) if want_ai else None
+    review_client = None
+    try:
+        manager = webform_service.browser.get_browser_manager(db)
+        if manager.is_active():
+            review_client = manager.client()
+    except Exception as error:  # noqa: BLE001 - computed preview remains usable
+        diagnostics.record_event("webform.review_browser_unavailable", error=type(error).__name__)
+    db.close()
+    return provider, review_client
+
+
 @router.post("/preview", response_model=WebFormPreviewOut)
 async def preview(payload: WebFormPreviewIn, db: Session = Depends(get_db)):
     """把"资料 vs 页面"算成可核对的预览（规则部分**纯计算，不碰页面**）。
@@ -62,15 +82,19 @@ async def preview(payload: WebFormPreviewIn, db: Session = Depends(get_db)):
     配了模型且开着 AI 时，规则认不出的那些控件会**用一次调用**批量交给模型识别，
     命中的并进 ``items`` 并标成 ``source="ai"``（**默认不勾选**）。
     """
+    # 示例数据集不做真实填表：预览是填表的第一步，在这里就拦住（与 live/start 同一判据）。
+    if webform_service.active_dataset_blocks_fill():
+        raise HTTPException(
+            status_code=409,
+            detail=webform_service.SAMPLE_FILL_BLOCKED_DETAIL,
+        )
     try:
         snapshot = webform_service.get_snapshot_store().get(payload.snapshot_id)
         # build_form_data/build_preview（规则匹配是纯计算热路径）都是同步重活，
         # 下沉线程池避免阻塞事件循环；db 会话按 resume_template_import 的既有
         # 模式直接作为参数传入线程池。
         # 一次取数冻结一份快照：data / 自定义标签同源（F5 契约 §2），旧补充事实已退出取数。
-        view = await run_in_threadpool(
-            webform_service.build_webform_view, db, scope=payload.scope
-        )
+        view = await run_in_threadpool(webform_service.build_webform_view, db, scope=payload.scope)
         data = view.data
         custom_labels = view.custom_labels
         # 「放宽模式」是用户设置（默认关）：开着时，点选类控件若匹配到字段+值会以
@@ -90,15 +114,27 @@ async def preview(payload: WebFormPreviewIn, db: Session = Depends(get_db)):
         )
     except webform_service.WebFormError as exc:
         _raise(exc)
-    # provider 要拿 db 配置，模型调用要等网络——**先取配置、关连接，再 await**。
-    provider = webform_service.ai.build_provider(db) if payload.ai else None
-    db.close()
-    if provider is not None:
-        # relaxed 与 build_preview 用同一个开关值：开启时放宽候选（点选类、规则没认出
-        # 字段）也一并交给模型，命中后按放宽代选语义采纳。
-        await webform_service.enrich_preview_with_ai(
-            snapshot, data, report, provider, relaxed=relaxed
-        )
+    # provider 要拿 db 配置、浏览器单例也要 db，模型调用要等网络——**先在 worker 里取
+    # 完配置并关连接，再 await**；事件循环不碰会话。
+    provider, review_client = await run_in_threadpool(
+        _prepare_ai_and_review, db, want_ai=payload.ai
+    )
+    try:
+        if provider is not None:
+            # relaxed 与 build_preview 用同一个开关值：开启时放宽候选（点选类、规则没认出
+            # 字段）也一并交给模型，命中后按放宽代选语义采纳。
+            await webform_service.enrich_preview_with_ai(
+                snapshot, data, report, provider, relaxed=relaxed
+            )
+        await run_in_threadpool(highlight_review, review_client, snapshot, report)
+    finally:
+        if review_client is not None:
+            try:
+                await run_in_threadpool(review_client.close)
+            except Exception as error:  # noqa: BLE001 - preview remains usable if cleanup fails
+                diagnostics.record_event(
+                    "webform.review_browser_close_failed", error=type(error).__name__
+                )
     diagnostics.record_event(
         "webform.preview",
         control_count=len(snapshot.controls),
@@ -245,7 +281,9 @@ def _record_fill(
 # 回看用：每次「填充到页面」落一条。删除走回收站（软删），彻底删除在回收站里另做。
 
 
-add_action_route(router, all_actions()["list_web_form_fills"], route_path="/records")
+add_action_route(router, registered_action("list_web_form_fills"), route_path="/records")
+
+
 def list_records(
     limit: int = Query(
         default=webform_service.history.DEFAULT_LIST_LIMIT,
@@ -254,15 +292,26 @@ def list_records(
     ),
     db: Session = Depends(get_db),
 ):
-    """填充记录列表（只含未删除的，最近的在最前）。"""
+    """填充记录列表（只含未删除的，最近的在最前）。
+
+    薄壳：查询在 ``services.webform.history.list_records``（助手动作
+    ``list_web_form_fills`` 调同一个函数）。
+    """
     return webform_service.history.list_records(db, limit=limit)
 
 
-add_action_route(router, all_actions()["get_web_form_fill"], route_path="/records/{record_id}")
+add_action_route(router, registered_action("get_web_form_fill"), route_path="/records/{record_id}")
+
+
 def read_record(record_id: int, db: Session = Depends(get_db)):
+    """读一次填充的完整明细；已软删的按不存在处理。
+
+    薄壳：取数在 ``services.webform.history.record_or_none``（与助手动作
+    ``get_web_form_fill`` 同一处），404 文案只在服务层定义一份。
+    """
     record = webform_service.history.record_or_none(db, record_id)
     if record is None:
-        raise HTTPException(status_code=404, detail="填充记录不存在或已被删除")
+        raise HTTPException(status_code=404, detail=webform_service.history.RECORD_NOT_FOUND_DETAIL)
     return record
 
 
@@ -270,4 +319,4 @@ def read_record(record_id: int, db: Session = Depends(get_db)):
 def remove_record(record_id: int, db: Session = Depends(get_db)):
     """移入回收站（软删，可恢复）。彻底删除在回收站里另做。"""
     if not webform_service.history.delete_record(db, record_id):
-        raise HTTPException(status_code=404, detail="填充记录不存在或已被删除")
+        raise HTTPException(status_code=404, detail=webform_service.history.RECORD_NOT_FOUND_DETAIL)

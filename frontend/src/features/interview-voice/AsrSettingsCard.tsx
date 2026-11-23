@@ -22,6 +22,7 @@ import { useAsrProfiles } from "../settings/useAsrProfiles";
 import AsrProfileList from "./AsrProfileList";
 import AsrProfileModal from "./AsrProfileModal";
 import MicSettingsRow from "./MicSettingsRow";
+import SettingsResetButton from "../settings/SettingsResetButton";
 import {
   MAX_ASR_PROFILES,
   NEW_ASR_PROFILE_ID,
@@ -105,6 +106,8 @@ export default function AsrSettingsCard() {
                 ? t("voiceInput.settings.badge.configured")
                 : t("voiceInput.settings.badge.notConfigured")}
             </Tag>
+            {/* I-10：卡片级恢复默认（scope=asr）。按钮自己判断有没有可重置项。 */}
+            <SettingsResetButton scope="asr" />
           </Flex>
         }
         extra={
@@ -166,7 +169,11 @@ export default function AsrSettingsCard() {
 
         <div style={{ marginTop: 16 }}>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 4 }}>
-            {t("voiceInput.settings.limitHint")}
+            {/* 上限按**生效协议**给：DeepSeek 那一档是 120 秒 / 8 MB 的硬限制，
+                照抄 3 分钟 / 10 MB 会让用户按 3 分钟录完再被拒。 */}
+            {controller.activeProfile?.protocol === "deepseek"
+              ? t("voiceInput.settings.limitHintDeepseek")
+              : t("voiceInput.settings.limitHint")}
           </Typography.Paragraph>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 4 }}>
             {t("voiceInput.settings.providerNote")}

@@ -17,6 +17,7 @@
 // 只借一个数据形状（`{ top, right, bottom, left }`）：`pageMargins.ts` 不 import 本文件，
 // 所以这条依赖是单向的，不会形成循环。
 import type { PageMargins } from "./pageMargins";
+import { isFieldStylePath } from "../features/resume/layout/fieldStyleTarget";
 import { DEFAULT_SCALE, SCALE_CSS_VARS, type ScaleKey } from "./resumeScaleParams";
 
 /**
@@ -89,6 +90,45 @@ export function photoScaleProbeCss(scale: number): string {
   return `:root { --photo-scale: ${formatG(value)}; }`;
 }
 
+/** 照片框五项（未设过的键由调用方按模板默认填入）。 */
+export interface PhotoFrameProbeValues {
+  width: number;
+  color: string;
+  radius: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+/**
+ * 照片框探针：`.profile-photo { border: …; border-radius: …; transform: … }`。
+ *
+ * 与后端 `format_css()` 的照片分支**逐字同形**（`resume_template_format.py:359-381`）：
+ * 声明顺序是 `border` → `border-radius` → `transform`，分隔符是 `"; "`，
+ * 数字走 `f"{value:g}"` ↔ `formatG`。
+ *
+ * 为什么需要它：偏移的产物是 `.profile-photo` 上的静态 `transform`，不像照片大小有
+ * `--photo-scale` 变量可写；没有探针，拖动要等防抖 + 后端重排才动，滑杆会显得"拖了没反应"。
+ *
+ * 四项全是模板默认（1px / 跟随线色 / 4px / 无偏移）时返回空串：后端在"一个键都没设过"
+ * 时**一条规则都不写**，探针写一遍会让拖动前后出现无意义的 DOM 差异。
+ */
+export function photoFrameProbeCss(frame: PhotoFrameProbeValues): string {
+  const width = Number.isFinite(frame.width) ? frame.width : 1;
+  const radius = Number.isFinite(frame.radius) ? frame.radius : 4;
+  const offsetX = Number.isFinite(frame.offsetX) ? frame.offsetX : 0;
+  const offsetY = Number.isFinite(frame.offsetY) ? frame.offsetY : 0;
+  const color = frame.color.trim();
+  if (width === 1 && radius === 4 && !color && offsetX === 0 && offsetY === 0) return "";
+  const declarations = [`border-radius: ${formatG(radius)}px`];
+  if (width <= 0) declarations.unshift("border: 0");
+  else if (color) declarations.unshift(`border: ${formatG(width)}px solid ${color}`);
+  else declarations.unshift(`border: ${formatG(width)}px solid var(--line)`);
+  if (offsetX || offsetY) {
+    declarations.push(`transform: translate(${formatG(offsetX)}mm, ${formatG(offsetY)}mm)`);
+  }
+  return `.profile-photo { ${declarations.join("; ")} }`;
+}
+
 /**
  * 系数探针：`name_scale` / `section_title_scale` / `entry_gap` 各自写一条 `:root` 声明。
  *
@@ -135,6 +175,24 @@ export function colorProbeCss(key: string, value: string): string {
   const text = value.trim();
   if (!cssVar || !text) return "";
   return `:root { ${cssVar}: ${text}; }`;
+}
+
+/**
+ * 条目标题颜色探针：`[data-role="entry_title"] { color: …; }`。
+ *
+ * 为什么不复用 `colorProbeCss`：它只会写 `:root` 的四个变量，而「条目标题」存的是
+ * **角色级覆盖**（`format_config.roles.entry_title.color`），后端 `resume_style._role_rules`
+ * 为它产出的是 `  [data-role="entry_title"] { color: …; }`——没有对应的 CSS 变量。
+ *
+ * 为什么逐字照抄后端（含两空格缩进、**不带 `!important`**）：
+ * 单条覆盖 `[data-object-id] [data-role="entry_title"]` 比这条更具体，后端正是靠
+ * specificity 让"单条设过的颜色"赢。探针一旦加 `!important` 就会在拖动时盖过单条、
+ * 松手后又被后端规则让回去——那就是"拖的时候变了、松手弹回来"。
+ */
+export function entryTitleColorProbeCss(color: string): string {
+  const text = color.trim();
+  if (!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(text)) return "";
+  return `  [data-role="entry_title"] { color: ${text}; }`;
 }
 
 /**
@@ -207,6 +265,10 @@ interface ProbeSelectors {
 function styleProbeSelectors(target: StyleProbeTarget): ProbeSelectors | null {
   const role = target.role && PROBE_ROLE.test(target.role) ? target.role : null;
   if (target.objectId) {
+    if (isFieldStylePath(target.objectId)) {
+      const field = `[data-resume-path="${target.objectId}"]:not([data-resume-path] [data-resume-path])`;
+      return { text: field, bullet: field, indent: field, metaAlign: field };
+    }
     if (!PROBE_OBJECT_ID.test(target.objectId)) return null;
     const prefix = `[data-object-id="${target.objectId}"]`;
     return {

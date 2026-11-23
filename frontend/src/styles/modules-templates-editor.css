@@ -1,0 +1,400 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 模板与样式的编辑区：内置样式画廊、样式编辑器两栏、A4 预览画布、徽标与识别编辑器。
+   从 `modules-templates.css` 拆出（单文件 500 行预算）：纯搬迁，
+   选择器 / 声明 / 媒体查询 / 层叠顺序逐字不变；聚合清单按原顺序 @import 本片。 */
+
+/* ===== 工作台：简历模板 ===== */
+.workbench-page .ant-tabs {
+  margin-top: 4px;
+}
+
+.template-chip {
+  margin-bottom: 4px;
+}
+
+/* 内置样式缩略图墙：每个内置样式一张真实渲染的 A4 缩略图，点开看大图。
+   缩略图是缩放的 iframe（不是截图），所以永远和真实模板一致。 */
+.builtin-style-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.builtin-style-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  background: var(--rf-surface, var(--rf-surface));
+  border: 1px solid var(--rf-border, var(--rf-border));
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.builtin-style-card:hover,
+.builtin-style-card:focus-visible {
+  border-color: var(--rf-focus-ring);
+  box-shadow: 0 2px 8px rgba(22, 119, 255, 0.12);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.builtin-style-thumb {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: var(--rf-surface);
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 4px;
+}
+
+.builtin-style-frame {
+  display: block;
+  border: 0;
+  /* 缩略图只作展示：让点击/滚动都落到外层按钮上，否则 iframe 会把事件吃掉。 */
+  pointer-events: none;
+}
+
+.builtin-style-name {
+  font-size: 13px;
+  color: var(--rf-text-body);
+}
+
+/* 包住"导入 HTML"按钮的 label：让点击落到里面的按钮上。 */
+.template-upload-button {
+  display: inline-flex;
+}
+
+/*
+ * 模板区卡片头部：「样式模板」卡的按钮组较宽（复制改一份 / 导入 HTML / 导入参考模板），
+ * 与标题挤在同一行时会贴死（用户截图反馈）。加最小间距并允许换行：
+ * 宽屏仍是"标题左、按钮组右"的默认节奏，窄一档时按钮组整体换到标题下方（右对齐）。
+ */
+.template-workbench .ant-card-head-wrapper {
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.style-template-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(min(320px, 100%), 460px);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1092px) {
+  .style-template-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.style-template-code textarea {
+  font-family: Consolas, "Cascadia Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.style-template-preview,
+.template-preview-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 8px;
+  background: var(--rf-surface-alt);
+  overflow: hidden;
+}
+
+.style-template-preview {
+  min-height: 420px;
+}
+
+/*
+ * A4 预览画布（A4PreviewFrame 组件用）。
+ *
+ * 取代了此前两套各写一半的写法：`.style-template-frame` 写死 `scale(0.54)`（列宽是可变的，
+ * 于是要么没铺满、要么被裁掉 —— 用户反馈"没有一次性展示全"），`.template-preview-frame`
+ * 则把 iframe 拉成"容器宽 × 72vh"（A4 的比例荡然无存）。现在两种场景共用一张按实测尺寸
+ * 等比缩放的 A4 纸，完整一页永远可见。
+ */
+.a4-preview-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--rf-surface-alt);
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 8px;
+}
+
+.a4-preview-paper {
+  overflow: hidden;
+  /* 纸面恒白（R18）：--rf-surface 在深色下会变暗，纸不能跟着变——导出/打印
+     看到的就是这张纸。深色主题下由 --rf-paper 显式保持 #ffffff。 */
+  background: var(--rf-paper);
+  box-shadow: 0 2px 12px rgb(15 23 42 / 12%);
+}
+
+.a4-preview-frame {
+  display: block;
+  border: 0;
+  transform-origin: top left;
+}
+
+/* ===== 版式编辑器：按 group 分区 + 两列栅格（I-19）=====
+   15 个参数单列排开约 1570px、控件 90px 宽而右侧 400px 全空；改成 1fr/1fr 栅格后
+   同一行的两个字段顶边对齐（验收用的就是 `getBoundingClientRect().top` 相等）。
+   行距 8px + 控件 30px 是"两列 15 个参数 + 5 个组头能塞进一屏"的实测密度，
+   不要为了更松快把它调大——那会直接把弹窗推回需要滚动的老问题。 */
+.rf-format-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 14px;
+  align-items: start;
+}
+
+/* 名称 / 组头这类"整行"元素：跨两列，且不参与两列对齐。 */
+.rf-format-span {
+  grid-column: 1 / -1;
+}
+
+.rf-format-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* 组头：11px + 一条细线。线只画在本段第一行之前，所以 `align-self: end` 让它贴住
+   下面那行字段，而不是被行距推到中间。 */
+.rf-format-group {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  align-self: end;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--rf-border-subtle);
+}
+
+.rf-format-group-name {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--rf-text-secondary);
+}
+
+/* 组级说明（照片区那句）：靠右、同一行，不额外占高度。 */
+.rf-format-group-note {
+  margin-inline-start: auto;
+  font-size: 11px;
+  color: var(--rf-text-secondary);
+}
+
+.rf-format-field {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* 标签 + ⓘ + 控件同一行：控件靠右，标签吃剩余宽度并省略号收尾（英文标签更长）。 */
+.rf-format-field-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  min-width: 0;
+}
+
+.rf-format-field-label {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--rf-text-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rf-format-control {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-inline-start: auto;
+}
+
+/* 禁用（`requires` 不满足）时：标签转次级色，并在控件下方写一句原因。 */
+.rf-format-field.is-disabled .rf-format-field-label {
+  color: var(--rf-text-secondary);
+}
+
+.rf-format-field-note {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--rf-text-secondary);
+}
+
+/* 颜色行：26×22 色块 + 11px 等宽 hex（或「跟随模板」）+ 已设时的 ↺。 */
+.rf-format-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rf-format-swatch-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 22px;
+}
+
+/* 原生取色器铺满色块、完全透明：色块自己就能画斜纹（replaced 元素画不了），
+   而点击/键盘仍然落在真正的 `<input type="color">` 上。 */
+.rf-format-color-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.rf-format-swatch {
+  width: 26px;
+  height: 22px;
+  border: 1px solid var(--rf-border-strong);
+  border-radius: 4px;
+  background: var(--rf-surface);
+}
+
+/* 未设过 = 斜纹：一眼区分"我挑了一个浅色"和"我根本没挑"。 */
+.rf-format-swatch.is-unset {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--rf-border-subtle) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+.rf-format-color-input:focus-visible + .rf-format-swatch {
+  outline: 2px solid var(--rf-focus-ring);
+  outline-offset: 1px;
+}
+
+.rf-format-color-input:disabled + .rf-format-swatch {
+  opacity: 0.5;
+}
+
+.rf-format-hex {
+  font-family: var(--rf-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--rf-text-secondary);
+}
+
+.rf-format-follow {
+  font-size: 11px;
+  color: var(--rf-text-secondary);
+}
+
+.rf-format-reset {
+  min-width: 22px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--rf-text-secondary);
+}
+
+/* 数值控件定宽：两列各自 ~280px，96px 足够放下 4 位数字 + 步进器，剩下的留白不挤。 */
+.rf-format-number {
+  width: 96px;
+}
+
+.rf-format-number input::placeholder {
+  font-size: 11px;
+}
+
+.rf-format-footnote {
+  display: block;
+  margin-top: 10px;
+  font-size: 11px;
+}
+
+/* 窄屏：一列。模态本身在窄档下也接近满宽，两列会挤到很窄。
+   断点用 767（BREAKPOINTS.phone）——640 不在本仓断点表里。 */
+@media (max-width: 767px) {
+  .rf-format-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .rf-format-span {
+    grid-column: auto;
+  }
+}
+
+.template-style-controls {
+  padding: 10px 12px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 8px;
+  background: var(--rf-surface-alt);
+}
+
+.template-style-control-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 14px;
+}
+
+.template-style-control-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.template-badge-editor {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rf-border-subtle);
+}
+
+.template-badge-editor-row {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.template-badge-editor-image {
+  width: 72px;
+  height: 32px;
+  object-fit: contain;
+  border: 1px solid var(--rf-border-strong);
+  border-radius: 4px;
+  background: var(--rf-surface);
+}
+
+.template-recognition-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
+  gap: 16px;
+  align-items: start;
+}
+
+.template-recognition-preview {
+  min-height: 520px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 1092px) {
+  .template-recognition-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

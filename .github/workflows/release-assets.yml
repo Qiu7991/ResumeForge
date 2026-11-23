@@ -9,7 +9,7 @@
 #   2. run this workflow with `tag=<tag>` and `dry_run=false`
 #   3. the run attaches ResumeForge-Setup-<ver>.exe (+.sha256),
 #      ResumeForge-<ver>-{x64,arm64}.dmg (+.sha256) and
-#      ResumeForge-<ver>-linux-{x64,arm64}.AppImage (+.sha256) to the release
+#      ResumeForge-<ver>-{x86_64,arm64}.AppImage (+.sha256) to the release
 #
 # The build source defaults to the tag itself, so the artifacts correspond
 # exactly to what was released. `source_ref` exists for rehearsal runs
@@ -31,6 +31,10 @@ on:
         description: "Build and keep artifacts as workflow artifacts; do not touch the release."
         type: boolean
         default: true
+      allow_unsigned:
+        description: "Attach even when the installer carries a test-signing certificate (production certificate not issued yet). Default false keeps the release-grade check."
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -47,13 +51,24 @@ jobs:
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
     steps:
-      - name: Resolve ref / verify release exists
+      # 这一个 `gh release view` 同时承担两件事：确认 Release 存在、导出它的正文。
+      # 分成两次调用会让「Release 是否存在」有两份判据，迟早漂移；合成一次以后
+      # 「能读到正文」就是「Release 存在」的唯一证据。
+      #
+      # 为什么正文要在这里导出：草稿（draft）Release 只有具备 push 权限的 token 才
+      # 看得见，这个作业是顶层 `contents: write`，看得见；跑安装器的 windows-upgrade
+      # 作业只有 `contents: read`（它要执行下载下来的安装包，写权限 token 不该进那个
+      # 环境），在那里 `gh release view` 拿到的是 404 "release not found"——2.3.1 发版
+      # run 45010882683 的 Windows 升级门禁就是这么挂的。所以正文在这里落盘、以
+      # artifact 交给升级作业，而不是让它自己去读 Release。
+      - name: Resolve ref / verify release exists / export the release notes
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
           SOURCE_REF: ${{ inputs.source_ref }}
           DRY_RUN: ${{ inputs.dry_run }}
+          NOTES_FILE: release-notes/release-notes.md
         run: |
           set -euo pipefail
           if [ -n "$SOURCE_REF" ]; then
@@ -63,48 +78,81 @@ jobs:
             REF="$TAG"
           fi
           if [ "$DRY_RUN" != "true" ]; then
-            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null ||
+            mkdir -p "$(dirname "$NOTES_FILE")"
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body >"$NOTES_FILE" ||
               { echo "::error::Release '$TAG' does not exist; create it first."; exit 1; }
+            # 空正文必须当场失败：下游会把这份正文当成更新对话框里的发布说明，
+            # 空文件在那里表现成「等不到说明标题」的 180 秒超时，错误信息完全不指向
+            # 真正的原因（空说明）。宁可在这里红在正确的位置上。
+            if [ ! -s "$NOTES_FILE" ]; then
+              echo "::error::Release '$TAG' 的说明为空。升级门禁会用这份正文校验更新对话框，空说明无法通过；请先补上发布说明再重跑。"
+              exit 1
+            fi
+            echo "Exported $(wc -c <"$NOTES_FILE") bytes of release notes for '$TAG'."
           fi
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      # 只在真发版时上传：dry_run 走 rehearsal 模式，include_release_notes 为 false，
+      # 没有任何作业会下载它。
+      - name: Upload the release notes for the upgrade gate
+        if: ${{ !inputs.dry_run }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: release-notes/release-notes.md
+          retention-days: 7
+          if-no-files-found: error
 
   windows-installer:
     name: Windows installer (Setup.exe)
     needs: target
     runs-on: windows-latest
-    timeout-minutes: 60
+    # 90 分钟 = 构建与打包约 10 分钟 + 等人工批准的 60 分钟窗口（见
+    # wait-for-completion-timeout-in-seconds）+ 回签、算哈希、上传的余量。
+    # 切到生产证书后每一次签名请求都要 Approver 在 SignPath 后台手工点批准，
+    # 这个 job 会停在提交请求之后等，所以作业超时必须比等待窗口明显更长。
+    timeout-minutes: 90
     # 顶层只写了 contents: write，GitHub 会把没列出来的权限一律清零。SignPath 的
     # action 要通过 GitHub API 回读本次 run 的 artifact（origin verification 的
     # 依据），所以这里必须显式补上 actions: read，否则运行时 403。
     permissions:
       contents: write
       actions: read
+    outputs:
+      candidate_tag: ${{ steps.checksum.outputs.tag }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.target.outputs.ref }}
 
+      - name: Set up pnpm
+        # MUST run before setup-node: setup-node resolves the pnpm store by running
+        # `pnpm store path`, and skips the cache silently when pnpm is absent.
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.21.0
+
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-          cache: npm
+          cache: pnpm
           cache-dependency-path: |
-            frontend/package-lock.json
-            desktop/package-lock.json
+            frontend/pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
 
       - name: Build frontend production assets
         working-directory: frontend
         run: |
-          npm ci --no-audit --no-fund --registry=https://registry.npmjs.org
-          npm run build
+          pnpm install --frozen-lockfile --registry=https://registry.npmjs.org
+          pnpm run build
 
       - name: Install desktop shell dependencies
         working-directory: desktop
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --no-audit --no-fund --registry=https://registry.npmjs.org
+        run: pnpm install --frozen-lockfile --registry=https://registry.npmjs.org
 
       - name: Package desktop app (dir + NSIS)
         env:
@@ -190,11 +238,13 @@ jobs:
           artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
           github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
           wait-for-completion: true
-          # 默认等待上限是 600 秒（10 分钟），从请求提交起算。但 SignPath Foundation
-          # 要求每一次签名请求都由 Approver 在后台手工批准，人还没来得及点就已经超时，
-          # 表现是「莫名其妙的超时」而不是可操作的错误。放到 1800 秒（仍在 job 的
-          # 60 分钟 timeout 之内），留出足够的人工批准窗口。
-          wait-for-completion-timeout-in-seconds: 1800
+          # 默认等待上限是 600 秒（10 分钟），从请求提交起算，对人工审批远远不够。
+          # SignPath Foundation 要求每一次签名请求都由 Approver 在后台手工批准
+          # （生产证书尤其如此），人还没来得及点就超时，表现是「莫名其妙的超时」
+          # 而不是可操作的错误。这里给到 3600 秒（1 小时）：够你收到通知再打开后台，
+          # 而不必守着触发按钮。job 的 timeout-minutes 相应提到 90 分钟，否则作业
+          # 会先于等待窗口被砍掉，报错会指向「作业超时」而不是「审批没点」。
+          wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: desktop/out/signed
 
       # 这一步产出的正是要回信给 SignPath 的两个链接，所以紧跟在提交之后：
@@ -245,6 +295,11 @@ jobs:
           # 直接写 if ($x) 会因为非空字符串恒为真而永远走进「放行」分支。必须显式
           # 和 'true' 比较一次，再把结论当布尔用。
           $isDryRun = ('${{ inputs.dry_run }}' -eq 'true')
+          # 生产证书尚未下发时的显式口子：只放行「链不受信任的测试证书」，
+          # 不放行 NotSigned / HashMismatch——那两条判定排在前面，任何模式都硬失败。
+          # 默认 false，常态仍要求 Valid + SignPath Foundation 主体。
+          $allowUnsigned = ('${{ inputs.allow_unsigned }}' -eq 'true')
+          $lenient = $isDryRun -or $allowUnsigned
           $signed = Get-ChildItem "desktop/out/signed" -Recurse -Filter "ResumeForge-Setup-*.exe" |
             Select-Object -First 1
           if (-not $signed) { throw "签名没回传安装包：desktop\out\signed 下递归找不到 ResumeForge-Setup-*.exe" }
@@ -289,30 +344,32 @@ jobs:
           Write-Host "signer subject  : $subject"
           $isProdSubject = $subject -like '*SignPath Foundation*'
           $isTestSubject = $subject -like '*Test certificate for*'
-          if (-not ($isProdSubject -or ($isDryRun -and $isTestSubject))) {
+          if (-not ($isProdSubject -or ($lenient -and $isTestSubject))) {
             throw "签的不是预期主体：$($signed.Name) 的签名主体为 '$subject'。期望包含 'SignPath Foundation'（生产证书）；演练模式（dry_run=true）下也接受 'Test certificate for ...'（test-signing 测试证书）。"
           }
           # ④ Valid：干净通过。这也是真发版唯一接受的状态。
           if ($sig.Status -eq 'Valid') {
             Write-Host "signature verified: Valid"
           }
-          elseif ($isDryRun) {
-            # ⑤ 其他状态（UnknownError / NotTrusted / Incompatible …）且是演练：
+          elseif ($lenient) {
+            # ⑤ 其他状态（UnknownError / NotTrusted / Incompatible …）且是演练或
+            #    显式接受未签名：
             #    test-signing 的测试证书根不在 runner 的信任列表里，本机必然报
             #    UnknownError，属预期行为，放行。但必须留下醒目痕迹——只在日志里
             #    滚过去的话，下次真发版忘了把 dry_run 关掉，就会把演练口径当成发版口径。
-            Write-Warning "演练模式放行：$($signed.Name) 的 Authenticode 状态为 $($sig.Status)（$($sig.StatusMessage)）。test-signing 的测试证书根不在本机信任列表，属预期行为；正式发版要求 Valid。"
+            $modeLabel = if ($isDryRun) { "演练模式" } else { "allow_unsigned 模式" }
+            Write-Warning "${modeLabel}放行：$($signed.Name) 的 Authenticode 状态为 $($sig.Status)（$($sig.StatusMessage)）。test-signing 的测试证书根不在本机信任列表，属预期行为；正式发版要求 Valid。"
             if ($env:GITHUB_STEP_SUMMARY) {
               # 用 AppendAllText + 无 BOM 的 UTF8，而不是 Add-Content：这份 summary
               # 由多个 step 依次追加，中途插入 BOM 会让后面的中文渲染成乱码。
-              $line = "- 演练模式：签名链不受信任（test-signing 测试证书，预期行为），正式发版要求 Valid。状态：$($sig.Status)；StatusMessage：$($sig.StatusMessage)"
+              $line = "- ${modeLabel}：签名链不受信任（test-signing 测试证书，预期行为），正式发版要求 Valid。状态：$($sig.Status)；StatusMessage：$($sig.StatusMessage)"
               [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, "$line`n", [System.Text.UTF8Encoding]::new($false))
             }
           }
           else {
             # ⑥ 其他状态且不是演练：真发版只接受 Valid。消息里必须带上当前状态与
             #    StatusMessage，否则维护者只能回 SignPath 后台翻才知道为什么被拦。
-            throw "签名不可信，拒绝发版：$($signed.Name) 的 Authenticode 状态为 $($sig.Status)（$($sig.StatusMessage)）。dry_run=false 时只接受 Valid；若这是 test-signing 的测试证书，请改用 dry_run=true 演练。"
+            throw "签名不可信，拒绝发版：$($signed.Name) 的 Authenticode 状态为 $($sig.Status)（$($sig.StatusMessage)）。dry_run=false 时只接受 Valid；若这是 test-signing 的测试证书，请改用 dry_run=true 演练，或显式传 allow_unsigned=true 接受未签名发版。"
           }
           Copy-Item -LiteralPath $signed.FullName -Destination "desktop\out\$($signed.Name)" -Force
           Write-Host "signed installer applied: $($signed.Name)"
@@ -320,7 +377,11 @@ jobs:
       # 逐字沿用接入签名前的写法（含 LF 的 WriteAllText）：.sha256 与安装包同处
       # desktop/out，`sha256sum -c` 依赖那一个换行。
       - name: Write checksum sidecar
+        id: checksum
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           $ErrorActionPreference = "Stop"
           # 必须恰好一个：回签文件名若与未签名不同，顶层会并存两个 exe，「取第一个」
@@ -330,6 +391,14 @@ jobs:
             throw "desktop\out 顶层应恰好有 1 个安装包，实际 $($setups.Count) 个：$($setups.Name -join ', ')。可能存在回签文件名不一致，请人工确认后再发布。"
           }
           $setup = $setups[0]
+          if ($setup.Name -cnotmatch '^ResumeForge-Setup-(\d+\.\d+\.\d+)\.exe$') {
+            throw "Unexpected Windows installer name: $($setup.Name)"
+          }
+          $tag = "v$($Matches[1])"
+          if ($env:DRY_RUN -eq 'false' -and $tag -cne $env:RELEASE_TAG) {
+            throw "Installer version $tag differs from release $env:RELEASE_TAG"
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
           $sha = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           # LF line ending so `sha256sum -c` works on macOS/Linux (Set-Content
           # would append CRLF and break the cross-platform check).
@@ -347,8 +416,31 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  windows-upgrade:
+    needs: windows-installer
+    permissions:
+      contents: read
+    uses: ./.github/workflows/windows-upgrade.yml
+    with:
+      # A dry run against an already-published tag cannot update from itself.
+      # Exercise the same installer handoff with a disposable next-patch package.
+      mode: ${{ inputs.dry_run && 'rehearsal' || 'candidate' }}
+      candidate_tag: ${{ needs.windows-installer.outputs.candidate_tag }}
+      include_release_notes: ${{ !inputs.dry_run }}
+
+  windows-publish:
+    name: Attach verified Windows installer
+    if: ${{ !inputs.dry_run }}
+    needs: [windows-upgrade, macos-package-upgrade, linux-package-upgrade]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-installer
+          path: windows-installer
+
       - name: Attach installer to the release
-        if: ${{ !inputs.dry_run }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -356,8 +448,8 @@ jobs:
         run: |
           set -euo pipefail
           gh release upload "$TAG" \
-            desktop/out/ResumeForge-Setup-*.exe \
-            desktop/out/ResumeForge-Setup-*.exe.sha256 \
+            windows-installer/ResumeForge-Setup-*.exe \
+            windows-installer/ResumeForge-Setup-*.exe.sha256 \
             --repo "$GITHUB_REPOSITORY" --clobber
 
   macos-installer:
@@ -365,20 +457,29 @@ jobs:
     needs: target
     runs-on: macos-latest
     timeout-minutes: 60
+    outputs:
+      candidate_tag: ${{ steps.candidate.outputs.tag }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.target.outputs.ref }}
 
+      - name: Set up pnpm
+        # MUST run before setup-node: setup-node resolves the pnpm store by running
+        # `pnpm store path`, and skips the cache silently when pnpm is absent.
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.21.0
+
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-          cache: npm
+          cache: pnpm
           cache-dependency-path: |
-            frontend/package-lock.json
-            desktop/package-lock.json
+            frontend/pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
 
       - name: Check the mac build script exists at this ref
         # Tags older than the script (v1.0.1 and earlier) cannot build dmgs
@@ -393,14 +494,14 @@ jobs:
       - name: Build frontend production assets
         working-directory: frontend
         run: |
-          npm ci --no-audit --no-fund
-          npm run build
+          pnpm install --frozen-lockfile
+          pnpm run build
 
       - name: Install desktop shell dependencies
         working-directory: desktop
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --no-audit --no-fund --registry=https://registry.npmjs.org
+        run: pnpm install --frozen-lockfile --registry=https://registry.npmjs.org
 
       - name: Build dmgs (x64 + arm64)
         env:
@@ -416,6 +517,21 @@ jobs:
         # 必须写清右键→打开 / xattr -dr com.apple.quarantine（docs/mac-build-handoff.md）。
         run: bash scripts/build-desktop-mac.sh --arch both
 
+      - name: Verify installer tag and export package version
+        id: candidate
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./desktop/package.json').version")"
+          candidate_tag="v$version"
+          if [ "$DRY_RUN" != "true" ] && [ "$candidate_tag" != "$RELEASE_TAG" ]; then
+            echo "::error::Built macOS package $candidate_tag differs from release $RELEASE_TAG."
+            exit 1
+          fi
+          echo "tag=$candidate_tag" >> "$GITHUB_OUTPUT"
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -426,16 +542,37 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - name: Attach dmgs to the release
-        if: ${{ !inputs.dry_run }}
+  macos-package-upgrade:
+    needs: macos-installer
+    permissions:
+      contents: read
+    uses: ./.github/workflows/desktop-package-upgrade.yml
+    with:
+      mode: candidate
+      platform: macos
+      candidate_tag: ${{ needs.macos-installer.outputs.candidate_tag }}
+
+  macos-publish:
+    name: Attach verified macOS dmgs
+    if: ${{ !inputs.dry_run }}
+    needs: [macos-installer, windows-upgrade, macos-package-upgrade, linux-package-upgrade]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-installers
+          path: macos-installers
+      - name: Attach verified dmgs to the release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           gh release upload "$TAG" \
-            desktop/out/ResumeForge-*.dmg \
-            desktop/out/ResumeForge-*.dmg.sha256 \
+            macos-installers/ResumeForge-*.dmg \
+            macos-installers/ResumeForge-*.dmg.sha256 \
             --repo "$GITHUB_REPOSITORY" --clobber
 
   linux-appimage:
@@ -443,6 +580,8 @@ jobs:
     needs: target
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      candidate_tag: ${{ steps.candidate.outputs.tag }}
     # 与 Windows 作业的分工差异：Linux 产物**不签名**（AppImage 没有 Authenticode
     # 那一套，Linux 侧的信任链是发行方给的 sha256 + 包管理器），所以这里不需要
     # SignPath 那几步，也就不需要额外的 actions: read 权限——顶层 contents: write 够用。
@@ -466,14 +605,21 @@ jobs:
         with:
           ref: ${{ needs.target.outputs.ref }}
 
+      - name: Set up pnpm
+        # MUST run before setup-node: setup-node resolves the pnpm store by running
+        # `pnpm store path`, and skips the cache silently when pnpm is absent.
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.21.0
+
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-          cache: npm
+          cache: pnpm
           cache-dependency-path: |
-            frontend/package-lock.json
-            desktop/package-lock.json
+            frontend/pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
 
       - name: Check the Linux build script exists at this ref
         # 老 tag 上没有这个脚本，从工作流里直接调只会得到一句 127。这里提前给出
@@ -488,14 +634,14 @@ jobs:
       - name: Build frontend production assets
         working-directory: frontend
         run: |
-          npm ci --no-audit --no-fund --registry=https://registry.npmjs.org
-          npm run build
+          pnpm install --frozen-lockfile --registry=https://registry.npmjs.org
+          pnpm run build
 
       - name: Install desktop shell dependencies
         working-directory: desktop
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --no-audit --no-fund --registry=https://registry.npmjs.org
+        run: pnpm install --frozen-lockfile --registry=https://registry.npmjs.org
 
       - name: Build the AppImages (x64 + arm64)
         env:
@@ -511,8 +657,8 @@ jobs:
       - name: Verify the artifacts (naming shape + target architecture)
         # 两条断言，都刻意不用通配符：
         #   1) 产物名必须**恰好**是 artifactName 的形状
-        #      ResumeForge-<ver>-linux-<arch>.AppImage（版本取自 desktop/package.json）。
-        #      写通配符的话，命名漂移（linux-x86_64、linux-amd64……）会被 *.AppImage
+        #      ResumeForge-<ver>-<arch>.AppImage（版本取自 desktop/package.json）。
+        #      写通配符的话，命名漂移（x86_64、amd64……）会被 *.AppImage
         #      静默吞下，最后上传一个名字对不上的包，而官网下载按钮按名字取，直接 404。
         #   2) 文件头里的 ELF e_machine 必须等于目标架构：AppImage 是"目标架构的运行时
         #      ELF + 追加的 squashfs"，所以读偏移 18 的两个字节就能判断这个包到底是给
@@ -542,13 +688,13 @@ jobs:
           # x86_64**（arm64 仍是 arm64）——这是 electron-builder 自己的映射，不是我们的选择。
           # 所以「ELF 判据（x64/arm64）」与「文件名里的架构词（x86_64/arm64）」是两个 token：
           # 前者喂 check_elf_machine，后者拼路径。混用会让首跑直接红在一个不存在的文件名上
-          # （2026-11-10 实测：构建成功、产物叫 -linux-x86_64.AppImage，断言却在找 -linux-x64）。
+          # （2026-11-10 实测：构建成功、产物叫 -linux-x86_64.AppImage，断言却在找 -linux-x64；2026-11-14 起产物名去掉了 -linux- 段）。
           for pair in x64:x86_64 arm64:arm64; do
             want="${pair%%:*}"
             arch="${pair##*:}"
-            artifact="desktop/out/ResumeForge-${version}-linux-${arch}.AppImage"
+            artifact="desktop/out/ResumeForge-${version}-${arch}.AppImage"
             if [ ! -f "$artifact" ]; then
-              echo "::error::缺少产物 $artifact（期望 electron-builder.yml 的 artifactName 形状 ResumeForge-${version}-linux-${arch}.AppImage，x64 在 Linux 上展开为 x86_64）。"
+              echo "::error::缺少产物 $artifact（期望 electron-builder.yml 的 artifactName 形状 ResumeForge-${version}-${arch}.AppImage，x64 在 Linux 上展开为 x86_64）。"
               ls -la desktop/out >&2 || true
               exit 1
             fi
@@ -562,6 +708,10 @@ jobs:
           done
 
       - name: Write checksum sidecars
+        id: candidate
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
         # 与 Windows/macOS 作业同款写法：`cd` 到产物目录后 sha256sum 只写文件名，
         # 这样用户在任何目录下 `sha256sum -c <file>.sha256` 都能验（写进相对路径
         # 就会因为路径前缀不同而失败）。sha256sum 的输出本来就是 LF。
@@ -571,32 +721,57 @@ jobs:
           cd desktop/out
           # 同上面：文件名里的架构词是 x86_64 / arm64（electron-builder 的 Linux 映射）。
           for arch in x86_64 arm64; do
-            f="ResumeForge-${version}-linux-${arch}.AppImage"
+            f="ResumeForge-${version}-${arch}.AppImage"
             sha256sum "$f" >"$f.sha256"
             cat "$f.sha256"
           done
+          candidate_tag="v$version"
+          if [ "$DRY_RUN" != "true" ] && [ "$candidate_tag" != "$RELEASE_TAG" ]; then
+            echo "::error::Built Linux package $candidate_tag differs from release $RELEASE_TAG."
+            exit 1
+          fi
+          echo "tag=$candidate_tag" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-appimages
           path: |
-            desktop/out/ResumeForge-*-linux-*.AppImage
-            desktop/out/ResumeForge-*-linux-*.AppImage.sha256
+            desktop/out/ResumeForge-*-*.AppImage
+            desktop/out/ResumeForge-*-*.AppImage.sha256
           retention-days: 7
           if-no-files-found: error
 
-      - name: Attach AppImages to the release
-        if: ${{ !inputs.dry_run }}
+
+  linux-package-upgrade:
+    needs: linux-appimage
+    permissions:
+      contents: read
+    uses: ./.github/workflows/desktop-package-upgrade.yml
+    with:
+      mode: candidate
+      platform: linux
+      candidate_tag: ${{ needs.linux-appimage.outputs.candidate_tag }}
+
+  linux-publish:
+    name: Attach verified Linux AppImages
+    if: ${{ !inputs.dry_run }}
+    needs: [linux-appimage, windows-upgrade, linux-package-upgrade, macos-package-upgrade]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-appimages
+          path: linux-appimages
+      - name: Attach verified AppImages to the release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          gh release upload "$TAG" \
-            desktop/out/ResumeForge-*-linux-*.AppImage \
-            desktop/out/ResumeForge-*-linux-*.AppImage.sha256 \
-            --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber linux-appimages/ResumeForge-*-*.AppImage linux-appimages/ResumeForge-*-*.AppImage.sha256
 
   source-zips:
     name: Source zips (all / windows / macos / linux)
@@ -609,12 +784,19 @@ jobs:
         with:
           ref: ${{ needs.target.outputs.ref }}
 
+      - name: Set up pnpm
+        # MUST run before setup-node: setup-node resolves the pnpm store by running
+        # `pnpm store path`, and skips the cache silently when pnpm is absent.
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.21.0
+
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       # 纯源码发行包（git archive + 内置前端产物 + 逐平台启动器裁剪与校验）。
       # v1.0.2 起回归此处：流程迁移到 CI 安装包时这一环曾被漏掉，Release 只挂
@@ -641,7 +823,6 @@ jobs:
           done
 
       - name: Upload archives as workflow artifacts
-        if: ${{ inputs.dry_run }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: source-zips
@@ -651,14 +832,22 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - name: Attach archives to the release
-        if: ${{ !inputs.dry_run }}
+  source-publish:
+    name: Attach source archives after platform package tests
+    if: ${{ !inputs.dry_run }}
+    needs: [source-zips, windows-upgrade, macos-package-upgrade, linux-package-upgrade]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source-zips
+          path: source-zips
+      - name: Attach verified source archives
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          gh release upload "$TAG" \
-            dist/ResumeForge-*.zip \
-            dist/ResumeForge-*.zip.sha256 \
-            --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber source-zips/ResumeForge-*.zip source-zips/ResumeForge-*.zip.sha256

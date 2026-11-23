@@ -49,7 +49,7 @@ const voiceInput = {
   "voiceInput.settings.intro":
     "Voice is used for dictation only: stop the recording and the text is placed in the input box for you to review and submit. Audio is sent to the provider configured below; this app does not store audio.",
   "voiceInput.settings.providerNote":
-    "DeepSeek cannot transcribe audio. Configure an OpenAI-compatible service here (OpenAI, Groq, SiliconFlow, etc.).",
+    "DeepSeek can transcribe through its own endpoint (120 seconds per clip, no streaming); other providers use the OpenAI-compatible interface.",
   "voiceInput.settings.baseUrl.label": "Service address",
   "voiceInput.settings.baseUrl.aria": "Voice service address",
   "voiceInput.settings.baseUrl.placeholder": "https://api.openai.com/v1 (example)",
@@ -81,6 +81,8 @@ const voiceInput = {
   "voiceInput.settings.badge.notConfigured": "Not configured",
   "voiceInput.settings.limitHint":
     "Up to 3 minutes / 10 MB per clip; 3 minutes for interview answers and 1 minute for follow-up questions.",
+  "voiceInput.settings.limitHintDeepseek":
+    "Up to 120 seconds / 8 MB per clip: this service has no streaming, and one request accepts 120 seconds at most.",
   "voiceInput.settings.privacyNote":
     "After saving, recordings go to {host}; this app does not store audio.",
 
@@ -88,10 +90,17 @@ const voiceInput = {
   "voiceInput.settings.device.aria": "Choose a microphone device",
   "voiceInput.settings.device.default": "System default",
   "voiceInput.settings.device.unnamed": "Microphone {index}",
-  "voiceInput.settings.device.empty": "No device list yet; allow access, then refresh",
+  "voiceInput.settings.device.empty":
+    "No microphone found. Connect one, then use Refresh microphone list",
   "voiceInput.settings.device.refresh": "Refresh microphone list",
-  "voiceInput.settings.device.hint": "Device names appear after you allow access",
+  "voiceInput.settings.device.hint":
+    "Access is allowed, but device names are not readable yet; use Refresh microphone list",
   "voiceInput.settings.device.lost": "That microphone is gone; using the system default",
+  "voiceInput.settings.device.grant": "Allow microphone access",
+  "voiceInput.settings.device.regrant": "Check permission again",
+  "voiceInput.settings.device.prompt": "Use Allow microphone access to see device names",
+  "voiceInput.settings.device.denied":
+    "Microphone access was denied. Open site settings from the address bar, set Microphone to Allow, then use Check permission again",
 
   "voiceInput.settings.micTest.open": "Test microphone",
   "voiceInput.micTest.title": "Test microphone",
@@ -129,6 +138,7 @@ const voiceInput = {
   "voiceInput.settings.protocol.aria": "Speech service call protocol",
   "voiceInput.settings.protocol.openai": "OpenAI-compatible",
   "voiceInput.settings.protocol.dashscope": "Alibaba Cloud Bailian",
+  "voiceInput.settings.protocol.deepseek": "DeepSeek",
   "voiceInput.settings.protocol.hint":
     "Bailian's compatible endpoint rejects whisper-style uploads and keeps returning 400",
 

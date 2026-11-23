@@ -25,22 +25,7 @@ import {
   Typography,
 } from "antd";
 import type { FormInstance } from "antd";
-import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { getExternalResume } from "../../api/externalResumes";
-import type {
-  InterviewDifficulty,
-  InterviewMaterialExtract,
-  InterviewType,
-  InterviewerStyle,
-} from "../../types";
-import { useJobSearchSelect } from "../../hooks/remoteSearchOptions";
-import {
-  describeCurrentMaterial,
-  parseExternalResumeId,
-  useExternalResumeApplier,
-  useInterviewResumeSelect,
-} from "../../hooks/useInterviewResumeSelect";
+import { useNavigate } from "react-router-dom";
 import { t } from "../../i18n";
 import {
   INTERVIEW_DIFFICULTY_LABEL_KEYS,
@@ -48,8 +33,6 @@ import {
   INTERVIEWER_STYLE_LABEL_KEYS,
 } from "../../i18n/enum/interview";
 import { useLocale } from "../../i18n/i18nContext";
-import { JANE_FACE_SOURCES } from "./janeFaces";
-import { MaterialSourceField, type MaterialSourceMode } from "./MaterialSourceField";
 import {
   INTERVIEW_DIFFICULTIES,
   INTERVIEW_TYPES,
@@ -57,34 +40,13 @@ import {
   MAX_INTERVIEW_ROUNDS,
   MIN_INTERVIEW_ROUNDS,
 } from "../../types";
+import type { InterviewMaterialExtract } from "../../types";
+import { JANE_FACE_SOURCES } from "./janeFaces";
+import { MaterialSourceField } from "./MaterialSourceField";
+import type { SetupForm } from "./useSetupFormState";
+import { useSetupFormState } from "./useSetupFormState";
 
-/** 轮数档位（问题 05）：自动收尾，或由用户指定的固定轮数。 */
-export type RoundsMode = "auto" | "custom";
-
-export interface SetupForm {
-  /** 关联岗位：与 `jobMaterial` 二选一（选了文件时这一项不出现在表单里）。 */
-  jobId?: number;
-  /**
-   * 关联简历：与 `resumeMaterial` 二选一。**带前缀的字符串**（#25）：`r:<id>` = 本应用的
-   * 简历，`e:<id>` = 外部简历——前缀就是 `onChange` 的分派依据；提交时由
-   * `toInternalResumeId` 还原成后端要的数字 id（外部简历没有内部 id，正文走材料）。
-   */
-  resumeId?: string;
-  /** 导入的岗位材料（#41）：已在上传时提取成文本，非空表示这一侧用文件。 */
-  jobMaterial?: InterviewMaterialExtract | null;
-  /** 导入的简历材料（#41）：已在上传时提取成文本。 */
-  resumeMaterial?: InterviewMaterialExtract | null;
-  interviewType: InterviewType;
-  difficulty: InterviewDifficulty;
-  /** 面试官风格：填了人设时不参与提示词（值仍保留，后端字段必填）。 */
-  interviewerStyle: InterviewerStyle;
-  /** 轮数档位：`auto` = 自动收尾（AI 按表现判断何时结束）。 */
-  roundsMode: RoundsMode;
-  /** 固定轮数，只在 `roundsMode === "custom"` 时生效。 */
-  rounds: number;
-  focus: string;
-  persona: string;
-}
+export type { RoundsMode, SetupForm } from "./useSetupFormState";
 
 /** 「指定轮数」档的取值是否合法：越界或空值都按默认值附近夹回来，不把 NaN 递给后端。 */
 function clampRounds(value: number | undefined | null): number | null {
@@ -97,6 +59,7 @@ function clampRounds(value: number | undefined | null): number | null {
 export function SetupTab({
   form,
   initialJobId,
+  initialResumeMaterial,
   starting,
   onStart,
 }: {
@@ -104,107 +67,27 @@ export function SetupTab({
   /** 深链带来的预填（RF-11）：岗位详情跳过来时关联岗位已选好。
    *  id 不在候选里时由远程搜索 hook 按 id 回查补进候选（P0-1）。 */
   initialJobId?: number;
+  /** 题库桥接带过来的简历文件材料（`resumeMaterial`）：非空时简历侧直接落在"导入文件"。 */
+  initialResumeMaterial?: InterviewMaterialExtract | null;
   starting: boolean;
   onStart: (values: SetupForm) => void;
 }) {
   // 本卡用模块级 t()：必须订阅语言变化，否则切语言后表单文案不重渲染。
   useLocale();
   const { message } = App.useApp();
-  // 从简历中心「用于面试」跳过来：把那份外部简历的**已提取正文**预填到"导入文件"这一侧。
-  // 刻意不新增第三种来源：record / file 二选一已经能表达"这份材料来自文件快照"。
-  const [searchParams] = useSearchParams();
-  const externalResumeId = parseExternalResumeId(searchParams.get("externalResumeId"));
-  const prefilledExternalIdRef = useRef<number | null>(null);
-  // 关联岗位下拉改为远程搜索（P0-1）：不再由页面预拉"前 100 条"当全量。
-  const jobSelect = useJobSearchSelect();
-  // 关联简历（0066 / #25）：候选 = 所选岗位关联的简历 **+** 通用简历 **+** 外部简历（分组展示）。
-  // 岗位没选之前整块下拉仍然禁用（记录侧候选本来就依赖岗位，外部简历也一并等它挑完）。
-  const watchedJobId = Form.useWatch("jobId", form) as number | undefined;
-  const watchedResumeValue = Form.useWatch("resumeId", form) as string | undefined;
-  // 人设与风格互斥（问题 06）：**看的是实时值**，所以用 useWatch 而不是读 initialValues——
-  // 用户边打人设，风格下拉边变灰，无需先提交或失焦。
-  const persona = Form.useWatch("persona", form) as string | undefined;
-  const hasPersona = (persona ?? "").trim().length > 0;
-  // 轮数两档（问题 05）：只有「指定轮数」才渲染输入框，默认「自动」。
-  const roundsMode = (Form.useWatch("roundsMode", form) as RoundsMode | undefined) ?? "auto";
-  const showRoundsInput = roundsMode === "custom";
-  // 材料来源（#41）：每侧都是"从记录选 / 导入文件"二选一。文件与记录是**互斥**的，
-  // 所以两者的状态分开存：切到文件时记录那一栏整个不渲染（连校验规则一起消失），
-  // 反过来切回记录时也不会把上一份文件悄悄带进面试。
-  const [jobSource, setJobSource] = useState<MaterialSourceMode>("record");
-  const [jobMaterial, setJobMaterial] = useState<InterviewMaterialExtract | null>(null);
-  const [resumeSource, setResumeSource] = useState<MaterialSourceMode>("record");
-  const [resumeMaterial, setResumeMaterial] = useState<InterviewMaterialExtract | null>(null);
-  // 文件侧这份材料是"导入的文件"还是"外部简历的正文"（#25）：两者都落在 `resumeMaterial`，
-  // 但「当前材料」要说清来源，否则用户以为系统把上传的文件弄丢了。
-  const [resumeFileOrigin, setResumeFileOrigin] = useState<"file" | "external" | null>(null);
-
-  // 外部简历落地（深链与下拉**共用**这一个函数）：引用稳定，深链 effect 才不会每渲染重跑。
-  const externalResume = useExternalResumeApplier({
-    useFileSource: () => setResumeSource("file"),
-    useFileMaterial: (material) => {
-      setResumeMaterial(material);
-      setResumeFileOrigin("external");
-    },
-    clearRecordValue: () => form.setFieldValue("resumeId", undefined),
-  });
-  const resumeSelect = useInterviewResumeSelect({
-    jobId: watchedJobId ?? null,
-    value: watchedResumeValue,
-    onExternal: externalResume.apply,
-    onExternalFailed: externalResume.notifyFailed,
-    onSelectInternal: (value) => form.setFieldValue("resumeId", value),
-  });
-
-  // 岗位一变就重拉简历候选：上一次的候选属于上一个岗位，留着会让用户挑到不该出现的简历。
-  // 外部简历组不随岗位变（列表接口没有 job_id 参数），`reload` 里一并刷新；已选项由
-  // hook 的 `pinned` 缓存保住显示。
-  useEffect(() => {
-    resumeSelect.reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchedJobId]);
-
-  // 外部简历深链预填（第 21 条）：只处理一次。StrictMode 下 effect 会"跑一遍 → 清理 →
-  // 再跑一遍"：如果把 ref 记在 effect 开头，第二次跑会以为"处理过了"而直接退出，第一次
-  // 的请求又被清理标记成 cancelled —— 结果永远不预填。所以 ref 记在**真正处理成功**的位置，
-  // 两次请求最多浪费一次 GET（与弹层数据加载同一种取舍）。
-  useEffect(() => {
-    if (externalResumeId === null || prefilledExternalIdRef.current === externalResumeId) return;
-    let cancelled = false;
-    void getExternalResume(externalResumeId)
-      .then((record) => {
-        if (cancelled) return;
-        prefilledExternalIdRef.current = externalResumeId;
-        // 与下拉选中走同一个函数：切来源、写材料、清记录侧的 id（漏掉清 id 就是脏状态）。
-        externalResume.apply(record);
-      })
-      .catch(() => {
-        if (!cancelled) externalResume.notifyFailed();
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [externalResumeId, externalResume]);
-
-  // 深链预填的岗位按 id 回查补进候选（P0-1），否则第 101 条之后的岗位只显示 id；
-  // 设定卡常驻可见，挂载时同时预拉第一页候选。
-  useEffect(() => {
-    void jobSelect.ensure(initialJobId);
-    void jobSelect.reload();
-    // hook 的回调引用稳定，只跟随预填目标变化。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialJobId]);
-
-  /**
-   * 「当前材料」（#25）：选中外部简历后记录侧下拉是**空的**（材料落在"导入文件"那一侧），
-   * 不显式说清现在用的是哪一份，用户会以为系统把文件弄丢了。判据与文案在 hook 里。
-   */
-  const currentMaterialText = describeCurrentMaterial({
-    source: resumeSource,
-    recordLabel: resumeSelect.labelFor(watchedResumeValue),
-    fileName: resumeMaterial?.name,
-    fileOrigin: resumeFileOrigin,
-  });
+  const navigate = useNavigate();
+  const {
+    jobSelect,
+    resumeSource,
+    setResumeSource,
+    resumeMaterial,
+    setResumeMaterial,
+    setResumeFileOrigin,
+    resumeSelect,
+    hasPersona,
+    showRoundsInput,
+    currentMaterialText,
+  } = useSetupFormState(form, initialJobId, initialResumeMaterial);
 
   /**
    * 提交前补齐"文件这一侧到底有没有材料"：表单校验只看**渲染出来**的字段，切到"导入文件"
@@ -213,10 +96,7 @@ export function SetupTab({
    * 同行（`noStyle`），校验文案没有位置显示，空值 / 越界在这里给明确提示。
    */
   const submit = (values: SetupForm) => {
-    if (jobSource === "file" && !jobMaterial) {
-      message.error(t("interviewPage.setup.material.jobRequired"));
-      return;
-    }
+    // 岗位侧只剩"从记录选"（Q3）：文件那一侧已经不存在，`jobMaterial` 恒为 null。
     if (resumeSource === "file" && !resumeMaterial) {
       message.error(t("interviewPage.setup.material.resumeRequired"));
       return;
@@ -231,7 +111,7 @@ export function SetupTab({
       roundsMode: values.roundsMode === "custom" ? "custom" : "auto",
       // 自动档下 rounds 只是表单里的占位值（页面按档位改传硬性保险），但不能是 NaN。
       rounds: rounds ?? 6,
-      jobMaterial: jobSource === "file" ? jobMaterial : null,
+      jobMaterial: null,
       resumeMaterial: resumeSource === "file" ? resumeMaterial : null,
     });
   };
@@ -283,42 +163,44 @@ export function SetupTab({
           {/* 材料行（问题 7）：两个材料字段单独成组，容器是 auto-fit 栅格 + align-items: start，
               两侧各自按内容高度排，不被对侧的下拉 / 文件区拉高。 */}
           <div className="interview-setup-materials">
-            {/* 岗位材料（#41）：从记录选 / 导入文件二选一，两侧接受同一组格式（问题 6）。
-                切到"导入文件"时下拉框禁用且不再校验（材料由文件提供）。 */}
+            {/* 岗位材料：只从记录选（Q3），岗位由岗位广场按链接导入。 */}
             <Form.Item
               label={t("interviewPage.setup.jobLabel")}
               name="jobId"
               className="interview-material-field"
-              rules={
-                jobSource === "record"
-                  ? [{ required: true, message: t("interviewPage.setup.jobRequired") }]
-                  : []
-              }
+              rules={[{ required: true, message: t("interviewPage.setup.jobRequired") }]}
               extra={
-                <MaterialSourceField
-                  kind="job"
-                  mode={jobSource}
-                  material={jobMaterial}
-                  disabled={starting}
-                  onModeChange={(mode) => {
-                    setJobSource(mode);
-                    if (mode === "file") form.setFieldValue("jobId", undefined);
-                  }}
-                  onMaterialChange={setJobMaterial}
-                />
+                <>
+                  <MaterialSourceField
+                    kind="job"
+                    mode="record"
+                    material={null}
+                    disabled={starting}
+                    allowFile={false}
+                    onModeChange={() => undefined}
+                    onMaterialChange={() => undefined}
+                  />
+                  {/* 没有合适岗位时的唯一出口：去岗位广场从链接导入，再回来这里选。 */}
+                  <Button
+                    type="link"
+                    size="small"
+                    className="interview-job-link-hint"
+                    onClick={() => navigate("/jobs")}
+                  >
+                    {t("interviewPage.setup.jobFromLink")}
+                  </Button>
+                </>
               }
             >
               <Select
                 allowClear
-                disabled={jobSource === "file"}
                 placeholder={t("interviewPage.setup.jobPlaceholder")}
                 {...jobSelect.selectProps}
               />
             </Form.Item>
-            {/* 简历材料（#41 / #25）：从记录选 / 导入文件二选一（与岗位侧同一组格式）；
-                记录侧下拉现在分两组（本应用的简历 / 外部简历，见 `useInterviewResumeSelect`）。
-                extra 在左列的基础上多一行「当前材料」——外部简历的正文落在文件侧，下拉里
-                没有它的 value，这行提示是选完之后唯一常驻的来源说明。 */}
+            {/* 简历材料（#41 / #25）：从记录选 / 导入文件二选一；记录侧下拉分两组
+                （本应用的简历 / 外部简历，见 `useInterviewResumeSelect`）。extra 多一行
+                「当前材料」——外部简历的正文落在文件侧，这行是选完之后唯一常驻的来源说明。 */}
             <Form.Item
               label={t("interviewPage.setup.resumeLabel")}
               name="resumeId"
@@ -355,14 +237,8 @@ export function SetupTab({
             >
               <Select
                 allowClear
-                disabled={
-                  resumeSource === "file" || watchedJobId === undefined || watchedJobId === null
-                }
-                placeholder={
-                  watchedJobId === undefined || watchedJobId === null
-                    ? t("interviewPage.setup.resumePlaceholderNoJob")
-                    : t("interviewPage.setup.resumePlaceholder")
-                }
+                disabled={resumeSource === "file" || undefined}
+                placeholder={t("interviewPage.setup.resumePlaceholder")}
                 {...resumeSelect.selectProps}
               />
             </Form.Item>
@@ -372,8 +248,6 @@ export function SetupTab({
           <Typography.Text type="secondary" className="interview-setup-hint">
             {t("interviewPage.setup.scopeHint")}
           </Typography.Text>
-          {/* 4 个字段单独成网格（第 8 条）：宽屏 4 等列填满整行，容器变窄时由
-              modules-interview-setup.css 的容器查询切成 2 列 / 1 列。 */}
           <div className="interview-setup-fields">
             <Form.Item label={t("interviewPage.setup.typeLabel")} name="interviewType">
               <Select

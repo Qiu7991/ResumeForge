@@ -40,6 +40,9 @@
    问题 16 的 pre-wrap 判据与 role_spans 逐字相同（两处不能各写一套）。 #}
 {% macro path_spans(segments) -%}
 {%- for seg in segments -%}
+{%- if seg.role == 'field_label' -%}
+{{ role_spans([seg]) }}
+{%- else -%}
 {%- set href = safe_link(seg.link) -%}
 {%- set pre = ' class="is-pre" style="white-space: pre-wrap"' if '\n' in (seg.text or '') else '' -%}
 {%- if href -%}
@@ -50,6 +53,7 @@
 <em{{ pre|safe }}{% if seg.path %} data-resume-path="{{ seg.path }}"{% endif %}>{{ seg.text }}</em>
 {%- else -%}
 <span{{ pre|safe }}{% if seg.path %} data-resume-path="{{ seg.path }}"{% endif %}>{{ seg.text }}</span>
+{%- endif -%}
 {%- endif -%}
 {%- endfor -%}
 {%- endmacro %}
@@ -186,7 +190,7 @@
 {%- endif -%}
 {%- endmacro %}
 
-<div class="header">
+<div class="header{% if document_plan.header.photo %} has-photo{% endif %}">
   <div class="header-main">
     <div class="name" data-role="name">{{ path_spans(document_plan.header.name) }}{% if document_plan.header.name_meta %} <span class="name-extra" data-role="meta">{{ path_spans(document_plan.header.name_meta) }}</span>{% endif %}</div>
     {%- if document_plan.header.subtitle %}
@@ -197,8 +201,14 @@
       {%- for line in document_plan.header.contact_lines -%}
       {%- for seg in line -%}
       {%- set href = safe_link(seg.link) -%}
-      {%- if href %}<a href="{{ href }}" data-resume-path="{{ seg.path }}">{{ seg.text }}</a>{% else %}<span data-resume-path="{{ seg.path }}">{{ seg.text }}</span>{% endif -%}
-      {%- if not loop.last %}<wbr />{% endif -%}
+      {#- QW-6：标签段另带一个**类名**，模板据此清掉 span 之间的分隔外边距。
+      不用 `[data-role="field_label"]` 属性选择器：默认路径必须零角色 CSS
+      （`test_resume_render_overrides` 钉着"[data-role=" 不出现）。 -#}
+      {%- set role_attr = ' class="contact-label" data-role="field_label"' if seg.role == 'field_label' else '' -%}
+      {%- if href %}<a href="{{ href }}" data-resume-path="{{ seg.path }}"{{ role_attr|safe }}>{{ seg.text }}</a>{% else %}<span data-resume-path="{{ seg.path }}"{{ role_attr|safe }}>{{ seg.text }}</span>{% endif -%}
+      {#- QW-6：标签段与值段共用同一条路径，属于**同一个字段**——两者之间不插分隔符，
+          否则纸面会在「电话：」和号码之间多出一段间隔（PDF/Word 侧按同一规则合并）。 #}
+      {%- if not loop.last and line[loop.index0 + 1].path != seg.path %}{% if document_plan.header.contact_separator %}<span class="contact-sep">{{ document_plan.header.contact_separator }}</span>{% else %}<wbr />{% endif %}{% endif -%}
       {%- endfor -%}
       {%- if not loop.last %}<br />{% endif -%}
       {%- endfor %}

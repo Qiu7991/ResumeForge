@@ -28,6 +28,7 @@ const jobDetail = {
     "“Go and apply” opens in the apply desk browser. If that window asks you to sign in, scan once there; it will be reused afterwards.",
   "jobDetail.tooltip.goApply": "Opens in the apply browser with the same sign-in as the apply desk",
   "jobDetail.action.goApply": "Go and apply",
+  "jobDetail.action.researchCompany": "Research this company",
   "jobDetail.action.favorite": "Favorite this job",
   "jobDetail.action.unfavorite": "Remove from favorites",
   "jobDetail.unsupported.title": "This Job cannot be auto-applied from the apply desk",
@@ -56,6 +57,9 @@ const jobDetail = {
   "jobDetail.relatedKnowledge.aria": "Related knowledge",
   "jobDetail.relatedKnowledge.viewAll": "View all related knowledge",
   "jobDetail.alt.noteImage": "Note image {index}",
+  "jobDetail.action.addTrack": "Add to job tracker",
+  "jobDetail.action.viewTrack": "View job tracker",
+  "jobDetail.error.loadTrack": "Could not load tracking records. Try again",
 } as const;
 
 export default jobDetail;

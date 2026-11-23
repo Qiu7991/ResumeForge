@@ -94,6 +94,354 @@ export function toggleInlineMark(text: string, range: InlineRange, marker: strin
   return { text: next, start: safe.start + marker.length, end: safe.end + marker.length };
 }
 
+/** 行内样式标记（R-11）：`{@size=0.9}…{@}`。收口串与后端 `resume_inline_style` 逐字一致。 */
+export const STYLE_CLOSE = "{@}";
+
+/**
+ * 字号系数的合法区间（与后端 `resume_inline_style.MIN_SIZE / MAX_SIZE` 同一口径）。
+ *
+ * 前端必须先夹一遍：后端对超区间的开标记**按字面保留**（宁可整段不生效，也不猜），
+ * 用户会看到纸面上原样印出的 `{@size=3}`。守卫测试把这两个数钉在后端常量上。
+ */
+export const MIN_INLINE_SIZE = 0.5;
+export const MAX_INLINE_SIZE = 1.6;
+
+/** 工具条上的常用字号档（80% / 90% / 110% / 125% / 150%）；100% 是「清除」。 */
+export const INLINE_SIZE_STEPS = [0.8, 0.9, 1.1, 1.25, 1.5] as const;
+
+/**
+ * 6 个预设强调色：**数据，不是主题变量**（用户会把它写进内容，导出后必须逐字一致）。
+ *
+ * 只在这里导出一次：工具条（`InlineMarkButtons`）的色板与右键菜单
+ * （`InlineMarkContextMenu`）的子菜单共用，顺序不可改（用户已按这个顺序取色）。
+ */
+export const COLOR_PRESETS = [
+  "#c0392b",
+  "#d97706",
+  "#2f6fd0",
+  "#2f855a",
+  "#6b7280",
+  "#111111",
+] as const;
+
+const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+const STYLE_ATTR = /^\s*(size|color)\s*=\s*(.+?)\s*$/i;
+
+/** 字号系数夹到合法区间（非数字按 1 处理，调用方只传滑杆/输入框的值）。 */
+export function clampInlineSize(size: number): number {
+  if (!Number.isFinite(size)) return 1;
+  return Math.min(MAX_INLINE_SIZE, Math.max(MIN_INLINE_SIZE, size));
+}
+
+/** `0.9 → "0.9"`、`1.2500001 → "1.25"`：标记里的数字不该出现浮点尾巴。 */
+function formatSizeValue(size: number): string {
+  return String(Number(clampInlineSize(size).toFixed(2)));
+}
+
+/**
+ * 颜色规范化：只接受 `#rgb` / `#rrggbb`（后端 `_HEX_RE` 的口径），统一小写、三字母展开。
+ *
+ * ColorPicker 的 `onChange` 会给 `rgba(...)` 形式的 css 串；直接写进标记后端会判非法、
+ * 整份样式作废。所以取值一律先 `toHexString()` 再走这里。
+ */
+export function normalizeInlineColor(value: string): string | null {
+  const text = value.trim().toLowerCase();
+  if (!HEX_COLOR.test(text)) return null;
+  if (text.length !== 4) return text;
+  return `#${text[1]}${text[1]}${text[2]}${text[2]}${text[3]}${text[3]}`;
+}
+
+/**
+ * ColorPicker 的取值 → 标记里的 `#rrggbb`。
+ *
+ * 用结构化类型（只要 `toHexString()`）而不是 `import type { AggregationColor } from "antd"`：
+ * 这条规则是纯函数，单测不该为了构造一个颜色对象去拉整个 antd。
+ * 返回值 `null` = 这个颜色不能写进标记（调用方保持原文不变）。
+ */
+export function inlineColorValue(color: { toHexString(): string }): string | null {
+  return normalizeInlineColor(color.toHexString());
+}
+
+/** 一条样式区间的属性表（已规范化）；`null` 表示这一项被显式清除。 */
+export interface InlineStylePatch {
+  size?: number | null;
+  color?: string | null;
+}
+
+interface StyleRun {
+  /** 开标记起点。 */
+  start: number;
+  /** 开标记之后的正文起点。 */
+  contentStart: number;
+  contentEnd: number;
+  /** 收口标记之后的位置。 */
+  end: number;
+  attrs: Record<string, string>;
+}
+
+/** `size=0.9,color=#c00` → 属性表；有任何非法项整份作废（与后端 `parse_style` 同规则）。 */
+function parseStyleAttrs(attributes: string): Record<string, string> | null {
+  const attrs: Record<string, string> = {};
+  for (const piece of attributes.split(",")) {
+    if (!piece.trim()) continue;
+    const match = STYLE_ATTR.exec(piece);
+    if (!match) return null;
+    const key = match[1].toLowerCase();
+    const value = match[2];
+    if (key === "size") {
+      const number = Number(value);
+      if (!Number.isFinite(number) || number < MIN_INLINE_SIZE || number > MAX_INLINE_SIZE) {
+        return null;
+      }
+      attrs.size = formatSizeValue(number);
+      continue;
+    }
+    const hex = normalizeInlineColor(value);
+    if (!hex) return null;
+    attrs.color = hex;
+  }
+  return Object.keys(attrs).length > 0 ? attrs : null;
+}
+
+/**
+ * 找出文本里所有**成对**的样式区间（按栈配对，支持嵌套，与后端 `mask_inline_styles` 同序）。
+ *
+ * 落单的开标记（没有 `{@}` 收口）不产出区间：后端也按字面保留，前端不该假装它生效。
+ */
+function parseStyleRuns(text: string): StyleRun[] {
+  const runs: StyleRun[] = [];
+  const stack: { start: number; contentStart: number; attrs: Record<string, string> }[] = [];
+  let index = 0;
+  while (index < text.length) {
+    if (text.startsWith(STYLE_CLOSE, index)) {
+      const open = stack.pop();
+      if (open) {
+        runs.push({
+          start: open.start,
+          contentStart: open.contentStart,
+          contentEnd: index,
+          end: index + STYLE_CLOSE.length,
+          attrs: open.attrs,
+        });
+      }
+      index += STYLE_CLOSE.length;
+      continue;
+    }
+    if (text.startsWith("{@", index)) {
+      const close = text.indexOf("}", index);
+      if (close > 0) {
+        const attrs = parseStyleAttrs(text.slice(index + 2, close));
+        if (attrs) stack.push({ start: index, contentStart: close + 1, attrs });
+        index = close + 1;
+        continue;
+      }
+    }
+    index += 1;
+  }
+  return runs;
+}
+
+function openerOf(attrs: Record<string, string>): string {
+  const parts: string[] = [];
+  if (attrs.size) parts.push(`size=${attrs.size}`);
+  if (attrs.color) parts.push(`color=${attrs.color}`);
+  return `{@${parts.join(",")}}`;
+}
+
+/** 把一次补丁叠到现有属性上：**同值再点一次 = 去掉**（"再点一次取消"），`null` 也去掉。 */
+function mergeAttrs(
+  current: Record<string, string>,
+  patch: InlineStylePatch,
+): Record<string, string> {
+  const next = { ...current };
+  if (patch.size !== undefined) {
+    if (patch.size === null) delete next.size;
+    else {
+      const value = formatSizeValue(patch.size);
+      if (next.size === value) delete next.size;
+      else next.size = value;
+    }
+  }
+  if (patch.color !== undefined) {
+    if (patch.color === null) delete next.color;
+    else {
+      const hex = normalizeInlineColor(patch.color);
+      if (hex) {
+        if (next.color === hex) delete next.color;
+        else next.color = hex;
+      }
+    }
+  }
+  return next;
+}
+
+/**
+ * 用新的开标记替换一条区间：正文不动，选区按开标记长度差平移。
+ *
+ * `keep` 是"用户看得见、希望继续被选中的那段"，坐标为**改动前**的偏移：
+ * 整体拆/换标记时传区间正文，局部改属性时传用户原本的选区。
+ */
+function replaceRunOpener(
+  text: string,
+  run: StyleRun,
+  attrs: Record<string, string>,
+  keep: InlineRange,
+): InlineEdit {
+  const content = text.slice(run.contentStart, run.contentEnd);
+  const opener = attrs.size || attrs.color ? openerOf(attrs) : "";
+  const next =
+    text.slice(0, run.start) + opener + content + (opener ? STYLE_CLOSE : "") + text.slice(run.end);
+  const delta = opener.length - (run.contentStart - run.start);
+  return { text: next, start: keep.start + delta, end: keep.end + delta };
+}
+
+/**
+ * 给选区加/改/去一种行内样式（字号、颜色或两者）。
+ *
+ * 四条规则（与后端协议对齐，UI 的"下拉选字号"和"右键菜单"共用这一份）：
+ *
+ * 1. 选区正好就是一个完整区间 → 拆标记（再点一次取消）；
+ * 2. 选区落在某个区间内部 → **改那个区间的开标记**（不是再套一层）：同属性覆盖、
+ *    未涉及的属性保留。这条就是"同属性嵌套拍平"；
+ * 3. 已经带了同值属性 → 去掉该属性（`size` 与 `color` 各自独立）；
+ * 4. 都不满足 → 用 `{@size=…,color=…}` 包住选区；两个字段都为空则什么都不做。
+ */
+export function applyStyleMark(
+  text: string,
+  range: InlineRange,
+  patch: InlineStylePatch,
+): InlineEdit {
+  const safe = clampRange(text.length, range);
+  if (safe.start === safe.end) return { text, ...safe };
+  const runs = parseStyleRuns(text);
+
+  const exact = runs.find((run) => run.start === safe.start && run.end === safe.end);
+  if (exact) {
+    const content = { start: exact.contentStart, end: exact.contentEnd };
+    return replaceRunOpener(text, exact, mergeAttrs(exact.attrs, patch), content);
+  }
+
+  // 最内层（start 最大）的包含区间
+  const containing = runs
+    .filter((run) => run.contentStart <= safe.start && safe.end <= run.contentEnd)
+    .sort((left, right) => right.start - left.start)[0];
+  if (containing) {
+    return replaceRunOpener(text, containing, mergeAttrs(containing.attrs, patch), safe);
+  }
+
+  const attrs = mergeAttrs({}, patch);
+  if (!attrs.size && !attrs.color) return { text, ...safe };
+  const opener = openerOf(attrs);
+  const selected = text.slice(safe.start, safe.end);
+  return {
+    text: text.slice(0, safe.start) + opener + selected + STYLE_CLOSE + text.slice(safe.end),
+    start: safe.start + opener.length,
+    end: safe.end + opener.length,
+  };
+}
+
+/** 小一号（0.9×）：常用档，等价于字号选 90%。 */
+export function toggleSmallMark(text: string, range: InlineRange): InlineEdit {
+  return applyStyleMark(text, range, { size: 0.9 });
+}
+
+/** 强调色（红）：等价于颜色选 `#c0392b`。 */
+export function toggleEmphasisMark(text: string, range: InlineRange): InlineEdit {
+  return applyStyleMark(text, range, { color: "#c0392b" });
+}
+
+/** 一段要删掉的字符区间（标记本身，正文不动）。 */
+interface MarkInterval {
+  start: number;
+  end: number;
+}
+
+/** 成对 `**` 的正文区间 + 它自己的两颗标记；落单的那颗不产出（原样保留）。 */
+function boldRuns(text: string): { from: number; to: number; marks: MarkInterval[] }[] {
+  const hits: number[] = [];
+  for (let at = text.indexOf("**"); at >= 0; at = text.indexOf("**", at + 2)) hits.push(at);
+  const runs: { from: number; to: number; marks: MarkInterval[] }[] = [];
+  for (let index = 0; index + 1 < hits.length; index += 2) {
+    const [open, close] = [hits[index], hits[index + 1]];
+    if (close <= open + 2) continue; // `****` 没有正文可清
+    runs.push({
+      from: open + 2,
+      to: close,
+      marks: [
+        { start: open, end: open + 2 },
+        { start: close, end: close + 2 },
+      ],
+    });
+  }
+  return runs;
+}
+
+/** 把原串下标映射到"删掉这些区间之后"的下标；落在删除区里就收拢到删除点。 */
+function shiftPosition(position: number, removals: readonly MarkInterval[]): number {
+  let shift = 0;
+  let consumed = 0;
+  for (const { start, end } of removals) {
+    const from = Math.max(start, consumed);
+    if (end <= from) continue; // 整段被前一段覆盖（嵌套）
+    if (from >= position) break;
+    shift += Math.min(end, position) - from;
+    consumed = end;
+  }
+  return position - shift;
+}
+
+/**
+ * 去掉选区里的行内格式（右键菜单「清除行内格式」）。
+ *
+ * ## 为什么要在**整串**上解析（DF-9）
+ *
+ * 编辑态是两层：标记占位但不可见。用户拖选看得见的"个人项目"时，选区落在
+ * `{@color=#c0392b}` 与 `{@}` **之间**——只在选区切片里找标记会一个都找不到，于是
+ * "点了没反应"。所以这里在整串上找格式段，再判断它与选区是否相交。
+ *
+ * ## 三条规则
+ *
+ * 1. **整段清除**：选区碰到哪个格式段，就把那一段的标记整体去掉（只选了半段也一样，
+ *    2026-11-18 的取舍：不做拆分）；
+ * 2. 相交判定用段的**正文区间**，不是整段 raw 区间——否则"光标紧贴 `{@}` 之后"会被判成
+ *    碰到了上一段，误清相邻格式；
+ * 3. 删除区间按起点排序后一次扫完（嵌套段自然被覆盖），返回的选区内标在新串上重算，
+ *    光标仍落在原来那几个字上。
+ *
+ * 只处理**成对**的样式标记（`{@…}…{@}`，含嵌套）与成对的 `**`；落单的 `{@` / `**` 原样
+ * 保留——用户真想印出来的花括号与星号不该被吞掉。链接（`[字](url)`）不清：URL 无法从文字恢复。
+ */
+export function clearInlineMarks(text: string, range: InlineRange): InlineEdit {
+  const safe = clampRange(text.length, range);
+  if (safe.start === safe.end) return { text, ...safe };
+  const hit = (from: number, to: number): boolean => safe.start < to && safe.end > from;
+
+  const removals: MarkInterval[] = [];
+  for (const run of parseStyleRuns(text)) {
+    if (!hit(run.contentStart, run.contentEnd)) continue;
+    removals.push({ start: run.start, end: run.contentStart });
+    removals.push({ start: run.contentEnd, end: run.end });
+  }
+  for (const bold of boldRuns(text)) {
+    if (!hit(bold.from, bold.to)) continue;
+    removals.push(...bold.marks);
+  }
+  if (removals.length === 0) return { text, ...safe };
+  removals.sort((left, right) => left.start - right.start);
+
+  let next = "";
+  let cursor = 0;
+  for (const { start, end } of removals) {
+    if (end <= cursor) continue;
+    next += text.slice(cursor, Math.max(start, cursor));
+    cursor = end;
+  }
+  next += text.slice(cursor);
+
+  const start = shiftPosition(safe.start, removals);
+  return { text: next, start, end: Math.max(start, shiftPosition(safe.end, removals)) };
+}
+
 /** 加粗（`**`）：与既有右键菜单的标记一致。 */
 export function toggleBoldMark(text: string, range: InlineRange): InlineEdit {
   return toggleInlineMark(text, range, "**");

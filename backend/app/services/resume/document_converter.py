@@ -41,6 +41,10 @@ from .document_converter_custom import (
     build_header_items,
     summary_items,
 )
+from .document_converter_layout import (  # noqa: F401  (_apply_field_layout 使用；常量保留旧属性)
+    FIELD_LAYOUT_SECTIONS,
+    _apply_field_layout,
+)
 from .document_converter_sections import build_entry_items, hints_by_doc_section
 from .resume_contact import validate_contact_breaks
 from .resume_labels import normalize_language
@@ -54,6 +58,12 @@ __all__ = [
     "ensure_document_version",
     "ensure_document_version_with_report",
 ]
+
+#: 照片页眉字段的固定位置（5.3：前端已删掉照片的「位置」下拉，语义恒为 photo）。
+_PHOTO_HEADER_KEY = "photo"
+#: 「位置下拉」留下、但任何渲染方都不认照片的四种死值。**不含 contact**——那个是
+#: I-02 的重复照片守卫刻意保留的状态，见 `_normalize_photo_placement` 的说明。
+_PHOTO_STALE_PLACEMENTS = frozenset({"hidden", "name", "name_meta", "subtitle"})
 
 #: v2 分区 key -> v1 ResumeContent 的列表属性名。
 _V1_LIST_ATTRS: dict[str, str] = {
@@ -70,20 +80,44 @@ _V1_LIST_ATTRS: dict[str, str] = {
     "languages": "languages",
 }
 
-_VALID_V2_PLACEMENTS = frozenset(("lead", "trail"))
 
-# v1 format_config.field_layout 里可调"补充字段排版"的七个分区（与 resume_content 的七个
-# 承载补充字段的分区一致）。这是**迁移输入**的契约，只在本转换器使用；v1 的排版实现
-# （resume_field_layout*.py / profile_field_lines.py）已删除，渲染器只认 v2 plan。
-FIELD_LAYOUT_SECTIONS: tuple[str, ...] = (
-    "education",
-    "experience",
-    "campus_experience",
-    "projects",
-    "awards",
-    "publications",
-    "research_projects",
-)
+def _normalize_photo_placement(document: dict) -> dict:
+    """把照片页眉字段的位置收敛为常量 ``"photo"``（5.3；幂等）。
+
+    **为什么放在这里**：``ensure_document_version_with_report`` 是读与写共同的唯一上游——
+    读侧 ``document_io.document_for_record``（详情/render/export/AI/双语/历史）与
+    ``document_io.document_or_422``（预览/导出/预检）都经过它，写侧
+    ``prepare_document_for_save*`` 也经过它。只改写入库、不改读侧，会让"还没保存的文档"
+    与库里产物的形状不一致；放在别处则要维护第二份调用点。
+
+    **为什么必须归一，而不是让渲染层忽略**：后端有二十多处 ``placement == "hidden"``
+    的消费方（document_html / document_plan_rows / document_analysis / document_view /
+    bilingual_variants …），导出是服务端从库里的文档重渲。前端"假装它是 photo"只会得到
+    "预览有照片、导出没有"。
+
+    **为什么排除 ``contact``**：I-02 那条缺陷（页眉 hide→show 把位置写死成 contact）走的是
+    另一套机制——读侧 planner 只看 data URI 前缀就当照片、写侧
+    ``_heal_header_photo_placements`` 在 `header.photo` 空着时才认领，且"已有照片时不抢占"
+    正靠这条 contact 状态。把它们一起扫成 photo 会让两张照片同时 placement=photo，
+    后者按"最后一个赢"覆盖前者。``hidden`` / ``name`` / ``name_meta`` / ``subtitle``
+    这四种才是"位置下拉"留下的、任何渲染方都不认照片的死值。
+
+    只动 ``key == "photo"`` 的字段：姓名、姓名旁小字、求职意向、联系方式的 placement
+    各有语义，不能一起扫平。已经是 ``photo`` 的原样返回，不加任何键——幂等，且旧文档
+    的字节不变。
+    """
+    header = document.get("header")
+    if not isinstance(header, dict):
+        return document
+    items = header.get("items")
+    if not isinstance(items, list):
+        return document
+    for item in items:
+        if not isinstance(item, dict) or item.get("key") != _PHOTO_HEADER_KEY:
+            continue
+        if item.get("placement") in _PHOTO_STALE_PLACEMENTS:
+            item["placement"] = "photo"
+    return document
 
 
 def ensure_document_version_with_report(
@@ -96,20 +130,21 @@ def ensure_document_version_with_report(
     """把任意版本的 content 收口成 v2 dict；返回 (document dict, 转换报告或 None)。
 
     报告为 None 表示本来就是 v2（没有发生转换）——API 用它决定要不要提示"已升级"。
+    三个出口都过 ``_normalize_photo_placement``：照片的位置只可能是 ``"photo"``（5.3）。
     """
     if isinstance(content, ResumeDocument):
-        return document_to_json(normalize_document(content)), None
+        return _normalize_photo_placement(document_to_json(normalize_document(content))), None
     if not isinstance(content, dict):
         raise ConversionError("简历内容必须是对象")
     if content.get("version") == 2:
-        return document_to_json(parse_document(content)), None
+        return _normalize_photo_placement(document_to_json(parse_document(content))), None
     document, report = convert_content(
         content,
         language=language or "zh-CN",
         format_config=format_config,
         custom_fields=custom_fields,
     )
-    return document_to_json(document), report
+    return _normalize_photo_placement(document_to_json(document)), report
 
 
 def ensure_document_version(
@@ -384,114 +419,3 @@ def _custom_before(custom_key: str, builtin_key: str | None, raw_order: Any) -> 
     except ValueError:
         return True
     return custom_at < builtin_at
-
-
-def _apply_field_layout(sections: list[ResumeSection], format_config: Mapping[str, Any]) -> None:
-    """v1 format_config.field_layout -> v2 SectionLayout/EntryLayout（计划 §7.4）。"""
-    raw = format_config.get("field_layout")
-    if not isinstance(raw, Mapping):
-        return
-    by_key = {section.key: section for section in sections}
-    for key in FIELD_LAYOUT_SECTIONS:
-        section = by_key.get(key)
-        config = raw.get(key)
-        if section is None or not isinstance(config, Mapping):
-            continue
-        _apply_section_layout(section, config)
-    entry_configs = raw.get("entries")
-    if not isinstance(entry_configs, Mapping):
-        return
-    for key, per_entry in entry_configs.items():
-        section = by_key.get(str(key))
-        if section is None or not isinstance(per_entry, Mapping):
-            continue
-        for entry in section.entries:
-            config = per_entry.get(entry.id or "")
-            if isinstance(config, Mapping):
-                _apply_entry_layout(entry, config)
-
-
-def _apply_section_layout(section: ResumeSection, config: Mapping[str, Any]) -> None:
-    columns = config.get("columns")
-    if isinstance(columns, int) and 1 <= columns <= 3:
-        section.layout.columns = columns  # type: ignore[assignment]
-    align = config.get("align")
-    if align in ("equal", "flow"):
-        section.layout.align = align  # type: ignore[assignment]
-    gap = _gap_value(config.get("gap"))
-    if gap is not None:
-        section.layout.gap = gap
-    if str(config.get("meta_position") or "") == "above":
-        for entry in section.entries:
-            _swap_lead_trail(entry)
-    for entry in section.entries:
-        _apply_key_flags(entry, config)
-
-
-def _apply_entry_layout(entry: ResumeEntry, config: Mapping[str, Any]) -> None:
-    columns = config.get("columns")
-    if isinstance(columns, int) and 1 <= columns <= 3:
-        entry.layout.columns = columns  # type: ignore[assignment]
-    align = config.get("align")
-    if align in ("equal", "flow"):
-        entry.layout.align = align  # type: ignore[assignment]
-    gap = _gap_value(config.get("gap"))
-    if gap is not None:
-        entry.layout.gap = gap
-    if str(config.get("meta_position") or "") == "above":
-        _swap_lead_trail(entry)
-    _apply_key_flags(entry, config)
-
-
-def _gap_value(raw: Any) -> float | None:
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    return min(max(value, 0.0), 30.0)
-
-
-def _grey_items(entry: ResumeEntry) -> list[Any]:
-    return [
-        item
-        for item in entry.items
-        if not isinstance(item, TextItem) and item.placement in _VALID_V2_PLACEMENTS
-    ]
-
-
-def _swap_lead_trail(entry: ResumeEntry) -> None:
-    for item in _grey_items(entry):
-        item.placement = "trail" if item.placement == "lead" else "lead"
-
-
-def _apply_key_flags(entry: ResumeEntry, config: Mapping[str, Any]) -> None:
-    solo = {str(key) for key in config.get("solo") or () if str(key)}
-    hidden = {str(key) for key in config.get("hidden") or () if str(key)}
-    for item in _grey_items(entry):
-        if item.key in solo:
-            item.solo = True
-        if item.key in hidden:
-            item.placement = "hidden"
-    order = [str(key) for key in config.get("order") or () if str(key)]
-    if order:
-        _reorder_grey(entry, order)
-
-
-def _reorder_grey(entry: ResumeEntry, order: list[str]) -> None:
-    """按 v1 field_layout.order 重排灰字段（只影响 lead/trail，正文/标题顺序不动）。"""
-    grey = _grey_items(entry)
-    if len(grey) < 2:
-        return
-    index = {key: position for position, key in enumerate(order)}
-    ranked = sorted(
-        enumerate(grey),
-        key=lambda pair: (index.get(pair[1].key, len(order) + pair[0]), pair[0]),
-    )
-    queue = [item for _, item in ranked]
-    rebuilt: list[Any] = []
-    for item in entry.items:
-        if not isinstance(item, TextItem) and item.placement in _VALID_V2_PLACEMENTS:
-            rebuilt.append(queue.pop(0))
-        else:
-            rebuilt.append(item)
-    entry.items = rebuilt

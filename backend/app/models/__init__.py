@@ -70,6 +70,7 @@ from .assistant_memory import (
     MEMORY_STATUSES,
     AssistantMemory,
 )
+from .assistant_memory_event import AssistantMemoryEvent
 from .career_scenario import CareerScenario
 from .claim import (
     CLAIM_CATEGORIES,
@@ -77,6 +78,7 @@ from .claim import (
     VERIFICATION_STATUSES,
     ClaimRecord,
 )
+from .company_research import CompanyResearchRun
 from .drill import (
     DRILL_STATUS_ACTIVE,
     DRILL_STATUS_FINISHED,
@@ -259,6 +261,8 @@ __all__ = [
     "AI_TASK_TERMINAL_STATUSES",
     # 2.0 schema epoch 单行表（基线迁移末尾播种 epoch=2）。
     "AppSchemaEpoch",
+    # T07 公司调研历史（0022）：每次调研一条，知识库仍原地覆盖。
+    "CompanyResearchRun",
     "Job",
     "JobMatchBatch",
     # 15A/15B 岗位采样流水（0012）：一次采集一条，见 models/job_seen.py。
@@ -283,6 +287,7 @@ __all__ = [
     "AssistantSkillFile",
     # 0015 助手语义记忆（#31A / #18D 合并模型）：kind 白名单 + 状态 + 来源 + 模型。
     "AssistantMemory",
+    "AssistantMemoryEvent",
     "MEMORY_KINDS",
     "MEMORY_KIND_TARGET_ROLE",
     "MEMORY_KIND_CITY",

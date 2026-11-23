@@ -7,11 +7,43 @@
  * 与「卡片标题」两类；填表引擎自身的文案仍不在这里。
  */
 const webFormPage = {
+  "webFormPage.preview.aiEvidence": "置信度 {confidence} · 依据：{evidence}",
   "webFormPage.notice.title": "这个功能只负责把资料填进页面，不会替你提交",
   "webFormPage.notice.body":
     "填充完成后请回到浏览器窗口逐项核对，确认无误后由你自己点击页面上的提交按钮。",
   "webFormPage.hint.expandLater":
     "浏览器就绪后，安全说明、AI 辅助等控制项会在这里逐步展开（放宽模式的边界说明一直可见）。",
+  "webFormPage.flow.reason.browserOff":
+    "浏览器还没启动：先点上面的「开启专用浏览器」，再回到这里读取当前表单。",
+  "webFormPage.fillMode.title": "怎么填",
+  "webFormPage.fillMode.hint": "这四行决定资料怎么进页面，改完立刻生效。",
+  /* I-27 首屏空态（三步引导）：右栏此前在没有预览时整块不渲染，只剩一行折叠记录，
+     2/3 的屏幕是白的。这三步只是「怎么开始」，真实动作仍在工具条与左栏。 */
+  /* 初始态只剩一条流程轨道（I-24）：步骤名统一取 `webFormPage.readSnapshot.step.*`
+     （与预览态同一套四步），这里只留整块的无障碍标题。 */
+  "webFormPage.onboarding.title": "填写流程",
+  /* 初始态右卡「最近填写」：只铺最近 3 条，完整列表在「查看全部」的抽屉里。
+     空态要说清"现在没有 / 之后会出现什么 / 还能去哪儿"。 */
+  "webFormPage.recent.title": "最近填写",
+  "webFormPage.recent.viewAll": "查看全部",
+  "webFormPage.recent.collapse": "收起",
+  "webFormPage.recent.truncated": "仅显示最近 {count} 条",
+  "webFormPage.recent.emptyWhat": "会发生什么",
+  "webFormPage.recent.emptyBody": "填完一次后，这里会按时间列出页面和填了几项，方便回头核对。",
+  "webFormPage.recent.urls": "看看打开过的网址",
+  "webFormPage.recent.error": "最近填写加载失败",
+  /* 进度条：4 个中文步骤名横排放不进 400px 左栏（会断成「自动浏/览」），
+     改成「当前第几步 + 名称」一行文字 + 4 段进度条。 */
+  "webFormPage.flow.progressTitle": "填表进度",
+  "webFormPage.flow.progressValue": "{current} / {total} · {title}",
+  /* 四类不代填的边界必须常驻可见（#37）；完整风险说明收进同面板的 ⓘ。 */
+  "webFormPage.fillMode.boundary":
+    "日期选择器 · 文件上传 · 密码/验证码/银行卡 · 无弹层只读选项：始终不代填",
+  "webFormPage.result.title": "结果与记录",
+  "webFormPage.result.tab.preview": "预览与填充",
+  "webFormPage.result.tab.pending": "待补资料 {count}",
+  "webFormPage.result.tab.result": "填充结果",
+  "webFormPage.records.hint": "记录里含真实填写的值（证件号、手机号等），看完可以逐条删掉。",
   "webFormPage.stagedAi.ready":
     "上一次后台的 AI 字段识别已完成，结果先存着；点「应用」切到那份预览，页面仍不会被自动修改。",
   "webFormPage.stagedAi.apply": "应用",
@@ -22,6 +54,7 @@ const webFormPage = {
   "webFormPage.scope.all": "全部资料",
   "webFormPage.scope.hint":
     "默认只用当前方案里的资料。切到「全部资料」后，预览、资料清单与自动填表会一起换成同一份数据。",
+  "webFormPage.scope.hintAria": "取数范围说明",
   "webFormPage.toast.targetOpened": "目标网申页面已打开；已有网页不会被覆盖",
   "webFormPage.toast.browserStarted":
     "浏览器已启动。请在这个窗口里打开目标公司的网申页面，再回来点「读取当前表单」",
@@ -40,7 +73,7 @@ const webFormPage = {
   "webFormPage.error.stopFailed": "关闭浏览器失败",
   "webFormPage.error.endFailed": "结束本次填写失败",
   "webFormPage.error.refreshFailed": "刷新浏览器状态失败",
-  "webFormPage.error.diagnosticsFailed": "导出诊断信息失败",
+  "webFormPage.error.diagnosticsFailed": "导出本页诊断失败",
   "webFormPage.error.liveToggleFailed": "切换点击填表失败",
   "webFormPage.error.readFailed": "读取表单失败",
   "webFormPage.error.fillFailed": "填充失败",
@@ -99,6 +132,7 @@ const webFormPage = {
   "webFormPage.aiAssist.body.tail": "；命中的行会标上「AI 建议」并且默认不勾选。",
   "webFormPage.aiAssist.unavailable":
     "尚未配置大模型，暂时无法使用。到「设置」页填好 Base URL 与模型名之后，规则认不出的框就能交给 AI 识别。",
+  "webFormPage.aiAssist.hintAria": "未识别字段辅助说明",
   "webFormPage.aiAssist.pendingRestart": "改动会在下次「开启」时生效",
   "webFormPage.browserCard.isolatedHint":
     "使用独立的网申专用浏览器（不会覆盖投递台或已有网申页面）",
@@ -106,13 +140,12 @@ const webFormPage = {
     "停掉这个受控浏览器窗口。里面的登录态会保留，下次启动不用重新登录",
   "webFormPage.browserCard.stop": "关闭浏览器",
   "webFormPage.browserCard.startAria": "开启专用浏览器",
+  "webFormPage.browserCard.moreAria": "更多浏览器操作",
   "webFormPage.browserCard.start": "开启专用浏览器",
   "webFormPage.browserCard.settings": "浏览器设置",
   "webFormPage.browserCard.refreshTooltip": "立即刷新状态",
   "webFormPage.browserCard.refreshAria": "刷新状态",
-  "webFormPage.browserCard.diagnostics": "导出诊断（不含密钥）",
-  "webFormPage.browserCard.endTooltip":
-    "结束这一次网申填写：收起面板、不清理资料，下次点「读取当前表单」重来",
+  "webFormPage.browserCard.diagnostics": "导出本页诊断（不含密钥）",
   "webFormPage.browserCard.end": "结束本次填写",
   "webFormPage.fillRate.label": "成功率 {percent}%（{filled}/{total}）",
   "webFormPage.fillResult.title": "填充结果",
@@ -144,6 +177,7 @@ const webFormPage = {
   "webFormPage.relaxed.risk":
     "开启后程序会尝试代点下拉/弹层选项并代勾你逐条确认过的声明项，存在选错可能，填完请核对。 " +
     "四类始终不代填：日期选择器、文件上传、密码/验证码/银行卡、无弹层的只读点选框——这些都需要你自己操作。",
+  "webFormPage.relaxed.hintAria": "放宽模式的风险说明",
   "webFormPage.liveStatus.thinking": "正在看这个框",
   "webFormPage.liveStatus.aiThinking": "AI 正在识别",
   "webFormPage.liveStatus.matched": "已给出建议",
@@ -155,6 +189,9 @@ const webFormPage = {
   "webFormPage.error.memoryTargetsFailed": "加载完整资料目录失败",
   "webFormPage.toast.restored": "已恢复上次读取的表单；勾选已重置为默认，请核对后再填充",
   "webFormPage.error.restoreFailed": "上次读取的表单已失效，请重新读取",
+  // 体验示例数据集：与后端 409 的 detail 逐字一致（见 services/webform/dataset_guard.py）。
+  "webFormPage.sampleLocked.hint":
+    "当前是体验示例数据集，示例数据不参与真实填表；请切换到自己的数据集",
 } as const;
 
 export default webFormPage;

@@ -23,14 +23,28 @@ class AssistantMemoryOut(BaseModel):
     key: str = ""
     value: str
     confidence: float = 0.5
-    # active / superseded / deleted（取值见 models/assistant_memory.py）。
+    # active / superseded / suppressed / deleted（取值见 models/assistant_memory.py）。
     status: str = "active"
     # manual / extracted（#18D 手填与 #31A 自动抽取共用同一模型）。
     source: str = "manual"
     source_conversation_id: int | None = None
     source_message_id: int | None = None
+    # 来源消息的摘录（最多 60 字）：让用户看见"这句话是从哪儿学来的"，而不是只有一个 id。
+    source_excerpt: str = ""
     created_at: datetime
     updated_at: datetime
+
+
+class AssistantMemoryEventOut(BaseModel):
+    """一条变更历史：动作 + 变更前后的值（F33）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    action: str
+    before: str = ""
+    after: str = ""
+    at: datetime
 
 
 class AssistantMemoryCreate(BaseModel):
@@ -54,14 +68,28 @@ class AssistantMemoryUpdate(BaseModel):
 
 
 class AssistantMemorySettings(BaseModel):
-    """自动抽取开关（#31A）。默认关：31C 可见可改之前不自动写入。"""
+    """记忆的两个设置项：自动抽取（默认关）与注入总开关（T23，默认开）。"""
 
     auto_extract: bool = False
+    inject: bool = True
+
+
+class AssistantMemorySettingsUpdate(BaseModel):
+    """PUT /settings 的请求体：只改显式给出的项，未给的一项保持原值。
+
+    两个开关在同一张卡上，各自只送自己那一项——把没动的那项一并回写会顺手把用户
+    刚改的设置顶回去。
+    """
+
+    auto_extract: bool | None = None
+    inject: bool | None = None
 
 
 __all__ = [
     "AssistantMemoryCreate",
+    "AssistantMemoryEventOut",
     "AssistantMemoryOut",
     "AssistantMemorySettings",
+    "AssistantMemorySettingsUpdate",
     "AssistantMemoryUpdate",
 ]

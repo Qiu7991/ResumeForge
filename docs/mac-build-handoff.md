@@ -7,7 +7,7 @@
 
 发布资产已可由 GitHub Actions 构建（公开仓库的 macOS runner 免费），**日常发版不再需要进入虚拟机**：
 
-1. 按常规流程 bump 版本、push、打 tag、创建 Release（`gh release create <tag> --notes-file ...`）；
+1. 按常规流程 bump 版本、push、打 tag，创建 Release 草稿（`gh release create <tag> --draft --notes-file ...`）。
 2. 在 GitHub Actions 页面手动运行 **`Release assets (desktop installers)`**：
    - `tag`：目标版本（如 `v1.0.2`，**Release 必须已存在**）；
    - `source_ref`：留空（构建源=该 tag，保证产物与发行严格对应）；
@@ -25,6 +25,39 @@ gh workflow run release-assets.yml -f tag=v1.0.2 -f dry_run=true   # 演练
 gh workflow run release-assets.yml -f tag=v1.0.2 -f dry_run=false  # 正式挂资产
 gh run watch
 ```
+
+跨平台安装升级演练建议使用当前正式版作为源、main 作为脚本版本：
+
+```bash
+gh workflow run release-assets.yml -f tag=v2.3.0 -f source_ref=main -f dry_run=true
+gh run watch
+```
+
+此演练的 Windows 分支会安装官方 v2.3.0，再构建临时 v2.3.1 候选包；macOS/Linux 会分别用官方 v2.2.3 升级到 v2.3.0。演练只生成 Actions artifact，不会修改公开 Release 或 Latest。
+
+### Windows 应用内升级验证
+
+- **发版前**，正式签名并生成 SHA-256 后，GitHub Actions 分别从官方 `v2.3.0` 和最近的较早正式版实装升级。若两者相同，只跑一次。两个不同的旧版在独立的 Windows runner 上测试。只有检查全部通过，工作流才会把 Windows 安装包和校验文件挂到 Release。
+- **发布后**，附件齐全后公开草稿并将其设为 Latest。`Windows desktop upgrade` 会通过公开的 GitHub Releases 实际下载并安装，验证原路径重启、后端版本和测试数据保留。可以在 Actions 查看失败步骤和截图。通过工作流的 `GITHUB_TOKEN` 发布时，GitHub 会抑制后续事件触发。此时用下方 `mode=public` 手动启动检查。
+- **随时演练**，`mode=rehearsal` 在独立的 GitHub runner 构建临时高版本，用官方 2.3.0 执行同一套实装验证。产物留在测试运行中。
+
+```bash
+gh workflow run windows-upgrade.yml -f mode=rehearsal
+gh workflow run windows-upgrade.yml -f mode=public
+```
+
+### macOS 与 Linux 安装包升级验证
+
+- 发版前，Release 资产工作流会把刚构建的 dmg / AppImage 暂存为 Actions artifact，并下载官方 v2.2.3 和最近正式版作为升级基线。macOS 在 Intel 与 Apple Silicon runner 上分别测试，Linux 在 x64 与 ARM64 runner 上分别测试。
+- 每台 runner 都挂载/启动旧安装包，通过桌面 UI 检查版本、后端健康、首页和「软件更新」设置页，写入用户数据标记，再按用户实际的安装方式替换成候选包并重新启动。检查新版本号、前端入口、后端健康和标记保留。任一平台或架构失败，Mac/Linux 安装包和 Windows 安装包都不会被挂到 Release。
+- Release 发布后，`desktop-package-upgrade` 会从公开 Releases API 与下载地址再走一遍。这样同时检查附件是否公开、名称和 SHA-256 是否正确、签名或打包文件是否能在原生 runner 上启动。若发布动作由 `GITHUB_TOKEN` 触发而没有启动 `release.published` 工作流，可手动执行：
+
+```bash
+gh workflow run desktop-package-upgrade.yml -f mode=public -f platform=all
+```
+
+- macOS 的更新是用新 dmg 替换「应用程序」中的旧 App。Linux 的更新是用新 AppImage 替换旧文件。两者当前都不提供应用内下载并安装，CI 验证的是各自现有的手动替换流程。
+- AppImage 的 ARM64 文件现在在原生 ARM64 runner 上启动。仅做交叉构建或 ELF 架构检查不算运行验证。
 
 **虚拟机仍然有用的两个场景**：① 真机启动验收（本文第四节）；② 补建早于 mac 构建脚本的历史版本（≤ v1.0.1 的 tag）。新版本优先走 CI。
 
@@ -62,13 +95,13 @@ git log --oneline -1            # 记录 commit，写入汇报
 
 # 2. 前端：安装依赖 + 构建生产资产（产出 frontend/dist；version.json 必须与 desktop/package.json 一致）
 cd frontend
-npm ci --no-audit --no-fund
-npm run build
+pnpm install --frozen-lockfile
+pnpm run build
 cd ..
 
 # 3. 桌面壳依赖（含 Electron 二进制；镜像避免国内下载卡住）
 cd desktop
-ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install --no-audit --no-fund
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ pnpm install
 cd ..
 
 # 4. 一键构建（脚本会：组装 payload → electron-builder --mac → 写 sha256）
@@ -106,9 +139,15 @@ open /Applications/ResumeForge.app
    `open -a /Applications/ResumeForge.app --args --disable-gpu`（虚拟机 Metal 加速不完整时的已知规避）。
 2. **后端链路**：首次启动会经由 `start.command` **在线装配 Python 运行时**（下载 Python + pip 安装依赖，VM 网络下可能 3–10 分钟），耐心等待并观察日志；后端就绪后页面应可正常打开与操作（如首页统计、岗位列表）。
 3. 日志位置（排查用）：
-   - 壳与后端运行日志：`/Applications/ResumeForge.app/Contents/Resources/payload/runtime/logs/desktop-main.log`、`desktop-backend.log`
-   - 用户数据与后端日志：`~/Library/Application Support/ResumeForge/`（含 `data/logs/backend.log`）
-   - 启动探针：`~/Library/Application Support/ResumeForge/ResumeForge/startup-probe.log`（若存在）
+   - 壳与后端运行日志：**用户目录**下的 `runtime/logs/desktop-main.log`、`desktop-backend.log`，macOS 即
+     `~/Library/Application Support/ResumeForge/runtime/logs/`；不可写时会降级到系统临时目录（`$TMPDIR/ResumeForge/logs`），
+     极端情况两个都写不了就没有这个文件（壳不写日志也不崩）。
+     **不要看** `.app/Contents/Resources/payload/runtime/logs/`：那是 `scripts/build-desktop-mac.sh` 用 `mkdir -p` 建出来的空壳，壳层永远不往里写（payload 只读）。
+   - 用户数据与后端日志：`~/Library/Application Support/ResumeForge/data/`，后端自己那份是 `data/logs/backend.log`（5MB×5 自带滚动，与上面的壳日志不是同一个文件）
+   - 诊断包：后端起得来时，`GET /api/system/diagnostics/export` 会按原名带走 `desktop-main.log` / `desktop-backend.log`
+     （只取尾部 400 行 / 256KB，过同一道脱敏闸，不带走 `.log.1` 轮转；只有由桌面壳拉起的后端才注入 `RF_DESKTOP_LOG_DIR`）。
+     包里没有桌面日志，只说明这台机器上的后端不是由桌面壳拉起的、或该文件还没被写过、或读不到（权限/占用）——不代表诊断包坏了。
+     后端起不来时该端点本身不可达，只能走上面的手动路径。
 4. 完成后退出应用（托盘/菜单退出），并卸载 dmg：`hdiutil detach /Volumes/ResumeForge`
 
 > ⚠️ 常见误判：「打不开」先分清是 Gatekeeper 拦截（弹窗提示"无法验证开发者"→ 右键→打开 即可）还是真崩溃（进程退出/白屏 + 日志报错）。
@@ -118,7 +157,7 @@ open /Applications/ResumeForge.app
 | # | 现象 | 处理 |
 |---|---|---|
 | 1 | `xcode-select: error` / 缺头文件 | `xcode-select --install` 装 CLT（不装完整 Xcode） |
-| 2 | `npm install` 卡在 electron 下载 | 必须带 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` |
+| 2 | `pnpm install` 卡在 electron 下载 | 必须带 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` |
 | 3 | 构建报错 `/bin/bash: ... Build-Desktop.ps1: ...` | **不要用 PowerShell 脚本**（`scripts/Build-Desktop.ps1` 是 Windows 专用）；mac 用 `scripts/build-desktop-mac.sh` |
 | 4 | 首次启动白屏/闪退 | 先看 `desktop-main.log`；VM 可试 `--disable-gpu`；再查首启装配是否还在进行 |
 | 5 | App 双击无反应/提示"无法验证开发者" | 未签名所致：右键→打开；或 `xattr -dr com.apple.quarantine /Applications/ResumeForge.app` |

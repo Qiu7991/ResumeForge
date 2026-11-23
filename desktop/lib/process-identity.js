@@ -44,12 +44,14 @@ const PROBE_UNREADABLE = Symbol("process-probe-unreadable");
 
 const QUERY_TIMEOUT_MS = 10_000;
 
-function defaultExecFile(file, args) {
+// `timeoutMs` 可覆盖：端口反查（lib/port-listener.js）自己要更紧的预算（5s），
+// 而身份校验沿用 10s。默认值不变，既有调用点（含注入的 execFileFn）行为完全一致。
+function defaultExecFile(file, args, { timeoutMs = QUERY_TIMEOUT_MS } = {}) {
   return new Promise((resolve) => {
     execFile(
       file,
       args,
-      { windowsHide: true, timeout: QUERY_TIMEOUT_MS, maxBuffer: 1 << 20 },
+      { windowsHide: true, timeout: timeoutMs, maxBuffer: 1 << 20 },
       (error, stdout, stderr) => {
         resolve({
           code: error && typeof error.code === "number" ? error.code : error ? 1 : 0,
@@ -251,15 +253,33 @@ function processExists(pid) {
   }
 }
 
+// R3-B adaptive cadence: after a kill the tree is usually gone within a frame
+// or two, so the first `fastAttempts` polls run at `fastIntervalMs` and only the
+// long tail (a tree still unwinding) falls back to `intervalMs`. Both default to
+// 0 = "no fast phase", so any caller that does not opt in keeps the exact old
+// cadence; backend-stop passes 50ms x 4 on the quit path.
+// `scheduleFn` / `nowFn` are injectable so the offline tests can drive a fake
+// clock instead of sleeping for real.
 async function waitForProcessExit(
   pid,
-  { timeoutMs = 5000, intervalMs = 300, existsFn = processExists } = {},
+  {
+    timeoutMs = 5000,
+    intervalMs = 300,
+    fastIntervalMs = 0,
+    fastAttempts = 0,
+    existsFn = processExists,
+    scheduleFn = setTimeout,
+    nowFn = Date.now,
+  } = {},
 ) {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = nowFn() + timeoutMs;
+  let attempt = 0;
   for (;;) {
     if (!existsFn(pid)) return true;
-    if (Date.now() >= deadline) return false;
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    if (nowFn() >= deadline) return false;
+    const delay = attempt < fastAttempts ? fastIntervalMs : intervalMs;
+    attempt += 1;
+    await new Promise((resolve) => scheduleFn(resolve, delay));
   }
 }
 
@@ -272,6 +292,7 @@ module.exports = {
   STATUS_UNVERIFIABLE,
   STATUS_VERIFIED,
   commandMatches,
+  defaultExecFile,
   parseProcessRecord,
   readProcessInfo,
   verifyProcessRecord,

@@ -1,56 +1,35 @@
 # SPDX-License-Identifier: Apache-2.0
-"""简历接口子模块共享件：PDF 响应头常量与三个跨域 helper。
+"""简历接口子模块共享件：PDF 响应头常量、导出准入/版本收口与序列化 helper。
 
 从原 ``api/resumes.py`` 原样搬运（Wave5 拆分）：常量与 helper 的实现逻辑零改动，
 仅随文件移动改变导入路径。
+
+**RF-03b**：``document_or_422`` / ``conversion_error_detail`` 与详情序列化
+（``_to_resume_out``）的实现搬到了 ``services/resume/**``——分页报告、版式保存与
+``get_resume`` 动作下沉到服务层之后，这两处若不搬就会被复制成第二份实现。
+本文件保留同名 re-export（含历史名字 ``_to_resume_out``），调用点无需改动。
 """
 
 import json
-from typing import Any, Literal, get_args
+from typing import Any
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
 
+from ...middleware.loopback_origin import is_non_cross_site_request
 from ...models.resume import ResumeRecord
-from ...schemas.resume import (
-    FactAnnotation,
-    ResumeFontScale,
-    ResumeOut,
-)
 from ...schemas.resume_document import DocumentValidationError
 from ...services import trash
 from ...services.resume import document_io
 from ...services.resume.document_conversion_types import ConversionError
-from ...services.resume.resume_labels import normalize_language
-from ...services.resume.resume_templates import DEFAULT_FONT_SCALE, DEFAULT_TEMPLATE
+from ...services.resume.document_io import conversion_error_detail, document_or_422
+from ...services.resume.resume_labels import DEFAULT_RESUME_LANGUAGE
+from ...services.resume.resume_out import build_resume_out
+from .. import settings as settings_api
 
-# 与 ResumeBrief 对应字段上的 Literal 保持一致（schema 里未起别名，这里就近镜像）。
-ResumeSource = Literal["ai", "manual"]
-ResumeEnhancementLevel = Literal["light", "balanced", "strong"]
-
-# 模型层三列都是 ``str``，出口处收窄为 schema 的 ``Literal``（未知值大声失败，
-# 与 pydantic Literal 字段的校验语义一致——以前响应模型校验也会在同一位置拦下）。
-_SOURCE_VALUES: tuple[ResumeSource, ...] = get_args(ResumeSource)
-_ENHANCEMENT_LEVEL_VALUES: tuple[ResumeEnhancementLevel, ...] = get_args(ResumeEnhancementLevel)
-_FONT_SCALE_VALUES: tuple[ResumeFontScale, ...] = get_args(ResumeFontScale)
-
-
-def _as_resume_source(value: str) -> ResumeSource:
-    if value not in _SOURCE_VALUES:
-        raise ValueError(f"未知的简历来源：{value!r}")
-    return value
-
-
-def _as_enhancement_level(value: str) -> ResumeEnhancementLevel:
-    if value not in _ENHANCEMENT_LEVEL_VALUES:
-        raise ValueError(f"未知的美化档位：{value!r}")
-    return value
-
-
-def _as_font_scale(value: str) -> ResumeFontScale:
-    if value not in _FONT_SCALE_VALUES:
-        raise ValueError(f"未知的字号系数：{value!r}")
-    return value
+# 历史名字（Wave5 之前叫 ``_to_resume_out``）：ai_edits / crud / layout_render /
+# versions / resume_phrases 这些调用点与既有 monkeypatch 位置都还用这个名字。
+_to_resume_out = build_resume_out
 
 
 # 服务端 PDF 的实际页数与用户选定的上限。前端靠它们提示"下载下来的页数和你选的不一样"，
@@ -94,43 +73,28 @@ def page_limit_header_value(page_limit: int | None, *, is_unlimited: bool) -> st
     return "0" if is_unlimited else str(page_limit)
 
 
+def _require_local_export_request(request: Request) -> None:
+    """Resume exports expose private profile data and are a loopback-only capability."""
+    if not settings_api._is_loopback_request(request) or not is_non_cross_site_request(request):
+        raise HTTPException(status_code=403, detail="简历导出仅允许从本机前端访问")
+
+
+def _document_for_request(db: Session, record: ResumeRecord, content_override: dict | None) -> dict:
+    """导出输入的版本收口：v2 直通；旧记录/旧草稿一次性转换（不写库）。
+
+    结构不合法（例如非法照片 data URL）统一 422 + 可读提示，不冒泡成 500。
+    """
+    return document_or_422(
+        content_override if content_override is not None else record.content,
+        db,
+        language=record.language or DEFAULT_RESUME_LANGUAGE,
+        format_config=record.format_config or {},
+    )
+
+
 def _format_sse(payload: dict) -> str:
     """把事件转成 SSE 数据帧。"""
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-
-
-# v1 内容的 pydantic 校验错误（尤其照片 data URL）对用户没有可读性：这里统一翻成人话。
-_UNSUPPORTED_PHOTO_DETAIL = "简历照片格式不受支持：照片必须是 JPEG、PNG 或 WebP 格式的 base64 data URL，请重新上传后再预览或导出"
-
-
-def conversion_error_detail(exc: Exception) -> str:
-    """把 ConversionError / pydantic 校验错误翻成可读的 422 detail（照片单独给指引）。"""
-    text = str(exc).strip()
-    lowered = text.lower()
-    if "photo" in lowered or "data url" in lowered or "data_url" in lowered:
-        return _UNSUPPORTED_PHOTO_DETAIL
-    if text:
-        return f"简历内容无法解析：{text[:300]}"
-    return "简历内容无法解析：请检查内容结构后重试"
-
-
-def document_or_422(
-    payload: Any,
-    db: Session | None = None,
-    *,
-    language: str | None = None,
-    format_config: dict | None = None,
-) -> dict:
-    """读/渲染入口的版本收口：v1/v2 -> v2 dict；结构不合法统一 422（不 500）。"""
-    try:
-        return document_io.ensure_document_version(
-            payload,
-            language=language,
-            format_config=format_config,
-            custom_fields=document_io.custom_field_definitions(db),
-        )
-    except (ConversionError, DocumentValidationError) as exc:
-        raise HTTPException(status_code=422, detail=conversion_error_detail(exc)) from exc
 
 
 def _validated_content(
@@ -154,184 +118,6 @@ def _validated_content(
         )
     except (ConversionError, DocumentValidationError) as exc:
         raise HTTPException(status_code=422, detail=conversion_error_detail(exc)) from exc
-
-
-def _coverage_notes_with_entry_map(
-    record: ResumeRecord, db: Session | None, *, hidden_sections: set[str] | None = None
-) -> list[dict[str, Any]]:
-    """给旧简历的未收录清单补上两个"读取侧才补"的键，并标明板块是否已隐藏。
-
-    **``entry_id_by_name``**（逐条补入用，2026-11-08）：这个键是生成时写进
-    ``coverage_notes`` 的，但用户手上已有的简历都是旧数据（实测 15 份里有清单的 5 份，
-    7 条 note 里 0 条带映射）。不补的话「从资料补上这段」在他们的简历上永远出不来按钮。
-
-    读取侧现场算的依据是**当前资料库**：清单里的名字本来就是资料条目的身份名，
-    按名字回查资料库就能拿到 entry_id。代价是"生成后资料被改名"的名字查不到，
-    那种情况不写这个键，前端那一行就不给补入按钮（不猜）。
-
-    **``granularity``**（2026-11-08）：字段级 note（``项目「X」的项目亮点``）与条目级
-    note（``项目经历``）由后端两个不同函数生成，只有新的那份会标 ``"field"``。
-    旧记录一条都没标 → 前端按条目级处理 → 落到「去制作台添加」这条**死路**
-    （制作台里没有"补这段"入口，用户实测点进去什么也做不了）。
-    这里用确定性规则回填：**分区标签不等于该分区的标准名** ⇒ 字段级。
-    两个生成点用的标签格式各自固定（条目级恒为标准名，字段级恒为
-    ``项目「X」的…``），所以这条规则不需要猜语义。
-
-    只补**缺失**的键：已有的保持生成时的快照（那才是当时的真相）。
-
-    **``section_hidden``**（2026-11-08）：板块被用户隐藏时（``section.hidden=true``，
-    「隐藏 = 数据保留、不上纸面」），清单里那些内容**本来就上不了纸**。实测用户 15 份
-    简历里 11 份把「专业技能」隐藏了，而清单照样报「66 条技能没写进简历」——
-    用户点「补进简历」补进去，纸面上什么都不会多出来，等于又一次"点了没反应"。
-    这里如实把板块隐藏状态带给前端，由它明说"这个板块当前是隐藏的，补进去也不显示"。
-    """
-    notes = record.coverage_notes or []
-    hidden = hidden_sections or set()
-    if not notes or db is None:
-        return notes
-    complete = all(
-        isinstance(item, dict)
-        and "granularity" in item
-        and (item.get("entry_id_by_name") or item.get("granularity") == "field")
-        and "section_hidden" in item
-        for item in notes
-    )
-    if complete:
-        return notes
-
-    from ...services.profile.ai_profile import load_ai_consumed_profile
-    from ...services.resume.resume_coverage import _SECTION_MAP
-    from ...services.resume.resume_coverage_notes import entry_id_map
-
-    identity_by_section = {section: field for _field, section, field, _label in _SECTION_MAP}
-    # 技能不在 ``_SECTION_MAP`` 里（那张表只登记"经历类"分区，技能走字段级比对），
-    # 但技能条目同样是"一条资料 = 一个技能"，可以逐条补入。身份字段是技能名。
-    identity_by_section["skills"] = "name"
-    # 条目级 note 的 ``section_label`` 恒等于这个标准名（见 ``find_unwritten_details``）；
-    # 字段级 note 的标签由 ``find_unwritten_field_details`` 拼成 ``项目「X」的…``。
-    label_by_section = {section: label for _field, section, _id, label in _SECTION_MAP}
-    # 技能的条目级 note 标签恒为「专业技能」（见 ``find_unwritten_field_details`` 第 2 段）。
-    label_by_section["skills"] = "专业技能"
-    # note 的 ``section`` 是**资料侧**键，文档分区是**简历侧**键：三个分区不同名。
-    # 与 ``_SECTION_MAP`` 的前两列同源（资料侧 -> 简历侧），其余分区同名。
-    doc_key_by_section = {section: field for field, section, _id, _label in _SECTION_MAP}
-    consumed = None
-    changed = False
-    enriched: list[dict[str, Any]] = []
-    for item in notes:
-        if not isinstance(item, dict):
-            enriched.append(item)
-            continue
-        patch: dict[str, Any] = {}
-        section = str(item.get("section") or "")
-        # 板块隐藏状态：note 里的 ``section`` 是资料侧键，而文档分区用简历侧键，
-        # 三个分区不同名（见 ``coverageGroups.PROFILE_SECTION_KEY_ALIASES`` 的另一半）。
-        patch["section_hidden"] = doc_key_by_section.get(section, section) in hidden
-        canonical_label = label_by_section.get(section)
-        if "granularity" not in item and canonical_label is not None:
-            is_field = str(item.get("section_label") or "") != canonical_label
-            patch["granularity"] = "field" if is_field else "entry"
-        # 字段级 note 没有"可整条补入"的条目身份（缺口是条目内的几句），不查映射。
-        if patch.get("granularity", item.get("granularity")) == "field":
-            identity_field = None
-        else:
-            identity_field = identity_by_section.get(section)
-        names = [str(name) for name in (item.get("names") or []) if str(name)]
-        if (
-            "entry_id_by_name" not in item
-            and identity_field
-            and names
-        ):
-            if consumed is None:
-                try:
-                    consumed = load_ai_consumed_profile(db)
-                except Exception:  # noqa: BLE001 - 资料读取失败不该让详情接口挂掉
-                    return notes
-            mapping = entry_id_map(consumed, section, identity_field, names)
-            if mapping:
-                patch["entry_id_by_name"] = mapping
-        if patch:
-            changed = True
-            enriched.append({**item, **patch})
-        else:
-            enriched.append(item)
-    return enriched if changed else notes
-
-
-def _to_resume_out(
-    record: ResumeRecord,
-    db: Session | None = None,
-    *,
-    document_conversion: dict | None = None,
-) -> ResumeOut:
-    """记录 -> 详情响应。读路径统一收口：v1 记录一次性转 v2（不写库）。
-
-    document_conversion 由**写路径**传入（创建时请求体是 v1，响应要告诉用户已升级）；
-    读路径下它是 None = 库内本来就是 v2，或转换发生在本次读取（document_for_record 返回摘要）。
-    """
-    content, conversion = document_io.document_for_record(db, record)
-    if document_conversion is not None:
-        conversion_summary = document_conversion
-    else:
-        conversion_summary = document_io.conversion_summary(conversion)
-    # 板块隐藏状态（"隐藏 = 数据保留、不上纸面"）：清单要据此明说"补进去也不显示"，
-    # 否则用户补完发现纸面没变，只会认为按钮坏了。
-    hidden_sections = {
-        str(section.get("key") or "")
-        for section in (content.get("sections") or [])
-        if isinstance(section, dict) and section.get("hidden")
-    }
-    return ResumeOut(
-        id=record.id,
-        title=record.title,
-        job_id=record.job_id,
-        job_title=record.job_title,
-        company=record.company,
-        source=_as_resume_source(record.source or "ai"),
-        favorite=record.favorite,
-        favorited_at=record.favorited_at,
-        favorited_at_estimated=bool(record.favorited_at_estimated),
-        model=record.model,
-        enhancement_enabled=record.enhancement_enabled,
-        enhancement_level=_as_enhancement_level(record.enhancement_level),
-        note=record.note or "",
-        # W14/0054：旧行 server_default 读作 resume。
-        document_mode=getattr(record, "document_mode", "resume") or "resume",
-        template=record.template or DEFAULT_TEMPLATE,
-        format_name=record.format_name or "",
-        # 这个字段漏了不会报错，只会让保存成功却读不回来——界面上表现为"按了没反应"。
-        format_config=record.format_config or {},
-        # 语义值原样回传：``0`` = 「不限篇幅」（前端按 ``=== 0`` 判定）。写成
-        # ``or 1`` 会让 API 把「不限」答成"1 页"，编辑器立刻显示最严的篇幅——用户
-        # 明明选了不限，界面却告诉他只能写一页。只有 NULL 列（老数据）才回落 1。
-        page_limit=record.page_limit if record.page_limit is not None else 1,
-        font_scale=_as_font_scale(record.font_scale or DEFAULT_FONT_SCALE),
-        # 读取侧收口而不是直接透传：库里的值被外部工具改成 "fr" 或空串时按 zh-CN 读，
-        # 否则 schema 的 Literal 校验会让整份简历列表 500（见 resume_labels 的说明）。
-        language=normalize_language(record.language),
-        created_at=record.created_at,
-        parent_revision_id=record.parent_revision_id,
-        content=content,
-        document_conversion=conversion_summary,
-        warnings=record.warnings or [],
-        parse_error=record.parse_error,
-        rationale=record.rationale or "",
-        coverage_notes=_coverage_notes_with_entry_map(
-            record, db, hidden_sections=hidden_sections
-        ),
-        # JSON 列里存的是 dict，逐条显式校验成 FactAnnotation（与 pydantic 构造时的
-        # 隐式校验同语义，这里写明让类型检查器也看得到）。
-        fact_annotations=[
-            FactAnnotation.model_validate(item) for item in (record.fact_annotations or [])
-        ],
-        # 制作台靠它决定要不要把「保存」常驻（见 schema 里的说明）。
-        draft=bool(record.draft),
-        # 保存次数（0052）：前端把它记成 ``expectedRevision``，下次条件写原样发回。
-        # ``or 0`` 兜住 0052 之前写入的旧行与"列刚加、还没 refresh"的实例。
-        revision=int(record.revision or 0),
-        # A5：这份简历生成时冻结的职业场景快照（旧行/手写简历为 None，不按当前场景回填）。
-        context_snapshot=getattr(record, "context_snapshot", None),
-    )
 
 
 def _get_live_resume(db: Session, resume_id: int) -> ResumeRecord:

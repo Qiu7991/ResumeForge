@@ -36,6 +36,8 @@
 - 优先使用依赖注入、接口隔离和现有本地抽象，以便替换实现和编写离线测试。
 - 复用已有工具、组件和类型；只有在确实减少复杂度或重复时才新增抽象。
 - 代码文件默认 ASCII；`docs/**`、`README*.md`、语言包等**既有中文文件用 UTF-8 读写**——不要转义成 `\uXXXX`、不要整文件重新编码（会产生全文件 diff，也会让中文变成不可读的转义串）。
+- **行尾统一 LF**（`.gitattributes` 的 `* text=auto eol=lf`）。Windows 上如果全局开了 `core.autocrlf=true`，checkout 出来的工作区会是 CRLF：这时本地 `pnpm run format:check` 会**假红**（prettier 把每行都判成变了），而 CI 是绿的——不要在那种状态下"修格式"，先 `git ls-files --eol` 确认，再 `git add --renormalize .` 刷新索引（内容对提交零差异）。诊断口诀：**一整个文件"每行都改了"但肉眼看不出区别 = 行尾，不是格式**。
+  两道机器闸门已在守它：`scripts/hooks/pre-commit` 拒绝暂存含 CRLF 的文本文件，CI 的 `repo-hygiene` 作业拒绝 `i/crlf` / `w/crlf`。**克隆后建议先执行一次 `git config core.autocrlf false`**（只影响本仓库），否则 Windows 上每次检出都会重新写出 CRLF。
 - 使用 `apply_patch` 进行手工编辑，不用脚本覆盖无关文件，不提交构建产物、虚拟环境、数据库和个人资料。
 
 ## 规模约束（CI 硬闸门）
@@ -55,7 +57,22 @@
 3. 实施范围可控的修改，沿用现有模式；不要回退或覆盖用户已有的无关改动。
 4. 补充测试和错误处理，更新相关文档与 CHANGELOG。
 5. 运行与风险匹配的验证命令，至少报告通过项、失败项和未覆盖风险。未能运行的检查必须明确说明原因。
-6. 汇总修改文件、行为变化、数据库/配置迁移、验证结果和后续建议。除非用户明确要求，不创建 Git commit、不推送远程、不删除用户数据。
+6. 汇总修改文件、行为变化、数据库/配置迁移、验证结果和后续建议。**不删除用户数据。**
+
+### Git 提交与推送（2026-11-20 修订）
+
+- **本地提交可以主动做。** 当一组改动构成一个完整、能一句话说清的单元，且它的验证已经跑绿
+  （相关用例 + 与风险匹配的 `ruff` / `format:check` / `lint` / `typecheck` / 构建）时，就地提交：
+  边界留在历史里，出问题能定位、能回退。反过来，**不要把整个任务攒成一次巨型提交**，也不要提交
+  半成品（留 TODO、测试红、迁移只改了一半）。
+- **推送必须由用户发起。** `git push`、force-push、打 tag、发 Release 一律等用户明确说"推 / 发"；
+  "改完了""可以了""提交吧"都**不等于**"推上去"。用户没说就不推，改动停在本地。
+- **只暂存自己的路径**：`git add <自己改过的文件>`。同一工作区常有别人的未提交改动，
+  `git add -A` / `git add .` 会把半成品一起带上；确实需要整树提交时，先确认那些改动属于本轮。
+  提交前 `git diff --cached --name-only` 看暂存区、`git show --stat HEAD` 复核实际落盘内容。
+- **pre-commit 失败就修根因**，不要 `--no-verify`；确需绕过必须由用户明确要求。
+- 提交信息按 `type(scope): 中文摘要`，正文写"为什么 / 影响面"；署名规则见「提交署名」一节
+  （禁止任何 AI trailer）。
 
 不确定的架构决策如果会改变公共接口、数据模型、部署方式或用户工作流，应先向用户确认；低风险、可回滚且与现有模式一致的实现可以直接推进，但要在交付摘要中说明假设。
 
@@ -68,7 +85,10 @@
 - **同一文件只能有一个写入者**。共享文件（i18n 语言包、路由表、schema 索引、`CHANGELOG.md`、`docs/**`）由一个人统一落，其他人只提交"需要什么"，不直接改。
 - **子任务回报"完成"不等于磁盘上真的有**：核对文件存在、静态检查 0 错、它声称跑过的命令确有输出。三者缺一就退回。
 - **回报固定一行**：`[任务 N] 状态 | 改动文件 | 证据（路径或命令） | 返工次数 | 需协调的事`。
-- 提交前用 `git show --stat HEAD` 与 `git status --porcelain <自己的文件>` 复核，别把他人的半成品带上去。
+- 提交前用 `git show --stat HEAD` 与 `git status --porcelain <自己的文件>` 复核，别把他人的半成品带上去；
+  只 `git add` 自己的路径（细则见「工作流程 → Git 提交与推送」）。
+- **提交 ≠ 推送**：本地提交是自己的历史，远端仍是共享状态。推之前先 `git fetch` 看一眼远端有没有新提交，
+  需要推送时按用户指示做（`git push` 属"必须由用户发起"的动作）。
 
 ## 本项目验证命令
 
@@ -84,9 +104,10 @@ $env:PYTHONUTF8 = "1"
 ```
 
 `-n auto` 走 `pytest-xdist`（在 `requirements-dev.txt` 里）并行执行。**这不是可选的美化**：全量
-7689 个用例的实测口径是——`-n auto` 约 **2.7 分钟**（164.69s，多核开发机）、`-n 4` 约 **9 分钟**
-（548.27s，本机沙箱/2C4G）、**串行带覆盖率**约 **43 分钟**（2578.20s）。三个数字的测量条件不同
-（并行度、是否开 `--cov`、机器核数），引用时必须带上条件，别混着比。
+**9969** 个用例的实测口径是——`-n 4` 约 **10.5 分钟**（631.88s，本机沙箱/2C4G，2026-11-16 实测）；
+`-n auto` 与**串行带覆盖率**的旧数据（2.7 分钟 / 约 43 分钟）来自 7689 用例的 2026-10 测量，
+用例数涨了 30% 后**未复测**，引用时要么重新测量、要么明确标注"旧口径"。三组数字的测量条件不同
+（并行度、是否开 `--cov`、机器核数），引用时必须带上条件与日期，别混着比。
 内存受限的环境（本机沙箱、2C4G 容器）改用 `-n 4`：`-n auto` 按核数开满，容易 OOM 后 worker
 猝死，失败信息看起来像用例坏了。
 `conftest.py` 的测试库与数据集目录按 PID 隔离，worker 之间本来就不会互相踩；**新增测试时不要
@@ -159,16 +180,33 @@ $env:PYTHONUTF8 = "1"
 在 `frontend` 目录执行：
 
 ```powershell
-npm ci
-npm test
-npm run format:check
-npm run lint
-npm run typecheck
-npm run build
-npm audit --registry=https://registry.npmjs.org
+pnpm install --frozen-lockfile
+pnpm run test
+pnpm run format:check
+pnpm run lint
+pnpm run typecheck
+pnpm run build
+pnpm audit --registry=https://registry.npmjs.org
 ```
 
+包管理器是 **pnpm 12.21.0**（`engines.pnpm` 是精确串，`packageManager` 钉版本）。依赖真相只有 `pnpm-lock.yaml`，`package-lock.json` 已删除且不得再生成。`--frozen-lockfile` 不一致即失败，别改成不带它的 `install`（那会重新解析版本）。`--no-audit` / `--no-fund` 在 pnpm 上是非法参数，`--fetch-retries` 要写 `--config.fetch-retries`。
+
+**`pnpm-workspace.yaml` 顶层的 `pmOnFail: ignore` 不得删除。** 它让 pnpm 不把自己写进锁文件；一旦删掉，`pnpm-lock.yaml` 会变回**两个 YAML 文档**，而 GitHub 的依赖图只读第一个（那个文档只有 pnpm 自身与 16 个 `@pnpm/exe.*`），结果是 Dependabot 的 JS 安全告警与 `dependency-review` 对 JS 依赖失明——本地 `pnpm install` 却一切正常，问题只在 GitHub 上看得见。守卫是 `backend/tests/test_version_consistency.py::test_lockfiles_are_single_yaml_document`。代价是 `packageManager` 的版本校验变软，版本钉死由 `engines.pnpm` 的精确串硬校验兜底。
+
 新增或修改交互时优先补充 Vitest 测试，并检查键盘可访问性、响应式布局、加载态、空态、错误态和异步竞态。
+
+**控制台警告分两类，不要混**（2026-11 起的约定，T12）：
+
+- **契约漂移 / 可恢复异常**（后端字段缺失、兜底路径生效、两版 HTML 不一致）：用
+  `frontend/src/utils/warnOnce.ts` 的 `warnOnce(key, ...)`，**同一个 key 整个会话只打一次**。
+  这类警告会在每次渲染/每次选择都触发，裸 `console.warn` 会把控制台刷成背景噪音，最后连真错误
+  都没人看。测试要断言"同 key 只打一次"（`src/utils/warnOnce.test.ts`）。
+- **真正的失败**：走 error 通道（用户可见提示 + 日志），**不能**用 `warnOnce` 吞掉——那会让
+  "只发生一次的错误"看起来像没发生。
+
+新增依赖类用例（需要联网/外部二进制/特定 OS）时，**自己 `pytest.skip` / `describe.skip` 并打印
+原因**，不要让它变成随机红；跳过的数量与理由要能在汇总行里被数出来（详见
+[`docs/verification-playbook.md`](docs/verification-playbook.md) §"跳过数与归因"）。
 
 ### macOS 启动链（改 `scripts/macos/**` 或根目录 `*.command` 时）
 
@@ -328,7 +366,7 @@ Windows 侧对应的是 `windows-end-to-end`（从干净检出走完整启动链
 
 ### 改文案的固定顺序（不按这个顺序会返工）
 
-1. 改实现 → 2. 跑相关 `.test.tsx` 拿失败清单 → 3. 逐条改断言 → 4. **每次 Edit 后 `grep` 复查被改处**（本项目出过三次"改一处吞掉邻行"）→ 5. 全量 `npm test`。
+1. 改实现 → 2. 跑相关 `.test.tsx` 拿失败清单 → 3. 逐条改断言 → 4. **每次 Edit 后 `grep` 复查被改处**（本项目出过三次"改一处吞掉邻行"）→ 5. 全量 `pnpm run test`。
 
 **界面文案改了，必须同一提交改五处**，否则"文档与界面互相矛盾"本身就是 P1：
 
@@ -502,7 +540,16 @@ README 是这个仓库的门面，也是对用户可见功能的**权威清单**
 - **安装包 sidecar 必须是两空格格式**（`<hex>`＋两个空格＋文件名，ASCII、无 `*` 前缀）：
   桌面更新器把 sidecar 里的文件名与发布资产名逐字比较，coreutils 的 `hash *file` 形式会被
   判为非法格式而拒绝更新。`scripts/Build-Desktop.ps1 -Target win` 现在会自动写出与 CI 同格式的
-  sidecar；手工发版时两个文件一起挂。
+  sidecar；手工发版时两个文件一起挂。**写入时机在签名之后**——签名会改写 exe 字节，先写就会
+  留下描述旧文件的摘要，更新器会拒收（2026-11-21 修）。
+- **发布物一律从仓库同级的 `rf-dist` 取，不要直接发 `desktop\out` 里的原件。** 本仓库根目录可能带
+  「低完整性」标签（`icacls <仓库根>` 显示 `Mandatory Label\Low Mandatory Level`，由工作区/沙箱策略设置），
+  子目录与构建产物全都会继承它。低完整性进程受 **no-write-up** 限制：写不进 `Program Files`、`D:\`、
+  `%APPDATA%`，连 `%TEMP%` 都被重定向到 `%TEMP%\Low`——用户双击这种安装包会直接看到「没有可写目录」，
+  而安装器本身没有任何问题（它会如实写日志）。`Build-Desktop.ps1 -Target win` 打完包会把安装包与 sidecar
+  复制到 `-PublishDirectory`（默认仓库同级的 `rf-dist`）；复制到无标签目录会自动洗成中等，脚本还会读副本的
+  `Mandatory Label`，仍带 `Low` 就 `throw`。守卫：`scripts/tests/Test-DesktopArtifactPublish.ps1`（CI 里跟
+  `Test-PythonRuntimeGuard.ps1` 同一个 Windows 作业跑）。
 - 桌面离线门禁在 `desktop/` 下跑：`node --test "scripts/test-*.js"`（CI 的 desktop-shell 作业
   紧接着真的打一次 NSIS 包，语法错误会在那里暴露）。
 
@@ -516,7 +563,7 @@ README 是这个仓库的门面，也是对用户可见功能的**权威清单**
   **项目已发布 1.0、当前是 2.0，破坏性变更传 `--bump major`。** 2.0 本身就是一次 major（迁移链折成单基线、补充事实整套下线、1.x 备份包不再导入）。0.x 阶段的旧口径（破坏性变更只进 minor、major 位留给"项目已稳定"的宣告）已经失效——2026-09-26 发 0.13.0 时删掉「官网采集」与「按岗位找公司」还是按 0.x 惯例走的 minor，那是历史，不要再照抄。
 
   脚本检测到新增 migration 会提醒复核，但不会替你判断——**`remove:` 不是脚本认的前缀，删功能的提交它一律算"不推动版本号"**，所以这类发版别信自动判定，直接看本节。
-- 脚本**只改文件，不 commit、不打 tag**——发布由用户发起（见"工作流程"第 6 条）。跑完按它打印的命令手动提交与打标签。
+- 脚本**只改文件，不 commit、不打 tag**——发布由用户发起（见「工作流程 → Git 提交与推送」）。跑完按它打印的命令手动提交与打标签。
 
 ## 提交署名（硬性要求）
 

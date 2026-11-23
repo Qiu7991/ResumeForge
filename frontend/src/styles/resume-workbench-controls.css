@@ -1,28 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-/* 简历制作台 · **左栏参数行与色板**（从 `resume-workbench.css` 按分段标题拆出的平铺分片）。
-
-   拆出的唯一理由是行数预算（单文件 500 行零豁免）：本段是三组参数控件共用的行布局与
-   色块样式，与"三栏怎么分宽、分隔条怎么拖"没有关系，所以它先被搬走。
-   搬迁是**纯搬迁**——选择器、声明、层叠顺序逐字不变；`resume.css` 的 `@import` 顺序
-   保证它仍然在 `resume-workbench.css` 之前生效（两段之间没有互相覆盖的规则）。
-   2026-10-23 追加的「参数行三列对齐」**不是**搬迁：那是新规则，理由写在它自己的段首。 */
-
-/* ===== 参数行（间距 / 外观两组） ===== */
-.resume-wb-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.resume-wb-row {
-  width: 100%;
-}
-
-/* 控件组吃掉标签剩下的宽度：`±` 固定、滑杆伸缩，读数与胶囊才落在同一条竖线上。 */
-.resume-wb-row-controls {
-  flex: 1 1 auto;
-  min-width: 0;
-}
+/* 简历制作台 · 左栏参数行与色板。
+   本文件是聚合清单：规则按下列 @import 顺序生效（@import 必须位于任何规则之前）。
+   2026-11-14 拆分：原文件贴 500 行预算，把「参数行（间距 / 外观两组）」整段原样搬到下列分片，
+   选择器 / 声明 / 层叠顺序逐字不变。 */
+@import "./resume-workbench-controls-rows.css";
+/* T20：宽档（栏宽 ≥ 520）把弹性给控件列。必须排在上面那条**之后**、本文件规则**之前**
+   ——`@import` 只能出现在规则前，而本文件自己的三条列模板在后面，宽档规则靠多一层
+   选择器压过它们（见新文件头注释）。 */
+@import "./resume-workbench-controls-wide.css";
 
 /* ===== 参数行三列对齐（2026-10-23 / 修订 2026-11-06） ===== */
 /* 症状分两阶段：
@@ -39,15 +24,14 @@
    `−`、滑杆左缘、滑杆右缘、`+`、读数左缘在四行里落在同一批竖线上——
    与标签字数、读数宽度都无关。
 
-   宽度算式（2026-11 问题 23 重算）：72 + 6 + 132 + 6 + 尾部。参数栏是 `width: 380`
-   + `padding: 20`，本项目没有全局 `box-sizing` 重置（antd 的 common style 只覆盖
-   `[class^="ant-"]`），所以内容是 content-box 的 380，按 border-box 的紧口径是 340；
-   **参数栏还是滚动容器，内容一长就多出一条竖向滚动条**，Windows 经典滚动条约 15px，
-   实际可用 ≈ **325**（15 是设计预留，不是实测值——各平台滚动条 0/6/15/17 都有，
-   取最坏的那个）。三列的下限合计 72 + 6 + 132 + 6 + (44 + 6 + 52) = 318，余 7px。
-   尾部那一列用 `minmax(min-content, 1fr)`：**先压控件列（滑杆 88 → 68），不切胶囊**；
-   胶囊再由 `margin-left: auto` 贴行右缘——列宽定下来之后，余量多少都不影响对齐。
-   （`workbenchLayoutContract.test.ts` 钉住这条算式与 15px 的滚动条预留。）
+   宽度算式（DF-7，2026-11-18）：`控件列 = clamp(128, 分组内容盒宽 − 72 − 102 − 2×6)`。
+   分组内容盒是 `.resume-wb-group-body`（卡片还有 1px 边框 + 12px 内边距，所以它比列
+   内容宽少 26px；参数栏 380 时是 314，扣掉标签与尾部下限后正好 128）。
+   这个值由 `useControlsWidthVar` 量出来写到列根，**不是**断点：栏宽每变 1px，滑杆就
+   跟着变 1px。尾部那一列仍是 `minmax(min-content, 1fr)`，胶囊由 `margin-left: auto`
+   贴行右缘；只有量出来的值已经贴到 128 下限、而系统滚动条又吃掉横向空间时，尾部才会
+   被压到 102 以下——那时由 `overflow: hidden` 收口（宁可变窄也不出横向滚动条）。
+   （`workbenchLayoutContract.test.ts` 钉住这条算式与三处共用的列模板。）
 
    顺带解决换行：`flex-wrap: wrap` 对 **grid 容器完全无效**，`SpacingRow` 那个 `wrap`
    从此失效——这就是"窄宽度不再掉到第二行"的真正原因（不是靠 `nowrap` 去盖它）。 */
@@ -57,13 +41,20 @@
      `max-content`——每行都是**独立**的 grid，`max-content` 会各自算各自的，
      第二列起点就又错开了（那正是第二阶段截图里的症状）。 */
   --resume-wb-label-w: 72px;
-  /* 控件列：± 各 30（controlHeightSM = 40 × 0.75）+ 两道 2px 间距 + 滑杆 88 = 152。
-     滑杆的左右外边距在参数栏里被清零（见下面的滑杆段），所以 88 就是它占的全部宽度。 */
+  /* 控件列的**下限**：± 各 30 + 两道 2px 间距 + 滑杆 64 = 128。
+     132（滑杆 68）是 2026-11 的旧下限，按"参数栏内容宽 325"算的；分组卡片实际还有
+     1px 边框 + 12px 内边距（合计 26），最窄的 380 栏里只够 128。滑杆 64 仍可拖
+     （56 是绝对下限，见滑杆段）。下限必须与 JS 的 `CONTROLS_MIN_WIDTH` 同值——
+     两者不等时 `minmax(132px, 128px)` 会按 min 落位，连续值就白算了。 */
+  --resume-wb-controls-min-w: 128px;
+}
+
+/* 控件列宽的兜底值**只写在列根**：真实值由 `useControlsWidthVar` 逐帧写到列根元素的
+   同名自定义属性上（连续，没有断点）。`.resume-wb-rows` 不能再声明一份兜底值——
+   子元素自己的声明会盖掉从列根继承下来的连续值，滑杆就永远停在 152 那一档。
+   152 = ± 各 30 + 两道 2px 间距 + 滑杆 88，只是 JS 还没挂上（首帧 / jsdom）时的样子。 */
+.resume-wb-col-params {
   --resume-wb-controls-w: 152px;
-  /* 控件列的**下限**（2026-11 问题 23）：± 各 30 + 两道 2px 间距 + 滑杆 68 = 132。
-     列模板写 `minmax(132px, 152px)`：余量不够时先压滑杆（88 → 68 还在能拖的范围），
-     而不是把尾部那格的「随模板」胶囊切掉。68 的来历见滑杆段。 */
-  --resume-wb-controls-min-w: 132px;
 }
 
 .resume-wb-rows > .resume-wb-row.ant-space {
@@ -163,7 +154,10 @@
   .resume-measure-grid.is-stacked
   > .resume-measure-cell:not(:has(.resume-measure-tail))
   > .resume-font-select.is-fluid {
-  width: var(--resume-wb-controls-w);
+  /* 宽度要减掉左边那 32px 的让位（30px 减号 + 2px 间距）：控件列是一个连续值
+     （DF-7 由 JS 量出来写 `--resume-wb-controls-w`），不减的话下拉右缘会比滑杆
+     多出一整个按钮宽、顶出分组卡片。 */
+  width: calc(var(--resume-wb-controls-w) - 32px);
   max-width: 100%;
   /* 30px 减号 + 2px 间距：下拉的左缘因此落在滑杆左缘（110px）上。 */
   margin-left: 32px;
@@ -184,210 +178,208 @@
   margin-left: auto;
 }
 
-/* 字号下限提示（"小于 9px 打印可能看不清"）：`modules-layout.css` 里它靠
-   `flex: 1 0 100%` 独占一整行，而 grid 容器里 flex 属性一律失效——不补这一条它会挤进
-   第一列、被压成竖排窄条。跨满三列 = 原来那一整行。 */
-.resume-wb-col-params
-  .resume-measure-grid.is-stacked
-  > .resume-measure-cell:has(.resume-measure-tail)
-  > .resume-font-warning {
-  grid-column: 1 / -1;
-}
-
-/* ===== 统一滑杆长度（2026-10-23 / 修订 2026-11-06：88px / 2026-11 问题 23：窄档收到 68） ===== */
-/* 症状：左栏四组的滑杆长度各不相同（行距/页边距 132、层次 90、分边更长、字号与照片
-   又各一个值），四条控制项像四套控件。根因是各组规则各自写死 `flex-basis` /
-   `min-width` / `width`，谁更长取决于那一条落在这个 flex 行里剩多少空间。
-   改法：左栏一个唯一的宽度变量，**宽档**下滑杆固定 88（既不长也不缩）。
-   88 不是拍的：340 − 标签 72 − 按钮与两道间距 62 − 尾部 102 − 列间距 12 ≈ 92，取 88。
-   **窄档（问题 23）**：参数栏是滚动容器，内容一长就长出竖向滚动条（约 15px），可用宽
-   从 340 掉到 ≈325，88 的滑杆会把尾部那格的胶囊挤出去。于是控件列允许压到 132
-   （`--resume-wb-controls-min-w`），滑杆跟着收到 68（= 132 − 30 − 30 − 2 − 2；56 是
-   可拖动的下限）。**先压滑杆，不切胶囊**。
-   `!important` 必需：`PhotoScaleControl` / `LineHeightControl` / `PagePaddingControl`
-   都写了内联 `flex` / `minWidth` / `margin`，只有 `!important` 压得过。`width: 100%`
-   而不是固定 88——外面那一格（`.ant-space-item`）才是 flex item，它收缩时滑杆要跟着收。
-   同一条理由：`margin-inline: 0` 也带 `!important`（antd 的 `.ant-slider` 自带
-   `margin: 14px 6px`，不清零时"88px 的滑杆"实际占 100px，控件列就不是 152 而是 164）。
-   代价：滑块圆点按轨道端点居中，值在两端时各溢出轨道 6px——落在 ± 按钮的透明内边距上。
-   只作用于 `.resume-wb-col-params`：弹窗与预览工具栏的滑杆由各自的 `.is-stacked` 定宽。 */
-.resume-wb-col-params {
-  --resume-wb-slider-w: 88px;
-}
-
-.resume-wb-col-params .ant-slider {
-  flex: 1 1 var(--resume-wb-slider-w) !important;
-  width: 100% !important;
-  min-width: 56px !important;
-  max-width: var(--resume-wb-slider-w) !important;
-  margin-inline: 0 !important;
-}
-
-/* 滑杆外面那一格才是真正占位的那一层（antd 的 `Space` 给每个子节点包一层
-   `.ant-space-item`）：它必须能收缩，滑杆才收得动；`max-width` 让它宽档时停在 88。
-   两条选择器各比"常规版"多一层祖先类，靠特异性压过本文件的
-   `.resume-wb-row .ant-space-item:has(> .resume-wb-slider)`（`flex: 1 1 90px`）与
-   `modules-layout.css` 的 `min-width: 112px`——112 比新下限 56 高，不改它滑杆永远
-   收不到 68。注意写的是**后代** `.ant-space .ant-space-item`（不是 `> .ant-space >`）：
-   滑杆那一格在「行 Space → item → 控件 Space → item → slider」的第四层上。 */
-.resume-wb-col-params .resume-wb-rows .ant-space-item:has(> .resume-wb-slider),
-.resume-wb-col-params
-  .resume-measure-grid.is-stacked
-  .ant-space
-  .ant-space-item:has(> .ant-slider) {
-  flex: 1 1 auto;
-  min-width: 56px;
-  max-width: var(--resume-wb-slider-w);
-}
-
-/* ===== 滑杆宽度（2026-10-23 回退） ===== */
-/* 这里曾经有一段"把滑杆格 `min-width` 降到 0 让它在窄栏里让位"的规则。它解决了溢出，
-   却把滑杆本身压成了 0 宽——用户截图里「条目间距 / 姓名大小 / 小节标题大小」三行只剩
-   `— +`，中间的轨道整条消失。
-   根因不在滑杆，在于当时的参数栏下限 380 比"所有行一行放下"所需的 400 少了 20px。
-   现在参数栏是**固定 380 且不可拖动**（`WORKBENCH_PARAMS_WIDTH`），空间够用，
-   所以把 `min-width` 还原成两条既有规则里的值（70 / 112），滑杆不再被压没。
-   教训：**窄容器要压的是"哪一项"，不能在没验证渲染结果的情况下把 `min-width` 归零**。 */
-
-.resume-wb-row .ant-space-item:has(> .resume-wb-slider) {
-  flex: 1 1 90px;
-  min-width: 70px;
-}
-
-.resume-wb-col-editor .resume-wb-slider,
-.resume-wb-slider {
-  min-width: 0;
-}
-
-/* ===== 颜色行：色板与取色器 / 尾部共用同一条竖线（2026-11-05） ===== */
-/* 症状（用户截图）：四组颜色里，「标签 + 取色器 + 色值 + 来源」那一行与它下面的色板行
-   右边界对不齐；四组之间也各偏一点（标签文案长度不同）。
-   根因三条，缺一不可：
-   1. 行是 flex 纵排，色板行是一条独立的 flex——它的宽度只由 5 个 20px 色块决定，
-      与上面那一行的宽度毫无关系；
-   2. 标签是 `min-width: 34px` + 内容宽（「强调色」36 /「辅助文字颜色」72），四行的
-      第二列起点因此各不相同；
-   3. 来源胶囊靠 `margin-left: auto` 收口，而色板行里没有那一条"auto"。
-   改法：把行本身做成 grid，`head` 用 `display: contents` 让它的几段**直接**落进列里，
-   色板跨"取色器那一列 → 行尾"——于是"色板左边界 = 取色器左边界"、"右边界 = 尾部右边界"，
-   标签列定宽之后四行共用同一条起跑线。
-   #12 起多了第一列（展开箭头），列数 4 → 5、色板起点 2 → 3，其余对齐结论不变。 */
-.resume-wb-rows {
-  /* 颜色行的标签列宽：目录里最长的一条是「辅助文字颜色」（6 字 × 12px = 72px，78 留一点
-     字宽取整的余量）。用固定值而不是 `max-content`——每一行都是**独立的** grid，
-     `max-content` 会各自算各自的，第二列起点就又错开了（那正是截图里的症状）。 */
-  --resume-wb-color-label-w: 78px;
-}
-
-.resume-wb-color-row {
-  display: grid;
-  /* 五列：展开箭头 / 标签 / 取色器 / 读数 / 来源（#12 加了行头箭头，四列会把来源挤到第二行）。 */
-  grid-template-columns: auto var(--resume-wb-color-label-w) auto minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 6px;
-  row-gap: 6px;
-  min-width: 0;
-  cursor: pointer;
-}
-
-/* #12：行头展开箭头。原生 button 画成一颗 caret：透明底、无边框，20×20 触达区。
-   antd-override 不适用——这不是 .ant-* 覆写，是私有形态的私有类。 */
-.resume-wb-color-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  min-width: 16px;
-  height: 20px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--rf-text-tertiary);
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.resume-wb-color-toggle:hover {
-  color: var(--rf-text-body);
-}
-
-.resume-wb-color-toggle:focus-visible {
-  border-radius: 2px;
-  outline: 2px solid var(--rf-focus-visible);
-  outline-offset: 1px;
-}
-
-/* 各段直接成为行 grid 的项：中间再包一层 flex，列宽就由内容各自决定，跨列对不上。 */
-.resume-wb-color-head {
-  display: contents;
-}
-
-/* 标签列定宽后不再需要 `min-width`；`overflow: hidden` 是兜底——将来出现更长的标签时
-   截断，而不是顶进取色器那一列。 */
-.resume-wb-color-row .resume-measure-label {
+/* 尾部的**最后一道泄压阀**（DF-7）：控件列量到下限 128 之后，如果系统滚动条又吃掉
+   十几像素（Windows 经典滚动条 15/17），三列加起来就会比分组内容盒宽——那会直接长出
+   一条横向滚动条，拖动时整栏抖。这里允许尾部压到内容宽以下（读数 44 + 间距 6 仍在），
+   多出来的部分被裁掉：宁可胶囊少显示两个字，也不横滚。正常情况下尾部拿到的是完整的
+   102px（读数 + 胶囊），这条规则不参与。 */
+.resume-wb-col-params .resume-measure-tail {
   min-width: 0;
   overflow: hidden;
+}
+
+.resume-wb-col-params .resume-measure-source {
+  /* `min-width: 52`（`modules-layout.css`）是"胶囊不许被切断"的保护；泄压时它必须让位。 */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-/* 读数留在自己那一格的左端（`minmax(0, 1fr)` 会把格子撑满，不写会居中/拉伸）。 */
-.resume-wb-color-row .resume-measure-value {
-  justify-self: start;
+/* 字号下限 / 非法值提示：`modules-layout.css` 给的是 `flex: 1 0 100%`，但这一格在参数栏里
+   已经被上面那条规则改成了**三列 grid**（`:has(.resume-measure-tail)`），flex 属性失效，
+   提示会落进第一列被压成竖排窄条。这里补 `grid-column: 1 / -1` 让它跨满整行。
+   两条选择器必须**各写全**：选择器列表里的元素不能以组合符开头（`> .x,` 单写成一项是
+   非法选择器，lightningcss 压缩时报 `Invalid empty selector` 直接让 `vite build` 失败，
+   2026-11-18 踩过）。 */
+.resume-wb-col-params
+  .resume-measure-grid.is-stacked
+  > .resume-measure-cell:has(.resume-measure-tail)
+  > .resume-font-warning,
+.resume-wb-col-params
+  .resume-measure-grid.is-stacked
+  > .resume-measure-cell:has(.resume-measure-tail)
+  > .resume-font-input-error {
+  grid-column: 1 / -1;
 }
 
-/* 颜色行的读数不是数字而是**状态词**（无覆盖时写「随模板 / Template」），
-   所以它不能沿用参数栏给数字定的 44px 定宽：14px 下 4 个汉字要 56px，
-   实测 `clientWidth 44 / scrollWidth 56`，靠 `overflow: visible` 才"看起来没问题"，
-   代价是这一格的右边界失效、真放不下时会压到来源胶囊上。
-   这里改成"按内容定宽、下限 44"：中文 3 字 42px、英文 `Template` 约 58px 都装得下，
-   而 `min-width` 保住与上下数字行同一列的观感。所在列是 `minmax(0, 1fr)`，
-   宽度由内容决定、富余留白交给这一列的右半边（来源胶囊仍靠右收口）。
-   **只影响颜色行**：滑杆那几行的 44px 读数定宽是三条尾巴对齐的前提，不能顺手改。 */
-.resume-wb-col-params .resume-wb-color-row .resume-measure-value {
-  flex: 0 1 auto;
-  width: auto;
-  min-width: 44px;
+/* ===== 外观组：2×2 色卡（I-09，2026-11-18） ===== */
+/* 老形态是「▸ 箭头｜标签｜20px 色块｜读数｜来源胶囊」+ 手风琴色板：色块在"随模板"时
+   统一传占位色 `#374151`，四行长得一模一样；候选色一次只能看一行。现在四格常驻，每格
+   「22px 色块（1px 边框）+ 名称 + 色值/来源」，点卡片任意位置打开同一个取色器。
+   色块颜色经内联自定义属性下发（用户选的颜色是**数据**，不是主题 token）。
+   高度：2 × 约 52 + 10 = 约 114，仍低于 #12 定的 120 预算（#12 的手风琴因此可以退场）。 */
+.resume-wb-colors {
+  display: grid;
+  /* 窄档（参数栏 380 → 分组内容盒 314）两列各约 152；`minmax(0, 1fr)` 防长标签撑破格子。 */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
-/* 来源胶囊落在最后一列的右缘：与同栏其它参数行尾部那条竖线是同一条（那些行的尾部走
-   `justify-self: end`，右边界都是行的内容盒右缘）。 */
-.resume-wb-color-row .resume-measure-source {
-  justify-self: end;
+/* T08：第 5 格「条目标题」与它的 ⓘ 各占整行（其余四格仍是 2×2）。 */
+.resume-wb-color-card.is-wide,
+.resume-wb-colors-hint {
+  grid-column: 1 / -1;
 }
 
-/* 色板：从**取色器那一列**起，一直铺到行尾。`padding-left` 去掉了——它正是当初
-   "色板比上面那行左移 2px"的来源。列号随 #12 的五行网格 +1。 */
-.resume-wb-swatches {
+.resume-wb-color-card {
+  position: relative;
   display: flex;
-  grid-column: 3 / -1;
-  grid-row: 2;
-  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 8px;
+  background: var(--rf-surface);
 }
 
-/* 色块：颜色值来自内联自定义属性（用户选的颜色是**数据**，不是主题 token）。 */
-.resume-wb-swatch {
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid var(--rf-border-subtle);
-  border-radius: 4px;
-  background: var(--resume-wb-swatch);
+/* 展开 / 悬停 / 键盘聚焦都要能看出来：只换 1px 边框在深色主题下太弱，再叠一层极浅品牌底。 */
+.resume-wb-color-card:hover,
+.resume-wb-color-card.is-open,
+.resume-wb-color-card:focus-within {
+  border-color: var(--rf-brand);
+  background: var(--rf-brand-wash);
+}
+
+/* 卡片整体是点击区：内部「色块 + 文字」是一个 <button>（不许嵌套按钮）。 */
+.resume-wb-color-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  /* 右侧多留 10px 给绝对定位的 ↺（它平时透明，只在 hover / 聚焦时出现）。 */
+  padding: 8px 20px 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
 }
 
-.resume-wb-swatch:hover {
-  border-color: var(--rf-border);
+.resume-wb-color-main:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
-.resume-wb-swatch.is-active {
+.resume-wb-color-main:focus-visible {
+  outline: 2px solid var(--rf-focus-visible);
+  outline-offset: -1px;
+}
+
+/* 色块必须带 1px 边框：白色 / 浅色色块没有边框会融进卡片背景（I-09 设计依据）。 */
+.resume-wb-color-chip {
+  flex: 0 0 22px;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 6px;
+  background: var(--resume-wb-chip);
+}
+
+/* 四级降级（自制模板 / 旧后端没有 palette）：斜纹 + 「随模板」，不编造假色值。 */
+.resume-wb-color-chip.is-fallback {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--rf-border-subtle) 0 3px,
+    var(--rf-surface) 3px 6px
+  );
+}
+
+.resume-wb-color-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.resume-wb-color-name {
+  overflow: hidden;
+  color: var(--rf-text-body);
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 色值用等宽数字：四个十六进制并排时不会因字宽不同而参差。
+   窄档（380）放不下「#6b7280 · 随模板」时允许在来源词前折行——裁成省略号等于把来源
+   藏起来，而"随模板 / 随版式"正是这一格要说的第二件事（验收：hex 可折到第二行）。 */
+.resume-wb-color-value {
+  color: var(--rf-text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+}
+
+/* 来源词（随模板 / 随版式）跟在色值后面，比色值再淡一档。 */
+.resume-wb-color-source {
+  opacity: 0.85;
+}
+
+/* ↺ 钉在卡片右上角：与主按钮**平级**（嵌套 <button> 在 HTML 里非法）。
+   `ParamResetButton`（恢复到打开时的值）与"删键回上一级"共用这个位置。 */
+.resume-wb-color-card > .resume-wb-color-reset,
+.resume-wb-color-card > .resume-param-restore {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.resume-wb-color-card:hover > .resume-wb-color-reset,
+.resume-wb-color-card:hover > .resume-param-restore,
+.resume-wb-color-card:focus-within > .resume-wb-color-reset,
+.resume-wb-color-card:focus-within > .resume-param-restore {
+  opacity: 1;
+}
+
+/* 自定义 ↺：22px 触达区，尺寸与 `ParamResetButton` 的小号文字按钮同档。 */
+.resume-wb-color-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--rf-text-tertiary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.resume-wb-color-reset:hover {
+  background: var(--rf-fill-tertiary);
+  color: var(--rf-text-body);
+}
+
+.resume-wb-color-reset:focus-visible {
   outline: 2px solid var(--rf-focus-visible);
   outline-offset: 1px;
 }
 
-.resume-wb-swatch:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
+/* 取色器：只渲染一个，跟着"点开的那一格"移动。触发器铺满卡片但不接收指针事件——
+   开合由卡片按钮 + `open` 受控（弹层本身是 portal，不受影响）。 */
+.resume-wb-color-card > .resume-wb-color-picker {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* ===== 参数栏下拉的弹层宽度（2026-11-06 → 2026-11 收窄到 260 → 2026-10-24 收到 216） ===== */
@@ -428,9 +420,13 @@
    antd 的选项内边距若变了，按「6 个字 + 省略号刚好放得下」重新校准，并同步
    `resume-dropdown-width.test.ts`。 */
 .resume-params-dropdown.resume-format-dropdown {
-  /* 与触发框（`.resume-format-select`，104px）一致：两者不等宽时，弹层比框宽出一截，
-     视觉上像是"点开跳出来一块"（用户截图）。 */
-  width: 104px;
+  /* 与触发框一致：两者不等宽时，弹层比框宽出一截，视觉上像是"点开跳出来一块"（用户截图）。
+     I-06（2026-11-18）：触发框改为跟随左栏控件列伸缩（104 → 封顶 320），定宽 104 不再
+     可能"等宽"，改成 `auto` + `min-width: 104`——**最小**宽度仍是"四个字 + 箭头"那档，
+     实际宽度由 rc-select 的 `popupMatchSelectWidth` 按触发框宽度设成内联 `min-width`，
+     长自制版式名才有地方显示；容器再窄时也不会塌到放不下四个字。 */
+  width: auto;
+  min-width: 104px;
 }
 
 /* 选项行单行省略：弹层宽度定死之后，长字体名 / 长文件名不能换行把行高撑乱。

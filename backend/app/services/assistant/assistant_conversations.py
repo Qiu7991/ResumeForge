@@ -25,12 +25,17 @@ from ...schemas.assistant import (
     ChatConversationForkRequest,
     ChatConversationUpdate,
     ChatMessageOut,
+    ContextCompactionStateOut,
     ConversationSurface,
+    LegacyConversationSkillOut,
 )
 from .. import trash
+from .assistant_compaction_store import compaction_state_out, load_compaction
 from .assistant_skills import (
+    PERSONA_SKILL_PREFIX,
     PendingSkillError,
     copy_conversation_skills,
+    list_conversation_skills,
     replace_conversation_skills,
     validate_conversation_skill_ids,
 )
@@ -115,6 +120,7 @@ def _to_brief(conversation: ChatConversation, message_count: int = 0) -> ChatCon
         favorite=conversation.favorite,
         archived=conversation.archived,
         group_name=conversation.group_name,
+        memory_off=conversation.memory_off,
         message_count=message_count,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
@@ -239,11 +245,25 @@ def read_conversation(
     # 先验证 brief 再拼 detail：避免 model_validate 触发 conversation.messages 的
     # 全量懒加载——limit 模式下这正是要省掉的那次查询。
     brief = ChatConversationBrief.model_validate(conversation)
+    # T24：旧关联行只做只读回显（前端提示一次「技能已改为按下一条消息生效」）。
+    # 视角技能（「视角 · X」）不算旧技能：T26 已把它挪到 conversation.persona_id。
+    legacy_skills = [
+        LegacyConversationSkillOut(id=int(skill.id), name=skill.name)
+        for skill in list_conversation_skills(db, conversation_id)
+        if not skill.name.startswith(PERSONA_SKILL_PREFIX)
+    ]
+    # 压缩状态落库是 `dict`，`ChatConversationDetail` 要的是契约模型：空 dict 表示
+    # "没有压缩过"，给 `None` 而不是验证一个空对象（否则前端会拿到一个全零的边界）。
+    compaction_payload = compaction_state_out(load_compaction(db, conversation_id))
     return ChatConversationDetail(
         **brief.model_dump(),
         messages=[ChatMessageOut.model_validate(row) for row in rows],
         messages_total=messages_total,
         has_earlier=has_earlier,
+        compaction=ContextCompactionStateOut.model_validate(compaction_payload)
+        if compaction_payload
+        else None,
+        legacy_skills=legacy_skills,
     )
 
 
@@ -341,6 +361,9 @@ def update_conversation(
             conversation.pinned = False
     if payload.group_name is not None:
         conversation.group_name = payload.group_name
+    if payload.memory_off is not None:
+        # 只切换"以后读不读/写不写"，不动 assistant_memory 里的任何一行。
+        conversation.memory_off = payload.memory_off
     # 标记变化不改变会话的时间排序，取消置顶后仍回到原位置。
     if payload.title is not None:
         conversation.updated_at = utcnow()

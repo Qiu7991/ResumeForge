@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from ..database import get_db
+from ..runtime.blocking import run_sync
+from ..schemas.extraction import MAX_RECOGNIZED_TEXT_CHARS
 from ..schemas.photo import ProfilePhotoCreate, ProfilePhotoOut, ProfilePhotoUpdate
 from ..schemas.profile import (
     ProfileOut,
@@ -18,7 +20,7 @@ from ..schemas.profile import (
     ProfileUpdate,
 )
 from ..services.actions import add_action_route
-from ..services.actions.catalog import all_actions
+from ..services.actions.catalog import registered_action
 from ..services.actions.domains.profile import profile_actions
 from ..services.attachments import (
     assert_attachment_budget,
@@ -29,6 +31,7 @@ from ..services.attachments import (
 from ..services.document_text import extract_documents_text
 from ..services.llm import create_provider
 from ..services.llm.base import LLMError
+from ..services.ocr import load_ocr_context
 from ..services.profile.profile_photos import (
     add_photo,
     delete_photo,
@@ -36,22 +39,37 @@ from ..services.profile.profile_photos import (
     rename_photo,
     set_primary_photo,
 )
+from ..services.profile.profile_save import (
+    save_photo_copy,
+    save_profile_with_photo,
+)
 from ..services.profile.profile_service import (
     patch_profile,
-    update_profile,
 )
 from ..services.profile_catalog_draft import build_profile_draft_sections
 from ..services.profile_text_parser import parse_profile_text
+from ..services.recognition_route import (
+    PROFILE_CONTENT_FIELDS,
+    RecognitionSetup,
+    blocked_image_warning,
+    decide_route,
+    dropped_images_warning,
+    filled_field_count,
+    ocr_rescue,
+    ocr_to_text,
+    recognition_setup,
+    trim_recognized_text,
+)
 from ..services.settings_service import get_llm_config
 from ..services.text_extraction import (
     ai_failed_warning,
+    attach_warnings,
     extract_profile_text,
     finalize_recognition_result,
     llm_is_configured,
     mark_local_fallback,
     no_model_warning,
 )
-from ..services.user_files import save_from_data_url
 from ._disconnect import client_gone, run_until_disconnect
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
@@ -95,17 +113,12 @@ def _with_catalog_draft(result: ProfileTextParseResult) -> ProfileTextParseDraft
 
 
 def _save_photo_copy(db: Session, data_url: str, source_ref: str, fallback_name: str) -> None:
-    """best-effort：把照片 data URL 落一份磁盘副本（失败只记日志）。"""
-    try:
-        save_from_data_url(
-            db,
-            data_url,
-            source_type="photo",
-            source_ref=source_ref,
-            fallback_name=fallback_name,
-        )
-    except Exception:  # noqa: BLE001 - 副本是锦上添花，绝不能挡住照片保存
-        logger.warning("个人照片磁盘副本保存失败 ref=%s", source_ref, exc_info=True)
+    """兼容封装：实现在 ``services.profile.profile_save.save_photo_copy``。
+
+    照片副本从 api 层下沉到服务层，是因为助手动作 ``update_profile`` 也要同一行为；
+    这里保留同名薄封装，``app.api.profile._save_photo_copy`` 这个补丁落点不变。
+    """
+    save_photo_copy(db, data_url, source_ref, fallback_name)
 
 
 # T28 Batch B：GET /api/profile 由契约层生成（ActionSpec 是参数/权限的唯一真源）。
@@ -113,13 +126,16 @@ def _save_photo_copy(db: Session, data_url: str, source_ref: str, fallback_name:
 add_action_route(router, profile_actions()["get_profile"])
 
 
-add_action_route(router, all_actions()["update_profile"], route_path="")
+add_action_route(router, registered_action("update_profile"), route_path="")
+
+
 def save_profile(payload: ProfileUpdate, db: Session = Depends(get_db)):
-    """旧协议 PUT：映射后整体替换新模型条目，不再重建旧六表（F2 契约 §5.1）。"""
-    profile = update_profile(db, payload)
-    if payload.photo:
-        _save_photo_copy(db, payload.photo, f"profile:{profile.id}", f"profile-{profile.id}")
-    return profile
+    """旧协议 PUT：映射后整体替换新模型条目，不再重建旧六表（F2 契约 §5.1）。
+
+    薄壳：写库与照片副本都在 ``services.profile.profile_save.save_profile_with_photo``
+    （助手动作 ``update_profile`` 的路由侧实现调同一个函数）。
+    """
+    return save_profile_with_photo(db, payload)
 
 
 @router.patch("", response_model=ProfileOut)
@@ -188,6 +204,21 @@ def remove_photo(photo_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="照片不存在或已被删除")
 
 
+def _prepare_parse_llm(db: Session) -> RecognitionSetup:
+    """读模型配置、能力声明、OCR 上下文，然后归还请求连接（整段同步工作单元）。
+
+    识别一次要几十秒，事件循环线程上一旦还留着会话，同进程的其它请求就会排在这条
+    SQLite 连接后面。**三份上下文都必须在 ``close`` 之前取**——OCR 的 Key 与引擎档位
+    也是查库拿的，放到 close 之后会静默变成"OCR 不可用"。未配置模型时 ``provider``
+    为 ``None``，由调用方走本地兜底。
+    """
+    config = get_llm_config(db)
+    provider = create_provider(config) if llm_is_configured(config) else None
+    setup = recognition_setup(config, provider, load_ocr_context(db))
+    db.close()
+    return setup
+
+
 @router.post(
     "/parse-text",
     response_model=ProfileTextParseDraftOut,
@@ -217,8 +248,9 @@ async def parse_profile_text_draft(
     # 字段锚定也仍然对着原文，比图片那条"让模型自己抄录再核对"的路子强。
     source_text = "\n\n".join(part for part in (payload.text, documents.text) if part.strip())
     local_draft = parse_profile_text(source_text)
-    config = get_llm_config(db)
-    if not llm_is_configured(config):
+    setup = await run_sync(_prepare_parse_llm, db)
+    provider = setup.provider
+    if provider is None:
         return _with_catalog_draft(
             finalize_recognition_result(
                 mark_local_fallback(local_draft, no_model_warning(has_images, has_documents)),
@@ -226,8 +258,39 @@ async def parse_profile_text_draft(
                 document_warnings=documents.warnings,
             )
         )
-    provider = create_provider(config)
-    db.close()
+    # I-34：与岗位识别同一套路由（无 vision → OCR → 文本模型；都用不了 → 一个请求都不发）。
+    route = decide_route(
+        has_images=has_images,
+        vision=setup.vision,
+        ocr_usable=setup.ocr_available,
+        ocr_forced=setup.ocr_forced,
+    )
+    extra_warnings: list[str] = []
+    ocr_text = ""
+    if route == "blocked":
+        return _with_catalog_draft(
+            finalize_recognition_result(
+                mark_local_fallback(
+                    local_draft,
+                    blocked_image_warning(setup.model, ocr_engine=setup.ocr_engine),
+                ),
+                has_images=has_images,
+                document_warnings=documents.warnings,
+            )
+        )
+    if route == "ocr":
+        prep = await ocr_to_text(
+            source_text=source_text,
+            image_urls=image_urls,
+            ctx=setup.ocr,
+            parse_local=parse_profile_text,
+        )
+        extra_warnings.extend(prep.warnings)
+        if prep.dropped_images:
+            extra_warnings.append(dropped_images_warning(prep.dropped_images))
+        source_text, local_draft, ocr_text = prep.source_text, prep.local_draft, prep.ocr_text
+        # 资料这条也遵守"OCR 文本与原图不同时发"。
+        image_urls = []
     try:
         # 一次识别要几十秒：客户端断开就停下（结果没人要，本地兜底也不必算）。
         result = await run_until_disconnect(
@@ -247,8 +310,32 @@ async def parse_profile_text_draft(
         )
     if result is None:
         raise client_gone("个人资料识别")
+    if route == "vision" and setup.ocr_available and not filled_field_count(
+        result, PROFILE_CONTENT_FIELDS
+    ):
+        try:
+            rescue = await ocr_rescue(
+                source_text=source_text,
+                image_urls=image_urls,
+                ctx=setup.ocr,
+                parse_local=parse_profile_text,
+                run_extraction=lambda text, draft, urls: extract_profile_text(
+                    provider, text, draft, urls
+                ),
+            )
+        except Exception:  # noqa: BLE001 - 兜底失败不该盖掉已有结果
+            logger.warning("资料视觉结果为空，OCR 兜底失败", exc_info=True)
+            rescue = None
+        if rescue is not None and filled_field_count(rescue.result, PROFILE_CONTENT_FIELDS) > 0:
+            result, ocr_text = rescue.result, rescue.ocr_text
+            extra_warnings.extend(rescue.warnings)
+    if ocr_text:
+        result = trim_recognized_text(result, ocr_text, MAX_RECOGNIZED_TEXT_CHARS)
     return _with_catalog_draft(
-        finalize_recognition_result(
-            result, has_images=has_images, document_warnings=documents.warnings
+        attach_warnings(
+            finalize_recognition_result(
+                result, has_images=has_images, document_warnings=documents.warnings
+            ),
+            extra_warnings,
         )
     )

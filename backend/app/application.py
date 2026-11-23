@@ -17,13 +17,14 @@ from . import (
     database,
     models,  # noqa: F401 - 确保全部模型注册到 Base.metadata
 )
-from .api import datasets, materials, resumes, skills
+from .api import datasets, materials, ocr, resumes, skills
 from .application_routers import install_routers
 from .config import BACKEND_DIR, DATA_DIR, get_settings
 from .database import run_sqlite_maintenance
 from .database_migrations import run_database_migrations
 from .middleware import (
     LoopbackOriginGuardMiddleware,
+    NetDirectOverrideMiddleware,
     RequestContextMiddleware,
     RequestIdFilter,
     get_request_id,
@@ -201,6 +202,19 @@ async def lifespan(_app: FastAPI):
     # 上次运行若中途退出，可能留下未应用的备份包与导出产物，它们不会再用到。
     startup_logger.info("启动自检：清理临时目录")
     cleanup_temp_directories(bind)
+    # F18：面试录像按"单场保留天数"到期清理（0 = 不自动删）。放在启动阶段而不是
+    # 定时任务：本地应用常年只在用的时候开着，定时器多半不会准点醒。清理失败不阻断启动
+    # ——最坏是旧文件多留一阵，比"打不开应用"轻得多。
+    try:
+        from .services.interview.interview_camera import (
+            cleanup_expired as cleanup_expired_recordings,
+        )
+
+        expired_recordings = cleanup_expired_recordings()
+        if expired_recordings:
+            startup_logger.info("清理过期面试录像 %d 个", expired_recordings)
+    except Exception:  # noqa: BLE001 - 清理失败不应阻断启动
+        startup_logger.warning("清理过期面试录像失败", exc_info=True)
     # 应用重启后，把仍停留在"进行中"的投递/采集/匹配/简历生成任务标记为失败，
     # 避免出现幽灵进度（简历任务还会占住"只跑一个"的生成入口，见 RF-02）。
     startup_logger.info("启动自检：清理中断的投递任务")
@@ -240,6 +254,19 @@ async def lifespan(_app: FastAPI):
             recover_running_tasks(session)
         except Exception:  # noqa: BLE001 - 恢复失败不应阻断启动
             startup_logger.warning("恢复中断的 Agent 任务失败", exc_info=True)
+    # I-04：助手记忆的启动补扫。抽取没有常驻定时器——用户关掉应用之后到点也没有进程
+    # 在跑，所以"下次打开应用"就是能抽的最佳时机。放在迁移、SQLite 维护与孤儿任务收尾
+    # 之后：孤儿 pending 行刚被标 failed，不会把补扫挡在"同会话在跑"上。
+    startup_logger.info("启动自检：补登记待抽取的助手记忆")
+    try:
+        from .services.assistant.memory_extract import backfill_pending_extractions
+
+        with database.SessionLocal() as session:
+            backfilled = backfill_pending_extractions(session)
+        if backfilled:
+            startup_logger.info("补登记助手记忆抽取 %d 个会话", backfilled)
+    except Exception:  # noqa: BLE001 - 补扫失败不能阻断启动
+        startup_logger.warning("补登记助手记忆抽取失败（不阻断启动）", exc_info=True)
     # T01：写操作提案跨重启语义——内存 token 已随进程丢失，pending/approved 必须
     # 一律置 expired（否则会出现"界面上还能确认、后端却执行不了"的假象）；同时按
     # 隐私最小化清理过期提案的参数与预览。失败不阻断启动（最坏是多留几条旧状态）。
@@ -391,6 +418,9 @@ def _frontend_dist_dir() -> Path:
 def create_app() -> FastAPI:
     """创建并装配应用；保留工厂便于离线测试和未来多实例部署。"""
     app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
+    # T02：请求级直连覆盖（`X-RF-Net-Direct: 1`）。放在最内层——它只写一个
+    # ContextVar，越靠近路由越不会受其它中间件的任务/上下文切换影响。
+    app.add_middleware(NetDirectOverrideMiddleware)
     app.add_middleware(DatasetRequestMiddleware)
     app.add_middleware(
         RequestContextMiddleware,
@@ -402,6 +432,9 @@ def create_app() -> FastAPI:
             # 资料箱附件：端点按 10MB 校验单文件，全局 8MB 会让 8–10MB 的
             # PDF/Word 先被中间件拦下（提示语还写着 8MB，与真实原因不符）。
             materials.ATTACHMENT_UPLOAD_PATH: settings.max_attachment_upload_mb * 1024 * 1024,
+            # OCR 任务直传原件：服务端上限 100 MiB，端点自己按 100MB 拦，
+            # 这里只负责别让中间件先用 8MB 把它挡回去。
+            ocr.TASK_PATH: settings.max_ocr_upload_mb * 1024 * 1024,
         },
     )
     app.add_middleware(

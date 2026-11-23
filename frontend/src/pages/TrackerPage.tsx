@@ -19,7 +19,6 @@ import {
   App,
   Button,
   Dropdown,
-  Empty,
   Input,
   Modal,
   Pagination,
@@ -29,6 +28,7 @@ import {
   Typography,
 } from "antd";
 import PageSkeleton from "../components/common/PageSkeleton";
+import EmptyState from "../components/common/EmptyState";
 import TrackerSummary from "../features/tracker/TrackerSummary";
 import ErrorState from "../components/common/ErrorState";
 import type { MenuProps } from "antd";
@@ -36,6 +36,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { getJob } from "../api/jobs";
 import { deleteTrack, exportTracks, listTrackStats, listTracksPage } from "../api/tracker";
+import ProbeButton from "../features/tracker/ProbeButton";
 import ReminderPanel from "../features/tracker/ReminderPanel";
 import TrackCard from "../features/tracker/TrackCard";
 import TrackFormModal from "../features/tracker/TrackFormModal";
@@ -217,7 +218,7 @@ export default function TrackerPage() {
     <div className="tracker-page">
       <div className="tracker-page-head">
         <Space orientation="vertical" size={0}>
-          <Typography.Title level={4} style={{ margin: 0 }}>
+          <Typography.Title level={3} style={{ margin: 0 }}>
             {t("trackerPage.title")}
           </Typography.Title>
           <Typography.Text type="secondary">{t("trackerPage.subtitle")}</Typography.Text>
@@ -229,6 +230,8 @@ export default function TrackerPage() {
           <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
             {t("trackerPage.action.import")}
           </Button>
+          {/* 回读「当前筛选下的这一页」：看到什么刷什么，不会偷偷刷你看不见的记录。 */}
+          <ProbeButton tracks={data?.items ?? []} onRefreshed={() => void reloadAll()} />
           <Dropdown
             menu={{
               items: exportMenu,
@@ -311,7 +314,7 @@ export default function TrackerPage() {
       {loading && <PageSkeleton rows={6} />}
       {error && <ErrorState description={error} onRetry={() => void reload()} />}
       {!loading && !error && items.length === 0 && (
-        <Empty
+        <EmptyState
           description={
             keyword || status ? t("trackerPage.empty.filtered") : t("trackerPage.empty.initial")
           }

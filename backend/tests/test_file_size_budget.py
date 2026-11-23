@@ -145,11 +145,12 @@ _EXEMPTIONS: dict[str, Exemption] = {
     "backend/app/services/webform/engine/core.py": Exemption(
         "单一类内聚，无拆分缝", _STRUCTURED_BACKSTOP
     ),
-    # install_live_control_script 主体是单一注入脚本字符串（canary 整脚本
-    # 断言），且 _load_face_data_uri 被 patch、_ASSET_DIR 为 __file__ 深度耦合。
-    "backend/app/services/webform/live_control.py": Exemption(
-        "patch + __file__ + 单一脚本资源", _STRUCTURED_BACKSTOP
-    ),
+    # live_control.py 的豁免（"patch + __file__ + 单一脚本资源"）已于 2026-11-14
+    # 批 2 T4 拆分批执行并删除：~400 行 JS f-string 纯搬迁到同目录
+    # live_control_script.py（render_live_control_script），install_live_control_script
+    # 收成 4 行调用；_load_face_data_uri / _ASSET_DIR 与 __file__ 层级留在原模块
+    # （patch 落点不变）。拆分后 live_control.py 110 行、新模块 429 行，均低于
+    # 500 预算，不再需要豁免。
     # 上一轮拆分后的编排核心；captures_dir/get_task_runner 被模块属性
     # patch。触发条件：>650 行或新增批次类型时迁出 StopAwareCdpClient。
     "backend/app/services/apply/task_runner.py": Exemption(
@@ -161,13 +162,10 @@ _EXEMPTIONS: dict[str, Exemption] = {
         "页面组合层（编排职责单一）", _STRUCTURED_BACKSTOP
     ),
     # 2026-10-12 AI 提速批接入共享连接池（client_pool）后各 +9 行（511/512 vs 500）。
-    # 两文件是协议编排热点：monkeypatch 落点密集（payload/_build_payload/_client/
+    # Anthropic 是协议编排热点：monkeypatch 落点密集（payload/_build_payload/_client/
     # 模块级 retry 等），拆出"HTTP 调用层"会把重试/降级/用量接线的上下文切成两半。
     # 触发条件：>600 行或下次功能改动时先把传输层（_client/_timeout/_headers/_endpoint）
     # 迁入独立模块（届时本豁免撤销）。
-    "backend/app/services/llm/openai_compat.py": Exemption(
-        "过线 12 行，协议编排热点 + patch 落点密集", _STRUCTURED_BACKSTOP
-    ),
     "backend/app/services/llm/anthropic.py": Exemption(
         "过线 11 行，协议编排热点 + patch 落点密集", _STRUCTURED_BACKSTOP
     ),
@@ -222,31 +220,17 @@ _EXEMPTIONS: dict[str, Exemption] = {
     "backend/app/api/apply.py": Exemption(
         "二开加招呼语闸门/失败分类分支，拆分会切断单条投递链路", _FORK_BACKSTOP
     ),
-    "backend/app/api/interview.py": Exemption(
-        "二开加教练参考答案端点（整块能力，到期后优先拆出独立模块）", _FORK_BACKSTOP
-    ),
-    "backend/app/services/apply/task_apply.py": Exemption(
-        "二开加站点适配分支，与 task_runner 同一条执行链", _FORK_BACKSTOP
-    ),
-    # browser_manager.py 的豁免已在合并上游 2.1.0（2026-11-13）时删除：合并后实测
-    # 492 行 ≤ 500，原来的条目变成幽灵豁免。上游把投递浏览器那段落抽走后腾出了空间。
+    # browser_manager.py 的豁免已在合并上游 2.1.0（2026-11-13）时删除；
+    # interview.py / task_apply.py / document_html.py / InterviewPage.tsx /
+    # modules-interview.css 在合并上游 2.3.1（2026-11-23）后均降至 ≤500 行，豁免同批删除。
     "backend/app/services/job/job_match.py": Exemption(
         "二开加平台派生筛选（platform.py 已拆出），剩余为匹配主流程", _FORK_BACKSTOP
     ),
     "backend/app/services/profile/portrait_import.py": Exemption(
         "二开新增整块能力，到期后优先整体拆为 portrait_* 子模块", _FORK_BACKSTOP
     ),
-    "backend/app/services/resume/document_html.py": Exemption(
-        "本次刚过线 3 行（section 级 hidden 过滤），下批改动前必须处理", _FORK_BACKSTOP
-    ),
     "backend/app/services/resume/resume_profile_append.py": Exemption(
         "本次刚过线 18 行（自建/内置双路径 + 幂等注释），下批改动前必须处理", _FORK_BACKSTOP
-    ),
-    "frontend/src/pages/InterviewPage.tsx": Exemption(
-        "二开加教练入口与报告附录渲染，与面试页状态耦合", _FORK_BACKSTOP
-    ),
-    "frontend/src/styles/modules-interview.css": Exemption(
-        "二开加教练卡片样式 74 行，与面试模块同一分段", _FORK_BACKSTOP
     ),
     # ---- 合并上游 2.1.0（2026-11-13）：合并后逐个实测"单侧未超、合起来超" ----
     #
@@ -257,14 +241,9 @@ _EXEMPTIONS: dict[str, Exemption] = {
     # 到期日 2026-12-31，与二开移植那批同批处理。逐文件说明为什么现在不拆：
     # - job_hunt_tasks.py：整条「采集→落候选→补 JD→建评分任务」的编排在这一个文件里，
     #   拆开会让一次采集跨两个模块（同 apply.py 的理由）。
-    # - settings.py / _site_browser.py / interview.py：上游在本批把三个文件都推到 499
-    #   左右（settings 479 / _site_browser 455 / interview 499），我们各自又加了几行；
-    #   拆它们属于上游的结构问题，跟着上游节奏走比自己拆更省冲突。
-    # - NativeJobHuntView.tsx / ApplyQueuePanel.tsx / JobsPage.tsx / apply.css：界面上
-    #   一屏的编排（工具栏 + 表格 + 弹窗），拆成两半会让"一条交互横跨两个文件"。
-    # - ApplyQueuePanel.test.tsx：与上一条同屏，用例跟着界面走。
-    # - scripts/fork_gate.py：二开闸门脚本，命令清单是**顺序契约**（按 README 里的
-    #   执行次序），拆成多个模块会让"跑哪几条、什么顺序"散落。
+    # - settings.py / _site_browser.py：上游已逼近预算，我们各自加了几行；跟着上游拆更省冲突。
+    # - apply.css：投递页样式（501 行），二开加投递结果列样式。
+    # - ApplyQueuePanel.test.tsx：测试豁免见 _TEST_EXEMPTIONS。
     "backend/app/api/job_hunt_tasks.py": Exemption(
         "二开采集全链路编排（采集→落候选→补JD→评分）在同一文件，拆开会切断单次采集", _FORK_BACKSTOP
     ),
@@ -274,17 +253,7 @@ _EXEMPTIONS: dict[str, Exemption] = {
     "backend/app/services/apply/_site_browser.py": Exemption(
         "合并后 502 行：上游已到 455，二开加投递专用浏览器实例隔离", _FORK_BACKSTOP
     ),
-    "backend/app/services/interview/interview.py": Exemption(
-        "合并后 505 行：上游已到 499，二开加教练参考答案落库", _FORK_BACKSTOP
-    ),
-    # NativeJobHuntView.tsx 的豁免已删除（2026-11-13）：把「数据源与动作」那一区
-    # 抽成 HuntSourceRow 之后降到 463 行，原条目成了幽灵豁免。
-    "frontend/src/features/apply/ApplyQueuePanel.tsx": Exemption(
-        "合并后 533 行：上游已到 481，二开加准入提示与投递结果列", _FORK_BACKSTOP
-    ),
-    "frontend/src/pages/JobsPage.tsx": Exemption(
-        "合并后 511 行：上游已到 495，二开加导入时间列与候选抽屉", _FORK_BACKSTOP
-    ),
+    # interview.py / ApplyQueuePanel.tsx / JobsPage.tsx 在合并上游 2.3.1 后已降至 ≤500 行，删除幽灵豁免。
     "frontend/src/styles/apply.css": Exemption(
         "合并后 501 行：上游已到 466，二开加投递结果列样式", _FORK_BACKSTOP
     ),

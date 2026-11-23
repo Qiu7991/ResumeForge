@@ -51,6 +51,14 @@ const typography = {
   "typography.role.entry_title": "条目标题",
   "typography.role.body": "正文",
   "typography.role.meta": "日期与元信息",
+  "typography.role.field_label": "字段名",
+  /** F25：折叠头第二行，说清这一组控制纸面哪里（收起态也在）。 */
+  "typography.role.hint.name": "纸面最上方的姓名行",
+  "typography.role.hint.section_title": "教育经历、项目经历等小节标题",
+  "typography.role.hint.entry_title": "每段经历的第一行：公司 + 职位",
+  "typography.role.hint.body": "要点句与段落正文",
+  "typography.role.hint.meta": "条目右侧的时间、学历等灰字",
+  "typography.role.hint.field_label": "字段值前的灰色前缀",
   /** 角色 header 上的覆盖计数胶囊：不写裸数字（读屏与视觉都要能自解释）。 */
   "typography.role.ownCount": "{count} 项已调整",
   /** 恢复某个角色的全部覆盖。 */
@@ -124,14 +132,23 @@ const typography = {
   "typography.entryStyle.scope.aria": "选择条目排版的作用范围",
   /** 四个范围名：与文字级别的同名范围刻意用不同措辞（这里是"条目排版"的入口）。 */
   "typography.entryStyle.scope.object": "整条",
+  "typography.fieldStyle.target.value": "字段值",
+  "typography.fieldStyle.target.label": "字段名",
+  "typography.fieldStyle.target.aria": "选择要调整的部分",
   "typography.entryStyle.scope.entry_title": "条目头",
   "typography.entryStyle.scope.body": "正文",
   "typography.entryStyle.scope.meta": "灰字",
+  "typography.entryStyle.scope.field": "当前字段",
+  /** QW-6：页眉字段的作用范围名与说明（字段名 / 字段值分别调）。 */
+  "typography.headerStyle.scope": "页眉字段",
+  "typography.headerStyle.hint": "字段名与字段值分开调：上面选哪一半，下面的参数就只改那一半",
+  "typography.headerStyle.noLabel": "这个字段当前不显示字段名（可在字段设置里改成「显示」）",
   /** 段控下方的一句范围说明：说清这次只动哪一块。 */
   "typography.entryStyle.scopeHint.object": "整条一起改：标题、正文、灰字都跟随",
   "typography.entryStyle.scopeHint.entry_title": "只改条目标题这一行",
   "typography.entryStyle.scopeHint.body": "只改正文与要点",
   "typography.entryStyle.scopeHint.meta": "只改时间、地点等灰字",
+  "typography.entryStyle.scopeHint.field": "只改命中的字段或要点",
   /** 状态行：目标 + 范围，避免"当前：跟随模板"被误读成范围。 */
   "typography.entryStyle.status": "正在调整：{name} · 范围：{scope}",
   /** 来源胶囊：这个范围当前是"已调整"还是"跟随模板"。 */
@@ -140,6 +157,7 @@ const typography = {
   "typography.entryStyle.source.entry_title": "条目头已调整",
   "typography.entryStyle.source.body": "正文已调整",
   "typography.entryStyle.source.meta": "灰字已调整",
+  "typography.entryStyle.source.field": "字段已调整",
   /** 恢复按钮：只清当前作用范围的键（整条 → objects；子范围 → object_roles）。 */
   "typography.entryStyle.restore": "恢复「{scope}」跟随模板",
   /** 无关项说明（不是隐藏得莫名其妙）。 */
@@ -185,9 +203,22 @@ const typography = {
   // ── 字符级标记（斜体 / 链接；加粗沿用右键菜单的既有语义）────────
   "typography.inline.groupAria": "字符格式",
   "typography.inline.bold": "加粗",
+  /** F22：字号/颜色不再写死一档，工具条给菜单。 */
+  "typography.inline.size": "字号",
+  "typography.inline.sizeAria": "把所选文字设为指定字号",
+  "typography.inline.sizeClear": "100%（清除字号）",
+  "typography.inline.sizeCustom": "自定义字号",
+  "typography.inline.sizeCustomAria": "自定义字号系数",
+  "typography.inline.sizeApply": "应用字号",
+  "typography.inline.color": "颜色",
+  "typography.inline.colorPresets": "常用颜色",
+  "typography.inline.colorClear": "清除颜色",
   "typography.inline.link": "链接",
   "typography.inline.boldAria": "加粗所选文字",
   "typography.inline.linkAria": "给所选文字加链接",
+  /** 右键菜单（F22）：与工具条同一批动作。 */
+  "typography.inline.linkMenu": "插入链接…",
+  "typography.inline.clearMarks": "清除行内格式",
   /** 链接输入弹层的标题（≤7 字）。 */
   "typography.inline.linkTitle": "插入链接",
   "typography.inline.linkPlaceholder": "https://example.com",
@@ -389,6 +420,15 @@ const typography = {
   "typography.tools.sectionBatch": "批量调整",
   "typography.tools.sectionRole": "同类段落",
   "typography.tools.roleHint": "同类段落默认按条目正文继承",
+  "typography.photoFrame": "照片框",
+  "typography.photoFrameHint": "照片框尺寸由模板决定，不能单独调节。",
+  "typography.photoFrameEmpty": "选中照片后，这里会显示它的画框比例与建议裁剪比例。",
+  "typography.photoGuide.text": "照片的大小、边框、圆角与偏移在左栏「照片」的「边框与位置」里调整",
+  "typography.photoGuide.action": "去「照片」",
+  "typography.objectGroup.text": "文字与颜色",
+  "typography.objectGroup.spacing": "行距与缩进",
+  "typography.objectGroup.list": "列表与对齐",
+  "typography.objectGroup.meta": "日期与字距",
 } as const;
 
 export default typography;

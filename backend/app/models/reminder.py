@@ -18,30 +18,23 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.vocabulary.reminder import (
+    REMINDER_KIND_ASSESSMENT_DEADLINE,
+    REMINDER_KIND_HR_REPLY,
+    REMINDER_KIND_INTERVIEW,
+    REMINDER_KIND_OTHER,
+    REMINDER_KINDS,
+    REMINDER_STATUS_DISMISSED,
+    REMINDER_STATUS_DONE,
+    REMINDER_STATUS_PENDING,
+    REMINDER_STATUSES,
+)
+
 from ..database import Base
 from .profile import utcnow
 
-# ===== 提醒种类（前后端共用一份取值）=====
-REMINDER_KIND_INTERVIEW = "interview"
-REMINDER_KIND_ASSESSMENT_DEADLINE = "assessment_deadline"
-REMINDER_KIND_HR_REPLY = "hr_reply"
-REMINDER_KIND_OTHER = "other"
-REMINDER_KINDS = (
-    REMINDER_KIND_INTERVIEW,
-    REMINDER_KIND_ASSESSMENT_DEADLINE,
-    REMINDER_KIND_HR_REPLY,
-    REMINDER_KIND_OTHER,
-)
-
-# ===== 提醒状态 =====
-REMINDER_STATUS_PENDING = "pending"
-REMINDER_STATUS_DONE = "done"
-REMINDER_STATUS_DISMISSED = "dismissed"
-REMINDER_STATUSES = (
-    REMINDER_STATUS_PENDING,
-    REMINDER_STATUS_DONE,
-    REMINDER_STATUS_DISMISSED,
-)
+# 提醒种类与状态词表已下沉到 ``app/vocabulary/reminder.py``（D8：契约层不再经由 models
+# 取词表）。这里逐个显式 re-export，既有 ``from app.models.reminder import ...`` 不变。
 
 
 class Reminder(Base):
@@ -57,13 +50,13 @@ class Reminder(Base):
     status: Mapped[str] = mapped_column(String(16), default=REMINDER_STATUS_PENDING, index=True)
     # 三个可选绑定对象，均为 SET NULL：被绑对象删除后提醒仍保留。
     track_id: Mapped[int | None] = mapped_column(
-        ForeignKey("application_track.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("application_track.id", ondelete="SET NULL"), nullable=True, index=True
     )
     job_id: Mapped[int | None] = mapped_column(
         ForeignKey("job.id", ondelete="SET NULL"), nullable=True, index=True
     )
     resume_id: Mapped[int | None] = mapped_column(
-        ForeignKey("resume_record.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("resume_record.id", ondelete="SET NULL"), nullable=True, index=True
     )
     note: Mapped[str] = mapped_column(Text, default="")
 

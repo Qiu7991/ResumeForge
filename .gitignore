@@ -21,13 +21,13 @@ node_modules/.tmp/
 # vite build 的临时输出目录。docs/AGENTS 里的构建绕行方案**要求输出到仓库外面**
 # （`--outDir D:\rf_build_tmp`），但真有人写进仓库时（一度出现过
 # `frontend/rf_build_tmp/`），构建产物不该被误提交——加一条兜住。
-# 构建产物本身可随时用 `npm run build` 重建，留着只会污染 `git status`。
+# 构建产物本身可随时用 `pnpm run build` 重建，留着只会污染 `git status`。
 rf_build_*/
 frontend/rf_build_*/
 # 审计验收时的一次性构建输出（2026-10-19 快照），同样不该被提交。
 frontend/rf_audit_build/
 # 手动导出的前端产物包（如 `frontend/dist-1.0.2-20261026.zip`）：`dist/` 只忽略目录，
-# 这类打好的 zip 会以未跟踪文件一直挂在 `git status` 里。产物可由 `npm run build` 重建，
+# 这类打好的 zip 会以未跟踪文件一直挂在 `git status` 里。产物可由 `pnpm run build` 重建，
 # 要分发请走 Release 资产，不进仓库。
 frontend/dist-*.zip
 
@@ -49,6 +49,8 @@ backend/*.sqlite-*
 backend/*.sqlite3
 backend/*.sqlite3-*
 backend/backups/
+# 测试/启动前的自动备份目录（按 PID 或测试名建子目录，内容是 .db，属运行期产物）
+backend/auto-backups/
 backend/test_resume_forge.db
 /runtime/
 # 后端运行期产物：本机调查脚本会在 backend/runtime/ 下写导出件。
@@ -105,3 +107,12 @@ docs/job-hunt-fixtures/*.otf
 # 技能包解压目录：内置技能只保留 app/assets/skills/*.zip（代码读的那个）。
 # 根目录这份是导入时解压出来的工作副本，不该进仓库（2026-11-10）。
 /skills/
+
+# `Build-PythonRuntime.ps1` 解压嵌入版 Python 的暂存目录（实测 32 MB）。
+# 它只是打包中间产物：漏了这条会以"未跟踪文件"身份躺在工作区里，很容易被
+# `git add -A` 一把带进仓库。
+desktop/runtime-staging/
+
+# 评审截图（本地证据，不进仓库）：每次改界面会用 Playwright 截一组，
+# 体积 1–2 MB/批且与发布产物无关，入库只会让 clone 变慢。
+/screenshots/

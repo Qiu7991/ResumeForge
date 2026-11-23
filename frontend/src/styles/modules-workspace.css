@@ -300,6 +300,29 @@
   font-size: 12px;
 }
 
+/* 临时对话（F34）：页头「本次不记忆」开关与侧栏状态图标。
+   图标只是状态标记（不是按钮），用次级色，避免和置顶/收藏的实心图标抢注意力。 */
+.assistant-memory-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-end: 8px;
+  font-size: 12px;
+}
+
+.assistant-conversation-memory-off {
+  display: inline-block;
+  margin-inline-start: 4px;
+  padding: 0 5px;
+  border: 0.5px solid var(--rf-border);
+  border-radius: 999px;
+  color: var(--rf-text-secondary);
+  font-size: 11px;
+  line-height: 15px;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
 .assistant-reasoning-control {
   display: inline-flex;
   align-items: center;
@@ -387,4 +410,20 @@
   line-height: 1.8;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/*
+ * I-20：模板下拉的菜单项是两行——第一行名字、第二行适用场景。
+ * 场景文案原来是 tooltip，收进菜单后必须常驻可读（用户就是靠它选模板），
+ * 所以第二行固定 12px 次要色，不再依赖悬停。
+ */
+.skills-template-item__name {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.skills-template-item__hint {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--rf-text-description);
 }

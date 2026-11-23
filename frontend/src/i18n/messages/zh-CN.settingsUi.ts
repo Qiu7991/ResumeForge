@@ -33,6 +33,13 @@ const settingsUi = {
   /** 关掉标语后仍保留哪些行为：只说被影响的，不吓唬用户。 */
   "settingsUi.orb.tipsHint":
     "关闭后悬浮球不再弹出提示语，也不会在「我的资料」页提示你去改资料，其余功能不受影响。",
+  /** 划词浮条开关（Q9）的无障碍名。 */
+  "settingsUi.orb.selectionAria": "开启投投划词浮条",
+  "settingsUi.orb.selectionOnToast": "选中文字后会浮出投投划词浮条",
+  "settingsUi.orb.selectionOffToast": "选中文字后不再浮出划词浮条",
+  /** 关掉划词浮条后仍保留哪些行为：入口、提示标语与动作面板的长按都不受影响。 */
+  "settingsUi.orb.selectionHint":
+    "关闭后选中网页文字不再浮出动作条（改写、复制、存资料等），点悬浮球打开助手与长按动作面板不受影响。",
   "settingsUi.orb.loadFailed": "加载投投悬浮球设置失败",
   "settingsUi.orb.saveFailed": "保存投投悬浮球设置失败",
 
@@ -129,7 +136,7 @@ const settingsUi = {
    * 消费者使用，但界面按语言包取文——否则英文界面里这句会是中文。
    */
   "settingsUi.help.previewNote":
-    "诊断包只包含脱敏运行事件、系统信息与近期后端日志尾部（疑似令牌已兜底抹除）；不包含简历全文、表单填写值、Cookie 或提示词。",
+    "诊断包只含脱敏事件、系统信息与近期日志（桌面壳启动时含桌面壳日志；令牌已抹除）；代理只记来源与端口；不包含简历全文、表单值、Cookie 与提示词。",
   /** 反馈渠道那一行的三段：链接前、群号前、群号后。 */
   "settingsUi.help.feedbackLead": "反馈渠道：",
   "settingsUi.help.feedbackJoin": "，或加用户群",
@@ -145,7 +152,7 @@ const settingsUi = {
     "的数据目录里（SQLite 数据库），应用没有账号体系、没有埋点上报，也不会把简历数据上传到任何服务器。",
   /** AI 边界：只在主动调用时外包，密钥留在本机。 */
   "settingsUi.privacy.ai":
-    "AI 功能只在你主动调用时，把完成任务所需的内容发送给你自己配置的模型服务商；服务商密钥保存在本机（Windows 上经系统级 DPAPI 加密）。诊断包（见「应用」分页的帮助与诊断）只含脱敏运行事件与日志尾部，不含简历数据与密钥。",
+    "AI 功能只在你主动调用时，把完成任务所需的内容发送给你自己配置的模型服务商；服务商密钥保存在本机（Windows 上经系统级 DPAPI 加密）。诊断包（见 更新与帮助 → 帮助与诊断）只含脱敏运行事件与日志尾部，不含简历数据与密钥。",
   /** 第三条承诺的两个小标题（各自后面紧跟一段正文）。 */
   "settingsUi.privacy.exportStrong": "带走数据：",
   "settingsUi.privacy.exportBody":
@@ -168,6 +175,30 @@ const settingsUi = {
     "生成类任务（简历生成、岗位解读、匹配度分析等）与投递 / 采集批次**完成时**，是否播放一声提示音。 弹窗提醒不受这个开关影响。",
   "settingsUi.reminderPopup.soundAria": "任务完成时播放提示音",
   "settingsUi.reminderPopup.soundHint": "默认开启。浏览器若拦截自动播放，会静默跳过。",
+
+  // ── 桌面版托盘图标（WF-20，仅桌面壳显示） ──────────────────────
+  "settingsUi.desktopTray.title": "桌面托盘图标",
+  "settingsUi.desktopTray.intro":
+    "托盘图标默认跟随应用内主题。如果任务栏是浅色、应用内又是暗色，图标会不够清楚——打开这个开关让它只跟系统深浅色。",
+  "settingsUi.desktopTray.toggleAria": "托盘图标跟随系统主题",
+  "settingsUi.desktopTray.enableToast": "已开启：托盘图标跟随系统主题",
+  "settingsUi.desktopTray.disableToast": "已关闭：托盘图标跟随应用内主题",
+  "settingsUi.desktopTray.loadFailed": "加载托盘图标设置失败",
+  "settingsUi.desktopTray.saveFailed": "保存托盘图标设置失败",
+  "settingsUi.desktopTray.defaultHint": "默认关闭（跟随应用内主题）。仅桌面版可见。",
+
+  // ── 开机自启（WF-08，仅桌面壳显示） ──────────────────────────
+  "settingsUi.launchAtLogin.title": "开机时自动启动",
+  "settingsUi.launchAtLogin.intro":
+    "登录 Windows 后自动启动 ResumeForge。这里读的就是安装器写的那条启动项，两边不会各存一份。",
+  "settingsUi.launchAtLogin.toggleAria": "登录 Windows 时自动启动 ResumeForge",
+  "settingsUi.launchAtLogin.enableToast": "已开启：登录 Windows 后会自动启动",
+  "settingsUi.launchAtLogin.disableToast": "已关闭：登录 Windows 后不再自动启动",
+  "settingsUi.launchAtLogin.loadFailed": "读取开机自启状态失败",
+  "settingsUi.launchAtLogin.saveFailed": "修改开机自启失败",
+  "settingsUi.launchAtLogin.unsupported":
+    "当前安装包无法代为管理开机自启，请到「任务管理器 → 启动」里调整。",
+  "settingsUi.launchAtLogin.hint": "值取自 Windows 本身，与安装器写入的是同一条。",
 
   // ── 助手技能卡（只读摘要） ────────────────────────────────────
   "settingsUi.skills.title": "助手技能",
@@ -206,7 +237,6 @@ const settingsUi = {
   "settingsUi.webFormRelaxed.warning":
     "开启后程序会尝试代点下拉/弹层选项并代勾你逐条确认过的声明项，存在选错可能，填完请核对；" +
     "四类始终不代填：日期选择器、文件上传、密码/验证码/银行卡、无弹层的只读点选框——这些都需要你自己操作。",
-
   // ── 生成偏好卡：简历是否显示项目技术栈 ──────────────────────
   "settingsUi.generationPrefs.title": "生成偏好 · 简历内容",
   "settingsUi.generationPrefs.intro":
@@ -221,6 +251,51 @@ const settingsUi = {
     "已生成的旧简历不受影响。",
   "settingsUi.skills.tagRecommended": "推荐",
 
+  // ── 出网与代理（T02 / T05）──────────────────────────────────
+  "settingsUi.network.title": "出网与代理",
+  "settingsUi.network.intro": "模型、搜索与更新检查共用这条出网路径。",
+  "settingsUi.network.instantHint": "改动保存后即时生效",
+  "settingsUi.network.modeLabel": "出网方式",
+  "settingsUi.network.mode.system": "跟随系统",
+  "settingsUi.network.mode.systemHint": "用系统代理与证书",
+  "settingsUi.network.mode.direct": "直连",
+  "settingsUi.network.mode.directHint": "绕过任何代理",
+  "settingsUi.network.mode.custom": "自定义代理",
+  "settingsUi.network.mode.customHint": "手动填地址",
+  "settingsUi.network.clean": "没有改动",
+  "settingsUi.network.dirty": "有未保存的更改",
+  "settingsUi.network.probeBlocked": "先保存再测试",
+  "settingsUi.network.directWarning":
+    "直连会绕过系统代理：需要代理才能上网的环境（公司网络、只能走代理的宽带）会因此全部连不上，包括模型、搜索与更新检查。",
+  "settingsUi.network.urlPlaceholder": "例如 http://127.0.0.1:7890",
+  "settingsUi.network.url": "代理地址",
+  "settingsUi.network.username": "代理用户名",
+  "settingsUi.network.usernamePlaceholder": "用户名（可选）",
+  "settingsUi.network.password": "代理口令",
+  "settingsUi.network.passwordPlaceholder": "口令（可选）",
+  "settingsUi.network.passwordKeep": "留空表示不改",
+  "settingsUi.network.socksHint":
+    "只支持 http:// 或 https:// 代理。代理软件通常同时提供一个 http 端口，用它即可。",
+  "settingsUi.network.trust": "信任系统证书库",
+  "settingsUi.network.trustHint":
+    "默认关闭。杀毒软件或公司网关对 HTTPS 做扫描时，会用它们自己的证书替换，这时才需要打开；打开后本机信任的证书都会被接受。",
+  "settingsUi.network.probe": "测试连接",
+  "settingsUi.network.probeCurrent": "按当前设置",
+  "settingsUi.network.probeDirect": "直连",
+  "settingsUi.network.probeOk": "连接成功",
+  "settingsUi.network.detected": "检测到系统代理 {proxy}（来源：{source}）",
+  "settingsUi.network.useDirect": "改为直连",
+  "settingsUi.network.saved": "已保存，下一次请求即生效",
+  "settingsUi.network.save": "保存",
+  "settingsUi.network.checklist.title": "连不上时按这四类排查（每类一句话）：",
+  "settingsUi.network.checklist.proxy":
+    "代理：确认代理软件在运行、端口没写错；不确定就先改成「直连」再测一次。",
+  "settingsUi.network.checklist.tls":
+    "证书：浏览器能打开但这里打不开，多半是杀毒软件或公司网关在扫描 HTTPS——加白名单，或打开「信任系统证书库」。",
+  "settingsUi.network.checklist.refused":
+    "连接被拒：Base URL 少了或多了 /v1，或端口不对；照服务商文档改到以 /v1 结尾。",
+  "settingsUi.network.checklist.timeout":
+    "超时：先测一次直连；直连也超时就是线路或服务端问题，换网络或稍后重试。",
 } as const;
 
 export default settingsUi;

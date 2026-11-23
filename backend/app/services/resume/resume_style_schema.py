@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .field_style_target import is_field_path
 from .resume_config_domains import HEX_COLOR_RE, is_object_id
 from .resume_template_scalars import template_float
 
@@ -32,11 +33,12 @@ ROLES: tuple[str, ...] = (
     "entry_title",
     "body",
     "meta",
+    "field_label",
 )
 
 # 属性表：key → 类型 + 区间/枚举 + 可用角色。前端同名表必须逐键相等（测试钉住）。
 STYLE_PROPS: tuple[dict[str, Any], ...] = (
-    {"key": "font_scale", "type": "number", "min": 0.70, "max": 2.40, "step": 0.02, "roles": ROLES},
+    {"key": "font_scale", "type": "number", "min": 0.50, "max": 3.00, "step": 0.02, "roles": ROLES},
     {"key": "color", "type": "color", "roles": ROLES},
     {"key": "bold", "type": "bool", "roles": ROLES},
     # #5d：italic 已整体移除（PDF 无斜体字形、Word/HTML 行为不一，详见 CHANGELOG）；
@@ -45,7 +47,7 @@ STYLE_PROPS: tuple[dict[str, Any], ...] = (
         "key": "space_before",
         "type": "number",
         "min": 0.0,
-        "max": 3.0,
+        "max": 6.0,
         "step": 0.05,
         "roles": ("section_title", "entry_title", "body"),
     },
@@ -53,19 +55,19 @@ STYLE_PROPS: tuple[dict[str, Any], ...] = (
         "key": "space_after",
         "type": "number",
         "min": 0.0,
-        "max": 3.0,
+        "max": 6.0,
         "step": 0.05,
         "roles": ("section_title", "entry_title", "body"),
     },
     {
         "key": "line_height",
         "type": "number",
-        "min": 1.0,
-        "max": 2.6,
+        "min": 0.90,
+        "max": 3.00,
         "step": 0.01,
         "roles": ("body", "entry_title"),
     },
-    {"key": "indent", "type": "number", "min": 0.0, "max": 4.0, "step": 0.05, "roles": ("body",)},
+    {"key": "indent", "type": "number", "min": 0.0, "max": 8.0, "step": 0.05, "roles": ("body",)},
     {
         "key": "bullet",
         "type": "enum",
@@ -87,12 +89,12 @@ STYLE_PROPS: tuple[dict[str, Any], ...] = (
     {
         "key": "letter_spacing",
         "type": "number",
-        "min": -0.10,
-        "max": 0.30,
+        "min": -0.20,
+        "max": 0.60,
         "step": 0.01,
         # Q11：字距放开到正文 / 条目头——四出口都能表达（HTML letter-spacing / Word
         # w:spacing / PDF set_char_spacing）；此前只允许姓名与板块标题，用户调不到。
-        "roles": ("name", "section_title", "body", "entry_title"),
+        "roles": ("name", "section_title", "body", "entry_title", "field_label"),
     },
 )
 
@@ -105,6 +107,20 @@ ROLE_PROPS: dict[str, tuple[str, ...]] = {
 }
 OBJECT_PROPS: tuple[str, ...] = PROP_KEYS
 
+#: 字段作用域（``object_roles["<字段路径>:<role>"]``）里**没有落点**的属性（DF-8）。
+#:
+#: 只列 ``meta_align``：它写的是 ``.entry-head`` 的 ``justify-content``，字段层没有这个
+#: flex 容器；PDF / Word 也从不按字段路径读它（``pdf_exporter`` 只在条目头查对象层）。
+#: 面板因此少给一个"拖了没反应"的滑杆，校验侧同步丢弃——否则用户能存进一个三出口都不读的值。
+FIELD_EXCLUDED_PROPS: tuple[str, ...] = ("meta_align",)
+
+#: 字段作用域真正有落点的属性 = 角色白名单去掉 ``FIELD_EXCLUDED_PROPS``。
+#: 前端 ``styleCatalog.FIELD_STYLE_PROPS`` 与这里逐项相等（``styleParity.test.ts`` 钉住）。
+FIELD_ROLE_PROPS: dict[str, tuple[str, ...]] = {
+    role: tuple(key for key in props if key not in FIELD_EXCLUDED_PROPS)
+    for role, props in ROLE_PROPS.items()
+}
+
 # 区间与步长单独暴露一份：前端区间表校验、输入控件的步进都读它（不重复抄数字）。
 PROP_BOUNDS: dict[str, tuple[float, float]] = {
     prop["key"]: (float(prop["min"]), float(prop["max"]))
@@ -115,7 +131,7 @@ PROP_STEPS: dict[str, float] = {
     prop["key"]: float(prop["step"]) for prop in STYLE_PROPS if prop["type"] == "number"
 }
 
-# 单角色/单对象最多 12 个属性（契约 §1.3）；STYLE_PROPS 一共 12 个，正好封顶。
+# 单角色/单对象最多 12 个属性（契约 §1.3）；STYLE_PROPS 一共 11 个，上限仍有余量。
 MAX_ROLE_PROPS = 12
 MAX_OBJECTS = 400
 # ``object_roles`` 域的条目上限（键是"对象 id:角色"，比 objects 更细，仍按同一数量级
@@ -130,7 +146,12 @@ def _as_float(value: object) -> float | None:
 
 
 def _valid_value(prop: dict[str, Any], value: object) -> object | None:
-    """按属性类型校验；不合法返回 None（调用方丢弃该属性，不夹紧）。"""
+    """按属性类型校验；**类型不合法**返回 None（调用方丢弃该属性）。
+
+    数值越界**夹到边界并保留**（I-32）：旧行为是越界返回 None、调用方静默丢键，
+    用户把字号拖到 2.4 松手后"跳回去"，看起来像控件坏了。读取侧同样夹紧，所以
+    旧文档里存着的越界值在界面上显示的就是渲染实际用的值。
+    """
     kind = prop["type"]
     if kind == "bool":
         return value if isinstance(value, bool) else None
@@ -144,7 +165,7 @@ def _valid_value(prop: dict[str, Any], value: object) -> object | None:
     if number is None:
         return None
     low, high = float(prop["min"]), float(prop["max"])
-    return round(number, 3) if low <= number <= high else None
+    return round(min(max(number, low), high), 3)
 
 
 def _validate_style_payload(
@@ -209,8 +230,10 @@ def validate_objects_domain(raw: object) -> dict | None:
 def validate_object_roles_domain(raw: object) -> dict | None:
     """§1.2 的 ``object_roles`` 域校验（W3：文字级别按选中字段/角色生效）。
 
-    键形如 ``"<object_id>:<role>"``：对象 id 必须过 ``is_object_id``、角色必须是
-    ``ROLES`` 之一，属性按该角色的 ``ROLE_PROPS[role]`` 收窄（meta 不允许段距等）。
+    键形如 ``"<object_id>:<role>"``：对象 id 必须过 ``is_object_id``（字段路径过
+    ``is_field_path``）、角色必须是 ``ROLES`` 之一，属性按该角色的 ``ROLE_PROPS[role]``
+    收窄（meta 不允许段距等）；字段路径再按 ``FIELD_ROLE_PROPS[role]`` 收窄（DF-8：
+    自定义字段没有条目头容器，``meta_align`` 存进去也没有出口读它）。
     ≤400 条；空域返回 ``None``（R3：不落库）。畸形键**整条丢弃**，不猜语义。
     """
     if not isinstance(raw, dict):
@@ -221,9 +244,11 @@ def validate_object_roles_domain(raw: object) -> dict | None:
         if name == "version":
             continue
         object_id, sep, role = name.rpartition(":")
-        if not sep or not is_object_id(object_id) or role not in ROLES:
+        is_field = is_field_path(object_id)
+        if not sep or not (is_object_id(object_id) or is_field) or role not in ROLES:
             continue
-        cleaned = _validate_style_payload(payload, allowed=ROLE_PROPS[role])
+        allowed = FIELD_ROLE_PROPS[role] if is_field else ROLE_PROPS[role]
+        cleaned = _validate_style_payload(payload, allowed=allowed)
         if cleaned:
             result[f"{object_id}:{role}"] = cleaned
         if len(result) >= MAX_OBJECT_ROLES:
@@ -291,6 +316,7 @@ def template_role_defaults(template: str) -> dict[str, dict[str, float]]:
         "entry_title": {"font_scale": template_float(defaults["entry_title_ratio"])},
         "body": {"font_scale": 1.0, "line_height": template_float(defaults["line_height"])},
         "meta": {"font_scale": template_float(defaults["entry_meta_ratio"])},
+        "field_label": {"font_scale": template_float(defaults["entry_meta_ratio"])},
     }
     # R-34A：两项有模板来源的间距基准（其余不编，见函数 docstring）。
     result["section_title"]["space_after"] = template_float(defaults["section_title_gap"])
@@ -309,6 +335,8 @@ def role_fields_catalog() -> list[dict]:
 
 
 __all__ = [
+    "FIELD_EXCLUDED_PROPS",
+    "FIELD_ROLE_PROPS",
     "MAX_OBJECTS",
     "MAX_OBJECT_ROLES",
     "MAX_ROLE_PROPS",

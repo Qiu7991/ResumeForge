@@ -27,8 +27,20 @@ import re
 import uuid
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# 列布局模型（RowLayout / SectionLayout / EntryLayout 与逐列几何校验）已迁至
+# ``schemas/resume_document_layout.py``；这里 re-export，保持既有导入路径不变。
+from .resume_document_layout import (  # noqa: F401  (re-export：保持既有导入路径)
+    MAX_COLUMN_GAP,
+    MAX_ENTRY_GAP,
+    WIDTH_SUM_TOLERANCE,
+    EntryLayout,
+    HeadLayout,
+    RowLayout,
+    SectionLayout,
+    _check_column_geometry,
+)
 from .resume_entries import (
     MAX_RESUME_LIST_ITEMS,
     MAX_RESUME_SECTION_ITEMS,
@@ -40,9 +52,10 @@ from .resume_research import MAX_AUTHORS, ResumeAuthor
 
 Placement = Literal["title", "meta", "lead", "trail", "body", "hidden"]
 HeaderPlacement = Literal["name", "name_meta", "subtitle", "contact", "photo", "hidden"]
+#: F20：页眉字段名的三态。`auto` 是默认值，也是存量文档的等价行为。
+LabelMode = Literal["auto", "show", "hide"]
 Format = Literal["text", "date", "date_range", "list", "enum", "url", "authors", "number"]
 SectionKind = Literal["entries", "inline", "text"]
-HeadLayout = Literal["split", "stacked", "meta_first"]
 Wrap = Literal["none", "paren"]
 Join = Literal["comma", "semicolon", "dot", "inline"]
 BodyStyle = Literal["bullet", "paragraph"]
@@ -124,6 +137,32 @@ class FieldSource(BaseModel):
     field_id: str = Field(default="", max_length=64)
 
 
+class RichTextRun(BaseModel):
+    """一段带样式的区间（下标基于**纯文本** `value`，左闭右开）。
+
+    I-12 的磁盘形态：`value` 是纯文本，行内样式旁挂在 `item.rich.runs`。`None` 表示
+    "这一项没有覆盖"，与 `False`（用户明确取消加粗）不是一回事——后者在读路径上按
+    "不加粗"处理，因为标记语法表达不了"取消"。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    start: int = 0
+    end: int = 0
+    bold: bool | None = None
+    link: str | None = None
+    size: float | None = None
+    color: str | None = None
+
+
+class RichText(BaseModel):
+    """`item.rich`：一个 item 的结构化行内样式（没有样式时不写这个键）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    runs: list[RichTextRun] = Field(default_factory=list)
+
+
 class _ItemBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -131,6 +170,9 @@ class _ItemBase(BaseModel):
     placement: Placement = "trail"
     show_label: bool = True
     solo: bool = False
+    #: I-12：结构化行内样式。`None`（默认）+ `exclude_none` 序列化 = 旧文档字节不变。
+    #: 读路径入口是 `resume_rich_marks.item_text`，**不要**在渲染器里直接读它。
+    rich: RichText | None = None
     # 编辑态辅助：隐藏前的位置；隐藏后再显示由前端恢复到此处。
     # 归 item 一起持久化（document_to_json 只在非 None 时写出），planner 不消费。
     hidden_from: Placement | None = None
@@ -197,6 +239,10 @@ class TextItem(BaseModel):
     style: BodyStyle = "bullet"
     text: str = Field(default="", max_length=MAX_RESUME_TEXT_CHARS)
     hidden: bool = False
+    #: I-12：文本块也能带行内样式（前端 `ItemEditor` 的 text 分支改写的目标）。
+    #: 与 `_ItemBase.rich` 同形；`text` 是纯文本，样式旁挂。`exclude_none` 序列化，
+    #: 旧文档字节不变。
+    rich: RichText | None = None
 
     @field_validator("id", mode="before")
     @classmethod
@@ -231,6 +277,17 @@ class HeaderItem(BaseModel):
     value: str = Field(default="", max_length=MAX_HEADER_VALUE_CHARS)
     placement: HeaderPlacement = "contact"
     format: Format = "text"
+    #: 兼容字段：新代码只读 `label_mode`，这里保留是为了旧文档/旧客户端能照常反序列化。
+    show_label: bool = True
+    #: F20 三态：auto = 按字段类型自动决定（默认，现状逐字节不变）；show = 印「电话：」；
+    #: hide = 只印值。**旧文档**没有这个键时按 `show_label === false ? "hide" : "auto"` 回落。
+    label_mode: LabelMode = "auto"
+    #: I-02：隐藏前的位置；隐藏后再显示由前端恢复到此处（与 `_ItemBase.hidden_from` 同义）。
+    #: **planner 不消费**；它只解决"恢复时没有记忆只能猜 contact"的状态机缺陷。
+    #: 序列化走 `exclude_none=True`，未隐藏的文档字节不变；只在隐藏期间多一个键。
+    hidden_from: HeaderPlacement | None = None
+    #: I-12：与 `_ItemBase.rich` 同形（页眉字段也能有行内样式）。
+    rich: RichText | None = None
 
     @field_validator("id", mode="before")
     @classmethod
@@ -251,142 +308,6 @@ class ResumeHeader(BaseModel):
     items: list[HeaderItem] = Field(default_factory=list, max_length=MAX_HEADER_ITEMS)
     # 沿用 v1 format_config.contact_breaks：这些字段之后强制换行（白名单在 planner 收口）。
     contact_breaks: list[str] = Field(default_factory=list, max_length=MAX_CONTACT_BREAKS)
-
-
-MAX_COLUMN_GAP = 16.0
-"""逐间隔上限（字号倍数），与制作台「列间距」同一个口径。
-
-任务 10 从 4 放宽到 8；本轮（问题 4）配合 UI 的 `MAX_GAP` 再放宽到 16——"两端"分布下
-`gap` 会退化为最小间距，用户需要更大的取值空间。**只放宽不下调**：已有文档可能有 12，
-下调会让旧内容校验失败。
-"""
-
-MAX_ENTRY_GAP = 16.0
-"""条目级「列间距」上限（字号倍数）。分区级仍是 30（`SectionLayout.gap`），不下调。"""
-
-WIDTH_SUM_TOLERANCE = 0.5
-"""逐列宽度合计的容差（百分比）。前端会按 0.1 取整，浮点累加难免 99.99/100.01。"""
-
-
-def _check_column_geometry(
-    widths: list[float] | None, gaps: list[float] | None
-) -> None:
-    """逐列宽度 / 逐间隔的自洽性校验（模型层只管自身，列数是否匹配交给 planner）。
-
-    为什么不在模型里校验"长度 == columns"：条目级 `columns` 常为 `None`（继承分区），
-    这里根本不知道生效列数。长度对不上时 planner 会**整体忽略**这两个字段（回落到等宽），
-    所以宽松校验不会产生"半个宽度生效"的坏状态。
-    """
-    if widths is not None:
-        if len(widths) < 2:
-            raise ValueError("逐列宽度至少要两列")
-        if any((width <= 0 or width > 100) for width in widths):
-            raise ValueError("逐列宽度必须在 0 到 100 之间")
-        if abs(sum(widths) - 100.0) > WIDTH_SUM_TOLERANCE:
-            raise ValueError("逐列宽度合计必须为 100")
-    if gaps is not None:
-        if not gaps:
-            raise ValueError("逐间隔不能为空列表")
-        if any((gap < 0 or gap > MAX_COLUMN_GAP) for gap in gaps):
-            raise ValueError(f"逐间隔必须在 0 到 {MAX_COLUMN_GAP:g} 之间（字号倍数）")
-        if widths is not None and len(gaps) != len(widths) - 1:
-            raise ValueError("逐间隔数量必须比列数少一")
-
-
-class RowLayout(BaseModel):
-    """一组灰字段（正文前 lead / 正文后 trail）的列布局（问题 4）。
-
-    为什么要拆出来：v2 的 `EntryLayout` 只有一套 `columns / align / gap`，正文前与正文后
-    被迫共用同一套列数——"正文前排 2 列、正文后排 3 列"做不到。`RowLayout` 让两侧各带
-    一份；**逐列宽度 / 逐间隔也一起搬进来**，否则分侧之后共享的 `column_widths` 长度必然
-    与另一侧的列数对不上，`resolved_column_geometry()` 会整体作废回落等宽，表现为"我明明
-    设了宽度却没生效"。
-
-    全部字段可空：`None` = 该层没设置，继续往继承链的上一层找（见 planner 的
-    `_effective_row_layout`）。旧文档里没有这两块，解析出来是 `None`，产物逐字节不变。
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    columns: Literal[1, 2, 3] | None = None
-    align: Literal["equal", "flow"] | None = None
-    # 分布：start = 列宽按内容、整体靠左（现状）；between = 剩余空白均分到列之间，
-    # 最后一列的右缘落在内容区右边界（HTML `justify-content: space-between`）。
-    justify: Literal["start", "between"] | None = None
-    gap: float | None = Field(default=None, ge=0, le=30)
-    column_widths: list[float] | None = Field(default=None, max_length=3)
-    column_gaps: list[float] | None = Field(default=None, max_length=2)
-
-    @model_validator(mode="after")
-    def _check_row_geometry(self) -> RowLayout:
-        _check_column_geometry(self.column_widths, self.column_gaps)
-        return self
-
-
-class SectionLayout(BaseModel):
-    """分区级默认版式：lead/trail 列布局 + 分页/标题开关（条目可覆盖列布局）。"""
-    model_config = ConfigDict(extra="ignore")
-
-    columns: Literal[1, 2, 3] = 1
-    align: Literal["equal", "flow"] = "equal"
-    gap: float | None = Field(default=None, ge=0, le=30)
-    # 逐列宽度（百分比，合计 100）与逐间隔（字号倍数，长度 = 列数−1）。
-    # 都为 None = 沿用 `columns` + `gap` 的等宽口径，历史文档逐像素不变。
-    column_widths: list[float] | None = Field(default=None, max_length=3)
-    column_gaps: list[float] | None = Field(default=None, max_length=2)
-    # 分布（问题 4）：start = 现状靠左；between = 剩余空白均分到列之间（最后一列贴右边界）。
-    # 只在 align=equal、columns>1、且没有显式 column_widths 时生效（宽度合计 100% 时没有
-    # 剩余空间，此时开关无效——UI 负责禁用并说明）。
-    justify: Literal["start", "between"] = "start"
-    # 正文前 / 正文后各自一套列布局（问题 4）。None = 完全跟随上面的共用字段。
-    lead: RowLayout | None = None
-    trail: RowLayout | None = None
-    hide_title: bool = False
-    keep_together: bool = False
-    start_on_new_page: bool = False
-    # 系统板块标题可覆盖；空 = 用语言包里的目录标题（自建板块标题永远用 section.title）。
-    title_override: str = Field(default="", max_length=64)
-
-    @model_validator(mode="after")
-    def _check_column_widths(self) -> SectionLayout:
-        _check_column_geometry(self.column_widths, self.column_gaps)
-        return self
-
-
-class EntryLayout(BaseModel):
-    """条目级覆盖：None = 继承分区。
-
-    共用字段（`columns / align / justify / gap / column_widths / column_gaps`）是"两侧
-    同一套"的旧口径，仍然有效；`lead` / `trail` 是问题 4 新增的分侧覆盖。继承顺序
-    （scope 由近到远）：
-
-        entry.lead.X ?? entry.X ?? section.lead.X ?? section.X ?? 默认值
-
-    即"条目共用值优先于板块分侧值"——条目自己说了算的范围更近。
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    head: HeadLayout = "split"
-    columns: Literal[1, 2, 3] | None = None
-    align: Literal["equal", "flow"] | None = None
-    justify: Literal["start", "between"] | None = None
-    gap: float | None = Field(default=None, ge=0, le=MAX_ENTRY_GAP)
-    # 与分区级同口径；条目级只校验自身（列数可能是继承来的，长度是否匹配交给 planner）。
-    column_widths: list[float] | None = Field(default=None, max_length=3)
-    column_gaps: list[float] | None = Field(default=None, max_length=2)
-    # 正文前 / 正文后各自一套列布局（问题 4）；None = 完全跟随上面的共用字段。
-    lead: RowLayout | None = None
-    trail: RowLayout | None = None
-    # 条目级分页（计划 §6.2）：True = 该条目另起一页 / 尽量整条不跨页；
-    # 与分区级取「或」得到生效值（planner 的 _effective_layout 负责合并）。
-    start_on_new_page: bool = False
-    keep_together: bool = False
-
-    @model_validator(mode="after")
-    def _check_column_widths(self) -> EntryLayout:
-        _check_column_geometry(self.column_widths, self.column_gaps)
-        return self
 
 
 class ResumeEntry(BaseModel):

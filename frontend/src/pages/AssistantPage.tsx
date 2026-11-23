@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /** AI 求职助手：流式对话、历史记录、按对话启用的技能、附件与项目上下文联动。 */
 import { ArrowDownOutlined } from "@ant-design/icons";
-import { App, Drawer } from "antd";
+import { App } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import AssistantBreadthPanel from "../features/assistant/AssistantBreadthPanel";
@@ -10,11 +10,8 @@ import AssistantContinueBar from "../features/assistant/components/AssistantCont
 import AssistantGroupModal from "../features/assistant/components/AssistantGroupModal";
 import AssistantMessageList from "../features/assistant/components/AssistantMessageList";
 import AssistantWorkspaceHeader from "../features/assistant/components/AssistantWorkspaceHeader";
-import ConversationSidebar from "../features/assistant/components/ConversationSidebar";
-import { useMediaQuery } from "../hooks/useMediaQuery";
 import { t } from "../i18n";
 import { useLocale } from "../i18n/i18nContext";
-import { mqMax } from "../theme/breakpoints";
 import { readStoredReasoningEffort } from "../features/assistant/readStoredReasoningEffort";
 import { readStoredWebSearch, writeStoredWebSearch } from "../features/assistant/webSearchPref";
 import type { StarterPrompt } from "../features/assistant/assistantTypes";
@@ -31,9 +28,12 @@ import { useAssistantMessageSelection } from "../features/assistant/hooks/useAss
 import { useAssistantSidebarActions } from "../features/assistant/hooks/useAssistantSidebarActions";
 import { useConversationSkills } from "../features/assistant/hooks/useConversationSkills";
 import { useAssistantStream } from "../features/assistant/hooks/useAssistantStream";
+import { useAssistantContextSelection } from "../features/assistant/hooks/useAssistantContextSelection";
+import { useAssistantHistoryDrawer } from "../features/assistant/hooks/useAssistantHistoryDrawer";
 import { useAssistantUrlBootstrap } from "../features/assistant/hooks/useAssistantUrlBootstrap";
 import { useRestoreStreamingConversation } from "../features/assistant/hooks/useRestoreStreamingConversation";
 import { useAssistantDisplayStream } from "../features/assistant/hooks/useThrottledStreamingText";
+import AssistantSidebarSlot from "./AssistantSidebarSlot";
 import type { AssistantPageProps } from "./assistantPageTypes";
 import type { AssistantConversationBrief, AssistantSurface, ReasoningEffort } from "../types";
 
@@ -57,12 +57,9 @@ export default function AssistantPage({
   // 从工作台等页面跳转过来时可用 ?ask=... 预填提问（例如「帮我把版式调松一点」）。
   // 只预填、**不自动发送**：用户能改完再点发送，避免一个链接就替用户发起一次模型调用。
   const [content, setContent] = useState(() => (searchParams.get("ask") ?? "").slice(0, 4000));
-  const [jobId, setJobId] = useState<number | undefined>(() =>
-    positiveId(searchParams.get("job_id")),
-  );
-  const [resumeId, setResumeId] = useState<number | undefined>(() =>
-    positiveId(searchParams.get("resume_id")),
-  );
+  // F36：岗位/简历关联的状态、发送后清空、切会话清空与引用片跳转都由这个 hook 统一持有。
+  const { jobId, resumeId, setJobId, setResumeId, clearContextRefs, openReference } =
+    useAssistantContextSelection(searchParams);
   // 允许联网：惰性读上次的选择（首帧就是对的，不会先闪一下"关"再变"开"）。
   const [webSearch, setWebSearch] = useState(readStoredWebSearch);
   const [reasoningEffort, setReasoningEffort] =
@@ -85,8 +82,6 @@ export default function AssistantPage({
     conversations,
     conversationsLoading,
     conversationsError,
-    conversationSearch,
-    handleConversationSearch,
     reloadConversations,
     loadDetail,
     loadEarlier,
@@ -95,23 +90,19 @@ export default function AssistantPage({
     createConversation,
     ensureWelcomeConversation,
   } = conversationsState;
-  // T14：技能按对话启用——已建会话走服务端（GET/PUT .../skills），草稿先暂存选择。
+  // T24：技能改为消息级——勾选只是本机"待发送"状态，发送后清空（不再 PUT 到会话）。
   const {
     catalog: skillCatalog,
     selectedSkills,
+    selectedSkillIds,
     budget: skillBudget,
     loaded: skillsLoaded,
     togglingSkillId,
-    pendingSkillIdsRef,
     toggleSkill,
+    clearSkills,
     reload: reloadSkills,
-  } = useConversationSkills(activeId, surface);
+  } = useConversationSkills(activeId);
   const openSkillWorkbench = () => navigate("/skills");
-  // 草稿态先勾了技能时，第一次发消息建会话要把暂存的选择一起带上（服务端同事务写入）。
-  const createConversationWithSkills = useCallback(
-    () => createConversation(pendingSkillIdsRef.current),
-    [createConversation, pendingSkillIdsRef],
-  );
   const attachmentsState = useAssistantAttachments({ mountedRef });
   const {
     attachments,
@@ -129,14 +120,13 @@ export default function AssistantPage({
     useAssistantMessageSelection({ activeId, loadDetail, message, surface });
 
   const messageCount = detail?.messages.length ?? 0;
-  // T01（任务卡搬首页）：助手页不再有任务区块——Agent 任务统一在首页「任务」卡展示，
-  // 这里不拉列表也不轮询。activeId 仍用于会话详情 / 流式恢复等既有逻辑。
+  // T01：任务统一在首页「任务」卡展示，这里不拉列表也不轮询；activeId 仍用于会话详情 / 流式恢复。
 
   const stream = useAssistantStream({
     activeIdRef,
     reloadConversations,
     loadDetail,
-    createConversation: createConversationWithSkills,
+    createConversation,
     clearAttachments,
     attachmentReadsRef,
     attachmentsRef,
@@ -144,9 +134,13 @@ export default function AssistantPage({
     clearQuote,
     jobId,
     resumeId,
+    clearContextRefs,
     webSearch,
     reasoningEffort,
     surface,
+    skillIds: selectedSkillIds,
+    skillRefs: selectedSkills,
+    clearSkills,
   });
   const {
     sending,
@@ -154,6 +148,8 @@ export default function AssistantPage({
     pendingUserText,
     pendingSentAt,
     pendingUserAttachments,
+    pendingUserRefs,
+    pendingUserSkills,
     streamingText,
     streamingReasoning,
     streamingSources,
@@ -190,7 +186,8 @@ export default function AssistantPage({
     },
     [activeId, regenerate],
   );
-
+  // F36 引用片跳转：消息气泡是 memo 的，这个回调必须稳定，否则流式期间每个 delta
+  // 都会重渲染全部历史气泡。岗位/简历详情页都用查询参数定位（与深链一致）。
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -250,20 +247,7 @@ export default function AssistantPage({
     if (prompt.enableWebSearch) setWebSearch(true);
   };
 
-  const {
-    handleToggleSkill,
-    handleSidebarCreate,
-    handleSidebarSelect,
-    handleSidebarDelete,
-    handleSidebarRestored,
-    handleSidebarBatchDelete,
-    handleSidebarRename,
-    handleSidebarToggleFlag,
-    handleSidebarArchive,
-    handleSidebarFork,
-    openGroupModal,
-    confirmGroup,
-  } = useAssistantSidebarActions({
+  const sidebarActions = useAssistantSidebarActions({
     conversations: conversationsState,
     groupTarget,
     groupValue,
@@ -274,6 +258,7 @@ export default function AssistantPage({
     setHistoryOpen,
     toggleSkill,
   });
+  const { confirmGroup, handleMemoryOffChange, handleToggleSkill } = sidebarActions;
 
   // ===== 滚动域（问题 A）：吸底跟随、定位到底部与「加载更早」跳过 =====
   // 整域下沉到 useAssistantAutoScroll；页面只消费回调与「回到底部」显隐。
@@ -301,76 +286,27 @@ export default function AssistantPage({
     loadEarlier,
   });
 
-  /**
-   * 平板档（≤1092 且 >767）：历史列表从"压成 220px 横条"改成抽屉（方案 §4.8）。
-   * 为什么要换：横条把消息区高度吃掉 220px，而 768 高的屏本来就紧；抽屉只在需要时出现，
-   * 关掉就把高度还给对话。≤767 保持原样——手机档的横条是 `mobile.css` 里成型的形态。
-   * 浮窗（`compact`）有自己的浮层，不参与。
-   */
-  const narrowViewport = useMediaQuery(mqMax("narrow"));
-  const phoneViewport = useMediaQuery(mqMax("phone"));
-  const historyDrawer = narrowViewport && !phoneViewport && !compact;
-  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  // 平板档把历史列表从横条改成抽屉；窄档 / 浮窗的形态见 hook 内注释。
+  const {
+    drawerVisible: historyDrawer,
+    drawerOpen: historyDrawerOpen,
+    setDrawerOpen: setHistoryDrawerOpen,
+  } = useAssistantHistoryDrawer(compact, historyOpen, setHistoryOpen);
 
-  // 浮窗的历史抽屉是盖在内容上的：除了点背板，键盘用户还需要一条直接退出的路。
-  useEffect(() => {
-    if (!compact || !historyOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setHistoryOpen(false);
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [compact, historyOpen]);
-
-  /**
-   * 历史列表**只有一份 JSX**：宽档内联、平板档进抽屉、浮窗进浮层，三处共用同一个节点。
-   * 写三遍的话（曾经有过两遍）"会话搜索""批量删除"这类能力会在某一处悄悄缺失。
-   */
-  const sidebarNode = (
-    <ConversationSidebar
-      surface={surface}
-      conversations={conversations}
-      loading={conversationsLoading}
-      activeId={activeId}
-      onCreate={handleSidebarCreate}
-      onSelect={handleSidebarSelect}
-      onDelete={handleSidebarDelete}
-      onRestored={handleSidebarRestored}
-      onBatchDelete={handleSidebarBatchDelete}
-      onRename={handleSidebarRename}
-      onToggleFlag={handleSidebarToggleFlag}
-      onArchive={handleSidebarArchive}
-      onFork={handleSidebarFork}
-      onMoveToGroup={openGroupModal}
-      // 会话搜索（P0-2）：输入防抖后走服务端 keyword 过滤。
-      search={conversationSearch}
-      onSearchChange={handleConversationSearch}
-      className={compact ? "assistant-sidebar--floating" : undefined}
-    />
-  );
   return (
     <div className={`assistant-page${compact ? " assistant-page--floating" : ""}`}>
-      {compact && historyOpen && (
-        <button
-          type="button"
-          className="assistant-sidebar-backdrop"
-          aria-label={t("responsive.assistant.aria.closeHistory")}
-          onClick={() => setHistoryOpen(false)}
-        />
-      )}
-      {(!compact && !historyDrawer) || (compact && historyOpen) ? sidebarNode : null}
-      {historyDrawer ? (
-        <Drawer
-          className="assistant-history-drawer"
-          open={historyDrawerOpen}
-          onClose={() => setHistoryDrawerOpen(false)}
-          title={t("responsive.assistant.history.title")}
-          size="default"
-          destroyOnHidden
-        >
-          {sidebarNode}
-        </Drawer>
-      ) : null}
+      <AssistantSidebarSlot
+        compact={compact}
+        surface={surface}
+        historyOpen={historyOpen}
+        onHistoryOpenChange={setHistoryOpen}
+        drawerVisible={historyDrawer}
+        drawerOpen={historyDrawerOpen}
+        onDrawerOpenChange={setHistoryDrawerOpen}
+        conversationsState={conversationsState}
+        sidebarActions={sidebarActions}
+        clearContextRefs={clearContextRefs}
+      />
       <section className={`assistant-workspace${selecting ? " is-selecting" : ""}`}>
         <AssistantWorkspaceHeader
           compact={compact}
@@ -387,12 +323,13 @@ export default function AssistantPage({
           removeSelected={removeSelected}
           exitSelecting={exitSelecting}
           title={detail?.title || t("responsive.assistant.defaultTitle")}
+          conversationId={activeId}
+          memoryOff={activeId === null ? undefined : (detail?.memory_off ?? false)}
+          onMemoryOffChange={(value) => void handleMemoryOffChange(activeId, value)}
         />
         <AssistantBreadthPanel
-          conversationId={activeId}
           showDigest={!compact && historyMessages.length === 0 && !awaitingConversation}
           compact={compact}
-          onSkillsChanged={reloadSkills}
         />
         <AssistantMessageList
           detail={detail}
@@ -402,6 +339,8 @@ export default function AssistantPage({
           pendingUserText={pendingUserText}
           pendingSentAt={pendingSentAt}
           pendingUserAttachments={pendingUserAttachments}
+          pendingUserRefs={pendingUserRefs}
+          pendingUserSkills={pendingUserSkills}
           streamingText={displayText}
           streamingReasoning={displayReasoning}
           streamingSources={streamingSources}
@@ -431,6 +370,7 @@ export default function AssistantPage({
           onToggleSelected={toggleSelected}
           messagesScrollRef={messagesScrollRef}
           onMessagesScroll={handleMessagesScroll}
+          onOpenReference={openReference}
         />
         {/* 问题 A：流式期间用户上翻退出吸底后出现的「回到底部」悬浮按钮。
             点击滚到底并恢复吸底跟随。z-index 用页面内局部浮层的个位数一档，
@@ -482,7 +422,7 @@ export default function AssistantPage({
           contextUsage={contextUsage}
           onContextWindowSaved={applyWindowTokens}
           onContextChanged={reloadContextUsage}
-          onSend={() => void send(content, () => setContent(""))}
+          onSend={(refs) => void send(content, () => setContent(""), refs)}
           onStop={stop}
         />
       </section>

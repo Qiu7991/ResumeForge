@@ -284,7 +284,6 @@ const resume = {
 
   // ── 简历列表排序（resumeSort）──────────────────────────────────
   /** 「恢复默认排序」按钮在默认态下的悬停说明。 */
-  "resume.sort.resetHintDefault": "当前已是默认排序：最近修改在前",
   /** 已改过排序时的悬停说明：说清点了会发生什么。 */
   "resume.sort.resetHint": "恢复默认排序：最近修改在前",
 
@@ -295,6 +294,14 @@ const resume = {
   "resume.fontScale.standard": "标准字号",
   /** 内置最大档的名字。 */
   "resume.fontScale.large": "大字号",
+
+  // ── 文档语言控件的说明入口（I-17）────────────────────────────
+  /**
+   * `resume.language.hint` 本体在主包（`zh-CN.ts`）里，不在这里重复定义；
+   * 这一条是 I-17 新增的**无障碍名**：那句 40 字的说明从 tooltip 改成了下拉右侧的
+   * `ⓘ`，读屏需要知道这个按钮点开的是什么。
+   */
+  "resume.language.hintAria": "文档语言说明",
 } as const;
 
 export default resume;

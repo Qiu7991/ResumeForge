@@ -25,6 +25,7 @@ const jobDetail = {
     "「前往投递」在投递台专用浏览器中打开；如果那个窗口显示登录，请在该窗口扫码登录一次，之后会自动沿用。",
   "jobDetail.tooltip.goApply": "在投递专用浏览器中打开，和投递台共用登录态",
   "jobDetail.action.goApply": "前往投递",
+  "jobDetail.action.researchCompany": "调研这家公司",
   "jobDetail.action.favorite": "收藏岗位",
   "jobDetail.action.unfavorite": "取消收藏",
   "jobDetail.unsupported.title": "这个岗位不能用投递台自动投递",
@@ -53,6 +54,9 @@ const jobDetail = {
   "jobDetail.relatedKnowledge.aria": "相关知识",
   "jobDetail.relatedKnowledge.viewAll": "查看全部相关知识",
   "jobDetail.alt.noteImage": "备注图片 {index}",
+  "jobDetail.action.addTrack": "加入求职进度",
+  "jobDetail.action.viewTrack": "查看求职进度",
+  "jobDetail.error.loadTrack": "求职进度未加载，请重试",
 } as const;
 
 export default jobDetail;

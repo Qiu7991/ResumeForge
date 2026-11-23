@@ -62,11 +62,25 @@ from .llm_settings import get_llm_config as get_llm_config
 from .llm_settings import list_llm_config_records as list_llm_config_records
 from .llm_settings import mask_llm_config as mask_llm_config
 from .llm_settings import resolve_llm_config_api_key as resolve_llm_config_api_key
+from .llm_settings import resolve_probe_config as resolve_probe_config
+from .llm_settings import resolve_probe_config_with_locale as resolve_probe_config_with_locale
 from .llm_settings import save_llm_config as save_llm_config
 from .llm_settings import save_llm_config_record as save_llm_config_record
 
+# 默认值的唯一真源（I-10）：各 getter 的 fallback 一律取注册表，不再内联字面量。
+# 这样「恢复默认」（删掉那一行）与「读不到时返回什么」在结构上就是同一个值。
+from .settings_defaults import default_for
+
 # 对外兼容面：联网搜索设置的实现在 web_search_settings（全局文件，所有数据集共用）；
 # 既有调用点与测试仍按本模块取符号，逐个 as 同名重导出。
+# 对外兼容面：桌面版托盘图标开关的实现在 settings_tray_icon（拆出以守住 500 行预算），
+# 既有调用点与测试仍按本模块取符号，逐个 as 同名重导出。
+from .settings_tray_icon import (
+    get_tray_icon_follow_system as get_tray_icon_follow_system,
+)
+from .settings_tray_icon import (
+    save_tray_icon_follow_system as save_tray_icon_follow_system,
+)
 from .web_search_settings import get_search_config as get_search_config
 from .web_search_settings import (
     get_search_config_with_secrets as get_search_config_with_secrets,
@@ -87,6 +101,9 @@ _APPLY_GREETING_TEMPLATES_KEY = "apply_greeting_templates"
 _REMINDER_POPUP_KEY = "reminder_popup_on_start"
 _ASSISTANT_ORB_KEY = "assistant_orb_enabled"
 _NAVIGATION_VISIBILITY_KEY = "navigation_visibility"
+# 制作台：未编辑时按真实行内样式预览（含字号）。默认**关**——打开后失焦字段会从文本域
+# 换成静态富文本块，属于"每次点击多一拍的摩擦"，不能替用户默认打开。
+_EDITOR_INLINE_FORMAT_PREVIEW_KEY = "editor_inline_format_preview"
 _WEBFORM_RELAXED_MODE_KEY = "webform_relaxed_mode"
 _EXPORT_SAVE_LOCATION_KEY = "export_save_location"
 # 自动备份间隔（天）的运行时设置：调度线程每次到期检查时读取，保存后下次检查生效。
@@ -100,16 +117,17 @@ _AGENT_TASK_EVENTS_KEY = "agent_task_events_enabled"
 
 
 def get_reminder_popup_on_start(db: Session) -> bool:
-    """读取「打开应用时弹出提醒」设置；缺失或脏数据退回默认开。"""
+    """读取「打开应用时弹出提醒」设置；缺失或脏数据退回注册表的出厂值（默认开）。"""
+    fallback = bool(default_for(_REMINDER_POPUP_KEY))
     row = db.get(AppSetting, _REMINDER_POPUP_KEY)
     if row is None:
-        return True
+        return fallback
     try:
         value = json.loads(row.value)
     except (json.JSONDecodeError, TypeError):
         logger.warning("提醒弹窗设置数据损坏，已重置为默认值")
-        return True
-    return value if isinstance(value, bool) else True
+        return fallback
+    return value if isinstance(value, bool) else fallback
 
 
 def save_reminder_popup_on_start(db: Session, enabled: bool) -> bool:
@@ -127,30 +145,37 @@ def save_reminder_popup_on_start(db: Session, enabled: bool) -> bool:
 # ===== 投投悬浮球设置 =====
 
 
+def _orb_default() -> AssistantOrbSetting:
+    """出厂值取自注册表（``assistant_orb_enabled``：入口、标语、划词三个开关默认全开）。"""
+    return AssistantOrbSetting.model_validate(default_for(_ASSISTANT_ORB_KEY))
+
+
 def get_assistant_orb_setting(db: Session) -> AssistantOrbSetting:
-    """读取「投投」悬浮球设置（整对象）；缺失或脏数据退回默认双开。
+    """读取「投投」悬浮球设置（整对象）；缺失或脏数据退回注册表的出厂值（默认双开）。
 
     **存量兼容**：这个 key 历史上存的是裸 bool（`json.dumps(enabled)`），升级后库里
     还躺着 `"true"` 这类旧值。读取分三种形态兜底——缺失/损坏回默认；裸 bool 视为
-    只换过入口开关、标语保持默认开；对象按模型校验（校验不过也回默认）。这样老用户
-    升级后看到的开关状态与升级前一致，不会被悄悄重置。
+    只换过入口开关、标语与划词保持出厂值；对象按模型校验（校验不过也回默认）。这样老
+    用户升级后看到的开关状态与升级前一致，不会被悄悄重置。
     """
+    fallback = _orb_default()
     row = db.get(AppSetting, _ASSISTANT_ORB_KEY)
     if row is None:
-        return AssistantOrbSetting()
+        return fallback
     try:
         value = json.loads(row.value)
     except (json.JSONDecodeError, TypeError):
         logger.warning("投投悬浮球设置数据损坏，已重置为默认开启")
-        return AssistantOrbSetting()
+        return fallback
     if isinstance(value, bool):
-        return AssistantOrbSetting(enabled=value, tips_enabled=True)
+        # 裸 bool 只记录过入口开关：标语与划词浮条都补成出厂值（老体验不变）。
+        return fallback.model_copy(update={"enabled": value})
     if isinstance(value, dict):
         try:
             return AssistantOrbSetting.model_validate(value)
         except ValidationError:
             logger.warning("投投悬浮球设置数据损坏，已重置为默认开启")
-    return AssistantOrbSetting()
+    return fallback
 
 
 def save_assistant_orb_setting(db: Session, setting: AssistantOrbSetting) -> AssistantOrbSetting:
@@ -169,21 +194,22 @@ def save_assistant_orb_setting(db: Session, setting: AssistantOrbSetting) -> Ass
 
 
 def get_webform_relaxed_mode(db: Session) -> bool:
-    """读取「网申填表放宽模式」开关；缺失或脏数据退回默认**关**。
+    """读取「网申填表放宽模式」开关；缺失或脏数据退回注册表出厂值（默认**关**）。
 
     放宽模式会把「只填不点」的一部分选择权交回用户：程序代点自定义下拉等弹层控件、
     代勾用户逐条确认过的声明项。它改变的是"程序替你做动作"的边界，所以默认必须
     保持现状（保守），由用户显式开启。
     """
+    fallback = bool(default_for(_WEBFORM_RELAXED_MODE_KEY))
     row = db.get(AppSetting, _WEBFORM_RELAXED_MODE_KEY)
     if row is None:
-        return False
+        return fallback
     try:
         value = json.loads(row.value)
     except (json.JSONDecodeError, TypeError):
         logger.warning("网申放宽模式设置数据损坏，已重置为默认关闭")
-        return False
-    return value if isinstance(value, bool) else False
+        return fallback
+    return value if isinstance(value, bool) else fallback
 
 
 def save_webform_relaxed_mode(db: Session, enabled: bool) -> bool:
@@ -207,20 +233,21 @@ def save_webform_relaxed_mode(db: Session, enabled: bool) -> bool:
 
 
 def get_agent_task_events_enabled(db: Session) -> bool:
-    """读取「提醒到期自动生成任务卡」开关；缺失或脏数据退回默认**关**。
+    """读取「提醒到期自动生成任务卡」开关；缺失或脏数据退回注册表出厂值（默认**关**）。
 
     它会让后台扫描在没有用户提问的情况下新建任务卡（只建卡、不执行任何写操作），
     因此与其它"助手主动行为"一样默认保守，由用户在设置里显式开启。
     """
+    fallback = bool(default_for(_AGENT_TASK_EVENTS_KEY))
     row = db.get(AppSetting, _AGENT_TASK_EVENTS_KEY)
     if row is None:
-        return False
+        return fallback
     try:
         value = json.loads(row.value)
     except (json.JSONDecodeError, TypeError):
         logger.warning("提醒任务事件开关设置数据损坏，已重置为默认关闭")
-        return False
-    return value if isinstance(value, bool) else False
+        return fallback
+    return value if isinstance(value, bool) else fallback
 
 
 def save_agent_task_events_enabled(db: Session, enabled: bool) -> bool:
@@ -239,13 +266,13 @@ def save_agent_task_events_enabled(db: Session, enabled: bool) -> bool:
 
 
 def get_export_save_location(db: Session) -> str:
-    """读取「生成内容保存位置」；缺失退回空串（= 仅浏览器下载，默认行为）。
+    """读取「生成内容保存位置」；缺失退回注册表出厂值（空串 = 仅浏览器下载）。
 
     存的就是原始路径字符串：路径里什么字符都可能出现，套一层 JSON 反而多一种坏法。
     """
     row = db.get(AppSetting, _EXPORT_SAVE_LOCATION_KEY)
     if row is None:
-        return ""
+        return str(default_for(_EXPORT_SAVE_LOCATION_KEY) or "")
     return str(row.value or "").strip()
 
 
@@ -265,15 +292,14 @@ def save_export_save_location(db: Session, path: str) -> str:
 
 
 def get_auto_backup_interval_days(db: Session) -> int:
-    """读取自动备份间隔（天）；缺失或脏数据回退环境配置的默认值。
+    """读取自动备份间隔（天）；缺失或脏数据回退注册表出厂值（跟随部署配置）。
 
     与环境级 ``Settings.auto_backup_interval_days`` 的关系：后者是进程启动时的
-    出厂默认（.env），这里存的是用户在设置页改过的运行时值。KV 里只存一个整数
-    （``json.dumps(days)``），读取时按 1..365 夹紧，避免越界值拖垮调度判定。
+    出厂默认（.env），注册表用它做 ``default_for``；这里存的是用户在设置页改过的
+    运行时值。KV 里只存一个整数（``json.dumps(days)``），读取时按 1..365 夹紧，
+    避免越界值拖垮调度判定。
     """
-    from ..config import get_settings
-
-    fallback = max(1, get_settings().auto_backup_interval_days)
+    fallback = max(1, int(default_for(_AUTO_BACKUP_INTERVAL_KEY)))
     row = db.get(AppSetting, _AUTO_BACKUP_INTERVAL_KEY)
     if row is None:
         return fallback
@@ -302,14 +328,15 @@ def save_auto_backup_interval_days(db: Session, days: int) -> int:
 
 
 def get_navigation_visibility(db: Session) -> NavigationVisibility:
+    fallback = NavigationVisibility.model_validate(default_for(_NAVIGATION_VISIBILITY_KEY))
     row = db.get(AppSetting, _NAVIGATION_VISIBILITY_KEY)
     if row is None:
-        return NavigationVisibility()
+        return fallback
     try:
         parsed = NavigationVisibility.model_validate(json.loads(row.value))
     except (json.JSONDecodeError, ValidationError, TypeError):
         logger.warning("导航显示设置数据损坏，已重置为默认显示")
-        return NavigationVisibility()
+        return fallback
     allowed = NAVIGATION_OPTIONAL_KEYS - NAVIGATION_CORE_KEYS
     return NavigationVisibility(hidden=[key for key in parsed.hidden if key in allowed])
 
@@ -378,7 +405,7 @@ def get_apply_blocklist(db: Session) -> dict[str, list[str]]:
     只做形态收敛（列表 + 非空字符串 + 去重），**不在这里判停用词**——那属于匹配规则，
     在 ``services/apply/blocklist.py``；存下来的就是用户填的原话，界面上原样能看见。
     """
-    raw = _read_json_setting(db, _APPLY_BLOCKLIST_KEY, {})
+    raw = _read_json_setting(db, _APPLY_BLOCKLIST_KEY, default_for(_APPLY_BLOCKLIST_KEY))
     data = raw if isinstance(raw, dict) else {}
     return {
         "companies": _clean_name_list(data.get("companies")),
@@ -404,7 +431,9 @@ def get_apply_greeting_templates(db: Session) -> list[dict[str, object]]:
     这里只保证"是个 dict 列表"，逐字段校验交给 schema（``GreetingTemplateIn``）——
     非法条目由业务层丢弃并记日志，不让一行坏数据把整个话术库读空。
     """
-    raw = _read_json_setting(db, _APPLY_GREETING_TEMPLATES_KEY, [])
+    raw = _read_json_setting(
+        db, _APPLY_GREETING_TEMPLATES_KEY, default_for(_APPLY_GREETING_TEMPLATES_KEY)
+    )
     if not isinstance(raw, list):
         return []
     return [item for item in raw if isinstance(item, dict)]
@@ -417,3 +446,32 @@ def save_apply_greeting_templates(
     cleaned = [dict(item) for item in templates if isinstance(item, dict)]
     _write_json_setting(db, _APPLY_GREETING_TEMPLATES_KEY, cleaned)
     return cleaned
+
+
+# ===== 制作台：行内格式预览开关 =====
+
+
+def get_editor_inline_format_preview(db: Session) -> bool:
+    """读取「未编辑时预览行内格式」开关；缺失或脏数据退回注册表的出厂值（默认关）。"""
+    fallback = bool(default_for(_EDITOR_INLINE_FORMAT_PREVIEW_KEY))
+    row = db.get(AppSetting, _EDITOR_INLINE_FORMAT_PREVIEW_KEY)
+    if row is None:
+        return fallback
+    try:
+        value = json.loads(row.value)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("行内格式预览设置数据损坏，已重置为默认值")
+        return fallback
+    return value if isinstance(value, bool) else fallback
+
+
+def save_editor_inline_format_preview(db: Session, enabled: bool) -> bool:
+    """持久化「未编辑时预览行内格式」开关。"""
+    row = db.get(AppSetting, _EDITOR_INLINE_FORMAT_PREVIEW_KEY)
+    serialized = json.dumps(bool(enabled))
+    if row is None:
+        db.add(AppSetting(key=_EDITOR_INLINE_FORMAT_PREVIEW_KEY, value=serialized))
+    else:
+        row.value = serialized
+    db.commit()
+    return bool(enabled)

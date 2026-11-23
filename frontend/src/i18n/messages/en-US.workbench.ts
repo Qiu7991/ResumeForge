@@ -14,6 +14,7 @@ const workbench = {
   "workbench.group.template": "Template",
   "workbench.group.page": "Page setup",
   "workbench.group.style": "Styles",
+  "workbench.group.photo": "Photo",
   // Section visibility (ported from 1.x: hidden = section.hidden=true, data kept, off the page).
   "workbench.sectionsVisibility.trigger": "Sections",
   "workbench.sectionsVisibility.syncProfile": "Sync Profile order",
@@ -35,6 +36,7 @@ const workbench = {
   "workbench.param.name-scale": "Name size",
   "workbench.param.section-title-scale": "Section heading size",
   "workbench.param.entry-gap": "Entry spacing",
+  "workbench.param.header-rule-gap": "Header rule offset",
   "workbench.param.section-gap": "Section spacing",
   "workbench.param.reset": "Double-click or press Enter to restore defaults",
   "workbench.param.resetLabel": "{label} (double-click or press Enter to restore defaults)",
@@ -51,6 +53,13 @@ const workbench = {
   /** 颜色行的值列（同 zh-CN：与 `resume.measure.hintTemplate` 同批缩短，
       原来 `Template default` 在参数栏那一格里要 103px，溢出到来源胶囊上）。 */
   "workbench.color.followTemplate": "Template",
+  /** 外观第 5 格「条目标题」未单独设色时的状态（entry titles inherit the body color）。 */
+  "workbench.color.followBody": "Body",
+  /** 第 5 格的 ⓘ：角色级覆盖与单条覆盖的优先级。 */
+  "workbench.color.entryTitleHint":
+    "Follows the body color by default; same value as Role styles → Entry title. A color set on one entry wins.",
+  /** 上面那句 ⓘ 的无障碍名。 */
+  "workbench.color.entryTitleHintAria": "About entry title color",
   "workbench.param.paletteAria": "Toggle palette for {label}",
   "workbench.column.editor": "Resume content",
   "workbench.resizer.params":
@@ -65,6 +74,14 @@ const workbench = {
   "workbench.action.cancel-changes": "Cancel changes",
   "workbench.action.publish": "Save to Resume Center",
   "workbench.draft.hint": "Not saved. Save to make it appear in Resume Center",
+  "workbench.action.retry-content": "Retry content",
+  "workbench.draft.baseline": "Draft based on revision {revision}",
+  "workbench.draft.revision-ahead":
+    "A newer version exists on the server; saving will resolve the conflict first",
+  "workbench.draft.too-large":
+    "The draft exceeds 256 KB and was not stashed; your changes are still on this page",
+  "workbench.draft.unavailable":
+    "The browser does not allow stashing drafts; your changes are still on this page",
   "editor.tab.basic": "Basic information",
   "editor.tab.education": "Education",
   "editor.tab.experience": "Internships / Work",
@@ -83,6 +100,10 @@ const workbench = {
   "resume.measure.fontSizeDecrease": "Decrease font size",
   "resume.measure.fontSizeIncrease": "Increase font size",
   "resume.measure.fontSizeSliderAria": "Font size (drag to adjust, arrow keys for fine adjustment)",
+  "resume.measure.fontSizeInputAria": "Font size value (type a number, press Enter to confirm)",
+  "resume.measure.fontSizeInputHint": "Type a font size directly; press Enter to confirm",
+  "resume.measure.fontSizeInputEmpty": "Enter a font size",
+  "resume.measure.fontSizeInputInvalid": "Font size must be between {min} and {max}px",
   "resume.measure.fontTooSmall": "Sizes below {px}px may be hard to read in print",
   "resume.measure.fontLabel": "Font",
   "resume.measure.more": "More typography",

@@ -1,0 +1,102 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 自研求职采集（AI 求职）筛选表单与数据源布局样式（工作通二开，从 jobs.css 拆出以守 500 行预算）。 */
+
+.hunt-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hunt-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hunt-field-label {
+  flex: 0 0 88px;
+  color: var(--rf-text-secondary, rgba(0, 0, 0, 0.65));
+  font-size: 13px;
+  line-height: 32px;
+  white-space: nowrap;
+}
+
+.hunt-field-control {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.hunt-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 32px;
+  max-width: 1100px;
+}
+
+@media (max-width: 767px) {
+  .hunt-filter-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hunt-field-label {
+    flex-basis: 72px;
+  }
+}
+
+.hunt-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 0;
+}
+
+.hunt-section + .hunt-section {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.hunt-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hunt-source-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 20px;
+}
+
+.hunt-field--narrow .hunt-field-control {
+  max-width: 96px;
+}
+
+@media (max-width: 1092px) {
+  .hunt-source-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .hunt-source-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.hunt-salary-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hunt-salary-dash {
+  color: var(--rf-text-secondary, rgba(0, 0, 0, 0.45));
+  flex: 0 0 auto;
+}
+
+.hunt-salary-unit {
+  color: var(--rf-text-secondary, rgba(0, 0, 0, 0.45));
+  font-size: 12px;
+  flex: 0 0 auto;
+}

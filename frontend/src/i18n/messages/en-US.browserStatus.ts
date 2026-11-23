@@ -13,6 +13,12 @@
  */
 const browserStatus = {
   "browserStatus.title": "Apply-only browser",
+  "browserStatus.ready": "Ready",
+  // I-16: shown on the very first frame, before the status has arrived. It used to say
+  // "unknown", which reads like an error; "still reading" is a different thing.
+  "browserStatus.state.loading": "Reading…",
+  "browserStatus.hint.collapse": "Collapse instructions",
+  "browserStatus.hint.expand": "Expand instructions",
   "browserStatus.port": "Debug port {port}",
   "browserStatus.action.start": "Start browser",
   "browserStatus.action.openSite": "Open job site",

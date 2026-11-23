@@ -15,6 +15,11 @@ const assistantBreadth = {
   "assistantBreadth.tasks.aria": "助手创建的任务",
 
   "assistantBreadth.digest.title": "今日简报",
+  "assistantBreadth.digest.summary.empty": "暂无新变化",
+  "assistantBreadth.digest.summary.stale": "无回答 {count}",
+  "assistantBreadth.digest.summary.expired": "已过期 {count}",
+  "assistantBreadth.digest.summary.expand": "展开",
+  "assistantBreadth.digest.summary.collapse": "收起",
   "assistantBreadth.digest.refresh": "重新生成",
   "assistantBreadth.digest.refreshing": "正在生成…",
   "assistantBreadth.digest.generatedAt": "更新于 {time}",
@@ -52,6 +57,14 @@ const assistantBreadth = {
   "assistantBreadth.persona.error": "切换视角失败，请稍后重试",
   "assistantBreadth.persona.needsConversation": "发送第一条消息后才能切换视角",
   "assistantBreadth.persona.aria": "助手视角",
+  "assistantBreadth.persona.trigger": "视角 · {name}",
+  "assistantBreadth.persona.desc.default": "不预设立场，按你问的答；需要判断时会先问清目标。",
+  "assistantBreadth.persona.desc.hr_scan":
+    "模拟招聘方 6 秒初筛：前 1/3 能读到哪 3 个关键词、命中/缺失、一句话结论。",
+  "assistantBreadth.persona.desc.interviewer":
+    "按 JD 与简历出 10 个必问 + 3 个大概率答不上来 + 每题考察点。",
+  "assistantBreadth.persona.desc.headhunter":
+    "该投/别投 + 投入产出（补什么、优先级），不复述匹配分。",
 } as const;
 
 export default assistantBreadth;

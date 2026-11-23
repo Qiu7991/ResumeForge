@@ -3,25 +3,47 @@
 const assistantMemory = {
   "assistantMemory.title": "Assistant memory",
   "assistantMemory.intro":
-    "The assistant only relies on job-search preferences you explicitly stated (at most five per turn). This page is the only place to inspect and edit them: add a profile fact, or delete memories you no longer want used.",
-  "assistantMemory.count": "{count} memories",
+    "The assistant only uses job-search preferences you stated yourself. Add one by hand, or delete the memories you no longer want.",
+  /** Trust line on the card head (T23): memory stays local. */
+  "assistantMemory.trust.local": "Stored on this device",
+  /** Left side of the list header. {count} is the number of rows, paused and replaced included. */
+  "assistantMemory.list.count": "Memory · {count}",
+  /** Accessible name of the row-level "..." icon button. */
+  "assistantMemory.list.menu": "More actions",
   "assistantMemory.empty":
     "No memories yet. Add a target role or salary floor, and the assistant will use it from the next turn.",
   "assistantMemory.loadFailed": "Could not load assistant memory. Please try again.",
-  "assistantMemory.autoExtract.label": "Extract memories after conversations",
+  "assistantMemory.autoExtract.label": "Organize memories automatically",
   "assistantMemory.autoExtract.hint":
-    "When on, a background task extracts memories about five minutes after a conversation goes idle. Off by default until you can see and edit them here.",
+    "When on, the next time you use the assistant it tidies up your previous conversation and lists what it found below, where you can edit or delete it. Turning this off keeps saved memories.",
   "assistantMemory.autoExtract.enableToast": "Memory extraction is on",
   "assistantMemory.autoExtract.disableToast": "Memory extraction is off",
   "assistantMemory.autoExtract.saveFailed":
     "Could not save the extraction setting. Please try again.",
+  /** Injection master switch (T23): on by default; off means no memory reaches the prompt. */
+  "assistantMemory.inject.label": "Use memories in chats",
+  "assistantMemory.inject.hint":
+    "When off, the assistant stops consulting the memories below; the entries themselves stay.",
+  "assistantMemory.inject.enableToast": "Memory injection is on",
+  "assistantMemory.inject.disableToast": "Memory injection is off",
   "assistantMemory.source.manual": "Manual",
   "assistantMemory.source.extracted": "Extracted",
   "assistantMemory.status.superseded": "Replaced by a newer value",
   "assistantMemory.confidence": "Confidence {percent}%",
+  /** One row's meta line: source · updated time (menu + screen-reader text only). */
+  "assistantMemory.meta.line": "{source} · {updated}",
   "assistantMemory.updatedAt": "Updated {time}",
+  /** Card footnote: memories stay in the local database. */
+  "assistantMemory.footnote.privacy":
+    "These memories live only in the local database and are never uploaded.",
+  /** Mechanism copy folded into the info tooltip. */
+  "assistantMemory.injection.info":
+    "Each turn injects at most five memories ranked by relevance to your message; turning off “Use memories in chats” injects none.",
+  "assistantMemory.injection.infoLabel": "How memories are used",
+  "assistantMemory.sourceExcerpt": "“{text}”",
+  "assistantMemory.source.label": "Source",
   "assistantMemory.openConversation": "Open source conversation",
-  "assistantMemory.action.add": "Add profile fact",
+  "assistantMemory.action.add": "Add memory",
   "assistantMemory.action.edit": "Edit",
   "assistantMemory.action.delete": "Delete",
   "assistantMemory.action.neverUse": "Never use",
@@ -35,19 +57,37 @@ const assistantMemory = {
   "assistantMemory.deleteConfirm.ok": "Delete memory",
   "assistantMemory.neverUseConfirm.title": "Stop using this memory",
   "assistantMemory.neverUseConfirm.body":
-    "The assistant will no longer use it in answers. The record is kept but disappears from this list.",
-  "assistantMemory.neverUseConfirm.ok": "Never use it",
+    "The assistant will no longer use it in answers. The row stays in this list (greyed out) and can be restored at any time.",
+  "assistantMemory.neverUseConfirm.ok": "Pause this memory",
   "assistantMemory.clearConfirm.title": "Clear all memories",
   "assistantMemory.clearConfirm.body":
     "Deletes all {count} memories one by one. The assistant stops using them and they disappear from this list (records stay in the database for traceability).",
   "assistantMemory.clearConfirm.ok": "Clear all memories",
   "assistantMemory.toast.deleted": "Memory deleted",
-  "assistantMemory.toast.neverUse": "Memory marked as never used",
+  "assistantMemory.toast.neverUse": "Paused; it will no longer be used",
+  "assistantMemory.toast.restored": "Restored",
+  "assistantMemory.status.suppressed": "Paused",
+  "assistantMemory.action.restore": "Restore",
+  "assistantMemory.action.history": "History",
+  "assistantMemory.history.title": "Change history",
+  "assistantMemory.history.empty": "No changes recorded yet",
+  "assistantMemory.history.loadFailed": "Could not load the change history",
+  "assistantMemory.history.action.create": "Created",
+  "assistantMemory.history.action.update": "Edited",
+  "assistantMemory.history.action.supersede": "Replaced",
+  "assistantMemory.history.action.suppress": "Paused",
+  "assistantMemory.history.action.restore": "Restored",
+  "assistantMemory.history.action.delete": "Deleted",
+  "assistantMemory.history.changed": "{before} → {after}",
+  "assistantMemory.search.placeholder": "Search memories",
+  "assistantMemory.sort.label": "Sort",
+  "assistantMemory.sort.recent": "Recently updated",
+  "assistantMemory.sort.kind": "By category",
   "assistantMemory.toast.cleared": "Cleared {count} memories",
   "assistantMemory.toast.saved": "Memory saved",
   "assistantMemory.toast.failed": "Something went wrong. Please try again.",
   "assistantMemory.error.valueRequired": "Please enter the memory content",
-  "assistantMemory.form.createTitle": "Add a profile fact",
+  "assistantMemory.form.createTitle": "Add a memory",
   "assistantMemory.form.editTitle": "Edit memory",
   "assistantMemory.form.kind": "Type",
   "assistantMemory.form.kindHint":

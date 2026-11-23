@@ -7,6 +7,7 @@ import bilingual from "./en-US.bilingual";
 import careerScenarios from "./en-US.careerScenarios";
 import conflict from "./en-US.conflict";
 import common from "./en-US.common";
+import companyResearch from "./en-US.companyResearch";
 import core from "./en-US.core";
 import credentials from "./en-US.credentials";
 import documentPack from "./en-US.document";
@@ -25,6 +26,9 @@ import profileLibrary from "./en-US.profileLibrary";
 import provenance from "./en-US.provenance";
 import proview from "./en-US.proview";
 import research from "./en-US.research";
+import external from "./en-US.external";
+import ocrScan from "./en-US.ocrScan";
+import voiceMemo from "./en-US.voiceMemo";
 import responsive from "./en-US.responsive";
 import review from "./en-US.review";
 import rich from "./en-US.rich";
@@ -89,6 +93,7 @@ import referralForm from "./en-US.referralForm";
 import trackerPage from "./en-US.trackerPage";
 import drillSession from "./en-US.drillSession";
 import shortcutSettings from "./en-US.shortcutSettings";
+import settingsReset from "./en-US.settingsReset";
 import shortcutsCard from "./en-US.shortcutsCard";
 import backgroundTasks from "./en-US.backgroundTasks";
 import referenceFile from "./en-US.referenceFile";
@@ -116,6 +121,7 @@ import llmRecordView from "./en-US.llmRecordView";
 import llmProtocol from "./en-US.llmProtocol";
 import profileTextModal from "./en-US.profileTextModal";
 import questionBankPanel from "./en-US.questionBankPanel";
+import assistantTools from "./en-US.assistantTools";
 import referralDetail from "./en-US.referralDetail";
 import resume from "./en-US.resume";
 import resumeChangeReview from "./en-US.resumeChangeReview";
@@ -137,6 +143,10 @@ import assistantHooks from "./en-US.assistantHooks";
 import assistantBreadth from "./en-US.assistantBreadth";
 import assistantMemory from "./en-US.assistantMemory";
 import assistantLimits from "./en-US.assistantLimits";
+import contactSeparator from "./en-US.contactSeparator";
+import skillColumns from "./en-US.skillColumns";
+import photoFrame from "./en-US.photoFrame";
+import trackProbe from "./en-US.trackProbe";
 import assistantUi from "./en-US.assistantUi";
 import componentsMisc from "./en-US.componentsMisc";
 import componentsMisc2 from "./en-US.componentsMisc2";
@@ -198,6 +208,7 @@ const enUS = {
   ...careerScenarios,
   ...conflict,
   ...common,
+  ...companyResearch,
   ...credentials,
   ...delivery,
   ...fontDownload,
@@ -214,6 +225,9 @@ const enUS = {
   ...provenance,
   ...proview,
   ...research,
+  ...external,
+  ...ocrScan,
+  ...voiceMemo,
   ...responsive,
   ...review,
   ...rich,
@@ -279,6 +293,7 @@ const enUS = {
   ...trackerPage,
   ...drillSession,
   ...shortcutSettings,
+  ...settingsReset,
   ...shortcutsCard,
   ...backgroundTasks,
   ...referenceFile,
@@ -306,6 +321,7 @@ const enUS = {
   ...llmProtocol,
   ...profileTextModal,
   ...questionBankPanel,
+  ...assistantTools,
   ...referralDetail,
   ...resume,
   ...resumeChangeReview,
@@ -327,6 +343,10 @@ const enUS = {
   ...assistantBreadth,
   ...assistantMemory,
   ...assistantLimits,
+  ...contactSeparator,
+  ...skillColumns,
+  ...photoFrame,
+  ...trackProbe,
   ...assistantUi,
   ...componentsMisc,
   ...componentsMisc2,

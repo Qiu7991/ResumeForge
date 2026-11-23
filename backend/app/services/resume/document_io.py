@@ -18,9 +18,12 @@ document_converter / schemas.resume_document）。
 
 from __future__ import annotations
 
+import logging
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from ...models.resume import ResumeRecord
@@ -40,9 +43,12 @@ __all__ = [
     "CustomFieldHint",
     "DocumentValidationError",
     "ResumeDocument",
+    "UNSUPPORTED_PHOTO_DETAIL",
+    "conversion_error_detail",
     "conversion_summary",
     "custom_field_definitions",
     "document_for_record",
+    "document_or_422",
     "ensure_document_version",
     "ensure_document_version_with_report",
     "parse_document",
@@ -50,6 +56,44 @@ __all__ = [
     "prepare_document_for_save_with_report",
     "validate_document_ids_v2",
 ]
+
+
+logger = logging.getLogger(__name__)
+
+#: I-02：照片 data URI 前缀。只判前缀、不解码（省掉每次保存一次 base64 decode）。
+_PHOTO_DATA_URL_RE = re.compile(r"^data:image/(?:jpeg|jpg|png|webp|gif);base64,", re.IGNORECASE)
+
+
+def _heal_header_photo_placements(document: dict) -> list[dict[str, str]]:
+    """I-02 保存侧自愈：`placement="contact"` 但值其实是图片 data URI 的页眉字段写回 `photo`。
+
+    返回被修复的字段（`item_id` / `key`），调用方拿它写结构化日志。
+    `header.photo` 已被占用时**不重复**占用：那个字段原样留在 contact，由 planner 跳过，
+    不在保存路径上静默删用户的字段。
+    """
+    header = document.get("header")
+    if not isinstance(header, dict):
+        return []
+    items = header.get("items")
+    if not isinstance(items, list):
+        return []
+    has_photo = any(
+        isinstance(item, dict) and item.get("placement") == "photo" and item.get("value")
+        for item in items
+    )
+    healed: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("placement") != "contact":
+            continue
+        value = item.get("value")
+        if not isinstance(value, str) or not _PHOTO_DATA_URL_RE.match(value):
+            continue
+        if has_photo:
+            continue
+        item["placement"] = "photo"
+        has_photo = True
+        healed.append({"item_id": str(item.get("id") or ""), "key": str(item.get("key") or "")})
+    return healed
 
 
 def ensure_document_version(
@@ -80,6 +124,10 @@ def prepare_document_for_save_with_report(
     """同 prepare_document_for_save，但额外返回 v1→v2 的转换报告（None = 本来就是 v2）。
 
     创建/保存响应里的 document_conversion 用它：只有真的发生过转换才提示"旧简历已升级"。
+
+    I-02 保存侧自愈：历史缺陷把照片写成 `placement="contact"` 的文档，在这里写回 `photo`。
+    渲染侧的容忍（planner 跳过图片型 contact）只保证"看起来对"，不自愈的话这个键会永远留着，
+    下一次导出仍要走一遍跳过判断。写回时记一条结构化日志，不打扰用户。
     """
     document, report = ensure_document_version_with_report(
         content,
@@ -91,6 +139,12 @@ def prepare_document_for_save_with_report(
         from .resume_labels import normalize_language
 
         document["language"] = normalize_language(language)
+    healed = _heal_header_photo_placements(document)
+    if healed:
+        logger.info(
+            "resume_document.header_photo_placement_healed",
+            extra={"healed_fields": healed, "healed_count": len(healed)},
+        )
     normalized = parse_document(document)
     validate_document_ids_v2(normalized)
     return document_to_json(normalized), report
@@ -157,3 +211,53 @@ def document_for_record(
         format_config=getattr(record, "format_config", None),
         custom_fields=custom_field_definitions(db),
     )
+
+
+# v1 内容的 pydantic 校验错误（尤其照片 data URL）对用户没有可读性：这里统一翻成人话。
+UNSUPPORTED_PHOTO_DETAIL = (
+    "简历照片格式不受支持：照片必须是 JPEG、PNG 或 WebP 格式的 base64 data URL，"
+    "请重新上传后再预览或导出"
+)
+
+
+def conversion_error_detail(exc: Exception) -> str:
+    """把 ConversionError / pydantic 校验错误翻成可读的 422 detail（照片单独给指引）。
+
+    **为什么在服务层**：读/写两个边界（``document_or_422`` 与 ``_validated_content``）与
+    RF-03 之后的动作层都要产出同一句用户可读提示；文案一旦有第二份实现，
+    "非法照片" 与 "结构不合法" 的措辞就会随改动漂移。
+    """
+    text = str(exc).strip()
+    lowered = text.lower()
+    if "photo" in lowered or "data url" in lowered or "data_url" in lowered:
+        return UNSUPPORTED_PHOTO_DETAIL
+    if text:
+        return f"简历内容无法解析：{text[:300]}"
+    return "简历内容无法解析：请检查内容结构后重试"
+
+
+def document_or_422(
+    payload: Any,
+    db: Session | None = None,
+    *,
+    language: str | None = None,
+    format_config: dict | None = None,
+) -> dict:
+    """读/渲染入口的版本收口：v1/v2 -> v2 dict；结构不合法统一 422（不 500）。
+
+    从 ``api/resumes/_shared.py`` 原样搬入服务层（RF-03b）：分页报告与渲染入口的编排
+    下沉到 ``services/resume/**`` 之后，动作层（不允许 import ``app.api``）必须能复用
+    同一个收口函数，否则"结构不合法 → 422"就会出现第二份实现。
+
+    返回 ``HTTPException`` 而不是自定义异常是有意为之：调用方**两侧**（路由 handler 与
+    ActionSpec.run）都要把同一条提示变成 422，错误形状是接口层契约，翻译只允许一处。
+    """
+    try:
+        return ensure_document_version(
+            payload,
+            language=language,
+            format_config=format_config,
+            custom_fields=custom_field_definitions(db),
+        )
+    except (ConversionError, DocumentValidationError) as exc:
+        raise HTTPException(status_code=422, detail=conversion_error_detail(exc)) from exc

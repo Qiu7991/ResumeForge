@@ -1,0 +1,307 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 实时语音房间：时间线（自己滚）+ 点评栏 + 底栏 + 通话设置弹层。
+   外壳 / 在场条 / 摄像头 PIP 在 `live-voice-room.css`。 */
+
+/* ===== 时间线：历史气泡，自己滚 =====
+   高度接力：thread(min-height:0) → conversation(flex:1 + min-height:0) → 消息区(overflow-y:auto)。
+   I-27 去掉了 `border-left` 与 `padding-left`：它现在只是时间线的上半段，
+   当前轮紧接在下方（同一列、同一条滚动轴）。 */
+.interview-live-room__conversation {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.interview-live-room__conversation-title {
+  flex: 0 0 auto;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+/* 气泡容器直接复用对话页的 `.interview-messages`（F16）：这里只脱掉它的卡片外壳——
+   记录区在主栏里已经是整块，再套一层边框与浅底就是"框里套框"。 */
+.interview-live-room__conversation .interview-messages {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 0;
+  padding: 2px 2px 12px;
+  border: 0;
+  background: transparent;
+}
+
+/* ===== 点评栏（I-27）=====
+   空态**常驻占位**且高度稳定：第一条点评到达时不能把时间线顶一下（I-17 的滚动锚定）。
+   `align-self: stretch` 让它与时间线同高，正文自己滚（长点评不把底栏推出去）。 */
+.interview-live-room__review {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  overflow: hidden;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: 10px;
+  background: var(--rf-surface);
+}
+
+.interview-live-room__review-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.interview-live-room__review-title {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.interview-live-room__review-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--rf-text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.interview-live-room__review-toggle:hover {
+  color: var(--rf-text-body);
+}
+
+.interview-live-room__review-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+/* 正文的 120px 下限**只在展开态**成立：收起态已经不渲染 body（R3-02），
+   把下限写在展开分支上是为了让"框为什么满高"这件事在样式里也读得出来。 */
+.interview-live-room__review[data-collapsed="false"] .interview-live-room__review-body {
+  min-height: 120px;
+}
+
+/* ===== 收起态：44px 竖排窄轨（R3-02）=====
+   `align-self: start` 是关键：不写它就退回 grid item 默认的 stretch，
+   卡片仍会把整列高度吃满，正是用户抱怨的"空壳"。 */
+.interview-live-room__review[data-collapsed="true"] {
+  align-self: start;
+  gap: 0;
+  padding: 10px 0;
+}
+
+.interview-live-room__review-rail {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--rf-text-secondary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.interview-live-room__review-rail:hover {
+  color: var(--rf-text-body);
+}
+
+.interview-live-room__review-rail:focus-visible {
+  outline: 2px solid var(--rf-focus-ring);
+  outline-offset: -2px;
+}
+
+.interview-live-room__review-rail-label {
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  /* 竖排 + 正立：中文字符按字正立，不跟着基线转 90°。 */
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+}
+
+/* 箭头用两条边框转 45° 画（不用 emoji / 字体图标：字形随主题与字体变，还会被当正文朗读）。
+   指向左侧 = "往时间线那边展开"。 */
+.interview-live-room__review-chevron {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-bottom: 1.5px solid currentColor;
+  border-left: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.interview-live-room__review-empty {
+  font-size: 12px;
+}
+
+/* ===== 底栏：一条呼叫条（I-27）=====
+   左（模式）/ 中（唯一一颗麦克风 + 电平环）/ 右（摄像头 / 设置 / 暂停）。
+   状态只在在场条的胶囊里说一次，这里不再有「麦克风 · 未开启」。 */
+.interview-live-room__controls {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 12px;
+  border-top: 1px solid var(--rf-border-subtle);
+}
+
+.interview-live-room__controls-left,
+.interview-live-room__controls-middle,
+.interview-live-room__controls-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.interview-live-room__controls-left {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.interview-live-room__controls-middle {
+  position: relative;
+  justify-content: center;
+}
+
+.interview-live-room__controls-right {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+/* 电平环：`--mic-level` 是 waveform 的均值（0..1），环的粗细与光晕跟着它走。
+   它表达的是"你现在有多大声"，与在场条头像上的装饰柱**不是**一回事。 */
+.interview-live-room__mic-ring {
+  --mic-level: 0;
+  position: absolute;
+  width: 46px;
+  height: 46px;
+  border: 2px solid var(--rf-border-subtle);
+  border-radius: 50%;
+  opacity: 0.5;
+  pointer-events: none;
+  transform: scale(calc(1 + var(--mic-level) * 0.16));
+  transition:
+    transform 120ms linear,
+    border-color 120ms linear;
+}
+
+.interview-live-room__mic-ring.is-live {
+  border-color: color-mix(
+    in srgb,
+    var(--rf-success-strong) calc(35% + var(--mic-level) * 55%),
+    transparent
+  );
+  opacity: 1;
+}
+
+/* ===== 通话设置弹层 ===== */
+.interview-voice-settings {
+  width: 268px;
+}
+
+.interview-voice-settings__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* 标签不换行：弹层只有 268px 宽，「播报音色」会被挤成「播报音 / 色」两行。 */
+.interview-voice-settings__row > .ant-typography {
+  white-space: nowrap;
+}
+
+.interview-voice-settings__label {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--rf-text-secondary);
+}
+
+.interview-voice-settings__hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.interview-voice-settings .ant-slider {
+  margin: 4px 6px 0;
+}
+
+@media (max-width: 860px) {
+  .interview-live-room__conversation {
+    padding-top: 14px;
+    border-top: 1px solid var(--rf-border-subtle);
+  }
+
+  /* 窄档点评栏落到时间线下方：给一个高度上限，否则一段长点评会把底栏推走。 */
+  .interview-live-room__review {
+    flex: 0 0 auto;
+    max-height: 240px;
+  }
+
+  /* R3-02：堆叠布局下窄轨复位成**通栏横条**——竖排 + `align-self: start` 会在
+     时间线下方立一根 44px 的柱子，文字还被压成一列。 */
+  .interview-live-room__review[data-collapsed="true"] {
+    align-self: stretch;
+    padding: 4px 12px;
+  }
+
+  .interview-live-room__review-rail {
+    min-height: 32px;
+    flex-direction: row;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .interview-live-room__review-rail-label {
+    letter-spacing: 0.02em;
+    writing-mode: horizontal-tb;
+  }
+
+  /* 横条：内容在下方展开，箭头朝下。 */
+  .interview-live-room__review-chevron {
+    transform: rotate(-45deg);
+  }
+
+  /* 要跟着展开态一起写：上面那条 `[data-collapsed="false"] ... __review-body`
+     特异性更高（0,3,0），只写 `.interview-live-room__review-body` 会被它按回 120px。 */
+  .interview-live-room__review[data-collapsed="false"] .interview-live-room__review-body {
+    min-height: 72px;
+  }
+
+  .interview-live-room__controls {
+    grid-template-columns: 1fr auto;
+    row-gap: 10px;
+  }
+
+  .interview-live-room__controls-left {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .interview-live-room__controls-middle {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .interview-live-room__controls-right {
+    grid-column: 1 / -1;
+    justify-content: center;
+  }
+}

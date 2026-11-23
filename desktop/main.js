@@ -19,25 +19,27 @@
 // the window or sets quitting before app.quit(). Window chrome (self-drawn
 // 32px title bar + WCO buttons) lives in lib/titlebar.js + lib/tray-menu.js.
 
-const { app, BrowserWindow, Tray, Menu, dialog, ipcMain, screen, session, shell } = require("electron");
+const { app, BrowserWindow, Tray, clipboard, dialog, ipcMain, nativeTheme, screen, session, shell, systemPreferences } = require("electron");
 const path = require("path");
 const { BackendManager } = require("./backend-manager");
 const { createShellLogging, announceDegradedOnReady } = require("./lib/preflight");
 const { linuxRuntimeDir, resolveLogDir } = require("./lib/shell-paths");
-const {
-  clampToWorkArea,
-  createWindowStateStore,
-  initialBounds,
-} = require("./lib/window-state");
+const { clampToWorkArea, createWindowStateStore, initialBounds } = require("./lib/window-state");
 const { createQuitLifecycle } = require("./lib/quit-lifecycle");
 // 桌面自绘标题栏 / 托盘 / 关闭行为 / 启动失败出口（§18 §19）：决策都在 lib/ 下，
 // 本文件只保留装配与 Electron 事件注册，500 行预算不会被这些分支吃光。
-const { createCloseBehavior, createPreferenceStore } = require("./lib/close-behavior");
+const { createPreferenceStore } = require("./lib/close-behavior");
+const { createClosePrompt } = require("./lib/close-dialog");
+const { createWindowShell } = require("./lib/window-shell");
 const { createTitleBarController, installTitleBarFallbackOnLoad } = require("./lib/titlebar");
-const { createTrayManager } = require("./lib/tray-menu");
+const { createSplashClock } = require("./lib/splash-timing");
+const { createShellTheme } = require("./lib/shell-theme");
+
 const { registerDesktopShellIpc } = require("./lib/desktop-shell-ipc");
+const { createShellDialogs } = require("./lib/shell-dialogs");
+const { createShellLocaleRuntime } = require("./lib/shell-locale-runtime");
 const { createStartupFailureReporter } = require("./lib/startup-failure");
-const { installerWaitCommand, runManualUpdateCheck, scheduleUpdateCheck, wantsManualUpdateCheck } = require("./updater");
+const { buildInAppUpdater, installerWaitCommand, runManualUpdateCheck, scheduleUpdateCheck, wantsManualUpdateCheck } = require("./updater");
 
 // Lifecycle diagnostics use the controlled runtime log; module imports must not write user profiles.
 
@@ -66,14 +68,6 @@ function projectRoot() {
   return app.isPackaged
     ? path.join(process.resourcesPath, "payload")
     : path.join(__dirname, "..");
-}
-
-function shellIcon() {
-  // electron-builder may drop icon.png from the asar (buildResources clash),
-  // so the packaged app reads the extraResources copy next to the payload.
-  return app.isPackaged
-    ? path.join(process.resourcesPath, "icon.png")
-    : path.join(__dirname, "icon.png");
 }
 
 function runtimeDir() {
@@ -108,49 +102,25 @@ const shellLogging = createShellLogging({
 });
 const logLine = shellLogging.log;
 
-// ADR-0004 legacy-data migration: asks the user before moving the payload-era
-// data into the user data dir. The module is required lazily (inside the
-// packaged-only path) so the dev-tree lifecycle probes, which load this file
-// in a VM with app.isPackaged = false, never resolve it.
-function confirmDataMigration(details) {
-  const incomplete =
-    details.reason === "marker-without-database"
-      ? "\n\n注意：上一次迁移的标记还在，但新位置已经找不到数据库文件" +
-        "（可能被移动、删除或同步工具移走）。现在重新迁移会从旧位置再复制一份。"
-      : "";
-  return dialog
-    .showMessageBox({
-      type: "question",
-      title: "简历通",
-      message: "检测到旧版本数据",
-      detail:
-        "检测到旧版本的数据仍保存在安装目录内。是否迁移到新的用户数据目录？" +
-        "旧数据将保留备份，迁移失败时旧数据也原样保留。" +
-        incomplete +
-        `\n\n旧位置：${details.from}\n新位置：${details.to}`,
-      buttons: ["迁移", "暂不迁移"],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-    })
-    .then(({ response }) => response === 0);
-}
+const shellTheme = createShellTheme({ app, nativeTheme, dirname: __dirname, logLine });
 
-// Marker present but no database anywhere: fail closed and let the user pick
-// between restoring a backup (quit) and explicitly starting from scratch.
-async function recoverMissingData(message) {
-  const { response } = await dialog.showMessageBox({
-    type: "error",
-    title: "简历通",
-    message: "数据目录需要确认",
-    detail: `${message}\n\n「创建全新数据库」会删除上一次迁移的标记并在新位置新建一份空数据库。`,
-    buttons: ["退出（先去恢复备份）", "创建全新数据库"],
-    defaultId: 0,
-    cancelId: 0,
-    noLink: true,
-  });
-  return response === 1;
-}
+// 壳层语言（应用内语言）：渲染进程挂载后推送，之前用系统语言兜底。切换后由 runtime
+// 重建托盘菜单 / tooltip 与窗口标题兜底（逻辑与用例都在 lib/shell-locale-runtime.js）。
+const shellLocaleRuntime = createShellLocaleRuntime({
+  getWindow: () => mainWindow,
+  getTrayManager: () => trayManager,
+  logLine,
+});
+
+// 壳层当前语言（应用内语言）。更新器的原生对话框也走它（9.3）：updater.js 只能被注入。
+const getShellLocale = () => shellLocaleRuntime.getLocale();
+
+// 原生对话框的文案装配（数据迁移确认 / 迁移不一致恢复 / 崩溃预算耗尽）。
+// 文案表在 lib/shell-locale.js；这里只注入 dialog 与"当前语言"。
+const shellDialogs = createShellDialogs({
+  dialog,
+  getLocale: () => shellLocaleRuntime.getLocale(),
+});
 
 // Resolves to { userDataDir, aborted }: null userDataDir keeps the legacy
 // (payload) location for this launch (declined / failed migration); aborted
@@ -160,13 +130,14 @@ async function resolveUserDataDir() {
   const result = await maybeMigrateUserData({
     oldDataDir: path.join(projectRoot(), "backend", "data"),
     newDataDir: userDataDir(),
-    showConfirm: confirmDataMigration,
+    showConfirm: shellDialogs.confirmDataMigration,
     showError: (title, message) => dialog.showErrorBox(title, message),
+    getLocale: () => shellLocaleRuntime.getLocale(),
     log: logLine,
   });
   if (result.outcome === "inconsistent") {
     logLine("data dir inconsistent: marker without database; asking the user");
-    const startFresh = await recoverMissingData(result.message);
+    const startFresh = await shellDialogs.confirmFreshStart(result.message);
     if (!startFresh) return { userDataDir: null, aborted: true };
     clearMarker(userDataDir());
     logLine("data dir inconsistent: user chose to start with a fresh database");
@@ -183,33 +154,30 @@ function sendStage(stage, detail) {
 
 /** 窗口尺寸 / 位置 / 缩放的读写（纯函数在 lib/window-state.js，有离线用例）。 */
 const windowState = createWindowStateStore({ app, getWindow: () => mainWindow });
+/** 启动页最短可见 1.0s（用户 2026-11-19 拍板，逻辑与用例在 lib/splash-timing.js）。 */
+const splashClock = createSplashClock();
 
-// 窗口壳（§18 §19）：托盘 / 关闭行为 / 标题栏覆盖层全部在 lib/ 下，决策可离线断言。
+// 窗口壳（§18 §19 + Q11）：托盘 / 关闭卡片 / 标题栏覆盖层全部在 lib/ 下，决策可离线断言。
 const titleBar = createTitleBarController({ getWindow: () => mainWindow, logLine });
-let trayManager = null;
-const closeBehavior = createCloseBehavior({
-  app,
-  dialog,
+// Q11：关闭提示改成**自绘无边框窗口**（原生 MessageBox 的外观没有任何可调参数）。
+// 决策逻辑仍在 lib/close-behavior.js：这里只把"怎么弹"注入进去。
+const promptClose = createClosePrompt({
+  BrowserWindow, ipcMain,
+  getWindow: () => mainWindow,
+  dirname: __dirname,
+  getShellLocale: () => shellLocaleRuntime.getLocale(),
+  logLine,
+});
+let desktopShellIpc = null;
+const { closeBehavior, trayManager } = createWindowShell({
+  app, Tray, BrowserWindow, ipcMain, screen, dirname: __dirname,
+  clipboard, promptClose,
   getWindow: () => mainWindow,
   isQuitting: () => quitting,
-  setQuitting: (value) => {
-    quitting = value;
-  },
+  setQuitting: (value) => { quitting = value; },
   store: createPreferenceStore({ app }),
-  logLine,
-  // 记忆变化后刷新托盘「关闭窗口时询问」的勾选态。
-  onPreferenceChanged: () => {
-    if (trayManager) trayManager.refresh();
-  },
-});
-trayManager = createTrayManager({
-  Tray,
-  Menu,
-  iconPath: shellIcon(),
-  app,
-  getWindow: () => mainWindow,
-  getRemembered: () => closeBehavior.getRemembered(),
-  clearRemembered: () => closeBehavior.clearRemembered(),
+  getMenu: () => desktopShellIpc,
+  getLocale: () => shellLocaleRuntime.getLocale(),
   logLine,
 });
 
@@ -238,16 +206,24 @@ function createWindow() {
     // §19：系统画三颗按钮（titleBarOverlay），自绘 32px 标题栏由 React 渲染。
     ...titleBar.windowOptions(),
     backgroundColor: "#f5f7fa",
-    icon: shellIcon(),
+    icon: shellTheme.windowIconPath(),
+    // 静态兜底标题：页面加载前任务栏/Alt-Tab 显示它。运行时双语由渲染层
+    // RouteAccessibility 接管（document.title 随页面与语言变化），主进程不重复实现。
+    title: "ResumeForge",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
+      additionalArguments: updateDeps.inApp ? ["--rf-in-app-update"] : [],
       contextIsolation: true,
       nodeIntegration: false,
       plugins: true, // 精确预览：内置 PDFium 渲染 blob PDF；默认 false 会让预览区空白
     },
   });
   mainWindow.setMenuBarVisibility(false);
-  require("./lib/media-permissions").installMediaPermissionHandler(session.defaultSession); // 语音输入要麦克风
+  // 媒体权限（麦克风/摄像头）：策略在 lib/media-permissions.js，这里只装配。
+  const mediaPermissions = require("./lib/media-permissions");
+  mediaPermissions.installMediaPermissionHandler(session.defaultSession); // 语音输入要麦克风
+  // macOS：首窗加载前问一次系统麦克风权限（I-08），失败只记日志，不拦启动。
+  void mediaPermissions.requestMacMicrophoneAccess({ systemPreferences, log: logLine });
   if (remembered && remembered.maximized) mainWindow.maximize();
 
   // 尺寸/位置：400ms 防抖后落盘（拖动时每一帧都写盘没有意义）。
@@ -274,8 +250,12 @@ function createWindow() {
     });
   }
 
-  mainWindow.loadFile(path.join(__dirname, "splash.html"));
-  mainWindow.once("ready-to-show", () => mainWindow.show());
+  // splash 首帧只能看系统主题（渲染进程还没上报），明暗两套 SVG 结构一致只是配色。
+  mainWindow.loadFile(path.join(__dirname, "splash.html"), {
+    query: { theme: shellTheme.splashTheme() },
+  });
+  // 计时基准：窗口真的可见那一刻（splash 动画也正是在这之后才被用户看到）。
+  mainWindow.once("ready-to-show", () => { splashClock.markShown(); mainWindow.show(); });
 
   // × 的关闭行为（§18）：quitting 时放行默认关闭（before-quit 的退出流程）；
   // 其余情况由 lib/close-behavior.js 决定——弹「最小化到托盘 / 退出应用」并支持
@@ -302,11 +282,11 @@ function handleUnexpectedExit(info) {
       `backend crash budget exhausted (${restartTimestamps.length} exits in ` +
         `${RESTART_WINDOW_MS / 60000} min), giving up`,
     );
-    dialog.showErrorBox(
-      "简历通",
-      `后端服务在 ${RESTART_WINDOW_MS / 60000} 分钟内连续异常退出 ${restartTimestamps.length} 次，已停止自动重启。\n` +
-        `诊断日志：${shellLogging.hint()}\n请重新启动应用。`,
-    );
+    shellDialogs.reportCrashBudgetExhausted({
+      count: restartTimestamps.length,
+      minutes: RESTART_WINDOW_MS / 60000,
+      logHint: shellLogging.hint(),
+    });
     return;
   }
 
@@ -329,6 +309,8 @@ function handleUnexpectedExit(info) {
 
 async function startBackend() {
   const url = await backend.start((stage) => sendStage(stage));
+  // 切界面前补足启动页最短可见时长：服务就绪得再快，也不能把开场动画切成闪一下。
+  await splashClock.hold();
   // P1-1 方案 3（主进程兜底）：加载完成后确认 React 真的渲染出了 32px 标题栏；缺了就补
   // 一条 body padding 并写 warning（决策与常量在 lib/titlebar.js）。必须挂在 loadURL
   // **之前**，否则事件可能已经过去了。
@@ -385,6 +367,7 @@ const reportStartupFailure = createStartupFailureReporter({
   logLine,
   sendStage,
   getLogDir: startupLogDir,
+  getLocale: () => shellLocaleRuntime.getLocale(),
   setQuitting: (value) => {
     quitting = value;
   },
@@ -407,7 +390,9 @@ const quitLifecycle = createQuitLifecycle({
   dialog,
   logLine,
   getBackend: () => backend,
+  getWindow: () => mainWindow,
   getRestartTimer: () => restartTimer,
+  getLocale: () => shellLocaleRuntime.getLocale(),
   setQuitting: (value) => {
     quitting = value;
   },
@@ -417,13 +402,12 @@ const quitLifecycle = createQuitLifecycle({
   clearTimeout,
 });
 
+const updateDeps = { installAndQuit: quitLifecycle.requestInstallAndQuit, getLocale: getShellLocale, getLogDir: startupLogDir };
+if (app.isPackaged && process.platform === "win32") updateDeps.inApp = buildInAppUpdater(() => mainWindow, updateDeps, logLine);
+
 // Single instance: a second launch focuses the existing window instead of
 // spawning a competing backend on another port.
 if (!app.requestSingleInstanceLock()) {
-  // 这里原本自己拼一条 <LOCALAPPDATA>\ResumeForge\startup-probe.log 并追加一行：
-  // 那是第二套路径逻辑，而且桌面测试套件加载 main.js 时会把它写进真实用户目录。
-  // 诊断信息改走壳的唯一日志出口 desktop-main.log（位置仍由 lib/shell-paths.js
-  // 裁决，写不进去也只是丢一行诊断，绝不阻断退出）。
   logLine("single-instance lock denied; another ResumeForge instance owns the shell");
   app.quit();
 } else {
@@ -434,20 +418,29 @@ if (!app.requestSingleInstanceLock()) {
       mainWindow.focus();
     }
     // 应用已经在运行时双击更新入口：不启动第二个实例，直接走一次手动检查。
-    if (wantsManualUpdateCheck(argv)) runManualUpdateCheck(mainWindow, logLine, { installAndQuit: quitLifecycle.requestInstallAndQuit });
+    if (wantsManualUpdateCheck(argv)) runManualUpdateCheck(mainWindow, logLine, updateDeps);
   });
 
   app.whenReady().then(async () => {
     try {
       // 先体检再启动：安装目录只读是正常形态，降级只提示，绝不阻断启动。
+      // 应用内语言还没到：先用系统语言兜底（app.getLocale 在 Windows 上要等 ready 之后）。
+      shellLocaleRuntime.initializeFromApp(app);
+      logLine(`shell locale fallback: ${shellLocaleRuntime.getLocale()}`);
       const preflightInfo = shellLogging.preflight();
       logLine("whenReady reached");
       createWindow();
       trayManager.create();
-      announceDegradedOnReady({ window: mainWindow, dialog, shell, info: preflightInfo });
+      announceDegradedOnReady({
+        window: mainWindow,
+        dialog,
+        shell,
+        info: preflightInfo,
+        getLocale: () => shellLocaleRuntime.getLocale(),
+      });
       await startBackendAndSwap();
-      scheduleUpdateCheck(mainWindow, logLine, { installAndQuit: quitLifecycle.requestInstallAndQuit });
-      if (wantsManualUpdateCheck()) runManualUpdateCheck(mainWindow, logLine, { installAndQuit: quitLifecycle.requestInstallAndQuit });
+      scheduleUpdateCheck(mainWindow, logLine, updateDeps);
+      if (wantsManualUpdateCheck()) runManualUpdateCheck(mainWindow, logLine, updateDeps);
     } catch (err) {
       // 一条可操作的出口：打开日志目录 / 退出（见 reportStartupFailure）。
       // 这里不再用 showErrorBox —— 它没有按钮，用户只能看着启动图。
@@ -478,23 +471,29 @@ require("./print").registerPrintHandler({ getMainWindow: () => mainWindow });
 ipcMain.on("app:quit-request", () => app.quit());
 
 // 自绘标题栏的 IPC（§19）：动作表在 lib/desktop-menu.js，注册与发送方校验在
-// lib/desktop-shell-ipc.js。动作只认固定 id；「关闭窗口」走 mainWindow.close()，
-// 触发第 18 条那条 close handler，绝不直接 destroy()。
-registerDesktopShellIpc({
+// lib/desktop-shell-ipc.js，动作只认固定 id；「关闭窗口」走 mainWindow.close()（触发
+// 第 18 条 close handler），绝不 destroy()。返回值是 `{ menu, channels }` 返回壳：
+// 托盘用的是 `desktopShellIpc.menu.run`。
+desktopShellIpc = registerDesktopShellIpc({
   ipcMain,
   app,
   getWindow: () => mainWindow,
   shell,
   getDataDir: effectiveDataDir,
   getLogDir: startupLogDir,
-  runUpdateCheck: () =>
-    runManualUpdateCheck(mainWindow, logLine, {
-      installAndQuit: quitLifecycle.requestInstallAndQuit,
-    }),
+  runUpdateCheck: () => runManualUpdateCheck(mainWindow, logLine, updateDeps),
+  updateSession: updateDeps.inApp,
+  getBackendUrl: () => backend?.url,
   titleBar,
+  getShellLocale: () => shellLocaleRuntime.getLocale(),
+  // 语言切换后的重建入口：托盘菜单 + tooltip + 窗口标题兜底（见 lib/shell-locale-runtime.js）。
+  onShellLocaleChanged: (locale) => shellLocaleRuntime.apply(locale),
+  // 主题（WF-20）：渲染进程上报的生效主题 → 托盘图标；开关由设置卡推过来（同一个对象）。
+  getShellTheme: () => shellTheme,
   logLine,
 });
 
 // Test hooks for the VM-based lifecycle probes (desktop/scripts/test-lifecycle.js).
 // The packaged app runs main.js as its entry and never imports it as a module, so this is inert.
-module.exports = { requestInstallAndQuit: quitLifecycle.requestInstallAndQuit };
+// `trayManager` 给用例读 `getMenuModel() / choose(id)`（与用户点托盘菜单同一条路径）。
+module.exports = { requestInstallAndQuit: quitLifecycle.requestInstallAndQuit, trayManager };

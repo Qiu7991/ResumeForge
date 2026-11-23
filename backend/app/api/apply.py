@@ -6,6 +6,8 @@
 """
 
 import logging
+from dataclasses import dataclass
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
@@ -19,6 +21,7 @@ from ..models.apply import (
     ApplyTaskItem,
 )
 from ..models.job import Job
+from ..runtime.blocking import run_sync
 from ..schemas.apply import (
     ApplyConfigIn,
     ApplyConfigOut,
@@ -27,8 +30,6 @@ from ..schemas.apply import (
     ApplyTaskDetailOut,
     ApplyTaskItemOut,
     ApplyTaskOut,
-    BrowserOpenUrlIn,
-    BrowserStatusOut,
     CollectBackfillIn,
     CollectConfigIn,
     CollectConfigOut,
@@ -44,7 +45,7 @@ from ..schemas.apply import (
 from ..schemas.common import Page
 from ..services import trash
 from ..services.actions import add_action_route
-from ..services.actions.catalog import all_actions
+from ..services.actions.catalog import registered_action
 from ..services.apply import apply_service, task_runner
 from ..services.job.job_match import generate_greeting, job_payload
 from ..services.job.job_match_context import resume_prompt_text
@@ -53,6 +54,7 @@ from ..services.llm.base import LLMError
 from ..services.settings_service import get_llm_config
 from ..services.site_health import site_health_overview
 from ._disconnect import client_gone, run_until_disconnect
+from .apply_browser_routes import router as apply_browser_router
 from .apply_extra import register_apply_extra_routes
 from .apply_queue import router as apply_queue_router
 from .apply_record_items import router as apply_record_items_router
@@ -60,8 +62,6 @@ from .apply_tasks_page import router as apply_tasks_page_router
 from .webform.records_page import router as webform_records_page_router
 
 logger = logging.getLogger(__name__)
-
-
 
 
 router = APIRouter(prefix="/api/apply", tags=["apply"])
@@ -140,83 +140,36 @@ def list_sites(db: Session = Depends(get_db)):
     return apply_service.list_sites(db)
 
 
-# ===== 投递专用浏览器 =====
-
-
-@router.get("/browser/status", response_model=BrowserStatusOut)
-def browser_status(db: Session = Depends(get_db)):
-    return apply_service.browser_status(db)
-
-
-@router.post("/browser/start", response_model=BrowserStatusOut)
-def browser_start(open_entry: bool = True, db: Session = Depends(get_db)):
-    """启动专用浏览器。
-
-    ``open_entry=false`` 时**不打开任何站点页面**（停在空白页）。投递台保持默认——它要那个
-    页面来让用户登录；把浏览器当渲染引擎借用的调用方则传 ``false``，否则用户会莫名其妙
-    跳出一个他这次没打算访问的招聘网站。
-    """
-    try:
-        return apply_service.start_browser(db, open_entry=open_entry)
-    except apply_service.ApplyServiceError as exc:
-        _raise(exc)
-
-
-@router.post("/browser/open", response_model=BrowserStatusOut)
-def browser_open(db: Session = Depends(get_db)):
-    """在已启动的专用浏览器里重新打开招聘网站入口（标签页被关掉或跳走后使用）。"""
-    try:
-        return apply_service.open_browser_url(db)
-    except apply_service.ApplyServiceError as exc:
-        _raise(exc)
-
-
-@router.post("/browser/open-url", response_model=BrowserStatusOut)
-def browser_open_url(payload: BrowserOpenUrlIn, db: Session = Depends(get_db)):
-    """在**投递专用浏览器**里打开具体岗位页（「前往投递」与投递台共用登录态）。"""
-    try:
-        return apply_service.open_browser_at(db, payload.url)
-    except apply_service.ApplyServiceError as exc:
-        _raise(exc)
-
-
-@router.post("/browser/refresh", response_model=BrowserStatusOut)
-def browser_refresh(db: Session = Depends(get_db)):
-    try:
-        return apply_service.refresh_browser(db)
-    except apply_service.ApplyServiceError as exc:
-        _raise(exc)
-
-
-@router.post("/browser/restart", response_model=BrowserStatusOut)
-def browser_restart(db: Session = Depends(get_db)):
-    try:
-        return apply_service.restart_browser(db)
-    except apply_service.ApplyServiceError as exc:
-        _raise(exc)
-
-
-@router.post("/browser/stop", status_code=204)
-def browser_stop(db: Session = Depends(get_db)):
-    """关闭专用浏览器。
-
-    关不掉时（窗口是上一次运行留下的）必须给出可展示的中文提示，不能静默成功——
-    与 /browser/start、/browser/open 用同一套错误映射。
-    """
-    try:
-        apply_service.stop_browser(db)
-    except apply_service.ApplyServiceError as exc:
-        _raise(exc)
-    return None
-
+# 投递专用浏览器端点（T8 拆分）：实现与路由都在 apply_browser_routes.py；
+# 挂载位置与拆分前一致（在 /sites 之后、招呼语预览之前）。
+router.include_router(apply_browser_router)
 
 # ===== 招呼语预览 =====
 
 
-@router.post("/greeting/preview", response_model=GreetingPreviewOut)
-async def greeting_preview(
-    payload: GreetingPreviewRequest, request: Request, db: Session = Depends(get_db)
-):
+@dataclass(frozen=True)
+class _GreetingPrep:
+    """招呼语预览的同步准备结果（worker 产出，事件循环只消费）。
+
+    ``early`` 非空表示无需调模型（队列里已有招呼语 / 模型未配置 / 无简历），直接返回它；
+    否则用 ``provider`` + 两个纯字符串去跑模型，``default_greeting`` 是失败兜底。
+    """
+
+    early: GreetingPreviewOut | None = None
+    provider: Any = None
+    payload_data: dict[str, Any] | None = None
+    resume_text: str = ""
+    default_greeting: str = ""
+    greeting_baseline: str = ""
+    greeting_with_salutation: bool = True
+
+
+def _prepare_greeting(db: Session, payload: GreetingPreviewRequest) -> _GreetingPrep:
+    """招呼语预览的全部同步数据库工作（岗位/配置/队列条目/简历/模型配置）。
+
+    整段放进 worker：这里读五张表（岗位、投递配置、队列条目、简历、模型配置），
+    原先全压在事件循环线程上；``db.close()`` 也在同一条线程里收尾，之后不再碰库。
+    """
     job = db.get(Job, payload.job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="岗位不存在或已被删除")
@@ -232,7 +185,9 @@ async def greeting_preview(
         and queue_item.greeting.strip()
         and queue_item.greeting_confirmed
     ):
-        return GreetingPreviewOut(greeting=queue_item.greeting.strip(), source="queue")
+        greeting_value = queue_item.greeting.strip()
+        db.close()
+        return _GreetingPrep(early=GreetingPreviewOut(greeting=greeting_value, source="queue"))
 
     # 招呼语是「简历 + 岗位」的投影：队列条目没有可用简历时不生成，也不回退默认文案
     # （那会变成没看简历的群发话术）。交给前端提示先去岗位广场生成简历。
@@ -244,11 +199,17 @@ async def greeting_preview(
     )
     resume = apply_service.resolve_resume(db, job.id, chosen_resume_id)
     if queue_item is not None and resume is None:
-        return GreetingPreviewOut(greeting="", source="no_resume")
+        db.close()
+        return _GreetingPrep(early=GreetingPreviewOut(greeting="", source="no_resume"))
 
     llm = get_llm_config(db)
+    default_greeting = config.default_greeting.strip()
     if not (llm.base_url.strip() and llm.model.strip()):
-        return GreetingPreviewOut(greeting=config.default_greeting.strip(), source="default")
+        db.close()
+        return _GreetingPrep(
+            early=GreetingPreviewOut(greeting=default_greeting, source="default"),
+            default_greeting=default_greeting,
+        )
 
     # 招呼语按这份简历写——否则会出现"招呼语里说 A 项目、实际投的简历是 B 版本"的割裂。
     # 用紧凑 markdown 而不是 json.dumps(content)：v2 文档序列化成 JSON 有 3 万字符，
@@ -260,20 +221,50 @@ async def greeting_preview(
     resume_text = ""
     if resume is not None:
         resume_text = resume_prompt_text(db, resume, job_payload_data=payload_data)
-    provider = create_provider(llm)
+    try:
+        provider = create_provider(llm)
+    except Exception:  # noqa: BLE001 - 构造不了 provider 与"模型这会儿不可用"同类
+        # 与"没配模型"走同一条兜底：返回默认招呼语而不是 500。原来的行为是让异常冒出
+        # ``run_sync`` → 兜底 handler → 500，用户只看到报错，而这条端点的语义本就是
+        # "能生成就生成，生成不了给默认话术"（下面模型调用失败的路径也是这么降级的）。
+        logger.warning("招呼语预览构造 provider 失败，回退默认招呼语", exc_info=True)
+        db.close()
+        return _GreetingPrep(
+            early=GreetingPreviewOut(greeting=default_greeting, source="default"),
+            default_greeting=default_greeting,
+        )
+    greeting_baseline = config.greeting_baseline
+    greeting_with_salutation = config.greeting_with_salutation
     db.close()
+    return _GreetingPrep(
+        provider=provider,
+        payload_data=payload_data,
+        resume_text=resume_text,
+        default_greeting=default_greeting,
+        greeting_baseline=greeting_baseline,
+        greeting_with_salutation=greeting_with_salutation,
+    )
+
+
+@router.post("/greeting/preview", response_model=GreetingPreviewOut)
+async def greeting_preview(
+    payload: GreetingPreviewRequest, request: Request, db: Session = Depends(get_db)
+):
+    prep = await run_sync(_prepare_greeting, db, payload)
+    if prep.early is not None:
+        return prep.early
     # 客户端断开（用户关了预览/离开页面）：不生成、也不回退默认招呼语——没人收这份结果。
     disconnected = False
     try:
         greeting = await run_until_disconnect(
             request,
             generate_greeting(
-                provider,
-                payload_data,
-                resume_text,
-                greeting_baseline=config.greeting_baseline,
+                prep.provider,
+                prep.payload_data or {},
+                prep.resume_text,
+                greeting_baseline=prep.greeting_baseline,
                 focus_project=payload.focus_project or "",
-                greeting_with_salutation=config.greeting_with_salutation,
+                greeting_with_salutation=prep.greeting_with_salutation,
             ),
             what="招呼语生成",
         )
@@ -286,23 +277,24 @@ async def greeting_preview(
         logger.exception("招呼语生成发生内部错误，回退默认招呼语")
     if disconnected:
         raise client_gone("招呼语生成")
-    return GreetingPreviewOut(greeting=config.default_greeting.strip(), source="default")
+    return GreetingPreviewOut(greeting=prep.default_greeting, source="default")
 
 
 # ===== 执行批次（轮询模型）=====
 
 
 def _task_detail(data: Session, task_id: int) -> ApplyTaskDetailOut:
+    """批次详情（投递与采集两个入口共用）。
+
+    这是**未装饰的 helper**，两个路由都调它：``GET /api/apply/tasks/{id}`` 与
+    ``GET /api/collect/tasks/{id}``。条目查询走 ``apply_service.list_task_items``
+    （唯一实现）——api 层不构造查询（守卫见 ``tests/test_api_layer_rules.py``）。
+    """
     try:
         task = apply_service.get_task_detail(data, task_id)
     except apply_service.ApplyServiceError as exc:
         _raise(exc)
-    items = (
-        data.query(ApplyTaskItem)
-        .filter(ApplyTaskItem.task_id == task_id)
-        .order_by(ApplyTaskItem.sort_order, ApplyTaskItem.id)
-        .all()
-    )
+    items = apply_service.list_task_items(data, task_id)
     detail = ApplyTaskDetailOut.model_validate(task)
     detail.items = [ApplyTaskItemOut.model_validate(item) for item in items]
     return detail
@@ -430,7 +422,9 @@ def list_records(
     return Page(items=items, total=total)
 
 
-add_action_route(router, all_actions()["list_apply_records"], route_path="/records/grouped")
+add_action_route(router, registered_action("list_apply_records"), route_path="/records/grouped")
+
+
 def list_record_batches(
     keyword: str = Query(default=""),
     result: str = Query(default="", description="success / failed / skipped"),
@@ -449,8 +443,11 @@ def list_record_batches(
 
     ``include_items=false``（B4 按需加载）：批次只带命中数（``matched_count``），明细由
     ``GET /records/batches/{task_id}/items`` 在展开时分页拉取——默认 true，旧行为不变。
+
+    薄壳：筛选 / 分页 / 视图组装都在 ``services.apply.record_batch_page``（助手动作
+    ``list_apply_records`` 调同一个函数）。
     """
-    batches, total = apply_service.list_record_batches(
+    return apply_service.record_batch_page(
         db,
         keyword=keyword,
         result=result,
@@ -459,7 +456,6 @@ def list_record_batches(
         page_size=page_size,
         include_items=include_items,
     )
-    return Page(items=batches, total=total)
 
 
 @router.post("/records/{item_id}/retry", response_model=ApplyTaskOut)

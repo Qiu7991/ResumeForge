@@ -21,7 +21,7 @@ const apiMocks = vi.hoisted(() => ({
   listResumeIds: vi.fn(),
   updateResumeFavorite: vi.fn(),
   getResume: vi.fn(),
-  fetchResumeHtml: vi.fn(),
+  fetchResumePreviewHtml: vi.fn(),
   renderResume: vi.fn(),
 }));
 
@@ -33,7 +33,7 @@ vi.mock("../api/resumes", async (importOriginal) => ({
   listResumeIds: apiMocks.listResumeIds,
   updateResumeFavorite: apiMocks.updateResumeFavorite,
   getResume: apiMocks.getResume,
-  fetchResumeHtml: apiMocks.fetchResumeHtml,
+  fetchResumePreviewHtml: apiMocks.fetchResumePreviewHtml,
   renderResume: apiMocks.renderResume,
   updateResume: vi.fn(),
   fetchResumeTemplates: vi.fn().mockResolvedValue(TEMPLATE_CATALOG),
@@ -118,7 +118,7 @@ beforeEach(() => {
     rationale: "",
     coverage_notes: [],
   });
-  apiMocks.fetchResumeHtml.mockReset().mockResolvedValue("<p>预览</p>");
+  apiMocks.fetchResumePreviewHtml.mockReset().mockResolvedValue("<p>预览</p>");
   apiMocks.renderResume.mockReset().mockResolvedValue("<p>预览</p>");
   jobMocks.listJobs.mockReset().mockResolvedValue({
     items: [{ id: 3, title: "制造工程师", company: "示例制造企业" }],
@@ -160,9 +160,7 @@ describe("ResumesPage 通用 AI 入口（A2）", () => {
     await screen.findByText(RESUME.title);
     const listCallsBefore = apiMocks.listResumes.mock.calls.length;
 
-    fireEvent.click(
-      screen.getByRole("button", { name: t("careerScenarios.center.aiGenerateAria") }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: t("careerScenarios.center.aiGenerate") }));
 
     const dialog = await screen.findByRole("dialog");
     // 弹窗标题由组件写死（生成通用简历）；用 DOM 读而不是 ByText，避免给 CJK 断言加存量。
@@ -176,9 +174,10 @@ describe("ResumesPage 通用 AI 入口（A2）", () => {
     renderPage();
     await screen.findByText(RESUME.title);
 
-    expect(screen.getByText(t("careerScenarios.center.suggestionTitle"))).toBeInTheDocument();
+    const hint = screen.getByRole("button", { name: t("careerScenarios.center.suggestionTitle") });
+    fireEvent.click(hint);
     fireEvent.click(
-      screen.getByRole("button", { name: t("careerScenarios.center.suggestionGenerate") }),
+      await screen.findByRole("button", { name: t("careerScenarios.center.suggestionGenerate") }),
     );
     expect(
       (await screen.findByRole("dialog")).querySelector(".ant-modal-title")?.textContent,
@@ -208,7 +207,10 @@ describe("ResumesPage 通用 AI 入口（A2）", () => {
     await screen.findByText(RESUME.title);
 
     fireEvent.click(
-      screen.getByRole("button", { name: t("careerScenarios.center.suggestionJobs") }),
+      screen.getByRole("button", { name: t("careerScenarios.center.suggestionTitle") }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: t("careerScenarios.center.suggestionJobs") }),
     );
 
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/jobs"));

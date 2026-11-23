@@ -4,8 +4,9 @@
  * （自 InterviewPage 拆出，逐字搬运，行为等价。）
  */
 import { CheckSquareOutlined, DeleteOutlined } from "@ant-design/icons";
-import { Button, Card, Checkbox, Empty, Listy, Pagination, Space, Tag } from "antd";
+import { Button, Card, Checkbox, Listy, Pagination, Space, Tag } from "antd";
 import LoadingBlock from "../../components/common/LoadingBlock";
+import EmptyState from "../../components/common/EmptyState";
 import BatchActionBar from "../../components/common/BatchActionBar";
 import { ListyItem, ListyMeta } from "../../components/common/ListyItem";
 import { RowActions, RowContextMenu, type RowActionItem } from "../../components/common/RowActions";
@@ -91,7 +92,7 @@ export function HistoryCard({
       {loadingList ? (
         <LoadingBlock />
       ) : sessions.length === 0 ? (
-        <Empty description={t("interviewPage.history.empty")} />
+        <EmptyState inline description={t("interviewPage.history.empty")} />
       ) : (
         <>
           <Listy
@@ -146,7 +147,7 @@ export function HistoryCard({
                   >
                     <ListyMeta
                       title={
-                        <Space size={6} wrap>
+                        <Space size={6} wrap className="interview-history-title">
                           <span>{item.title}</span>
                           <Tag color={item.status === "active" ? "blue" : "default"}>
                             {item.status === "active"

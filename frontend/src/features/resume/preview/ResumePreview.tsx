@@ -21,6 +21,7 @@ import { useMaxFitScale } from "./usePreviewZoom";
 import { usePreviewAvailableSpace } from "./usePreviewAvailableSpace";
 import { usePreviewProbeHandle } from "./usePreviewProbeHandle";
 import { usePreviewZoomPair } from "./usePreviewZoomPair";
+import { usePreviewZoomAnchor } from "./usePreviewZoomAnchor";
 import ProviewLayer from "./ProviewLayer";
 import ExactPreviewPanel from "./ExactPreviewPanel";
 import type { ExactPreviewOptions } from "./exactPreviewOptions";
@@ -29,13 +30,14 @@ import PreviewAlerts from "./PreviewAlerts";
 import PreviewZoomBar from "./PreviewZoomBar";
 import ResumePreviewToolbar from "./ResumePreviewToolbar";
 import BoldContextMenu, { type RichTextEditAdapter } from "./BoldContextMenu";
+import RichColorPickerPopover from "./RichColorPickerPopover";
 import { useClickToEditPreview } from "./useClickToEditPreview";
-import { layoutFrame } from "./layout";
 import { forwardWheelToParent, useFrameInteractions } from "./useFrameInteractions";
 import { usePreviewBodyHeight } from "./usePreviewBodyHeight";
 import { useReportedPageCount } from "./useReportedPageCount";
 import { useFrameRelayout } from "./useFrameRelayout";
 import { stripPreviewScripts } from "./previewHtml";
+import { usePreviewFrameLayout } from "./usePreviewFrameLayout";
 
 // `ExactPreviewOptions` 的定义在 `resume-preview/exactPreviewOptions.ts`，这里 re-export 保持调用点不变。
 
@@ -99,6 +101,11 @@ interface Props {
    */
   onPickField?: (path: string) => void;
   richEdit?: RichTextEditAdapter; // 右键加粗的最小契约；不传 = 整条链路不渲染
+  /**
+   * 5.4：草稿模式的照片样式（宿主按未保存的 `format_config` 现算），原样透传给画布
+   * 注入 iframe。不传 = 不注入（预览弹窗 / 导出等只读宿主一行都不用改）。
+   */
+  photoLiveCss?: string;
 }
 
 /**
@@ -127,6 +134,7 @@ const ResumePreview = forwardRef<ResumePreviewHandle, Props>(function ResumePrev
     onPreviewModeChange,
     onPickField,
     richEdit,
+    photoLiveCss,
   },
   ref,
 ) {
@@ -173,9 +181,13 @@ const ResumePreview = forwardRef<ResumePreviewHandle, Props>(function ResumePrev
   // 专业视图能力由画布宿主注入；主预览（列表页）没有 Provider → 整块不渲染。
   const proviewConfig = useProviewConfig();
   const [isPanning, setIsPanning] = useState(false);
-  const [measure, setMeasure] = useState<LayoutMeasure | null>(null);
-  const [overflow, setOverflow] = useState(false);
-  const [naturalWidth, setNaturalWidth] = useState(A4_WIDTH_PX);
+  const { measure, overflow, naturalWidth, applyLayoutToFrame } = usePreviewFrameLayout({
+    pageLimit,
+    paperHeight,
+    reportedPages,
+    onMeasure,
+    onLayoutStatus,
+  });
   // 预览口径：给了 `previewMode` 就是受控（主预览与制作台共享一份状态），否则自管。
   const [innerMode, setInnerMode] = useState<PreviewMode>("draft");
   const activeMode = previewMode ?? innerMode;
@@ -187,7 +199,7 @@ const ResumePreview = forwardRef<ResumePreviewHandle, Props>(function ResumePrev
   /** 当前口径的缩放状态（缩放条 / Ctrl+滚轮 / 快捷键都只作用于看得见的那一档）。 */
   const zoom = activeZoom.zoom;
   const setZoom = activeZoom.setZoom;
-  const adjustZoom = activeZoom.adjustZoom;
+  const zoomByFactor = activeZoom.zoomByFactor;
   const resetZoom = activeZoom.resetZoom;
   const zoomByWheel = activeZoom.zoomByWheel;
 
@@ -199,52 +211,6 @@ const ResumePreview = forwardRef<ResumePreviewHandle, Props>(function ResumePrev
     [onPreviewModeChange],
   );
 
-  /**
-   * 对**一个** iframe 应用分页样式，并把它滚到第 `index` 列。
-   *
-   * 每个 iframe 都是同一份 HTML 的独立文档：`layoutFrame` 会把 body 撑成 `页数 × 794`
-   * 宽、切成对应数量的列，然后这个 iframe 只开一个 A4 的窗口、横向滚到第 index 列。
-   * 所以"第 i 页"= 同一份排版的第 i 列，断点口径与横向并排时**完全一致**。
-   *
-   * 每页都跑一次测量是刻意的：只有第 1 页上报状态（`index === 0`），但每页都得拿到
-   * 同一份列宽 / 列间距——否则某一页的列宽算错，那一页就会显示成"上一列的尾巴"。
-   */
-  const applyLayoutToFrame = useCallback(
-    (frame: HTMLIFrameElement, index: number) => {
-      const document = frame.contentDocument;
-      if (!document?.body || !document.documentElement) return;
-      const result = layoutFrame({ document, pageLimit, paperHeight, reportedPages });
-      if (!result) return;
-      if (index === 0) {
-        if (result.measure) {
-          setMeasure(result.measure);
-          onMeasure?.(result.measure);
-        }
-        setOverflow(result.overflow);
-        setNaturalWidth(result.naturalWidth);
-        onLayoutStatus?.({
-          pages: pageLimit,
-          overflow: result.overflow,
-          pagesNeeded: result.pagesNeeded,
-          pagesRendered: result.visualPages,
-        });
-      }
-      // `overflow: hidden` 的文档仍然可以编程滚动（只是不给用户拖滚动条）。
-      //
-      // **只保留一个滚动出口**（问题 1）：`columnsCss()` 给 `html,body` 都写了
-      // `overflow: hidden`，于是 `body` 自身也是一个横向滚动容器（`scrollWidth` 是整份
-      // 多列排版的宽度）。`overflow: hidden` 只是不给用户拖滚动条，**不阻止编程滚动**——
-      // 之前这里同时写 `documentElement.scrollLeft` 与 `body.scrollLeft`，两次位移叠加，
-      // 第 i 页实际偏移变成 `2 × i × 794`，于是第 2 列（项目经历…）与第 4 列从来没有
-      // 任何一页在显示。`window.scrollTo()` 滚的也是 `documentElement`，与上面那行等价，
-      // 一并收敛成一行，避免以后再出现"两个出口"。
-      if (index > 0) {
-        document.documentElement.scrollLeft = index * A4_WIDTH_PX;
-      }
-    },
-    [onLayoutStatus, onMeasure, pageLimit, paperHeight, reportedPages],
-  );
-
   // 见 `resume-preview/useFrameRelayout.ts`：报告回来后要重排已有的纸（问题 3）。
   useFrameRelayout({
     containerRef,
@@ -253,18 +219,65 @@ const ResumePreview = forwardRef<ResumePreviewHandle, Props>(function ResumePrev
     reportedPages,
   });
 
+  const geometry = calculatePreviewGeometry({
+    availableSpace,
+    paperHeight,
+    pageLimit,
+    // 草稿几何只由草稿缩放决定：精确那套比例与它无关。
+    zoom: draftZoom.zoom,
+    // 制作台右栏按宽度适应（Q21）：纸宽 ≤ 相框宽，纵向滚动看全。
+    fitMode,
+    overflow,
+    naturalWidth,
+    maxFitScale,
+    // 竖排后画布自己不再画分页条（页与页之间是真实的空白），这个入参只为兼容旧签名。
+    pageGap: 0,
+    measure,
+    // 页数以服务端报告为准（问题 3）；`measure` 退为"不许裁掉内容"的下界。
+    reportedPages,
+  });
+
+  /**
+   * QW-7：缩放前记录光标下的内容点，缩放提交后由 hook 补偿滚动
+   * （纯几何在 `zoomAnchor.ts`，DOM 接线在 `usePreviewZoomAnchor.ts`）。
+   *
+   * I-40：**吃什么量什么**——精确模式没有 `.resume-preview-scale-box`（那是草稿画布），
+   * 改量 `.exact-preview-paper-column` 的宽度算比例，横向滚动容器换成 `.exact-preview`
+   * （它只在放大后才有 `overflow-x: auto`）。几何算法一行没动。
+   */
+  const draftContentEl = () =>
+    containerRef.current?.querySelector<HTMLElement>(".resume-preview-scale-box") ?? null;
+  const exactContentEl = () =>
+    bodyRef.current?.querySelector<HTMLElement>(".exact-preview-paper-column") ?? null;
+  const captureZoomAnchor = usePreviewZoomAnchor({
+    scaleValue: activeZoom.zoom,
+    contentEl: () => (exactActive ? exactContentEl() : draftContentEl()),
+    hScroller: () =>
+      exactActive
+        ? (bodyRef.current?.querySelector<HTMLElement>(".exact-preview") ?? null)
+        : containerRef.current,
+    vScroller: () => bodyRef.current,
+    scale: () => {
+      if (!exactActive) return geometry.scale;
+      // 精确模式现量：`pageWidth = floor(layoutWidth * zoom)`，缓存值与真实渲染会差 1px。
+      const column = exactContentEl();
+      const width = column?.getBoundingClientRect().width ?? 0;
+      return width > 0 ? width / A4_WIDTH_PX : 1;
+    },
+  });
+
   const handleWheel = useCallback(
     (event: globalThis.WheelEvent) => {
       if (event.defaultPrevented) return; // 内层（草稿视口）已经处理过这一拍
       // Ctrl/Cmd：**只缩放、不滚动**（先 preventDefault 挡掉浏览器整页缩放；靠 zoomByWheel 的返回值会掉进"转交滚动"）。
       if (event.ctrlKey || event.metaKey) {
         event.preventDefault();
-        zoomByWheel(event);
+        if (zoomByWheel(event)) captureZoomAnchor(event);
         return;
       }
       if (forwardWheelToParent(containerRef.current, event)) event.preventDefault();
     },
-    [zoomByWheel],
+    [captureZoomAnchor, zoomByWheel],
   );
 
   const { bindFrame } = useFrameInteractions({
@@ -290,6 +303,7 @@ const ResumePreview = forwardRef<ResumePreviewHandle, Props>(function ResumePrev
     active,
     bindDocument: bindClickToEdit,
     boldMenu,
+    colorPicker,
   } = useClickToEditPreview({ containerRef, draftMode, onPickField, richEdit });
 
   // 命令式测量接口（"自动一页"逐档试版式 / 滑块实时探针）拆到 `usePreviewProbeHandle`。
@@ -314,23 +328,6 @@ const ResumePreview = forwardRef<ResumePreviewHandle, Props>(function ResumePrev
     [applyLayoutToFrame, bindClickToEdit, bindFrame],
   );
 
-  const geometry = calculatePreviewGeometry({
-    availableSpace,
-    paperHeight,
-    pageLimit,
-    // 草稿几何只由草稿缩放决定：精确那套比例与它无关。
-    zoom: draftZoom.zoom,
-    // 制作台右栏按宽度适应（Q21）：纸宽 ≤ 相框宽，纵向滚动看全。
-    fitMode,
-    overflow,
-    naturalWidth,
-    maxFitScale,
-    // 竖排后画布自己不再画分页条（页与页之间是真实的空白），这个入参只为兼容旧签名。
-    pageGap: 0,
-    measure,
-    // 页数以服务端报告为准（问题 3）；`measure` 退为"不许裁掉内容"的下界。
-    reportedPages,
-  });
   // 刷新（换 html / 页数）时按新旧 fit 的比值补偿缩放，保持纸面显示大小不变。
   // 只对草稿口径生效（Q21）：精确模式下草稿画布隐藏/裁零，fit 抖动不该改任何一套缩放。
   useStablePreviewScale(
@@ -367,6 +364,12 @@ const ResumePreview = forwardRef<ResumePreviewHandle, Props>(function ResumePrev
    */
   const measuringOnly = canExactPreview && activeMode === "exact";
   const mountDraftCanvas = !measuringOnly || Boolean(onMeasure || onLayoutStatus);
+
+  /** QW-7：`+/-` 按可见比例缩放 5%，锚点取视口中心（纸面比视口小时会夹进纸面）。 */
+  const zoomByVisibleStep = (factor: number) => {
+    captureZoomAnchor(null);
+    zoomByFactor(factor);
+  };
 
   return (
     <div className="resume-preview-root">
@@ -463,6 +466,7 @@ const ResumePreview = forwardRef<ResumePreviewHandle, Props>(function ResumePrev
               iframeRef={iframeRef}
               onIframeLoad={handleFrameLoad}
               clickToEdit={active}
+              photoLiveCss={photoLiveCss}
             />
           </div>
         ) : null}
@@ -478,11 +482,12 @@ const ResumePreview = forwardRef<ResumePreviewHandle, Props>(function ResumePrev
         clampedToMin={canExactPreview && activeMode === "exact" ? false : geometry.clampedToMin}
         overflowHint={needsHorizontalScroll ? t("preview.zoom.scrollHint") : undefined}
         hint={zoomHint}
-        onZoomOut={() => adjustZoom(-0.1)}
-        onZoomIn={() => adjustZoom(0.1)}
+        onZoomOut={() => zoomByVisibleStep(1 / 1.05)}
+        onZoomIn={() => zoomByVisibleStep(1.05)}
         onReset={resetZoom}
       />
       {boldMenu ? <BoldContextMenu {...boldMenu} /> : null}
+      {colorPicker ? <RichColorPickerPopover {...colorPicker} /> : null}
     </div>
   );
 });

@@ -6,6 +6,8 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { translate } from "../../i18n";
 import type { ApplyTaskDetail, CollectConfigOut } from "../../types";
+import { t } from "../../i18n";
+import { RHYTHM_OPEN_KEY } from "./collect/collectRhythmCollapse";
 import CollectPanel from "./CollectPanel";
 
 const apiMocks = vi.hoisted(() => ({
@@ -186,9 +188,15 @@ describe("CollectPanel 采集来源", () => {
       ).not.toBeInTheDocument(),
     );
     // 个人列表没有这些维度：关键词也一并隐藏，并给出说明与限量输入。
-    expect(screen.queryByPlaceholderText(translate("zh-CN", "applyCollect.placeholder.keywords"))).toBeNull();
-    expect(screen.getByLabelText(translate("zh-CN", "applyCollect.field.interestScanLimit"))).toBeInTheDocument();
-    expect(screen.getByLabelText(translate("zh-CN", "applyCollect.field.interestMaxPages"))).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText(translate("zh-CN", "applyCollect.placeholder.keywords")),
+    ).toBeNull();
+    expect(
+      screen.getByLabelText(translate("zh-CN", "applyCollect.field.interestScanLimit")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(translate("zh-CN", "applyCollect.field.interestMaxPages")),
+    ).toBeInTheDocument();
   });
 
   it("interest 模式点开始不触发「请填写关键词」警告，且提交 source=interest", async () => {
@@ -219,6 +227,39 @@ describe("CollectPanel 采集来源", () => {
     expect(apiMocks.updateCollectConfig).toHaveBeenCalledWith(
       expect.objectContaining({ source: "search" }),
     );
+  });
+});
+
+describe("CollectPanel 采集节奏折叠", () => {
+  it("默认折叠成一行摘要，展开状态记在 localStorage 的 .v1 key 上", async () => {
+    renderPanel();
+
+    // 折叠态：只有摘要与「调整」，不占两排输入框。
+    const adjust = await screen.findByRole("button", { name: t("applyCollect.rhythm.adjust") });
+    expect(
+      await screen.findByText(
+        t("applyCollect.rhythm.summary", { interval: 3, jitter: 1, minutes: 3 }),
+      ),
+    ).toBeInTheDocument();
+    // 展开区是 `hidden` 而不是不存在：Form.Item 必须保持注册，摘要才拿得到真实数值。
+    expect(document.querySelector(".apply-collect-rhythm-body")).toHaveAttribute("hidden");
+
+    fireEvent.click(adjust);
+
+    expect(
+      await screen.findByLabelText(t("applyCollect.field.intervalSeconds")),
+    ).toBeInTheDocument();
+    expect(localStorage.getItem(RHYTHM_OPEN_KEY)).toBe("open");
+  });
+
+  it("上一步选了展开，重新进入仍保持展开", async () => {
+    localStorage.setItem(RHYTHM_OPEN_KEY, "open");
+    renderPanel();
+
+    expect(
+      await screen.findByLabelText(t("applyCollect.field.intervalSeconds")),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("applyCollect.rhythm.adjust") })).toBeNull();
   });
 });
 

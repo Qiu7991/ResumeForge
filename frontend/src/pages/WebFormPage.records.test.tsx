@@ -54,7 +54,11 @@ vi.mock("../utils/aiTaskEntry", async () => {
   });
 });
 
-const settingsMocks = vi.hoisted(() => ({ getLLMConfig: vi.fn() }));
+// `listDatasets` 是 `useSampleDatasetLock` 的取数口：默认返回空列表（= 非示例数据集）。
+const settingsMocks = vi.hoisted(() => ({
+  getLLMConfig: vi.fn(),
+  listDatasets: vi.fn(() => Promise.resolve([])),
+}));
 
 vi.mock("../api/settings", () => settingsMocks);
 
@@ -244,6 +248,8 @@ describe("填充记录", () => {
     });
     renderPage();
 
+    // T03：不再开抽屉——「查看全部」当场向下展开，明细就地渲染。
+    fireEvent.click(await screen.findByRole("button", { name: "查看全部" }));
     fireEvent.click(await screen.findByText("某公司网申"));
 
     await waitFor(() => expect(apiMocks.getWebFormRecord).toHaveBeenCalledWith(7));
@@ -252,8 +258,8 @@ describe("填充记录", () => {
     expect(screen.getByText(/1 个框是我们填的/)).toBeInTheDocument();
   });
 
-  it("翻页时用新页码重新拉取，取到旧截断之外的记录", async () => {
-    const pageOne = Array.from({ length: 20 }, (_, index) => ({
+  it("T03：展开后一次取满 100 条，能看到默认 10 条截断之外的记录", async () => {
+    const all = Array.from({ length: 21 }, (_, index) => ({
       id: index + 1,
       url: "",
       page_title: `记录-${index + 1}`,
@@ -263,34 +269,21 @@ describe("填充记录", () => {
       source: "batch",
       created_at: "2026-09-27T10:30:00",
     }));
-    apiMocks.listWebFormRecordsPage
-      .mockResolvedValueOnce({ items: pageOne, total: 21 })
-      .mockResolvedValueOnce({
-        items: [
-          {
-            id: 21,
-            url: "",
-            page_title: "深层历史记录",
-            filled: 1,
-            unverified: 0,
-            failed: 0,
-            source: "batch",
-            created_at: "2026-01-01T00:00:00",
-          },
-        ],
-        total: 21,
-      });
+    apiMocks.listWebFormRecordsPage.mockImplementation(async (_page: number, size: number) => {
+      // 收起态 10 条；展开态取接口上限 100 条（不再翻页）。
+      if (size === 10) return { items: all.slice(0, 10), total: 21 };
+      return { items: all, total: 21 };
+    });
     renderPage();
 
-    expect(await screen.findByText("记录-1")).toBeInTheDocument();
-    expect(screen.queryByText("深层历史记录")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getAllByTitle("2")[0]);
+    expect(screen.queryByText("记录-15")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "查看全部" }));
 
     await waitFor(() => {
-      expect(apiMocks.listWebFormRecordsPage).toHaveBeenLastCalledWith(2, 20);
+      expect(apiMocks.listWebFormRecordsPage).toHaveBeenLastCalledWith(1, 100);
     });
-    expect(await screen.findByText("深层历史记录")).toBeInTheDocument();
+    expect(await screen.findByText("记录-15")).toBeInTheDocument();
+    expect(screen.getByText("记录-21")).toBeInTheDocument();
   });
 
   it("没有记录时如实说还没有", async () => {
@@ -316,9 +309,12 @@ describe("填充记录", () => {
 describe("浏览器设置", () => {
   it("提供一个改浏览器的入口（与投递台共用浏览器类型配置）", async () => {
     renderPage();
-    await waitFor(() => expect(screen.getByRole("button", { name: /浏览器设置/ })).toBeEnabled());
+    const more = await screen.findByRole("button", { name: "更多浏览器操作" });
+    await waitFor(() => expect(more).toBeEnabled());
 
-    screen.getByRole("button", { name: /浏览器设置/ }).click();
+    // 配置与诊断收进了「更多」：常驻两颗按钮会把状态行挤到换行（I-27）。
+    fireEvent.click(more);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /浏览器设置/ }));
 
     await waitFor(() =>
       expect(screen.getByText(/分别打开独立浏览器窗口与登录态/)).toBeInTheDocument(),

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -112,6 +113,18 @@ def _json_payloads(client: Any, events: list[dict[str, Any]]) -> list[Any]:
     return [item.body for item in captured]
 
 
+def _close_tab(manager: Any, tab_id: str) -> None:
+    """关掉临时标签页（失败只记日志：留着比抛异常好）。"""
+    if not tab_id:
+        return
+    try:
+        closer = manager.client()
+        closer.send("Target.closeTarget", {"targetId": tab_id})
+        closer.close()
+    except Exception:  # noqa: BLE001 - 清理失败不影响抓取结果
+        logger.debug("关闭临时标签页失败", exc_info=True)
+
+
 def fetch_with_browser(
     db: Any,
     url: str,
@@ -119,15 +132,28 @@ def fetch_with_browser(
     manager_factory: Any = None,
     ready_timeout: float = PAGE_READY_TIMEOUT_SECONDS,
     settle_seconds: float = PAGE_SETTLE_SECONDS,
+    use_new_tab: bool = True,
+    resolver: Callable[[str, int], list[str]] | None = None,
 ) -> BrowserPage:
     """用投递专用浏览器打开 url，返回正文与页面发出的 JSON 响应。
 
     浏览器没启动时按需启动（与投递台共用同一个浏览器实例，复用登录态）。
+
+    ``resolver`` 与 http 引擎的注入点一致（见 :func:`url_policy.resolve_and_check`）：
+    编排层（``JobFetcher``）把同一个解析器传进来，两档才用同一套 SSRF 判据；
+    默认 ``None`` = 用真实 DNS 解析，与不传时的行为一致。
+
+    ``use_new_tab`` 默认 **True：每次抓取新开一个标签页，抓完关掉**。两个理由：
+
+    1. 站点的前端路由会接管同源导航——在已有标签上 ``Page.navigate`` 到同站的另一条
+       路由时，页面骨架在、数据区却不挂载（字节「应聘记录」页实测：复用标签 153 字、
+       新标签 252 字且含记录卡片）；
+    2. 不覆盖用户正在看的页面：抓取不该把人家刚打开的网页导航走。
     """
     from ..browser.cdp_client.base import CdpError
     from ..browser.page_ready import ReadyWait, wait_for_page_state
 
-    target = resolve_and_check(url)
+    target = resolve_and_check(url, resolver=resolver)
     factory = manager_factory
     if factory is None:
         from ..apply import get_browser_manager
@@ -135,10 +161,17 @@ def fetch_with_browser(
         factory = get_browser_manager
     manager = factory(db)
     client = None
+    tab_id = ""
     try:
         if not manager.is_active():
             manager.start()
         client = manager.client()
+        if use_new_tab:
+            try:
+                tab_id = client.new_tab("about:blank")
+            except Exception:  # noqa: BLE001 - 开新标签失败就退回当前标签
+                logger.debug("新建标签页失败，回落到当前标签", exc_info=True)
+                tab_id = ""
         client.start_event_capture([_NETWORK_RESPONSE_EVENT])
         result = client.navigate(target, timeout=CDP_TIMEOUT_SECONDS)
         if isinstance(result, dict) and result.get("errorText"):
@@ -155,7 +188,7 @@ def fetch_with_browser(
         final_url = str(client.evaluate(_FINAL_URL_JS, timeout=CDP_TIMEOUT_SECONDS) or target)
         # 浏览器内部的重定向不经过本进程：落地后必须重新校验一次。
         try:
-            resolve_and_check(final_url)
+            resolve_and_check(final_url, resolver=resolver)
         except ValueError as exc:
             raise WebFetchError("这个页面跳转到了不允许访问的地址，已停止读取") from exc
         text = str(client.evaluate(_INNER_TEXT_JS, timeout=CDP_TIMEOUT_SECONDS) or "")
@@ -186,6 +219,7 @@ def fetch_with_browser(
                 client.close()
             except Exception:  # noqa: BLE001
                 logger.debug("关闭浏览器客户端失败", exc_info=True)
+        _close_tab(manager, tab_id)
 
 
 __all__ = [

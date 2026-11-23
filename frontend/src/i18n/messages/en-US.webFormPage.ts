@@ -9,12 +9,41 @@
  * wording.
  */
 const webFormPage = {
+  "webFormPage.preview.aiEvidence": "Confidence {confidence} · Evidence: {evidence}",
   "webFormPage.notice.title":
     "This feature only fills your data into the page; it never submits for you",
   "webFormPage.notice.body":
     "After filling, review each field in the browser window and click the page's own submit button yourself once everything is correct.",
   "webFormPage.hint.expandLater":
     "Once the browser is ready, the safety note, AI assist and other controls expand here step by step (the relaxed-mode boundary stays visible).",
+  "webFormPage.flow.reason.browserOff":
+    "The browser is not running yet: click “Start dedicated browser” above, then come back here to read the current form.",
+  "webFormPage.fillMode.title": "How to fill",
+  "webFormPage.fillMode.hint":
+    "These four rows decide how your data enters the page; changes apply immediately.",
+  /* I-27 first-screen empty state (three-step guide). */
+  /* One flow track only (I-24): step names come from `webFormPage.readSnapshot.step.*`
+     so onboarding and the working state share the same four steps. */
+  "webFormPage.onboarding.title": "Fill-in flow",
+  "webFormPage.recent.title": "Recent fills",
+  "webFormPage.recent.viewAll": "View all",
+  "webFormPage.recent.collapse": "Collapse",
+  "webFormPage.recent.truncated": "Showing the latest {count} only",
+  "webFormPage.recent.emptyWhat": "What happens here",
+  "webFormPage.recent.emptyBody":
+    "After your first fill, this lists the page and how many fields were filled, newest first.",
+  "webFormPage.recent.urls": "See URLs you opened",
+  "webFormPage.recent.error": "Could not load recent fills",
+  "webFormPage.flow.progressTitle": "Fill progress",
+  "webFormPage.flow.progressValue": "Step {current} of {total} · {title}",
+  "webFormPage.fillMode.boundary":
+    "Date pickers · File uploads · Password/OTP/bank card · Read-only toggles without a popup: never automated",
+  "webFormPage.result.title": "Results and records",
+  "webFormPage.result.tab.preview": "Preview and fill",
+  "webFormPage.result.tab.pending": "Needs your input {count}",
+  "webFormPage.result.tab.result": "Fill result",
+  "webFormPage.records.hint":
+    "Records keep the real values that were written (ID number, phone number). Delete them one by one when you are done.",
   "webFormPage.stagedAi.ready":
     "The AI field detection you started earlier is done. Its result is staged; click “Apply” to switch to that preview — the page itself is still untouched.",
   "webFormPage.stagedAi.apply": "Apply",
@@ -29,6 +58,7 @@ const webFormPage = {
     "The target web form is open; existing pages are left untouched",
   "webFormPage.toast.browserStarted":
     "The browser started. Open the company's web form in that window, then come back and click Read current form",
+  "webFormPage.scope.hintAria": "Data range note",
   "webFormPage.toast.sessionEnded": "This web form session has ended",
   "webFormPage.toast.statusRefreshed": "Browser status refreshed",
   "webFormPage.toast.diagnosticsExported":
@@ -51,7 +81,7 @@ const webFormPage = {
   "webFormPage.error.stopFailed": "Could not close the browser",
   "webFormPage.error.endFailed": "Could not end this session",
   "webFormPage.error.refreshFailed": "Could not refresh the browser status",
-  "webFormPage.error.diagnosticsFailed": "Could not export the diagnostics",
+  "webFormPage.error.diagnosticsFailed": "Could not export this page's diagnostics",
   "webFormPage.error.liveToggleFailed": "Could not toggle click-to-fill",
   "webFormPage.error.readFailed": "Could not read the form",
   "webFormPage.error.fillFailed": "Fill failed",
@@ -115,20 +145,22 @@ const webFormPage = {
     "; matched rows are tagged AI suggestion and left unchecked by default.",
   "webFormPage.aiAssist.unavailable":
     "No model is configured yet, so this is unavailable for now. Fill in the Base URL and model name on the Settings page, and boxes the rules cannot recognize can go to the AI.",
+  "webFormPage.aiAssist.hintAria": "AI assist note",
   "webFormPage.aiAssist.pendingRestart": "Changes take effect the next time you turn this on",
   "webFormPage.browserCard.isolatedHint":
     "Uses a dedicated browser for web forms; it never covers the apply console or existing web form pages",
   "webFormPage.browserCard.stopTooltip":
     "Close this controlled browser window. Logins inside it are kept, so the next start does not need them again",
   "webFormPage.browserCard.stop": "Close browser",
-  "webFormPage.browserCard.startAria": "Start the dedicated browser",
+  // 必须与下一行可见文字逐字一致：axe 的 `label-content-name-mismatch`（serious）
+  // 要求可访问名包含可见文字，多一个 "the" 就会红（只有英文暴露，中文「开启专用浏览器」两处相同）。
+  "webFormPage.browserCard.startAria": "Start dedicated browser",
+  "webFormPage.browserCard.moreAria": "More browser actions",
   "webFormPage.browserCard.start": "Start dedicated browser",
   "webFormPage.browserCard.settings": "Browser settings",
   "webFormPage.browserCard.refreshTooltip": "Refresh now",
   "webFormPage.browserCard.refreshAria": "Refresh status",
-  "webFormPage.browserCard.diagnostics": "Export diagnostics (no secrets)",
-  "webFormPage.browserCard.endTooltip":
-    "End this web form session: the panel is put away and nothing is cleared. Click Read current form to start again",
+  "webFormPage.browserCard.diagnostics": "Export this page's diagnostics (no secrets)",
   "webFormPage.browserCard.end": "End this session",
   "webFormPage.fillRate.label": "Fill rate {percent}% ({filled}/{total})",
   "webFormPage.fillResult.title": "Fill result",
@@ -163,6 +195,7 @@ const webFormPage = {
   "webFormPage.relaxed.risk":
     "When enabled, the program will click dropdown/overlay options and check declarations you confirmed one by one; mistakes are possible, please review the form. " +
     "Four categories are never automated: date pickers, file uploads, password/OTP/bank-card fields, and read-only toggles without a popup - you handle those yourself.",
+  "webFormPage.relaxed.hintAria": "Relaxed mode risk note",
   "webFormPage.liveStatus.thinking": "Looking at this box",
   "webFormPage.liveStatus.aiThinking": "AI is recognizing",
   "webFormPage.liveStatus.matched": "Suggestion ready",
@@ -175,6 +208,8 @@ const webFormPage = {
   "webFormPage.toast.restored":
     "Restored the form read last time; the selection is back to default, review before filling",
   "webFormPage.error.restoreFailed": "The form read last time is no longer valid, read it again",
+  "webFormPage.sampleLocked.hint":
+    "This is the sample dataset: demo data is never filled into real application forms. Switch to your own dataset to use this feature.",
 } as const;
 
 export default webFormPage;

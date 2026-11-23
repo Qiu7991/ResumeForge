@@ -17,7 +17,8 @@ $ErrorActionPreference = "Stop"
 
 # Set UTF-8 mode before any Python child process starts. pip 24.x decodes a
 # BOM-less requirements file with the locale codec (cp936 on Chinese Windows),
-# so without this the first-run `pip install -r requirements.txt` aborts with
+# so without this the first-run install of backend\requirements.runtime.lock.txt
+# (the production lock the launcher installs from, 40 hashed pins) aborts with
 # UnicodeDecodeError. venv creation, pip and the backend all inherit it.
 $env:PYTHONUTF8 = "1"
 
@@ -104,7 +105,14 @@ catch {
     Write-Host ""
     Write-Host "启动失败。" -ForegroundColor Red
     Write-Host ""
-    Write-Host $_.Exception.Message
+    # 曾经出现过"启动失败。"后面什么都没有：原生命令的 stderr 被当成终止错误时，
+    # 异常 Message 可能是空串（进度条那条记录只剩回车）。空消息对用户等于零信息，
+    # 所以退回异常类型 + 日志位置，至少给出一条能查的线索。
+    $reason = $_.Exception.Message
+    if ([string]::IsNullOrWhiteSpace($reason)) {
+        $reason = "没有可读的错误信息（$($_.Exception.GetType().Name)）。后端日志：runtime\backend.stderr.log"
+    }
+    Write-Host $reason
     Write-Host ""
     Write-Host "已停止，没有启动任何服务。" -ForegroundColor Yellow
     Write-Host "按上面的步骤处理后，关掉这个窗口重新双击 start.cmd 即可。" -ForegroundColor Yellow

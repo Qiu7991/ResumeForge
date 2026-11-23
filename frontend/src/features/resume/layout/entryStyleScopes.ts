@@ -25,11 +25,16 @@ import type { MessageKey } from "../../../i18n";
 import type { StylePropKey } from "../../../utils/resumeStyleParams";
 import type { ResumeEntry } from "../../../types/resumeDocument";
 import { getItemPlacement } from "../document/placement";
-import { OBJECT_STYLE_PROPS, ROLE_STYLE_PROPS, type ResumeRoleKey } from "./styleCatalog";
+import {
+  FIELD_STYLE_PROPS,
+  OBJECT_STYLE_PROPS,
+  ROLE_STYLE_PROPS,
+  type ResumeRoleKey,
+} from "./styleCatalog";
 import { TEXT_LEVEL_PROPS, type TextLevelScope } from "./textLevels";
 
 /** 作用范围就是「条目内部实际存在的三个角色」+ 整条（与文字级别的范围同一套取值）。 */
-export type EntryStyleScope = TextLevelScope;
+export type EntryStyleScope = TextLevelScope | "field";
 
 export const ENTRY_STYLE_SCOPES: readonly EntryStyleScope[] = [
   "object",
@@ -43,6 +48,7 @@ export const ENTRY_STYLE_SCOPE_LABELS: Record<EntryStyleScope, MessageKey> = {
   entry_title: "typography.entryStyle.scope.entry_title",
   body: "typography.entryStyle.scope.body",
   meta: "typography.entryStyle.scope.meta",
+  field: "typography.entryStyle.scope.field",
 };
 
 /** 段控下方的一句范围说明：说清"这次只动哪一块"，不写操作步骤。 */
@@ -51,6 +57,7 @@ export const ENTRY_STYLE_SCOPE_HINTS: Record<EntryStyleScope, MessageKey> = {
   entry_title: "typography.entryStyle.scopeHint.entry_title",
   body: "typography.entryStyle.scopeHint.body",
   meta: "typography.entryStyle.scopeHint.meta",
+  field: "typography.entryStyle.scopeHint.field",
 };
 
 /** 来源胶囊：这个范围当前是"已调整"还是"跟随模板"。 */
@@ -59,10 +66,15 @@ export const ENTRY_STYLE_SCOPE_SOURCES: Record<EntryStyleScope, MessageKey> = {
   entry_title: "typography.entryStyle.source.entry_title",
   body: "typography.entryStyle.source.body",
   meta: "typography.entryStyle.source.meta",
+  field: "typography.entryStyle.source.field",
 };
 
 /** 作用范围 → 后端角色；`null` = 整条（写 `objects` 域）。 */
-export function entryStyleScopeRole(scope: EntryStyleScope): ResumeRoleKey | null {
+export function entryStyleScopeRole(
+  scope: EntryStyleScope,
+  fieldRole: ResumeRoleKey = "body",
+): ResumeRoleKey | null {
+  if (scope === "field") return fieldRole;
   return scope === "object" ? null : scope;
 }
 
@@ -77,8 +89,15 @@ const PANEL_PROPS: readonly StylePropKey[] = OBJECT_STYLE_PROPS.filter(
  * 整条 = 8 项；条目头 = 颜色 / 行距 / 对齐 / 字距；
  * 正文 = 颜色 / 行距 / 缩进 / 项目符号 / 对齐 / 字距；灰字 = 颜色 / 日期位置。
  * （#5d 起斜体不在任何清单里。）
+ *
+ * 单字段范围读 `FIELD_STYLE_PROPS`（DF-8）：字段层没有条目头 flex 容器，`meta_align`
+ * 在那里没有落点，所以即使字段的角色是灰字也不会出现「日期位置」。
  */
-export function entryStyleScopeProps(scope: EntryStyleScope): readonly StylePropKey[] {
+export function entryStyleScopeProps(
+  scope: EntryStyleScope,
+  fieldRole: ResumeRoleKey = "body",
+): readonly StylePropKey[] {
+  if (scope === "field") return FIELD_STYLE_PROPS[fieldRole];
   if (scope === "object") return PANEL_PROPS;
   const roleProps = ROLE_STYLE_PROPS[scope];
   return PANEL_PROPS.filter((prop) => roleProps.includes(prop));

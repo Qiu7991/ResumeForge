@@ -1,0 +1,405 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* 网申填表页：初始态版式（流程轨道 + 两栏「填写方式 / 最近填写」）与地址条内嵌历史。
+   由 `webform-workbench.css` 顶部 `@import` 聚合（@import 必须位于任何规则之前）。
+
+   ## 为什么单独成片
+   `webform-workbench.css` 已贴着 500 行预算，而初始态是另一套版式：三步从竖排说明
+   变成一条整页宽的流程轨道，右栏从结果区变成「最近填写」预览。新规则写在这里。
+
+   ## 为什么用容器查询而不是媒体查询
+   `.webform-workbench` 是页面内容根（`container-type: inline-size` 在 workbench 片声明）。
+   左侧全局导航收起/展开时，内容区实际宽度与视口宽度能差 200px 以上，用视口断点会在
+   1440 + 展开侧栏这种最常用的组合下切错列。这里只写 `@container`，不重复声明容器类型，
+   也不使用任何视口 `@media` 断点。 */
+
+/* ===== 安全条：从黄色警醒块降级为一行中性小字 =====
+   它在页面顶部、任何状态下都渲染；只留锁图标 + 一句话，不再抢走两行高度。
+   语义仍是产品边界（只填不交），所以颜色取次要文字色而不是弱化到看不清。 */
+
+.webform-safety-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  margin: 0;
+  padding: 0 2px;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.webform-safety-strip-icon {
+  flex: 0 0 auto;
+  color: var(--rf-text-tertiary);
+}
+
+.webform-safety-strip-title {
+  color: var(--rf-text-body);
+  font-weight: 500;
+}
+
+.webform-safety-strip-body {
+  color: var(--rf-text-secondary);
+}
+
+/* ===== 初始态：一条流程轨道 + 两栏（1.6 : 1） ===== */
+
+.webform-onboarding {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 宽档轨道：整页一条，节点横排，主 CTA 在最右端。
+   `min-height` 而不是 padding 撑高：按钮 loading 时高度不变，整行不会跳。
+   必须显式写 `flex-direction: row`：基础规则 `.webform-flow-bar` 是竖排（窄档的文字 + 条 +
+   动作各占一行），不重置的话 `align-items: center` 会把整条 CTA 居中掉到节点下面一行。 */
+.webform-flow-bar.is-wide {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  min-height: 56px;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: var(--rf-radius-control);
+  background: var(--rf-surface);
+}
+
+/* 窄档文案：容器不够宽时才出现（见文件末尾的容器查询）。 */
+.webform-flow-compact-text {
+  display: none;
+  min-width: 0;
+  color: var(--rf-text-body);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.webform-flow-nodes {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.webform-flow-node {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 2026-11-19（用户）：轨道"太短"。连接线虽然写了 `flex: 1 1 24px`，但它长在 `<li>` 里，
+   而 `<li>` 只有内容宽度——多余的 400+px 全落在 `<ol>` 末尾的空白里。
+   让前三个节点吃掉剩余宽度，连接线才真正铺满整行；最后一步保持内容宽度，紧贴主按钮。 */
+.webform-flow-node:not(:last-child) {
+  flex: 1 1 auto;
+}
+
+.webform-flow-node-num {
+  display: flex;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--rf-border-strong);
+  border-radius: 50%;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* 名称不换行不断字：放不下时由外层容器查询整条退回窄档，而不是把「自动浏 / 览」折断。 */
+.webform-flow-node-title {
+  flex: 0 0 auto;
+  color: var(--rf-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+/* 连接线吃掉剩余宽度：节点本身保持内容宽度，轨道才能铺满整行。 */
+.webform-flow-link {
+  width: auto;
+  height: 1px;
+  flex: 1 1 24px;
+  min-width: 16px;
+  margin: 0 10px;
+  background: var(--rf-border-subtle);
+}
+
+.webform-flow-link.is-done {
+  background: var(--rf-brand);
+}
+
+.webform-flow-node.is-current .webform-flow-node-num {
+  border-color: transparent;
+  background: var(--rf-brand);
+  color: #ffffff;
+}
+
+.webform-flow-node.is-current .webform-flow-node-title {
+  color: var(--rf-text-body);
+  font-weight: 600;
+}
+
+.webform-flow-node.is-done .webform-flow-node-num {
+  border-color: var(--rf-brand);
+  color: var(--rf-brand);
+}
+
+.webform-flow-node.is-done .webform-flow-node-title {
+  color: var(--rf-text-body);
+}
+
+.webform-flow-slot {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ===== 「填写方式 / 最近填写」上下排列 =====
+   2026-11-19（用户）：左右两栏在整页宽下左卡被拉得很宽、右卡只剩三条窄记录，
+   读起来像两张不相干的卡。改成上下结构：宽卡在上、记录整行在下。
+   `align-items: start` 保留——记录卡不跟上面的卡等高。 */
+
+.webform-onboarding-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.webform-onboarding-columns > * {
+  min-width: 0;
+}
+
+/* 右卡高度由内容决定（I-24）：不再 `height: 100%` 跟左卡等高，
+   否则三条记录下面就是一大片空白。 */
+.webform-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 20px 8px;
+  border: 1px solid var(--rf-border-subtle);
+  border-radius: var(--rf-radius-control);
+  background: var(--rf-surface);
+}
+
+.webform-recent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* 3 条固定行高：条目多少不改变卡片节奏，也不把右卡撑得比左卡高。
+   条目本身在 `overflow: hidden` 里做省略，长标题不会把标签挤出卡外。 */
+.webform-recent-rows {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  flex-direction: column;
+  list-style: none;
+}
+
+/* 整行宽之后改成四列（时间 / 记录 / 结果 / ⋯）：行**不再是固定高度**——
+   T03 起这一行可以就地展开明细，`height` + `overflow: hidden` 会把明细裁掉
+   （这正是上一轮"展开后看不见内容"的根因）。改成 `min-height` 并去掉 overflow。
+   窄容器（< 720）退回两行式，见文件末尾的容器查询。 */
+.webform-recent-row {
+  border-top: 1px solid var(--rf-border-subtle);
+}
+
+.webform-recent-line {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) auto auto;
+  min-height: 44px;
+  align-items: center;
+  gap: 16px;
+}
+
+/* 记录标题是展开开关（按钮而不是文本：键盘可达，且 `aria-expanded` 能被读屏读到）。 */
+.webform-recent-page {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.webform-recent-detail {
+  padding: 8px 0 12px;
+}
+
+.webform-recent-more {
+  padding: 8px 0;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+}
+
+.webform-recent-row:first-child {
+  border-top: none;
+}
+
+.webform-recent-time {
+  flex: 0 0 auto;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.webform-recent-page {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 13px;
+}
+
+.webform-recent-tags {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 空态：`flex: 1` 吃掉标题行之外的全部高度，内容在其中垂直居中。
+   自带标题、「会发生什么」与次要入口，不依赖外层再补说明。 */
+.webform-recent-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 0;
+  text-align: center;
+}
+
+.webform-recent-empty-title {
+  margin: 0;
+  color: var(--rf-text-body);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.webform-recent-empty-what {
+  margin: 4px 0 0;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.webform-recent-empty-body {
+  max-width: 300px;
+  margin: 0;
+  color: var(--rf-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* 窄容器：记录行回到两行式（时间 + 结果一行、标题一行）。三列在 720 以下会把标题压成
+   几个字，还不如让标题独占一行。 */
+@container (max-width: 720px) {
+  /* 375px 真机（2026-11-20 CI）：步骤条整行 `nowrap` + 右端槽位 `flex: 0 0 auto`，
+     于是「按钮 152 + 禁用原因 396」把内容顶出视口 234px。窄档一律允许换行：
+     槽位独占一整行，原因再独占一整行；步骤名本身仍是 `nowrap`（不折断词语）。 */
+  .webform-flow-bar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .webform-flow-slot {
+    flex: 1 1 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .webform-flow-reason {
+    flex: 1 1 100%;
+  }
+
+  /* 时间列原本 `nowrap` + 内容宽度（实测 169px），窄档会顶出 51px。 */
+  .webform-recent-time {
+    white-space: normal;
+  }
+
+  /* 真正的栅格在 `li` 里的 `.webform-recent-line` 上，不在 `li` 本身——原来把窄档
+     栅格写在行上，行变成了两列、里面的行内栅格仍是 `140px | 1fr | auto | auto`，
+     375px 下右侧顶出 51px（CI 2026-11-20）。 */
+  .webform-recent-row {
+    height: auto;
+    padding: 10px 0;
+  }
+
+  .webform-recent-line {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "time tags"
+      "page page";
+    min-height: 0;
+    row-gap: 2px;
+  }
+
+  .webform-recent-time {
+    grid-area: time;
+  }
+
+  .webform-recent-page {
+    grid-area: page;
+  }
+
+  .webform-recent-tags {
+    grid-area: tags;
+    justify-self: end;
+  }
+}
+
+/* 轨道在窄容器退回 `2 / 4 · 标题` 一行文字（与左栏那一条同一套文案）。
+   阈值取 1080：1440 宽能放下四个步骤名 + 右端按钮，1280 与 1080 放不下——
+   宁可退回一行文字，也不把「自动浏 / 览」折断。 */
+@container (max-width: 1080px) {
+  .webform-flow-bar.is-wide .webform-flow-nodes {
+    display: none;
+  }
+
+  .webform-flow-bar.is-wide .webform-flow-compact-text {
+    display: block;
+    flex: 1 1 auto;
+  }
+}
+
+/* ===== 地址条内嵌的历史菜单（T09） =====
+   菜单自绘容器仍是**唯一**滚动层（内层 `.ant-dropdown-menu` 的 overflow 兜底在
+   `modules-webform.css`）。限高改成随视口收缩：360×420 的窄窗里 360px 会顶到窗口
+   下沿被裁，`60vh` 留出锚点那一行。 */
+.webform-history-popup {
+  max-height: min(360px, 60vh);
+  overflow-y: auto;
+}
+
+/* 一条历史 = 标题（省略号）+ 删除按钮：flex 让删除按钮始终贴右，
+   标题再长也不会把按钮挤出行外。 */
+.webform-history-item {
+  display: flex;
+  max-width: 420px;
+  align-items: center;
+  gap: 8px;
+}

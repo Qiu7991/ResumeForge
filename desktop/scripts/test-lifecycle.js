@@ -25,10 +25,12 @@ test("tray exit does NOT stop the backend (audit R: stop call count is 0)", asyn
   const loaded = loadMain();
   try {
     await waitForShellReady(loaded);
-    const exitItem = loaded.menuHolder.menu.template.find((i) => i.label === "退出");
-    assert.ok(exitItem, "tray menu should contain the exit item");
+    assert.ok(
+      loaded.trayManager.getMenuModel().some((item) => item.id === "quit"),
+      "tray menu should contain the exit item",
+    );
 
-    exitItem.click();
+    loaded.trayManager.choose("quit");
     assert.ok(loaded.events.quitCalls.length >= 1, "tray exit should request app.quit()");
     assert.strictEqual(
       loaded.events.stopCalls.length,
@@ -63,8 +65,7 @@ test("tray exit: app.quit() resumes only AFTER backend.stop() completes", async 
     const deferred = makeDeferred();
     loaded.state.stopBackend = () => deferred.promise;
 
-    const exitItem = loaded.menuHolder.menu.template.find((i) => i.label === "退出");
-    exitItem.click();
+    loaded.trayManager.choose("quit");
     const quitsBeforeStop = loaded.events.quitCalls.length;
     const handler = loaded.events.beforeQuitHandler;
     const event = { preventDefault: () => {} };
@@ -234,8 +235,7 @@ test("plain quit: an unverified stop is logged, NOT shown as an error box (R3)",
     loaded.state.stopBackend = () =>
       Promise.resolve({ ok: false, reason: "x", verified: false });
 
-    const exitItem = loaded.menuHolder.menu.template.find((i) => i.label === "退出");
-    exitItem.click();
+    loaded.trayManager.choose("quit");
     const quitsBeforeStop = loaded.events.quitCalls.length;
     loaded.events.beforeQuitHandler({ preventDefault() {} });
     await flush();
@@ -257,8 +257,7 @@ test("plain quit: an unverified stop does not arm the install-path timeout (R3)"
     await waitForShellReady(loaded);
     loaded.state.stopBackend = () => new Promise(() => {});
 
-    const exitItem = loaded.menuHolder.menu.template.find((i) => i.label === "退出");
-    exitItem.click();
+    loaded.trayManager.choose("quit");
     loaded.events.beforeQuitHandler({ preventDefault() {} });
     await flush();
 
@@ -288,8 +287,7 @@ test("plain quit: an unknown port probe (ok + warning) is a normal exit (R3)", a
     loaded.state.stopBackend = () =>
       Promise.resolve({ ok: true, reason: "", verified: false, warning: "端口探测未能确认后端已停止" });
 
-    const exitItem = loaded.menuHolder.menu.template.find((i) => i.label === "退出");
-    exitItem.click();
+    loaded.trayManager.choose("quit");
     loaded.events.beforeQuitHandler({ preventDefault() {} });
     await flush();
     await flush();
@@ -316,6 +314,72 @@ test("install path: an unknown port probe (ok but unverified) still blocks the i
       "an unverified stop must never be papered over by an install");
     assert.ok(loaded.events.errorBoxes.length >= 1, "the blocked install must be explained");
     assert.match(loaded.events.errorBoxes.join(" "), /更新未安装/);
+  } finally {
+    loaded.cleanup();
+  }
+});
+
+test("quit hides the main window BEFORE the backend stop (R3-A, main.js wiring)", async () => {
+  const loaded = loadMain();
+  try {
+    await waitForShellReady(loaded);
+    const win = loaded.windowInstances[0];
+    const order = [];
+    const realHide = win.hide.bind(win);
+    win.hide = () => {
+      order.push("hide");
+      realHide();
+    };
+    const deferred = makeDeferred();
+    loaded.state.stopBackend = () => {
+      order.push("stop");
+      return deferred.promise;
+    };
+
+    loaded.trayManager.choose("quit");
+    loaded.events.beforeQuitHandler({ preventDefault() {} });
+
+    assert.deepStrictEqual(order, ["hide", "stop"],
+      `the window must be hidden before the stop starts (order: ${order.join(" -> ")})`);
+    assert.strictEqual(win.hidden, 1, "the window is hidden exactly once");
+    assert.strictEqual(win.closeCalls, 0, "hide must not run the ask-on-close handler");
+    assert.strictEqual(loaded.events.closeDialogPrompts.length, 0,
+      "hiding for a quit must never re-open the close prompt");
+    assert.strictEqual(win.destroyed, false, "the window is hidden, not destroyed");
+
+    deferred.resolve();
+    await flush();
+    await flush();
+    assert.strictEqual(win.hidden, 1, "the resuming before-quit pass must not hide again");
+  } finally {
+    loaded.cleanup();
+  }
+});
+
+test("the quit stage stamps land in the runtime log (R3-04 acceptance evidence)", async () => {
+  const fs = require("fs");
+  const path = require("path");
+  const loaded = loadMain();
+  try {
+    await waitForShellReady(loaded);
+    loaded.trayManager.choose("quit");
+    loaded.events.beforeQuitHandler({ preventDefault() {} });
+    await flush();
+    await flush();
+
+    const logFile = path.join(loaded.userDataDir, "ResumeForge", "runtime", "logs", "desktop-main.log");
+    assert.ok(fs.existsSync(logFile), `the runtime log must exist at ${logFile}`);
+    const text = fs.readFileSync(logFile, "utf-8");
+    // ① 收到退出请求 / A 窗口隐藏：各自一行。
+    for (const stage of ["stop requested", "window hidden"]) {
+      assert.match(text, new RegExp(`quit timing: ${stage} \\+\\d+ms`),
+        `missing stage stamp in desktop-main.log: ${stage}`);
+    }
+    // ⑤ 放行退出：收尾的那一行把五个节点一次读完（②③④ 由 backend-stop 补）。
+    assert.match(text,
+      /quit timing: stop requested at \+\d+ms, taskkill exit (n\/a|\+\d+ms), process gone (n\/a|\+\d+ms), port probe (n\/a|\+\d+ms), releasing quit \+\d+ms/,
+      "the one-line quit summary must be in the runtime log");
+    assert.match(text, /taskkill exit n\/a/, "the harness backend never runs taskkill: n/a, not a fake number");
   } finally {
     loaded.cleanup();
   }
@@ -356,6 +420,36 @@ test("restart budget: >3 crashes within 5 minutes give up with an error dialog",
       "no restart may be scheduled once the budget is exhausted");
     assert.ok(loaded.events.errorBoxes.length >= 2 || loaded.events.errorBoxes.length >= 1,
       "further crashes keep reporting the failure instead of restarting");
+  } finally {
+    loaded.cleanup();
+  }
+});
+
+// --- 接线：main.js 必须把 app 递进 quit-lifecycle，will-quit 兜底才挂得上 --------
+//
+// 这条兜底是「壳要走了，后端跟着走」的唯一同步手段：lib/quit-lifecycle.js 在构造时
+// 自己 `app.on("will-quit", handleWillQuit)`，判据是 `typeof app.on === "function"`。
+// 它写在 lib 里（而不是 main.js 里）是为了 main.js 的 500 行预算，代价是**注册点与
+// 装配点分居两个文件**：main.js 的 createQuitLifecycle deps 一旦漏掉 `app`，注册会被
+// 那行类型判断安静跳过，兜底消失而其余用例全绿。本用例读的是**经过 main.js 装配后**
+// 的 app 替身，是这条接线唯一的覆盖点——所以替身必须记录全部事件（lifecycle-harness）。
+
+test("main.js 装配后 will-quit 上有兜底监听器（deps 漏传 app 就静默消失）", () => {
+  const loaded = loadMain();
+  try {
+    const willQuitHandlers = loaded.events.handlers["will-quit"] || [];
+    assert.strictEqual(
+      willQuitHandlers.length,
+      1,
+      "will-quit 上必须恰好一个监听器：零个 = 兜底没接上（main.js 的 " +
+        "createQuitLifecycle deps 漏了 app，退出只剩 before-quit 的异步结论，" +
+        "判错就留下占着端口的孤儿后端）；多于一个 = 重复注册，会发两次 SIGTERM",
+    );
+    assert.strictEqual(
+      typeof willQuitHandlers[0],
+      "function",
+      "will-quit 的监听器必须是函数（兜底没接上）",
+    );
   } finally {
     loaded.cleanup();
   }

@@ -9,11 +9,13 @@
 
 1. **不回显 Key**：读取只返回掩码；PUT 的掩码/空值按"沿用旧 Key"处理（地址或协议变了才清）；
 2. **不记录音频**：日志只有 ``status / bytes / ms / host``，不写文件名、内容与 Key；
-3. **限额在服务端再拦一道**：10 MB + 180 秒，前端能绕过，后端不能信。
+3. **限额在服务端再拦一道**：上限**按协议取值**（``asr_deepseek.audio_limits_for``），
+   前端能绕过，后端不能信。``deepseek`` 是 120 秒 / 8 MiB（它不支持流式，所以 120 秒是
+   硬上限）；``openai`` / ``dashscope`` 维持 180 秒 / 10 MB。
 
 上游错误按"让用户知道下一步怎么办"分类：鉴权失败指向 Key、404 指向地址前缀、400 带上
-上游原话（模型名打错、音频被判无效只能从原话看出）、413 指向时长、超时与空结果各有独立
-文案——前端据此出互不相同的提示。
+上游原话（模型名打错、音频被判无效、格式不支持只能从原话看出）、413 指向时长、超时与空结果
+各有独立文案——前端据此出互不相同的提示。
 
 「沿用旧 Key」的解析只写一份（``_resolve_key``）：测试连接、拉模型列表、保存三处判据必须
 逐字一致，否则会出现"测试能用、拉模型说没 Key"这种谁都说不清的分歧。
@@ -31,6 +33,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..runtime.blocking import run_sync
 from ..schemas.asr import (
     MAX_AUDIO_BYTES,
     MAX_AUDIO_SECONDS,
@@ -53,6 +56,8 @@ from ..services.asr_client import (
     probe_asr_connection,
     transcribe_audio,
 )
+from ..services.asr_deepseek import PROTOCOL as DEEPSEEK_PROTOCOL
+from ..services.asr_deepseek import AudioLimits, audio_limits_for
 from ..services.asr_profiles import (
     AsrProfileError,
     AsrProfileNameConflict,
@@ -89,6 +94,32 @@ _TOO_LONG_DETAIL = f"单段录音最长 {MAX_AUDIO_SECONDS // 60} 分钟，请�
 _EMPTY_AUDIO_DETAIL = "没有读到音频数据，请重新录音"
 _BAD_LANGUAGE_DETAIL = "语言代码不合法，请使用 zh / en 这类 ISO 语言码"
 _BAD_DURATION_DETAIL = "录音时长不合法，请重新录音"
+
+
+def _limits_for(protocol: AsrProtocol, limits: AudioLimits) -> tuple[int, int]:
+    """``(max_seconds, max_bytes)``：这一档真正生效的上限。
+
+    ``openai`` / ``dashscope`` 走本模块的常量（= 既有 180 秒 / 10 MB，行为不变）；
+    ``deepseek`` 用它自己的硬上限（120 秒 / 8 MiB）——**不是**把 180 砍成 120 的"顺手
+    收紧"，而是上游不支持流式、单请求就只收 120 秒。
+    """
+    if protocol == DEEPSEEK_PROTOCOL:
+        return limits.seconds, limits.bytes
+    return MAX_AUDIO_SECONDS, MAX_AUDIO_BYTES
+
+
+def _too_large_detail(protocol: AsrProtocol, max_bytes: int) -> str:
+    """超大文案：老协议保持原句（既有用例与用户认知都对着它），新协议按真实上限写。"""
+    if protocol == DEEPSEEK_PROTOCOL:
+        return f"音频超过 {max_bytes // (1024 * 1024)} MB，无法转写"
+    return _TOO_LARGE_DETAIL
+
+
+def _too_long_detail(protocol: AsrProtocol, max_seconds: int) -> str:
+    """超长文案：DeepSeek 的 120 秒不是整分钟，用秒写才不会让人以为能录到 119.99 秒。"""
+    if protocol == DEEPSEEK_PROTOCOL:
+        return f"单段录音最长 {max_seconds} 秒，请缩短后重试"
+    return _TOO_LONG_DETAIL
 
 # 语言只接受 ISO 语言码（zh / en / zh-CN / en-US）：它会被原样放进上游客体的表单字段，
 # 不做白名单校验等于把任意字符串交给上游。
@@ -159,6 +190,80 @@ def _resolve_key(
     return raw_key
 
 
+def _prepare_settings_probe(
+    db: Session, payload: AsrSettings
+) -> AsrSettings | AsrSettingsTestResult:
+    """「测试连接」的**准备段**：跑一次旧数据迁移、合并已存配置、解析出真实 Key。
+
+    整段都碰请求会话，所以在同一个 worker 里做完并归还连接；随后那次探测是一次真发
+    音频的远端调用，不该继续占着 SQLite 连接。要素不全时直接把最终结果返回，路由据此
+    提前返回（与改造前同一份文案）。
+    """
+    try:
+        _ensure_asr_migrated(db)
+        stored = get_asr_runtime_settings(db)
+        base_url = payload.base_url or stored.base_url
+        model = payload.model or stored.model
+        protocol = _resolve_protocol(payload, stored)
+        api_key = _resolve_key(db, payload, protocol)
+        candidate = AsrSettings(base_url=base_url, model=model, api_key=api_key, protocol=protocol)
+        if not is_asr_configured(candidate):
+            # deepseek 没有 model 参数：向它要模型名会让用户永远填不完这一格。
+            message = (
+                "请先填写语音服务地址与 Key"
+                if protocol == DEEPSEEK_PROTOCOL
+                else "请先填写语音服务地址、模型与 Key"
+            )
+            return AsrSettingsTestResult(ok=False, message=message)
+        return candidate
+    finally:
+        db.close()
+
+
+def _prepare_models_probe(db: Session, payload: AsrModelsRequest) -> AsrSettings | None:
+    """「拉模型列表」的**准备段**：解析地址/协议/Key；缺一即返回 ``None``（空列表）。"""
+    try:
+        stored = get_asr_runtime_settings(db)
+        base_url = payload.base_url or stored.base_url
+        protocol = _resolve_protocol(payload, stored)
+        api_key = _resolve_key(db, payload, protocol)
+        if not (base_url and api_key):
+            return None
+        return AsrSettings(base_url=base_url, api_key=api_key, protocol=protocol)
+    finally:
+        db.close()
+
+
+def _prepare_profile_probe(
+    db: Session, profile_id: str, payload: AsrProfileTestRequest
+) -> AsrSettings | None:
+    """命名配置「测试连接」的**准备段**：迁移 + 解析「已存 Key + 草稿覆盖」。"""
+    try:
+        _ensure_asr_migrated(db)
+        with _profile_errors():
+            return resolve_probe_target(profile_id, payload)
+    finally:
+        db.close()
+
+
+def _load_asr_runtime(db: Session) -> AsrSettings:
+    """转写入口的**准备段**：读出这一档真正生效的运行时配置，然后归还连接。"""
+    try:
+        return get_asr_runtime_settings(db)
+    finally:
+        db.close()
+
+
+def _record_asr_usage(db: Session, seconds: float, *, source: str, host: str) -> None:
+    """转写入口的**收尾段**：记一条非 token 用量账（旁路，失败只记日志）。"""
+    from ..services.usage_counters import KIND_ASR, record_external_usage
+
+    try:
+        record_external_usage(KIND_ASR, seconds, source=source, db=db)
+    except Exception:  # noqa: BLE001 - 计量是旁路，不能让已成功的转写变成失败
+        logger.warning("ASR 用量记录失败 host=%s", host, exc_info=True)
+
+
 @router.get("/settings/asr", response_model=AsrSettingsOut)
 def read_asr_settings(db: Session = Depends(get_db)) -> AsrSettingsOut:
     """读取语音服务配置：``api_key`` 只可能是掩码或空串。"""
@@ -180,16 +285,14 @@ async def test_asr_settings(
     payload: AsrSettings, db: Session = Depends(get_db)
 ) -> AsrSettingsTestResult:
     """用表单当前值探测一次上游（发一段静音），不要求先保存。"""
-    _ensure_asr_migrated(db)
-    stored = get_asr_runtime_settings(db)
-    base_url = payload.base_url or stored.base_url
-    model = payload.model or stored.model
-    protocol = _resolve_protocol(payload, stored)
-    api_key = _resolve_key(db, payload, protocol)
-    if not (base_url and model and api_key):
-        return AsrSettingsTestResult(ok=False, message="请先填写语音服务地址、模型与 Key")
+    prepared = await run_sync(_prepare_settings_probe, db, payload)
+    if isinstance(prepared, AsrSettingsTestResult):
+        return prepared
     ok, message, latency_ms = await probe_asr_connection(
-        base_url=base_url, api_key=api_key, model=model, protocol=protocol
+        base_url=prepared.base_url,
+        api_key=prepared.api_key,
+        model=prepared.model,
+        protocol=prepared.protocol,
     )
     return AsrSettingsTestResult(ok=ok, latency_ms=latency_ms, message=message)
 
@@ -202,13 +305,12 @@ async def list_asr_models(
 
     与「测试连接」共用 :func:`_resolve_key`：两处对"沿用旧 Key"的判据必须一致。
     """
-    stored = get_asr_runtime_settings(db)
-    base_url = payload.base_url or stored.base_url
-    protocol = _resolve_protocol(payload, stored)
-    api_key = _resolve_key(db, payload, protocol)
-    if not (base_url and api_key):
+    target = await run_sync(_prepare_models_probe, db, payload)
+    if target is None:
         return AsrModelsResult(models=[])
-    models = await fetch_asr_models(base_url=base_url, api_key=api_key, protocol=protocol)
+    models = await fetch_asr_models(
+        base_url=target.base_url, api_key=target.api_key, protocol=target.protocol
+    )
     return AsrModelsResult(models=models)
 
 
@@ -264,9 +366,7 @@ async def test_asr_profile(
     ``profile_id`` 允许传 ``new``（新建弹窗里还没有 id）：此时不读取任何已存 Key，
     避免"新建时留空却测通了上一条配置的 Key"这种误判。
     """
-    _ensure_asr_migrated(db)
-    with _profile_errors():
-        target = resolve_probe_target(profile_id, payload)
+    target = await run_sync(_prepare_profile_probe, db, profile_id, payload)
     if target is None:
         return AsrSettingsTestResult(ok=False, message="请先填写语音服务地址、模型与 Key")
     ok, message, latency_ms = await probe_asr_connection(
@@ -277,18 +377,25 @@ async def test_asr_profile(
     )
     return AsrSettingsTestResult(ok=ok, latency_ms=latency_ms, message=message)
 
+
 @router.get("/transcribe/status", response_model=AsrStatus)
 def read_transcribe_status(db: Session = Depends(get_db)) -> AsrStatus:
-    """麦克风组件启动前的探测：是否可用、音频会发到哪台主机、服务端限额。"""
+    """麦克风组件启动前的探测：是否可用、音频会发到哪台主机、服务端限额。
+
+    ``max_seconds`` / ``max_bytes`` **按当前协议给**（不是写死 180 / 10 MB）：前端用它
+    决定录音上限定到哪里，并在 ``deepseek`` 时说明为什么只有 120 秒。三套数字
+    （前端滑块 60–300、服务端 180 秒、DeepSeek 120 秒）只在这里收敛成一套。
+    """
     runtime = get_asr_runtime_settings(db)
     configured = is_asr_configured(runtime)
+    limits = audio_limits_for(runtime.protocol)
     return AsrStatus(
         configured=configured,
         provider_host=provider_host(runtime.base_url) if configured else "",
         model=runtime.model if configured else "",
         protocol=runtime.protocol,
-        max_seconds=MAX_AUDIO_SECONDS,
-        max_bytes=MAX_AUDIO_BYTES,
+        max_seconds=limits.seconds,
+        max_bytes=limits.bytes,
     )
 
 
@@ -302,26 +409,33 @@ async def transcribe(
     """把一段录音转成文字。
 
     ``duration_ms`` 由前端按真实录音时长传入；服务端只做上限校验，不解析音频内容。
-    请求体按落库的 ``protocol`` 分派（whisper 式 multipart / Qwen-ASR 的 chat）。
+    请求体按落库的 ``protocol`` 分派（whisper 式 multipart / Qwen-ASR 的 chat /
+    DeepSeek 的 ``/tools/asr``）。上限也按协议取：``deepseek`` 是 120 秒 / 8 MiB。
     """
     started = time.perf_counter()
-    runtime = get_asr_runtime_settings(db)
+    runtime = await run_sync(_load_asr_runtime, db)
     host = provider_host(runtime.base_url)
     if not is_asr_configured(runtime):
         raise HTTPException(status_code=409, detail=_NOT_CONFIGURED_DETAIL)
     if not _LANGUAGE_PATTERN.fullmatch(language or ""):
         raise HTTPException(status_code=422, detail=_BAD_LANGUAGE_DETAIL)
+    limits = audio_limits_for(runtime.protocol)
+    max_seconds, max_bytes = _limits_for(runtime.protocol, limits)
     if duration_ms is not None:
         if duration_ms < 0:
             raise HTTPException(status_code=422, detail=_BAD_DURATION_DETAIL)
-        if duration_ms > MAX_AUDIO_MS:
-            raise HTTPException(status_code=413, detail=_TOO_LONG_DETAIL)
+        if duration_ms > max_seconds * 1000:
+            raise HTTPException(
+                status_code=413, detail=_too_long_detail(runtime.protocol, max_seconds)
+            )
 
-    raw = await file.read(MAX_AUDIO_BYTES + 1)
+    raw = await file.read(max_bytes + 1)
     if not raw:
         raise HTTPException(status_code=422, detail=_EMPTY_AUDIO_DETAIL)
-    if len(raw) > MAX_AUDIO_BYTES:
-        raise HTTPException(status_code=413, detail=_TOO_LARGE_DETAIL)
+    if len(raw) > max_bytes:
+        raise HTTPException(
+            status_code=413, detail=_too_large_detail(runtime.protocol, max_bytes)
+        )
 
     content_type = (file.content_type or "audio/webm").strip()
     try:
@@ -350,6 +464,18 @@ async def transcribe(
         ) from exc
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
+    # 计量（T16）：只记**音频秒数**，不折算金额。用前端报的 duration_ms 除以 1000
+    # （那是真实录音时长，也是上限校验的同一个数）；没报就不记——用字节数反推时长
+    # 会随编码格式漂移（1.5 KB 的 opus 只有 0.25 秒），宁可少一条也不写错账。
+    # 落账同样是一次写库，交给 worker：转写刚回来，事件循环要先能接下一个请求。
+    if duration_ms:
+        await run_sync(
+            _record_asr_usage,
+            db,
+            duration_ms / 1000,
+            source=f"transcribe:{host}",
+            host=host,
+        )
     # duration_ms 是"录音被掐断"的唯一直接证据（需求 #8：之前只能拿 bytes 反推时长，
     # 1.5 KB 的 opus 折算 0.25 秒才定位到"用户连点两下"）。缺省记 -1，与"0 毫秒"区分开。
     logged_duration = duration_ms if duration_ms is not None else -1
