@@ -111,6 +111,24 @@ def test_detail_parser_accepts_brand_com_info():
     assert parsed["company"] == "新版公司容器"
 
 
+def test_detail_parser_prefers_full_company_name_over_brand_short_name():
+    """详情接口同时带品牌短名与工商全名时，保留更完整的工商全名供风鸟直达查询。"""
+    payload = {
+        "zpData": {
+            "jobInfo": {"jobName": "后端工程师", "postDescription": "负责接口开发"},
+            "brandComInfo": {
+                "brandName": "示例品牌",
+                "companyName": "示例网络科技有限公司",
+            },
+        }
+    }
+
+    parsed = parse_detail_response(payload)
+
+    assert parsed is not None
+    assert parsed["company"] == "示例网络科技有限公司"
+
+
 def test_api_error_recognises_nonzero_code_and_message():
     assert api_error({"code": 19, "message": "参数值错误"}) == ("19", "参数值错误")
     assert api_error({"code": 0, "message": "Success"}) is None

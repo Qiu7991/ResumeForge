@@ -23,6 +23,7 @@ import re
 from typing import Any
 from urllib.parse import urljoin
 
+from ..job_hunt.company_name import should_replace_company
 from .boss_network_salary import format_salary, parse_salary_text
 from .boss_probe import note_encoded_digits
 from .boss_text import normalize_text, split_job_fields, split_title_salary
@@ -333,11 +334,20 @@ def parse_detail_response(payload: Any) -> dict[str, Any] | None:
     boss = boss_value if isinstance(boss_value, dict) else {}
     brand = brand_value if isinstance(brand_value, dict) else {}
 
+    company = ""
+    for container, keys in (
+        (brand, ("companyName", "comName", "customerName", "fullName", "brandName", "name")),
+        (boss, ("companyName", "comName", "brandName")),
+        (detail, ("companyName", "comName", "brandName")),
+    ):
+        for key in keys:
+            candidate = _text(container.get(key))
+            if should_replace_company(company, candidate) or (not company and candidate):
+                company = candidate
+
     return {
         "job_title": _text(_first(detail, "jobName", "jobTitle", "positionName")),
-        "company": _text(_first(brand, "brandName", "companyName", "name"))
-        or _text(_first(boss, "brandName", "companyName"))
-        or _text(_first(detail, "brandName", "companyName")),
+        "company": company,
         "description": sections.description,
         # 切不出独立的段落时留空是**如实**的：接口本来就没有把它单列出来，
         # 该段内容仍然完整地留在描述里，不会丢。

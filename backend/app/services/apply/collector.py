@@ -37,6 +37,7 @@ from ...schemas.job import RECOGNITION_SOURCE_COLLECT
 from .. import trash
 from ..candidate_jobs import stage_candidate_job
 from ..job.job_service import refresh_job_keywords
+from ..job_hunt.company_name import should_replace_company
 from ..sites.base import CollectQuery, FilterResolution, SearchResult, SiteAdapter, SiteFailure
 from .collect_filters import FilterTally
 from .collector_interest import collect_interest
@@ -184,10 +185,16 @@ class Collector:
         详情抓失败时 ``detail`` 是空字典，这时仍然要暂存：标题 / 公司 / 城市 / 薪资 / 链接
         都已经拿到了，缺的只是 JD——把整条丢掉等于"因为拿不到详情就连岗位都不要了"。
         """
+        detail_company = str(detail.get("company", "")).strip()
+        company = (
+            detail_company
+            if should_replace_company(result.company, detail_company)
+            else (result.company or detail_company)
+        )
         stage_candidate_job(
             session,
             title=result.title or str(detail.get("job_title", "")),
-            company=result.company or str(detail.get("company", "")),
+            company=company,
             location=result.location,
             salary=result.salary,
             source_url=result.url,
@@ -244,6 +251,9 @@ class Collector:
                 additional = str(detail.get("additional_info") or "").strip()
                 if additional:
                     job.additional_info = additional
+                detail_company = str(detail.get("company") or "").strip()
+                if should_replace_company(job.company or "", detail_company):
+                    job.company = detail_company
                 # 技能标签是从 JD 解析出来的，补到正文后必须重算，否则搜索/匹配仍按空标签走。
                 refresh_job_keywords(job)
                 job.updated_at = utcnow()
