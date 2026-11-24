@@ -137,6 +137,23 @@ def _collect_links_script() -> str:
     )
 
 
+def _business_company_script() -> str:
+    """从 BOSS 详情页「工商信息」区块读取工商注册全名（供风鸟直达查询）。
+
+    必须限定在 ``.business-info-box`` 作用域内，避免命中相似职位卡片或导航栏；
+    去掉 ``<li>`` 内嵌的 ``<span>公司名称</span>`` 标签，只保留纯公司名。
+    """
+    return (
+        "(() => { /* rf:business-company */\n"
+        "  const node = document.querySelector('.business-info-box li.company-name');\n"
+        "  if (!node) return '';\n"
+        "  const clone = node.cloneNode(true);\n"
+        "  for (const s of clone.querySelectorAll('span, label')) s.remove();\n"
+        "  return (clone.textContent || '').trim();\n"
+        "})()"
+    )
+
+
 def _detail_script() -> str:
     return "".join(
         [
@@ -150,6 +167,13 @@ def _detail_script() -> str:
             "    return n ? (n.textContent || '').trim() : ''; };\n",
             "  const pickDoc = (sel) => { const n = document.querySelector(sel);\n",
             "    return n ? (n.textContent || '').trim() : ''; };\n",
+            "  const pickBiz = () => {\n",
+            "    const n = document.querySelector('.business-info-box li.company-name');\n",
+            "    if (!n) return '';\n",
+            "    const c = n.cloneNode(true);\n",
+            "    for (const s of c.querySelectorAll('span, label')) s.remove();\n",
+            "    return (c.textContent || '').trim();\n",
+            "  };\n",
             "  const byHeading = (words) => {\n",
             "    for (const section of root.querySelectorAll('section, .job-detail-section, .job-sec')) {\n",
             "      const heading = section.querySelector('h1,h2,h3,h4,.title,.section-title');\n",
@@ -160,8 +184,8 @@ def _detail_script() -> str:
             "    url: location.href,\n",
             "    title: document.title || '',\n",
             "    job_title: pick(TITLE),\n",
-            "    // 公司名在 .job-banner 里，常不在 root 内；限定在 banner 内找，避免命中顶部「公司」导航。\n",
-            "    company: pickDoc(\".job-banner a[href*='/gongsi/'], .job-banner .company-info .name, .job-banner .company-name, .job-banner span.boss-name, .company-info .name, span.boss-name\") || pick(COMPANY),\n",
+            "    // 优先取「工商信息」里的工商全名，其次退回 banner 品牌短名，避免命中顶部「公司」导航。\n",
+            "    company: pickBiz() || pickDoc(\".job-banner a[href*='/gongsi/'], .job-banner .company-info .name, .job-banner .company-name, .job-banner span.boss-name, .company-info .name, span.boss-name\") || pick(COMPANY),\n",
             "    description: pick(DESC) || byHeading(['职位描述', '岗位职责', '工作内容']),\n",
             "    requirements: pick(REQ) || byHeading(['任职要求', '职位要求', '岗位要求']),\n",
             "  });\n",

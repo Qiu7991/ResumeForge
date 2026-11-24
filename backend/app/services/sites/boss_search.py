@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 from ...models.apply import FAILURE_NETWORK_TIMEOUT, FAILURE_SELECTOR_INVALID
 from ..browser.cdp_client import CdpClient
+from ..job_hunt.company_name import should_replace_company
 from .base import CollectQuery, SearchPage, SearchResult, SiteFailure
 from .boss_city import CityResolutionError
 from .boss_network import DETAIL_MARKERS, SEARCH_MARKERS
@@ -58,6 +59,9 @@ from .boss_search_scripts import (
 )
 from .boss_search_scripts import (
     _bar_present as _bar_present,
+)
+from .boss_search_scripts import (
+    _business_company_script as _business_company_script,
 )
 from .boss_search_scripts import (
     _card_count_script as _card_count_script,
@@ -277,6 +281,21 @@ class BossSearchMixin(BossFilterMixin):
             parsed = parse_detail_response(network_detail)
             if parsed is not None:
                 parsed["url"] = parsed.get("url") or url
+                # 接口 JSON 常只给品牌短名（brandName），而页面已渲染好「工商信息」全称；
+                # 顺手补读一次，读不到或异常时安静保留原值，不影响主路径。
+                try:
+                    raw_biz = client.evaluate(_business_company_script())
+                except Exception:  # noqa: BLE001 - 工商全名是增强项，失败回退接口公司名
+                    raw_biz = ""
+                if isinstance(raw_biz, str):
+                    biz_name = raw_biz.strip()
+                    if (
+                        biz_name
+                        and len(biz_name) <= 80
+                        and not biz_name.startswith("{")
+                        and should_replace_company(str(parsed.get("company", "")), biz_name)
+                    ):
+                        parsed["company"] = biz_name
                 return parsed
         _raise_api_error(responses, DETAIL_MARKERS, "岗位详情")
         if outcome["failure"] is not None:

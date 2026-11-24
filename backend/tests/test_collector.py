@@ -47,8 +47,11 @@ class FakeCollectAdapter(SiteAdapter):
     # 声明之内**的，测试里不声明就测不到筛选行为。
     post_filter_conditions = ("薪资", "经验", "学历")
 
-    def __init__(self, pages: list[SearchPage]) -> None:
+    def __init__(
+        self, pages: list[SearchPage], details: dict[str, dict] | None = None
+    ) -> None:
         self._pages = pages
+        self._details = details or {}
         self.searched_pages: list[int] = []
 
     def risk_profile(self) -> RiskProfile:
@@ -65,6 +68,8 @@ class FakeCollectAdapter(SiteAdapter):
         raise AssertionError("采集不应调用投递")
 
     def fetch_job_detail(self, client, url):  # type: ignore[override]
+        if url in self._details:
+            return self._details[url]
         return {"description": "岗位详情正文", "requirements": "任职要求正文"}
 
 
@@ -270,3 +275,53 @@ def test_collector_stops_early_when_pages_repeat(db_session):
     assert report.skipped == 2
     # 账目进 task.config，界面据此显示"提前停止翻页"的说明
     assert task.config["pagination_stopped_at"] == 5
+
+
+def test_collector_upgrades_short_brand_to_detail_full_company_name(db_session):
+    """列表只给品牌短名、详情抓到工商全名时，入暂存区应保留工商全名；反向不覆盖。"""
+    page = SearchPage(
+        results=[
+            SearchResult(
+                title="后端开发",
+                company="示例品牌",
+                url="https://example.com/full",
+            ),
+            SearchResult(
+                title="前端开发",
+                company="示例科技有限公司",
+                url="https://example.com/noise",
+            ),
+        ],
+        page=1,
+        has_next=False,
+    )
+    adapter = FakeCollectAdapter(
+        [page],
+        details={
+            "https://example.com/full": {
+                "company": "示例网络科技有限公司",
+                "description": "负责服务端开发",
+            },
+            "https://example.com/noise": {
+                "company": "公司",
+                "description": "负责前端开发",
+            },
+        },
+    )
+    task = _task(db_session)
+
+    report = Collector().run(
+        session=db_session,
+        task=task,
+        client=object(),
+        adapter=adapter,
+        config=_config(per_task_limit=5),
+        checkpoint=lambda: None,
+        sleeper=lambda _seconds: None,
+        clock=_FakeClock(),
+    )
+
+    assert report.collected == 2
+    by_url = {row.source_url: row.company for row in db_session.query(CandidateJob).all()}
+    assert by_url["https://example.com/full"] == "示例网络科技有限公司"
+    assert by_url["https://example.com/noise"] == "示例科技有限公司"
