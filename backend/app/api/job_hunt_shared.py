@@ -33,13 +33,6 @@ class BlocklistConfig(BaseModel):
     keywords: list[str] = Field(default_factory=list, max_length=200)
 
 
-def select_setting():
-    """取 ``app_setting.value`` 的 SQL 语句（调用方自己传 key 绑定参数）。"""
-    from sqlalchemy import text
-
-    return text("SELECT value FROM app_setting WHERE key = :key")
-
-
 def read_blocklist_config(db: Session) -> BlocklistConfig:
     """读黑名单配置；键不存在或内容损坏时返回空配置（不报错）。"""
     raw = read_blocklist_raw(db)
@@ -93,5 +86,4 @@ __all__ = [
     "acquire_client",
     "is_blocked",
     "read_blocklist_config",
-    "select_setting",
 ]

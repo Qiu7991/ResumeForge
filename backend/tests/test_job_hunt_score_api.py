@@ -3,6 +3,7 @@
 
 模型调用全部打桩，不发真实请求。
 """
+
 from __future__ import annotations
 
 import json
@@ -61,3 +62,54 @@ def test_get_score_returns_not_scored(client, db_session):
     resp = client.get(f"/api/job-hunt/jobs/{job.id}/score")
     assert resp.status_code == 200
     assert resp.json()["ok"] is False
+
+
+def test_score_job_persists_and_hits_cache(client, db_session, monkeypatch):
+    calls = {"count": 0}
+
+    async def _fake_call(prompt):
+        from app.services.job_hunt.scoring import parse_semantic_score
+
+        calls["count"] += 1
+        return parse_semantic_score(_MODEL_JSON), "fake-score-model"
+
+    monkeypatch.setattr(
+        "app.services.job_hunt.scoring_service.resolve_resume_text",
+        lambda db, resume_id=None: (
+            None,
+            "熟悉 Python 与 AIGC 应用开发",
+            "AI 应用工程师简历正文",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.job_hunt.scoring_service.call_scoring_model",
+        _fake_call,
+    )
+
+    job = _job(db_session)
+    url = f"/api/job-hunt/jobs/{job.id}/score"
+
+    first = client.post(url)
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+    assert first_body["cached"] is False
+    assert first_body["total"] == 83
+    assert calls["count"] == 1
+
+    stored = client.get(url)
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["total"] == 83
+
+    second = client.post(url)
+    assert second.status_code == 200, second.text
+    second_body = second.json()
+    assert second_body["cached"] is True
+    assert second_body["total"] == 83
+    assert calls["count"] == 1
+
+    forced = client.post(f"{url}?force=true")
+    assert forced.status_code == 200, forced.text
+    forced_body = forced.json()
+    assert forced_body["cached"] is False
+    assert forced_body["total"] == 83
+    assert calls["count"] == 2
