@@ -14,12 +14,12 @@ import { listResumes } from "../../../api/resumes";
 import { t } from "../../../i18n";
 
 /**
- * 一次拉取的上限。
+ * 一次拉取的上限（对齐后端 `GET /api/resumes` 的 `page_size <= 100` 校验上限）。
  *
  * 与 `remoteSearchOptions` 的 `page_size: 50` 不同：那里是"搜索下拉的一页"，
  * 这里是"名字对照表"，覆盖常见的简历库规模即可；超出部分退化为 `简历 #{id}`。
  */
-export const RESUME_TITLE_PAGE_SIZE = 200;
+export const RESUME_TITLE_PAGE_SIZE = 100;
 
 /** 简历 id → 标题。请求失败返回空表（调用方用 `resumeTitleOf` 的兜底名）。 */
 export async function fetchResumeTitles(): Promise<Record<number, string>> {

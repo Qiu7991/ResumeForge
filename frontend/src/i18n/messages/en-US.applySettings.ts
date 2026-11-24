@@ -18,7 +18,7 @@ const applySettings = {
   "applySettings.defaultResume.placeholder": "Pick a general Resume (type to search)",
   "applySettings.greetingBaseline.label": "Custom greeting baseline",
   "applySettings.greetingBaseline.extra":
-    "Paste your preferred template, structure or tone — you can also state your differentiator (e.g. “most of my projects were built end-to-end with AI tools”). It is the highest-priority constraint, but facts must still come from the Resume; leave empty to use the built-in baseline.",
+    "Paste your preferred template, tone, or differentiator. Highest-priority constraint, while facts must still come from your resume. Blank uses default.",
   "applySettings.greetingReview.label": "Review the greeting before sending",
   "applySettings.greetingReview.extra":
     "When enabled, queued jobs without a confirmed greeting are skipped and marked \"greeting missing\"; the default greeting is never sent on your behalf.",
@@ -63,7 +63,7 @@ const applySettings = {
   "applySettings.saveFailed": "Could not save the apply settings",
   "applySettings.greetingSalutation.label": "Start the greeting with a salutation",
   "applySettings.greetingSalutation.extra":
-    "On by default. Turn it off and sentence 1 starts directly with the capability label — BOSS shows only the first 10–18 characters in the message list, and \"Hello,\" uses up 3 of them. Flip it to compare.",
+    "On by default. Turn off to start directly with your capability label — BOSS previews only the first 10–18 chars, and \"Hello,\" uses 3.",
 
 
   "applySettings.tab.cadence": "Pacing",

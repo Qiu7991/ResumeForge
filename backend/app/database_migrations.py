@@ -29,9 +29,10 @@ _BASELINE_REVISION = "0001_baseline_v2"
 # 让 alembic 顺序执行上游 0018–0022 与幂等的 0023–0024。备份导入路径（repair_schema=False）
 # 不走桥接，保持 fail-closed 校验。
 _LEGACY_FORK_REVISIONS_ANCHOR = "0017_agent_task_params"
-_LEGACY_FORK_REVISIONS = frozenset(
+LEGACY_FORK_REVISIONS = frozenset(
     {"0018_fork_apply_greeting_plan_aijob", "0019_candidate_job_score"}
 )
+_LEGACY_FORK_REVISIONS = LEGACY_FORK_REVISIONS
 
 
 def application_tables() -> tuple[str, ...]:

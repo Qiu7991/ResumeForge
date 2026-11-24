@@ -48,7 +48,9 @@ from tests.resume_generate_task_support import (
 )
 
 # 规范化规则版本：规则一改必须 +1，让 manifest 报"规则版本不符"而不是只报 sha 变化。
-RULES_VERSION = 1
+# 版本 2（2026-11-24）：二开 coverage_notes 新增 entry_id_by_name（名字 -> 随机 entry_id），
+# 保留条目名字键，将其值按 entry_id 归一化为 "<id>"，避免每次运行因随机 entry_id 哈希漂移。
+RULES_VERSION = 2
 MANIFEST_PATH = Path(__file__).resolve().parent / "fixtures" / "generate_golden" / "manifest.json"
 
 _CASES: tuple[tuple[str, bool], ...] = (("job_targeted", True), ("general", False))
@@ -80,6 +82,8 @@ _TEMP_DIR_MARKERS = tuple(
 def _normalize(value: Any, key: str | None = None) -> Any:
     """按模块 docstring 的规则递归规范化；纯函数，方便单独推演。"""
     if isinstance(value, dict):
+        if key == "entry_id_by_name":
+            return {name: _normalize(item, "entry_id") for name, item in value.items()}
         return {name: _normalize(item, name) for name, item in value.items()}
     if isinstance(value, list):
         return [_normalize(item, key) for item in value]
@@ -174,6 +178,7 @@ def _write_manifest(digests: dict[str, str]) -> None:
     MANIFEST_PATH.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
 
 

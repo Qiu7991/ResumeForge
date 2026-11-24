@@ -17,13 +17,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models.material import CANDIDATE_JOB_PENDING, CandidateJob
+from ..models.material import CandidateJob
 from ..services.job_hunt.candidate_score_task import (
     CandidateScoreBusy,
     get_candidate_score_runner,
     get_candidate_score_task,
 )
 from ..services.job_hunt.candidate_scoring import candidate_has_jd
+from ..services.job_hunt.queries import (
+    find_scored_candidate_ids,
+    list_candidates_by_ids,
+    list_unscored_pending_candidate_ids,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,28 +59,18 @@ def start_score(req: CandidateScoreIn, db: Session = Depends(get_db)) -> dict[st
     ids = list(req.candidate_ids)
     if not ids:
         # 默认范围只挑「还没评过」的：已评过的重跑要显式 force 或显式给 id。
-        query = db.query(CandidateJob).filter(
-            CandidateJob.status == CANDIDATE_JOB_PENDING,
-            CandidateJob.deleted_at.is_(None),
-            CandidateJob.score_total.is_(None),
-        )
-        ids = [row.id for row in query.order_by(CandidateJob.id).limit(2000).all()]
+        ids = list_unscored_pending_candidate_ids(db, limit=2000)
     if not ids:
         raise HTTPException(400, "没有需要评分的备选岗位")
 
     if not req.force:
         # 显式给了 id 但已评过的，跳过（而不是把分数重算一遍覆盖掉）。
-        scored = {
-            row.id
-            for row in db.query(CandidateJob)
-            .filter(CandidateJob.id.in_(ids), CandidateJob.score_total.isnot(None))
-            .all()
-        }
+        scored = find_scored_candidate_ids(db, ids)
         ids = [candidate_id for candidate_id in ids if candidate_id not in scored]
         if not ids:
             raise HTTPException(400, "这些备选岗位都已经评过分（要重评请传 force=true）")
 
-    candidates = db.query(CandidateJob).filter(CandidateJob.id.in_(ids)).all()
+    candidates = list_candidates_by_ids(db, ids)
     missing = [row for row in candidates if not candidate_has_jd(row)]
 
     # 缺 JD 的**先补抓一次**再评（2026-11-11）：
@@ -86,7 +81,7 @@ def start_score(req: CandidateScoreIn, db: Session = Depends(get_db)) -> dict[st
 
     db.expire_all()
     scorable: list[int] = []
-    for row in db.query(CandidateJob).filter(CandidateJob.id.in_(ids)).all():
+    for row in list_candidates_by_ids(db, ids):
         if candidate_has_jd(row):
             scorable.append(row.id)
         else:

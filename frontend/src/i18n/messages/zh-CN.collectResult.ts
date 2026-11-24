@@ -22,7 +22,7 @@
 const collectResult = {
   "collectResult.title": "采集到的岗位",
   "collectResult.hint":
-    "这里是**所有批次**采集到、还没导入岗位广场的岗位（含之前几轮的）。勾选后才进岗位广场，没勾的会留在这里，之后还能再来挑。",
+    "列出**所有批次**采集到、尚未导入岗位广场的岗位（含此前几轮）。仅勾选的会导入，其余保留在此供后续挑选。",
   "collectResult.empty": "还没有待导入的岗位（可能都已导入，或一条都没采到）",
 
   "collectResult.column.title": "岗位",

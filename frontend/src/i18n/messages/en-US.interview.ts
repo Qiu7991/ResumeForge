@@ -65,7 +65,7 @@ const interview = {
   "interview.coach.noteGrounded":
     "Every fact here comes from your own resume, profile entries or confirmed facts — you can say it as written.",
   "interview.coach.notePartial":
-    "Some parts are transferable wording, not your real experience. Do not present them as experience — follow-up questions in a real interview will expose it, which hurts more than saying “I don't know”.",
+    "Some parts are transferable wording, not real experience. Follow-ups will expose it — better to say “I don't know” than fake it.",
   "interview.coach.noteNotScored":
     "Reference answers are not scored; only your own answers count toward the report.",
   "interview.coach.failed": "Could not generate a reference answer. Please try again.",

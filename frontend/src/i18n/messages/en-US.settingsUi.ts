@@ -203,16 +203,14 @@ const settingsUi = {
   // ── Generation preferences: show project tech stack ──────────
   "settingsUi.generationPrefs.title": "Generation preferences · Resume content",
   "settingsUi.generationPrefs.intro":
-    'Controls whether generated resumes show a separate "Tech stack: ..." line. ' +
-    "The tech stack stays in your profile for job matching and interview prep; this switch only decides whether it appears on the resume page.",
+    'Controls whether generated resumes show a "Tech stack: ..." line. Tech stacks stay in your profile for matching and interviews.',
   "settingsUi.generationPrefs.toggleAria": "Show project tech stack on resumes",
   "settingsUi.generationPrefs.enableToast": "On: generated resumes will show project tech stack",
   "settingsUi.generationPrefs.disableToast":
     "Off: generated resumes no longer show project tech stack",
   "settingsUi.generationPrefs.saveFailed": "Could not save generation preferences",
   "settingsUi.generationPrefs.hint":
-    "Nothing is deleted when this is off - the tech stack items simply stay off the page and remain visible (and draggable back) in the resume editor. " +
-    "Resumes generated earlier are not affected.",
+    "Nothing is deleted when off — tech stack stays visible (and draggable back) in the editor. Existing resumes are unaffected.",
   "settingsUi.skills.tagRecommended": "Recommended",
 
   // ── Outbound network & proxy (T02 / T05) ──────────────────

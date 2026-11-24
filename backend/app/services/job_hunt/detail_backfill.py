@@ -179,7 +179,7 @@ def _run_backfill(
         logger.info("JD 补抓跳过（抓取器不可用）：%s: %s", type(exc).__name__, exc)
         return
     try:
-        kwargs = {"overwrite": overwrite}
+        kwargs: dict[str, Any] = {"overwrite": overwrite}
         if limit is not None:
             kwargs["limit"] = limit
         backfill_details(db, job_ids, fetch=fetch, adapter=adapter, **kwargs)

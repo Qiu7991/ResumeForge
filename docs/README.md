@@ -54,7 +54,7 @@
 | [ResumeForge 技术债核实与治理计划](tech-debt-plan-2026-11-14.md) | 技术债施工记录；数字是 2026-11-14 快照 | 2027-06-30 |
 | [ResumeForge 多分辨率 / 系统缩放适配方案（2026-10-23）](verification/responsive-20261023/PLAN.md) | 多分辨率适配方案；已落地，留作验收记录 | 2027-06-30 |
 
-## 不可变记录（ADR / 实测档案）· 8 篇
+## 不可变记录（ADR / 实测档案）· 37 篇
 
 只增不改：被推翻的决策在原处留「后续修订」，不重写历史；实测档案重测时新增一节，不改旧数字。
 
@@ -65,6 +65,35 @@
 | [ADR-0003：备份包资产清单（per-dataset asset manifest）与存储统计作用域](adr/ADR-0003-backup-asset-manifest-and-storage-scope.md) | 决策记录 |
 | [ADR-0004: 桌面端五类路径的固定策略（程序目录 / 用户数据 / 日志 / 运行时 / 缓存）](adr/ADR-0004-desktop-data-directory-policy.md) | 决策记录 |
 | [ADR-0005：备份恢复「先验后发布」与附件防覆盖](adr/ADR-0005-backup-restore-verify-before-publish.md) | 决策记录 |
+| [采集 → 自动评分 → 人工确认导入（方案 3）](candidate-score-pipeline-plan.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [AI 求职适配层 · 对抗审查报告（A7）](fork-2.0-ai-jobs-adversarial.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [AI 求职适配 · 阻塞清单](fork-2.0-ai-jobs-blocked.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [AI 求职适配 · 三方契约核对表（A1）](fork-2.0-ai-jobs-contract.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [AI 求职前端移植 · 阻塞清单（会话 B）](fork-2.0-ai-jobs-fe-blocked.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [AI 求职前端移植 · 晨间报告（会话 B）](fork-2.0-ai-jobs-fe-morning-report.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [AI 求职前端移植 · 进度日志（会话 B）](fork-2.0-ai-jobs-fe-progress.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [AI 求职前端移植任务板（会话 B · 分支 feat/ai-jobs-frontend）](fork-2.0-ai-jobs-fe-taskboard.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [AI 求职 · 线2 前端合并报告](fork-2.0-ai-jobs-merge-report.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [AI 求职适配 · 晨间报告（会话 A · 后端）](fork-2.0-ai-jobs-morning-report.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [AI 求职适配 · 执行日志（追加式）](fork-2.0-ai-jobs-progress.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [AI 求职适配任务板（分支 feat/ai-jobs-sidecar）](fork-2.0-ai-jobs-taskboard.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [二开功能落点校对表（N1 交付物）](fork-2.0-baseline.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [2.0 移植阻塞清单](fork-2.0-blocked.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [简历通二开功能清单（迁移上游 2.0 用）](fork-2.0-migration-inventory.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [简历通 2.0 二开移植 · 晨间报告](fork-2.0-morning-report.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [2.0 移植进度日志（追加式）](fork-2.0-progress.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [N8 简历侧 · 对抗审查报告（R7）](fork-2.0-resume-adversarial.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [N8 简历侧移植 · 落点复核（R1，只读）](fork-2.0-resume-baseline.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [N8 简历侧移植 · 阻塞清单](fork-2.0-resume-blocked.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [N8 简历侧移植 · 晨间报告](fork-2.0-resume-morning-report.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [N8 简历侧移植 · 执行日志（追加式）](fork-2.0-resume-progress.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [N8 简历侧移植任务板（分支 feat/resume-side）](fork-2.0-resume-taskboard.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [2.0 移植任务板](fork-2.0-taskboard.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [自研 AI 求职 · 阻塞项登记（追加式）](job-hunt-blocked.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [采集夹具（真实页面样本）](job-hunt-fixtures/README.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [自研 AI 求职 · 夜间执行晨间报告](job-hunt-morning-report.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [自研 AI 求职 · 进度日志（追加式）](job-hunt-progress.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
+| [自研 AI 求职任务板（分支 feat/gongzuotong）](job-hunt-taskboard.md) | 工作通二开历史设计方案、基线快照与阶段执行记录 |
 | [标签 PDF 能力研究（D12）](quality/tagged-pdf-research-d12.md) | 标签 PDF 调研；2026-11-17 复测结论不变 |
 | [模板质量档案（ResumeForge 内置模板）](quality/template-quality-archive.md) | 逐模板质量档案；评分与截图是 1.0.2 快照，页数已按 2.1.0 复核 |
 | [制作台本地性能基线（W21 / plan §11）](quality/workbench-performance-baseline.md) | 单机性能实测快照；重测就新增一节，不改旧数字 |

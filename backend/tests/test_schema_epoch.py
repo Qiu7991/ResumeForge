@@ -96,6 +96,26 @@ def test_decide_refuses_unknown_revision(tmp_path):
         engine.dispose()
 
 
+def test_decide_upgrades_legacy_fork_revisions_with_epoch_2(tmp_path):
+    """合并上游 2.3.1 前的本机二开版本号（重编号前）在 epoch=2 时必须放行给桥接迁移。"""
+    from app.database_migrations import LEGACY_FORK_REVISIONS
+
+    for index, legacy_rev in enumerate(sorted(LEGACY_FORK_REVISIONS)):
+        engine = _baseline_engine(tmp_path, f"legacy-fork-{index}.db")
+        try:
+            database = Path(str(engine.url.database))
+            with engine.begin() as connection:
+                connection.execute(
+                    text("UPDATE alembic_version SET version_num = :rev"),
+                    {"rev": legacy_rev},
+                )
+            before = _file_state(database)
+            assert decide(database) is EpochDecision.UPGRADE
+            assert _file_state(database) == before
+        finally:
+            engine.dispose()
+
+
 def test_decide_refuses_epoch_table_without_row(tmp_path):
     """表在但没行是未知状态：既不归档（可能是 2.0 库被改坏），也不迁移（写下去更糟）。"""
     engine = _baseline_engine(tmp_path, "epoch-without-row.db")

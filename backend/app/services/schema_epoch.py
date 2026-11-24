@@ -146,6 +146,17 @@ def known_revisions() -> frozenset[str]:
     return frozenset(script.revision for script in scripts.walk_revisions())
 
 
+def _accepted_revisions() -> frozenset[str]:
+    """当前迁移链版本号 + 允许本机平滑桥接的旧二开版本号。
+
+    备份导入路径不走本模块（走 ``data_backup.import_archive._check_candidate_revision``
+    与 ``repair_schema=False``），仍严格只认当前迁移链。
+    """
+    from ..database_migrations import LEGACY_FORK_REVISIONS
+
+    return known_revisions() | LEGACY_FORK_REVISIONS
+
+
 def _business_table_names() -> frozenset[str]:
     """当前代码认识的业务表（从模型注册表推导，不手写清单）。"""
     from ..database_migrations import application_tables
@@ -196,7 +207,7 @@ def decide(database: Path) -> EpochDecision:
     if epoch < SCHEMA_EPOCH:
         return EpochDecision.ARCHIVE_AND_RESET
 
-    if revision is None or revision not in known_revisions():
+    if revision is None or revision not in _accepted_revisions():
         return EpochDecision.REFUSE_UNKNOWN
     return EpochDecision.UPGRADE
 

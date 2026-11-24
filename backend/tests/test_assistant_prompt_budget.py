@@ -240,9 +240,11 @@ def test_worst_case_prompt_estimate_stays_bounded(client, db_session):
     # 按既定"本批条目单独计量"口径，阈值 25,400 → 26,700（实测 26,388 + 212 余量，约 0.8%）。
     # **非本批部分仍按 23,800 的目标压缩**——26,700 不是新的"正常水位"；真正的成本闸门
     # 仍是 MAX_PROMPT_TOKENS_ESTIMATE（60,000 token，实测估算远低于它）。
-    assert len(system_prompt) <= 26_700, (
+    # 2026-11-24（工作通二开合并 2.3.1）：内置技能「岗位简历包装」（builtin_skills.py）
+    # 注入的技能目录摘要净增约 499 字符（实测 26,887），按同口径留 ~0.8% 余量上调至 27,100。
+    assert len(system_prompt) <= 27_100, (
         f"系统提示固定成本回涨到 {len(system_prompt)} 字符"
-        "（2026-11-11 剩余 11 条三轮能力进提示后应 ≤ 26,700）"
+        "（2026-11-24 合并 2.3.1 含二开内置技能后应 ≤ 27,100）"
     )
     # 2026-11-14：工具 schema 实测 46,413（`_tools_specs_document` 与 document_support 的
     # 参数说明扩写）。45,000 是上一批的实测 + 余量，不是硬上限；按同一口径上调到 **47,000**

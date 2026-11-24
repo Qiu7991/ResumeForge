@@ -81,6 +81,31 @@ def test_enforce_upgrade_passes_through(tmp_path, monkeypatch) -> None:
         engine.dispose()
 
 
+def test_enforce_then_migrate_bridges_legacy_fork_revision(tmp_path, monkeypatch) -> None:
+    """模拟工作通 2.1.0 真实生产库升级：0019_candidate_job_score 经 enforce() 放行后平滑升到 head。"""
+    from app.database_migrations import _LEGACY_FORK_REVISIONS_ANCHOR, LEGACY_FORK_REVISIONS
+    from tests.test_database import _assert_head_schema
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    database_file = data_dir / "resume_forge.db"
+    engine = database.build_engine(database.database_url_for(database_file))
+    try:
+        # 构造 0017 锚点状态并写入合并前的旧二开版本号（缺少上游 0018-0022 结构）
+        command.upgrade(build_alembic_config(engine), _LEGACY_FORK_REVISIONS_ANCHOR)
+        legacy_head = max(LEGACY_FORK_REVISIONS)
+        with engine.begin() as connection:
+            connection.exec_driver_sql("UPDATE alembic_version SET version_num = ?", (legacy_head,))
+        _point_settings_at(monkeypatch, database_file)
+
+        assert startup_gate.enforce(engine) is schema_epoch.EpochDecision.UPGRADE
+        run_database_migrations(engine, backup=False)
+        _assert_head_schema(engine)
+        assert schema_epoch.read_revision(database_file) == head_revision()
+    finally:
+        engine.dispose()
+
+
 def test_enforce_refuses_too_new_without_byte_changes(tmp_path, monkeypatch) -> None:
     _data_dir, database_file = _baseline_library(tmp_path)
     with sqlite3.connect(database_file) as connection:

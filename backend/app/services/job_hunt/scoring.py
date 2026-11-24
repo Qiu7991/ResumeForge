@@ -185,7 +185,8 @@ def parse_semantic_score(raw: str) -> SemanticScore:
     # 维度别名归一
     normalized: dict[str, Any] = {}
     for key, value in payload.items():
-        normalized[_ALIASES.get(key, key)] = value
+        key_str = str(key)
+        normalized[_ALIASES.get(key_str, key_str)] = value
 
     components: list[ScoredComponent] = []
     for key, limit in COMPONENT_LIMITS.items():

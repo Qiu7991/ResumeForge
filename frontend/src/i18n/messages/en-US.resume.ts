@@ -128,7 +128,7 @@ const resume = {
   "resume.coverage.appendedThis": "Added “{name}”",
   "resume.coverage.skippedThis": "“{name}” is already in the Resume — nothing was added twice",
   "resume.coverage.polishInstruction":
-    "Polish only this entry in {section} of this Resume: {name}. Change wording, order and register only — do not add any fact, number, company or project name, and do not touch other entries.",
+    "Polish only this entry in {section}: {name}. Improve wording, order and tone only — do not add facts, numbers, companies or projects, or edit others.",
   "resume.coverage.goWorkbench": "Add in the workbench",
   "resume.coverage.goWorkbenchHint":
     "AI edits can only rewrite existing content, not add new entries",

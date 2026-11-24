@@ -1,8 +1,8 @@
 {
   "cases": {
-    "general": "0a46b7807313f4e98abd889fe2a06961b28aa50077dc094426d21febb5c46ea1",
-    "job_targeted": "0bb413a3bdd983e43cc207e78190e16b9461ea190ff1adddbabbbe9d5b8dbd04"
+    "general": "290ee7de42c63a130771da900920fb98ecfd0851ec2ce35762b29ac5e0e3e60c",
+    "job_targeted": "740c94b72e92965bc90bbfb5c42da7e53e2e23573bd222dbe9af5b8fd603b5b5"
   },
   "normalization": "见 backend/tests/test_resume_generate_golden.py 模块 docstring（版本 1）",
-  "rules_version": 1
+  "rules_version": 2
 }

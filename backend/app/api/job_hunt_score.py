@@ -10,6 +10,7 @@
 存储：结果写进 ``job_match_analysis.result`` 的 ``semantic_score`` 子键，
 复用现有表（job_id 唯一）与查询路径，**不新建表**。
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.job import Job
+from ..runtime.blocking import run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,68 @@ router = APIRouter(prefix="/api/job-hunt", tags=["job-hunt"])
 
 def _job_has_jd(job: Job) -> bool:
     return bool((job.description or "").strip())
+
+
+def _prepare_score_context(
+    db: Session,
+    *,
+    job_id: int,
+    force: bool,
+    resume_id: int | None,
+) -> tuple[dict[str, Any] | None, str, str]:
+    """在工作线程完成同步读库并构建评分 prompt；若命中缓存直接返回缓存结果。"""
+    from ..services.apply import apply_service
+    from ..services.job_hunt.scoring_service import (
+        ScoringUnavailable,
+        build_prompt_for_texts,
+        resolve_resume_text,
+    )
+
+    try:
+        job = db.get(Job, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="岗位不存在或已被删除")
+
+        existing = apply_service.latest_match(db, job_id)
+        cached = (existing.result or {}).get("semantic_score") if existing else None
+        if cached and not force:
+            return {"job_id": job_id, "cached": True, **cached}, "", ""
+
+        if not _job_has_jd(job):
+            # detail 只写原因，动作段归前端 `api/errorGuidance.ts` 的 formatErrorGuidance()
+            # （规范 §2.4 / §4.6）——同一句提示在两处写会先分叉、再互相矛盾。
+            raise HTTPException(
+                status_code=409,
+                detail="该岗位还没有 JD 正文，无法做语义评分（可让采集补抓详情或手动补全 JD）",
+            )
+
+        # 简历与资料：与备选评分走**同一条**取源路径（scoring_service），避免两处口径分叉。
+        # 岗位专属简历优先（job 行存在），再落设置里的默认简历。
+        chosen_resume_title = ""
+        try:
+            profile, profile_text, resume_text = resolve_resume_text(db, resume_id=resume_id)
+        except ScoringUnavailable as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if resume_id is not None:
+            from ..models.resume import ResumeRecord  # noqa: PLC0415 — 局部导入避免循环
+
+            record = db.get(ResumeRecord, resume_id)
+            chosen_resume_title = (record.title if record is not None else "") or ""
+        if not resume_text.strip() and not profile_text.strip():
+            raise HTTPException(status_code=400, detail="个人资料为空，无法评分")
+
+        prompt = build_prompt_for_texts(
+            resume=resume_text or profile_text,
+            title=job.title,
+            company=job.company,
+            city=job.location,
+            salary=job.salary,
+            jd=(job.description or ""),
+            profile=profile,
+        )
+        return None, prompt, chosen_resume_title
+    finally:
+        db.close()  # await 期间不占着连接池
 
 
 @router.post("/jobs/{job_id}/score")
@@ -45,58 +109,21 @@ async def score_job(
     前置：岗位必须有 JD 正文。没有 JD 时只能拿标题猜，结果没有参考价值——
     与其返回一个中性分误导用户，不如明确告诉用户「先补 JD」。
     """
-    from ..services.apply import apply_service
     from ..services.job_hunt.scoring_service import (
         ScoringFailed,
         ScoringUnavailable,
-        build_prompt_for_texts,
         call_scoring_model,
-        resolve_resume_text,
     )
 
-    job = db.get(Job, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="岗位不存在或已被删除")
-
-    existing = apply_service.latest_match(db, job_id)
-    cached = (existing.result or {}).get("semantic_score") if existing else None
-    if cached and not force:
-        return {"job_id": job_id, "cached": True, **cached}
-
-    if not _job_has_jd(job):
-        # detail 只写原因，动作段归前端 `api/errorGuidance.ts` 的 formatErrorGuidance()
-        # （规范 §2.4 / §4.6）——同一句提示在两处写会先分叉、再互相矛盾。
-        raise HTTPException(
-            status_code=409,
-            detail="该岗位还没有 JD 正文，无法做语义评分（可让采集补抓详情或手动补全 JD）",
-        )
-
-    # 简历与资料：与备选评分走**同一条**取源路径（scoring_service），避免两处口径分叉。
-    # 岗位专属简历优先（job 行存在），再落设置里的默认简历。
-    chosen_resume_title = ""
-    try:
-        profile, profile_text, resume_text = resolve_resume_text(db, resume_id=resume_id)
-    except ScoringUnavailable as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if resume_id is not None:
-        from ..models.resume import ResumeRecord  # noqa: PLC0415 — 局部导入避免循环
-
-        record = db.get(ResumeRecord, resume_id)
-        chosen_resume_title = (record.title if record is not None else "") or ""
-    if not resume_text.strip() and not profile_text.strip():
-        raise HTTPException(status_code=400, detail="个人资料为空，无法评分")
-
-    prompt = build_prompt_for_texts(
-        resume=resume_text or profile_text,
-        title=job.title,
-        company=job.company,
-        city=job.location,
-        salary=job.salary,
-        jd=(job.description or ""),
-        profile=profile,
+    cached_out, prompt, chosen_resume_title = await run_sync(
+        _prepare_score_context,
+        db,
+        job_id=job_id,
+        force=force,
+        resume_id=resume_id,
     )
-
-    db.close()  # await 期间不占着连接池
+    if cached_out is not None:
+        return cached_out
 
     try:
         score, model = await call_scoring_model(prompt)
@@ -109,7 +136,7 @@ async def score_job(
     payload = score.as_dict()
     payload["resume_id"] = resume_id
     payload["resume_title"] = chosen_resume_title
-    _persist_semantic(job_id, payload, model=model)
+    await run_sync(_persist_semantic, job_id, payload, model=model)
     return {"job_id": job_id, "cached": False, **payload}
 
 

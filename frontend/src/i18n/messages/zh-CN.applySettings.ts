@@ -26,7 +26,7 @@ const applySettings = {
   "applySettings.defaultResume.placeholder": "选一份通用简历（输入关键词搜索）",
   "applySettings.greetingBaseline.label": "自定义打招呼语基准",
   "applySettings.greetingBaseline.extra":
-    "粘贴你认可的模板/句式/语气要求；也可以写你的差异化卖点（例如「我的项目基本都是用 AI 工具端到端做的」）。它会作为最高优先级约束，但事实只能来自简历；留空则使用内置基准。",
+    "粘贴你认可的模板、句式或卖点（如「项目均由 AI 工具端到端交付」）。作为最高优先级约束，事实仍只取自简历；留空用内置基准。",
   "applySettings.greetingReview.label": "发送前必须确认招呼语",
   "applySettings.greetingReview.extra":
     "开启后，队列里没有填写招呼语的岗位会被跳过（记录里写明「招呼语未确认」），绝不拿默认招呼语替你群发。",

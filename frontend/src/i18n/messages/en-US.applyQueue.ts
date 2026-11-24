@@ -71,7 +71,7 @@ const applyQueue = {
   "applyQueue.greeting.unconfirmedHint": "No greeting saved yet: this item is skipped when sending. Click this tag to edit, generate and save one.",
   "applyQueue.greeting.pendingConfirm": "Greeting pending review",
   "applyQueue.greeting.pendingConfirmHint":
-    "Generated for this Job but not yet confirmed: this item is skipped when sending. Click this tag to edit and save, or use “Confirm greetings” in the toolbar to confirm in bulk.",
+    "Generated for this Job but unconfirmed — skipped when sending. Click to edit and save, or use “Confirm greetings” in the toolbar.",
   "applyQueue.greeting.clickToEdit": "Click to edit",
   "applyQueue.greeting.editAria": "Edit greeting for {job}",
 
@@ -81,7 +81,8 @@ const applyQueue = {
   "applyQueue.column.job": "Job",
   "applyQueue.column.admission": "Admission",
   "applyQueue.column.applyResult": "Result",
-  "applyQueue.admission.columnHint": "Whether this job is safe to apply — the admission verdict from match analysis. This column answers \"should I apply?\"; the Result column answers \"was it applied, and did it work?\".",
+  "applyQueue.admission.columnHint":
+    "Match admission verdict: answers “should I apply?”, while the Result column shows whether it was sent and succeeded.",
   "applyQueue.applyResult.never": "Not applied",
   "applyQueue.applyResult.success": "Applied",
   "applyQueue.applyResult.failed": "Failed",
@@ -169,7 +170,7 @@ const applyQueue = {
   "applyQueue.greeting.batchSkipped": "{count} more were not processed (stopped)",
   "applyQueue.action.batchGreeting": "Generate greetings",
   "applyQueue.action.batchGreetingTooltip":
-    "Generates a greeting for each selected Job from its Resume and the Job itself (same format as the button in the editor). These are drafts — you still confirm each one before anything is sent.",
+    "Generates draft greetings for selected Jobs from each Job and Resume. You still confirm every draft before sending.",
   "applyQueue.action.batchGreetingEmpty": "All selected Jobs already have greetings",
   "applyQueue.action.batchGreetingNone":
     "Selected Jobs have no usable Resume, so nothing could be generated",

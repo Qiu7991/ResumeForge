@@ -21,10 +21,9 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-logger = logging.getLogger(__name__)
+from ..services.job_hunt.queries import BLOCKLIST_KEY, read_blocklist_raw
 
-# 黑名单在 AppSetting 里的键（按数据集隔离，不建表）。
-BLOCKLIST_KEY = "job_hunt_blocklist"
+logger = logging.getLogger(__name__)
 
 
 class BlocklistConfig(BaseModel):
@@ -43,7 +42,7 @@ def select_setting():
 
 def read_blocklist_config(db: Session) -> BlocklistConfig:
     """读黑名单配置；键不存在或内容损坏时返回空配置（不报错）。"""
-    raw = db.execute(select_setting(), {"key": BLOCKLIST_KEY}).scalar_one_or_none()
+    raw = read_blocklist_raw(db)
     if not raw:
         return BlocklistConfig()
     try:

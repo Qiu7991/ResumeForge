@@ -6,6 +6,7 @@
 2026-11-19：旧的 ``/api/ai-jobs/*`` sidecar 路径（遥控外部 BossHunter 引擎）已整体删除，
 ``job_hunt_backend`` 开关随之取消——自研是唯一实现，不再有"两个后端"的概念。
 """
+
 from __future__ import annotations
 
 import json
@@ -23,7 +24,6 @@ from ..services.job_hunt.registry import get_registry
 from ..services.job_hunt.runner import HuntCriteria, JobHuntRunner, cdp_fetcher, hash_criteria
 from ..services.job_hunt.sites.boss_font import salary_for_display
 from .job_hunt_shared import (
-    BLOCKLIST_KEY,
     BlocklistConfig,
     acquire_client,
     is_blocked,
@@ -86,8 +86,9 @@ def collect(req: JobHuntCollectIn, db: Session = Depends(get_db)) -> dict:
     runner = JobHuntRunner(adapter, max_pages=req.max_pages)
     extra = {"city_code": req.city_code} if req.city_code else {}
     criteria = HuntCriteria(keywords=req.keywords, city=req.city, extra=extra)
-    cursor = load_cursor(db, adapter.key, hash_criteria(adapter.key, criteria)) \
-        if req.resume else None
+    cursor = (
+        load_cursor(db, adapter.key, hash_criteria(adapter.key, criteria)) if req.resume else None
+    )
     report = runner.run(criteria, fetch=cdp_fetcher(client, adapter), cursor=cursor)
     if report.next_cursor is not None:
         if report.stopped_reason in ("no_results", "repeated_page"):
@@ -224,8 +225,12 @@ def _start_jd_backfill(
             return cdp_fetcher(client, adapter, page_kind="detail")
 
         start_backfill_in_background(
-            open_session, job_ids, fetch_factory=_fetch_factory, adapter=adapter,
-            overwrite=overwrite, limit=limit,
+            open_session,
+            job_ids,
+            fetch_factory=_fetch_factory,
+            adapter=adapter,
+            overwrite=overwrite,
+            limit=limit,
         )
     except Exception as exc:  # noqa: BLE001 — 补抓是增强项，失败不该连累采集
         logger.info("JD 补抓启动失败（不影响入库）：%s: %s", type(exc).__name__, exc)
@@ -324,18 +329,12 @@ def read_blocklist(db: Session = Depends(get_db)) -> BlocklistConfig:
 @router.put("/blocklist")
 def write_blocklist(config: BlocklistConfig, db: Session = Depends(get_db)) -> BlocklistConfig:
     """写黑名单。空列表即清空（不做「只增不减」，用户要能撤销）。"""
+    from ..services.job_hunt.queries import write_blocklist_raw
+
     payload = json.dumps(
         {"companies": config.companies, "keywords": config.keywords}, ensure_ascii=False
     )
-    from sqlalchemy import text
-
-    db.execute(
-        text(
-            "INSERT INTO app_setting (key, value) VALUES (:key, :value) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-        ),
-        {"key": BLOCKLIST_KEY, "value": payload},
-    )
+    write_blocklist_raw(db, payload)
     db.commit()
     return config
 
@@ -360,20 +359,9 @@ def refetch_jd(req: JobHuntRefetchIn, db: Session = Depends(get_db)) -> dict:
     只处理能归属到已注册平台的岗位（按 ``source_url`` 主机名判断）；其余平台/手工
     录入的岗位无法重抓，如实跳过。后台线程跑，立刻返回本次排队的数量。
     """
-    from ..models.job import Job
+    from ..services.job_hunt.queries import find_jobs_for_refetch
 
-    if req.job_ids:
-        candidates = db.query(Job).filter(Job.id.in_(req.job_ids)).all()
-    else:
-        # 候选 = 有链接、未删除、JD 偏短。长度判断放在 Python 里，因为 SQLite 的
-        # LENGTH() 对中文按字符数算而 Python 的 len() 也是字符数，两边一致；
-        # 但用 ORM 过滤能让被软删除的行自然排除，不必再写一遍 deleted_at 条件。
-        candidates = [
-            job
-            for job in db.query(Job).filter(Job.deleted_at.is_(None)).all()
-            if (job.source_url or "").strip()
-            and len((job.description or "").strip()) < req.short_threshold
-        ]
+    candidates = find_jobs_for_refetch(db, job_ids=req.job_ids, short_threshold=req.short_threshold)
 
     registry = get_registry()
     by_site: dict[str, list[int]] = {}
@@ -440,8 +428,12 @@ def _start_serial_backfill(plan: list[tuple[int, Any]], *, job_ids_total: int) -
                 client = acquire_client(db)
                 fetch = cdp_fetcher(client, adapter, page_kind="detail")
                 backfill_details(
-                    db, ids, fetch=fetch, adapter=adapter,
-                    overwrite=True, limit=len(ids),
+                    db,
+                    ids,
+                    fetch=fetch,
+                    adapter=adapter,
+                    overwrite=True,
+                    limit=len(ids),
                 )
         except Exception as exc:  # noqa: BLE001 — 浏览器不可用等：整批放弃并记录
             logger.info("存量 JD 重抓中断：%s: %s", type(exc).__name__, exc)
@@ -450,5 +442,3 @@ def _start_serial_backfill(plan: list[tuple[int, Any]], *, job_ids_total: int) -
 
     threading.Thread(target=_run, daemon=True).start()
     logger.info("存量 JD 重抓已排队：%s 条（串行执行）", job_ids_total)
-
-

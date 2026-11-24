@@ -14,7 +14,7 @@ const applyCollect = {
     '"My interests" is your personal Job list on BOSS; no keywords or city needed. Jobs are staged together with their full descriptions.',
   "applyCollect.field.interestScanLimit": "Newest N favorites only",
   "applyCollect.hint.interestScanLimit":
-    "Counts from the newest favorite down; skipped ones still use a slot. 0 = check all. Keeps a run from scanning hundreds of old favorites just to find a few new ones.",
+    "Counts from newest favorites down (skipped items still count). 0 = check all. Avoids scanning hundreds of old favorites for a few new jobs.",
   "applyCollect.field.interestMaxPages": "Interest pages limit",
   "applyCollect.hint.interestMaxPages": "15 Jobs per page; 10 pages ≈ 150 Jobs.",
   "applyCollect.group.search": "Search conditions",

@@ -387,6 +387,180 @@
       "title": "制作台本地性能基线（W21 / plan §11）",
       "status": "record",
       "note": "单机性能实测快照；重测就新增一节，不改旧数字"
+    },
+    {
+      "path": "docs/candidate-score-pipeline-plan.md",
+      "title": "采集 → 自动评分 → 人工确认导入（方案 3）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-ai-jobs-adversarial.md",
+      "title": "AI 求职适配层 · 对抗审查报告（A7）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-ai-jobs-blocked.md",
+      "title": "AI 求职适配 · 阻塞清单",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-ai-jobs-contract.md",
+      "title": "AI 求职适配 · 三方契约核对表（A1）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-ai-jobs-fe-blocked.md",
+      "title": "AI 求职前端移植 · 阻塞清单（会话 B）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-ai-jobs-fe-morning-report.md",
+      "title": "AI 求职前端移植 · 晨间报告（会话 B）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-ai-jobs-fe-progress.md",
+      "title": "AI 求职前端移植 · 进度日志（会话 B）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-ai-jobs-fe-taskboard.md",
+      "title": "AI 求职前端移植任务板（会话 B · 分支 feat/ai-jobs-frontend）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-ai-jobs-merge-report.md",
+      "title": "AI 求职 · 线2 前端合并报告",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-ai-jobs-morning-report.md",
+      "title": "AI 求职适配 · 晨间报告（会话 A · 后端）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-ai-jobs-progress.md",
+      "title": "AI 求职适配 · 执行日志（追加式）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-ai-jobs-taskboard.md",
+      "title": "AI 求职适配任务板（分支 feat/ai-jobs-sidecar）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-baseline.md",
+      "title": "二开功能落点校对表（N1 交付物）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-blocked.md",
+      "title": "2.0 移植阻塞清单",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-migration-inventory.md",
+      "title": "简历通二开功能清单（迁移上游 2.0 用）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-morning-report.md",
+      "title": "简历通 2.0 二开移植 · 晨间报告",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-progress.md",
+      "title": "2.0 移植进度日志（追加式）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-resume-adversarial.md",
+      "title": "N8 简历侧 · 对抗审查报告（R7）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-resume-baseline.md",
+      "title": "N8 简历侧移植 · 落点复核（R1，只读）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-resume-blocked.md",
+      "title": "N8 简历侧移植 · 阻塞清单",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-resume-morning-report.md",
+      "title": "N8 简历侧移植 · 晨间报告",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-resume-progress.md",
+      "title": "N8 简历侧移植 · 执行日志（追加式）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-resume-taskboard.md",
+      "title": "N8 简历侧移植任务板（分支 feat/resume-side）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/fork-2.0-taskboard.md",
+      "title": "2.0 移植任务板",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/job-hunt-blocked.md",
+      "title": "自研 AI 求职 · 阻塞项登记（追加式）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/job-hunt-fixtures/README.md",
+      "title": "采集夹具（真实页面样本）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/job-hunt-morning-report.md",
+      "title": "自研 AI 求职 · 夜间执行晨间报告",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/job-hunt-progress.md",
+      "title": "自研 AI 求职 · 进度日志（追加式）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
+    },
+    {
+      "path": "docs/job-hunt-taskboard.md",
+      "title": "自研 AI 求职任务板（分支 feat/gongzuotong）",
+      "status": "record",
+      "note": "工作通二开历史设计方案、基线快照与阶段执行记录"
     }
   ],
   "archived": [
