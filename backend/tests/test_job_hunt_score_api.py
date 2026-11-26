@@ -15,7 +15,7 @@ def _job(db_session, **kw):
     defaults = dict(
         title="AI 工程师",
         company="测试公司",
-        location="广州",
+        location="示例市",
         salary="15-25K",
         description="负责 AI 应用开发，要求熟悉 Python。",
         source_url="https://example.com/j1",
@@ -35,7 +35,7 @@ _MODEL_JSON = json.dumps(
         "transferable_evidence": {"evidence": "有迁移", "score": 18},
         "hard_requirements": {"evidence": "满足", "score": 15},
         "tools_industry": {"evidence": "Python", "score": 8},
-        "practical_fit": {"evidence": "广州", "score": 10},
+        "practical_fit": {"evidence": "地点匹配", "score": 10},
         "caps": [],
         "hard_gaps": [],
         "reason": "匹配",

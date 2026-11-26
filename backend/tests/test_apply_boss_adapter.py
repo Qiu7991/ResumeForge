@@ -233,12 +233,12 @@ def test_parse_job_detail_repairs_company_taken_from_the_wrong_element():
         {
             "job_title": "AI 应用开发助理（双休+五险一金）",
             "company": "AI 应用开发助理（双休+五险一金）\n8-13K",
-            "title": "AI 应用开发助理（双休+五险一金）_广州市依色锦时尚服饰有限公司招聘-BOSS直聘",
+            "title": "AI 应用开发助理（双休+五险一金）_示例服饰有限公司招聘-BOSS直聘",
             "description": "职责",
         }
     )
 
-    assert detail["company"] == "广州市依色锦时尚服饰有限公司"
+    assert detail["company"] == "示例服饰有限公司"
 
 
 def test_parse_job_detail_repairs_a_generic_company_label():
@@ -247,12 +247,12 @@ def test_parse_job_detail_repairs_a_generic_company_label():
         {
             "job_title": "AI 应用开发助理（双休+五险一金）",
             "company": "公司",
-            "title": "「AI 应用开发助理（双休+五险一金）招聘」_广州市依色锦时尚服饰招聘-BOSS",
+            "title": "「AI 应用开发助理（双休+五险一金）招聘」_示例服饰招聘-BOSS",
             "description": "职责",
         }
     )
 
-    assert detail["company"] == "广州市依色锦时尚服饰"
+    assert detail["company"] == "示例服饰"
 
 
 def test_detect_blocker_prefers_captcha_over_login():

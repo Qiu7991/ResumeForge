@@ -22,7 +22,7 @@ def test_full_name_replaces_short_brand():
 
 def test_truncated_name_always_replaced():
     """带截断标记的名字无条件替换——它本身就是残的。"""
-    assert should_replace_company("广州市示例国际贸...", "海森国际") is True
+    assert should_replace_company("广州市示例国际贸...", "示例国际") is True
 
 
 def test_empty_current_always_replaced():

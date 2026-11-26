@@ -25,7 +25,7 @@ def _payload(**overrides) -> str:
         "transferable_evidence": {"evidence": "有迁移经验", "score": 20},
         "hard_requirements": {"evidence": "学历满足", "score": 15},
         "tools_industry": {"evidence": "Python/LLM", "score": 8},
-        "practical_fit": {"evidence": "广州匹配", "score": 10},
+        "practical_fit": {"evidence": "地点匹配", "score": 10},
         "caps": [],
         "hard_gaps": [],
         "reason": "整体匹配",
