@@ -12,7 +12,7 @@
     backend/.venv/Scripts/python.exe scripts/import_portrait.py --extract
     backend/.venv/Scripts/python.exe scripts/import_portrait.py --apply
 
-画像目录默认 ``D:\\飞牛文件同步\\工作\\简历\\AI方向``，可用 ``--dir`` 覆盖。
+画像目录默认取环境变量 ``JOBFORGE_PORTRAIT_DIR``（未设时为仓库下 ``portrait/``），可用 ``--dir`` 覆盖。
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -40,7 +41,11 @@ from app.services.profile.portrait_import import (  # noqa: E402
 )
 from sqlalchemy.orm import Session  # noqa: E402
 
-DEFAULT_DIR = Path(r"D:\飞牛文件同步\工作\简历\AI方向")
+DEFAULT_DIR = (
+    Path(os.environ["JOBFORGE_PORTRAIT_DIR"])
+    if os.environ.get("JOBFORGE_PORTRAIT_DIR")
+    else Path(__file__).resolve().parents[1] / "portrait"
+)
 DEFAULT_BUNDLE = Path(__file__).resolve().parents[1] / "runtime" / "portrait-bundle.json"
 SOURCE_FILES = (
     "00-个人画像.md",

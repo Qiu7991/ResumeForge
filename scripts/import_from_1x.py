@@ -27,7 +27,7 @@
     backend/.venv/Scripts/python.exe -I scripts/import_from_1x.py --apply
 
     # 自定义源库
-    ... --source "D:/飞牛文件同步/工作/简历通/backend/data/resume_forge.db"
+    ... --source "/path/to/legacy-1x/backend/data/resume_forge.db"
 """
 
 from __future__ import annotations
@@ -47,7 +47,11 @@ TARGET = ROOT / "backend" / "data" / "resume_forge.db"
 # 让 `app.*` 可导入：脚本常以 `-I`（隔离模式）运行，那种模式下 sys.path 不含脚本目录，
 # 更不含 backend/。不加这行，`_api_key_decrypts` 里的导入会静默失败 → 误报"Key 解不开"。
 sys.path.insert(0, str(ROOT / "backend"))
-DEFAULT_SOURCE = Path(r"D:/飞牛文件同步/工作/简历通/backend/data/resume_forge.db")
+DEFAULT_SOURCE = (
+    Path(os.environ["JOBFORGE_LEGACY_1X_DB"])
+    if os.environ.get("JOBFORGE_LEGACY_1X_DB")
+    else ROOT.parent / "legacy-1x" / "backend" / "data" / "resume_forge.db"
+)
 REPORT = ROOT / "runtime" / "import-from-1x-report.json"
 
 # ---------------------------------------------------------------------------
