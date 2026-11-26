@@ -14,6 +14,23 @@ const collectResult = {
   "collectResult.empty":
     "Nothing to import yet (everything may already be imported, or nothing was collected)",
 
+  /** Pending / imported view switch. */
+  "collectResult.view.pending": "Pending",
+  "collectResult.view.imported": "Imported",
+  "collectResult.imported.hint":
+    "Staged records already imported into Job Pool; remove entries whose job was deleted to collect them again.",
+  "collectResult.imported.empty": "No imported staged records yet",
+  "collectResult.imported.column.jobStatus": "Job status",
+  "collectResult.imported.status.live": "In Job Pool",
+  "collectResult.imported.status.orphaned": "Job removed",
+  "collectResult.imported.deleteSelected": "Remove from staging",
+  "collectResult.imported.deleteSelectedWithCount": "Remove {count} selected",
+  "collectResult.imported.cleanOrphaned": "Clean {count} orphaned",
+  "collectResult.imported.deleteSuccess": "Removed {count} staged records",
+  "collectResult.imported.deleteFailed": "Could not remove staged records; please try again",
+  "collectResult.imported.footnote":
+    "Removing from staging moves entries to Trash (recoverable) and never deletes live jobs in Job Pool.",
+
   "collectResult.column.title": "Job",
   "collectResult.column.location": "City",
   "collectResult.column.salary": "Salary",

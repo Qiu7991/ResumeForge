@@ -17,6 +17,8 @@ from ..schemas.material import (
     CandidateCsvImportResult,
     CandidateCsvPreview,
     CandidateCsvRow,
+    CandidateJobBulkDeleteOut,
+    CandidateJobBulkDeleteRequest,
     CandidateJobBulkImportOut,
     CandidateJobBulkImportRequest,
     CandidateJobOut,
@@ -30,6 +32,7 @@ from ..services.candidate_csv import (
     parse_candidate_csv,
 )
 from ..services.candidate_jobs import (
+    bulk_delete_candidate_jobs,
     delete_candidate_job,
     import_candidates,
     list_candidate_job_ids,
@@ -112,6 +115,19 @@ def import_candidate_jobs(payload: CandidateJobBulkImportRequest, db: Session = 
     实际是路由顺序问题。
     """
     return import_candidates(db, payload.candidate_ids)
+
+
+@router.post("/bulk-delete", response_model=CandidateJobBulkDeleteOut)
+def bulk_remove_candidate_jobs(
+    payload: CandidateJobBulkDeleteRequest, db: Session = Depends(get_db)
+):
+    """批量软删暂存区候选岗位（进回收站可恢复，清理后即可重新采集）。
+
+    **声明在 ``/{candidate_id}`` 之前**：与 ``/import`` / ``/ids`` 同一条路由顺序铁律，
+    否则 "bulk-delete" 会先被当成 candidate_id 去解析。
+    """
+    deleted, missing = bulk_delete_candidate_jobs(db, payload.candidate_ids)
+    return CandidateJobBulkDeleteOut(deleted=deleted, missing=missing)
 
 
 @router.get("/ids", response_model=list[int])

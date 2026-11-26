@@ -25,6 +25,22 @@ const collectResult = {
     "列出**所有批次**采集到、尚未导入岗位广场的岗位（含此前几轮）。仅勾选的会导入，其余保留在此供后续挑选。",
   "collectResult.empty": "还没有待导入的岗位（可能都已导入，或一条都没采到）",
 
+  /** 「待导入 / 已导入」视图切换。 */
+  "collectResult.view.pending": "待导入",
+  "collectResult.view.imported": "已导入",
+  "collectResult.imported.hint": "已导入岗位广场的暂存记录；原岗位删除后移出暂存区即可重新采集。",
+  "collectResult.imported.empty": "还没有已导入的暂存记录",
+  "collectResult.imported.column.jobStatus": "岗位状态",
+  "collectResult.imported.status.live": "在岗位广场",
+  "collectResult.imported.status.orphaned": "原岗位已删",
+  "collectResult.imported.deleteSelected": "移出暂存区",
+  "collectResult.imported.deleteSelectedWithCount": "移出选中的 {count} 条",
+  "collectResult.imported.cleanOrphaned": "清理 {count} 条孤立记录",
+  "collectResult.imported.deleteSuccess": "已移出 {count} 条暂存记录",
+  "collectResult.imported.deleteFailed": "移出暂存记录失败，请稍后重试",
+  "collectResult.imported.footnote":
+    "移出暂存区会进入回收站（可恢复），不影响岗位广场里仍在使用的正式岗位。",
+
   "collectResult.column.title": "岗位",
   "collectResult.column.location": "城市",
   "collectResult.column.salary": "薪资",

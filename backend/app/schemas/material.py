@@ -267,6 +267,11 @@ class CandidateJobOut(BaseModel):
     collect_task_id: int | None = None
     status: Literal["pending", "imported"]
     imported_job_id: int | None = None
+    # 已导入的候选，它关联的正式岗位**是否已经不在岗位广场**（被彻底删除或进了回收站）。
+    #
+    # 判据：``status == "imported"`` 且 ``imported_job_id`` 在存活岗位里查不到。界面据此把
+    # 这条标成「原岗位已删」，并允许用户把它移出暂存区，好让同一个岗位能重新被采集。
+    imported_job_missing: bool = False
     # 这条候选对应的岗位**是否已经在投递队列里**（2026-11-10）。
     #
     # 为什么不在前端拿 imported_job_id 去比对：队列里存的是 job_id，候选存的是
@@ -347,6 +352,19 @@ class CandidateJobBulkImportOut(BaseModel):
     invalid: int = 0
     missing: int = 0
     results: list[CandidateJobImportOutcome] = Field(default_factory=list)
+
+
+class CandidateJobBulkDeleteRequest(BaseModel):
+    """批量软删选中的备选岗位（移入回收站，可恢复；不删除正式岗位）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_ids: list[int] = Field(min_length=1, max_length=MAX_CANDIDATE_IMPORT_BATCH)
+
+
+class CandidateJobBulkDeleteOut(BaseModel):
+    deleted: int = 0
+    missing: int = 0
 
 
 class CandidateCsvExportRequest(BaseModel):

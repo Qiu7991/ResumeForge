@@ -108,6 +108,19 @@ export function deleteCandidateJob(id: number): Promise<void> {
   return request(`/candidate-jobs/${id}`, { method: "DELETE" });
 }
 
+/**
+ * 批量软删候选（移入回收站，可恢复）：清理「已导入但原岗位已删」的孤立记录，好让同一
+ * 岗位重新被采集。**只动候选表，不删正式岗位。**
+ */
+export function bulkDeleteCandidateJobs(
+  candidateIds: number[],
+): Promise<{ deleted: number; missing: number }> {
+  return request("/candidate-jobs/bulk-delete", {
+    method: "POST",
+    body: JSON.stringify({ candidate_ids: candidateIds }),
+  });
+}
+
 /** 当前筛选下全部候选的 id（不分页）：抽屉「全选全部」用；上限由调用方裁决。 */
 export function listCandidateJobIds(
   params: {

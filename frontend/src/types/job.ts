@@ -237,6 +237,12 @@ export interface CandidateJob {
   status: CandidateJobStatus;
   imported_job_id: number | null;
   /**
+   * 已导入的候选，它关联的正式岗位是否**已经不在岗位广场**（被彻底删除或进了回收站）。
+   *
+   * 服务端算好下发；界面据此标「原岗位已删」，并允许把这批孤立记录移出暂存区。
+   */
+  imported_job_missing?: boolean;
+  /**
    * 这个岗位**是否已经在投递队列里**（2026-11-10，服务端算好下发）。
    *
    * 与 `imported_job_id` 不是一回事：那只说明"导入过岗位广场"，导入后又被移出队列的

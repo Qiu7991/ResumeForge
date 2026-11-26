@@ -16,11 +16,13 @@ import { t } from "../../i18n";
 const apiMocks = vi.hoisted(() => ({
   listCandidateJobs: vi.fn(),
   importCandidateJobs: vi.fn(),
+  bulkDeleteCandidateJobs: vi.fn(),
 }));
 
 vi.mock("../../api/candidateJob", () => ({
   listCandidateJobs: apiMocks.listCandidateJobs,
   importCandidateJobs: apiMocks.importCandidateJobs,
+  bulkDeleteCandidateJobs: apiMocks.bulkDeleteCandidateJobs,
 }));
 
 function candidate(overrides: Partial<CandidateJob> = {}): CandidateJob {

@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from ..models.material import CandidateJob
+from ..models.job import Job
+from ..models.material import CANDIDATE_JOB_IMPORTED, CandidateJob
 from ..schemas.material import CandidateJobOut
 from .apply._queue import queued_job_ids
 from .candidate_origin import is_collected_candidate
@@ -41,15 +42,26 @@ def candidates_by_ids(
 
 
 def with_queue_flags(db: Session, rows: list[CandidateJob]) -> list[CandidateJobOut]:
-    """给一批候选补上「是否已在投递队列」与「采集时间」（2026-11-10）。
+    """给一批候选补上「是否已在投递队列」「采集时间」与「原岗位是否还在」。
 
-    **一次查询算完全部**（``queued_job_ids`` 走 ``WHERE job_id IN (...)``），不逐条查：
-    采集结果一次上百条，逐条查会让打开这一块随条数线性变慢。
+    **一次查询算完全部**（``queued_job_ids`` 与存活 ``Job.id`` 都走 ``WHERE id IN (...)``），
+    不逐条查：采集结果一次上百条，逐条查会让打开这一块随条数线性变慢。
 
-    两个字段都只增不改：``status`` / ``imported_job_id`` 的语义原样保留——前端已有代码
-    依赖它们，这里只是多给两条**它本来要自己算**的信息。
+    这些字段都只增不改：``status`` / ``imported_job_id`` 的语义原样保留——前端已有代码
+    依赖它们，这里只是多给三条**它本来要自己算**的信息。
     """
     queued = queued_job_ids(db, [row.imported_job_id for row in rows])
+    # 一次查出这批候选关联的**存活**正式岗位 id（回收站里的不算）：逐条查会让这块随
+    # 采集量线性变慢，而这里要回答的只是"原岗位还在不在"。
+    linked_job_ids = {int(row.imported_job_id) for row in rows if row.imported_job_id}
+    live_job_ids: set[int] = set()
+    if linked_job_ids:
+        live_job_ids = {
+            int(job_id)
+            for (job_id,) in db.query(Job.id)
+            .filter(Job.id.in_(linked_job_ids), live_only(Job))
+            .all()
+        }
     out: list[CandidateJobOut] = []
     for row in rows:
         item = CandidateJobOut.model_validate(row)
@@ -58,6 +70,11 @@ def with_queue_flags(db: Session, rows: list[CandidateJob]) -> list[CandidateJob
                 update={
                     "in_apply_queue": bool(
                         row.imported_job_id and int(row.imported_job_id) in queued
+                    ),
+                    # 已导入、但关联的正式岗位已不在岗位广场（彻底删除或进了回收站）。
+                    "imported_job_missing": bool(
+                        row.status == CANDIDATE_JOB_IMPORTED
+                        and not (row.imported_job_id and int(row.imported_job_id) in live_job_ids)
                     ),
                     # 采集来的候选才有「采集时间」；手动粘贴的留空（界面显示为"手动添加"）。
                     #

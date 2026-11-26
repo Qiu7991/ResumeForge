@@ -11,7 +11,7 @@
  * 然后去岗位广场里数不出来。
  */
 import { LinkOutlined, SendOutlined, UploadOutlined } from "@ant-design/icons";
-import { Alert, App, Button, Collapse, Space, Table, Tag, Typography } from "antd";
+import { Alert, App, Button, Collapse, Segmented, Space, Table, Tag, Typography } from "antd";
 import EmptyState from "../../components/common/EmptyState";
 import type { TableColumnsType } from "antd";
 import { useState } from "react";
@@ -19,6 +19,7 @@ import { useNavigate } from "react-router-dom";
 import { importCandidateJobs, listCandidateJobs } from "../../api/candidateJob";
 import type { CandidateJobSort } from "../../api/candidateJob";
 import CandidateScoreCell from "../jobs/candidate/CandidateScoreCell";
+import CollectImportedPanel from "./CollectImportedPanel";
 import { useApi } from "../../hooks/useApi";
 import { bulkEnqueueJobs, bulkEnqueueSummary } from "./queue/bulkEnqueue";
 import { formatDateTime } from "../../utils/format";
@@ -87,23 +88,15 @@ export default function CollectResultPanel({
   const { message } = App.useApp();
   const navigate = useNavigate();
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  // 「待导入 / 已导入」视图：已导入的那批单独拆成子组件（本文件已贴 500 行预算）。
+  const [view, setView] = useState<"pending" | "imported">("pending");
   const [importing, setImporting] = useState(false);
   const [lastResult, setLastResult] = useState<CandidateJobImportResult | null>(null);
 
-  // 拉**全部批次**的待处理候选（2026-11-10 用户要求）：
-  // 以前只列「本次采集结果」，于是昨天采的 46 条躺在暂存区里、界面上看不见，用户以为丢了。
-  // 现在一次列完"我采集过的所有岗位"，省得再去「采集记录」翻。
-  //
-  // `status: "pending"` 仍然只列**还没导入岗位广场**的：已导入的岗位在岗位广场里，
-  // 在这里重复列出来只会让这一块越来越长。（"已在投递台"的标注另算，见列定义。）
-  //
-  // **不再依赖 `taskId`**（2026-11-10 第二次修）：这段列的是"所有批次的候选"，
-  // 跟"现在有没有正在跑/刚跑完的采集任务"无关。以前 `taskId` 为空就 `return null`，
-  // 于是用户切到别的页、再切回来（当前任务已被收尾、`collectTask` 变 null）时，
-  // 整块候选列表凭空消失——他以为数据没了。
-  //
-  // 排序走**服务端**（`sort` 参数）：本表是客户端分页，本地排序只能排当前页，
-  // 用户按分数挑的时候看到的是"这一页里最高的"，不是"所有候选里最高的"。
+  // 拉**全部批次**的待处理候选（2026-11-10）：以前只列本次采集结果，昨天采的候选躺在
+  // 暂存区里看不见，用户以为丢了。`status: "pending"` 只列还没导入岗位广场的；**不依赖
+  // `taskId`**——一旦 taskId 为空就不渲染，用户切页回来时整块列表会凭空消失。
+  // 排序走**服务端**（`sort` 参数）：本表是客户端分页，本地排序只能排当前页。
   const [sort, setSort] = useState<CandidateJobSort>("created_desc");
   const { data, loading, error, reload } = useApi<CandidateJob[]>(
     () => listCandidateJobs({ status: "pending", sort }),
@@ -324,7 +317,9 @@ export default function CollectResultPanel({
         const order = Array.isArray(sorter) ? sorter[0]?.order : sorter.order;
         if (field !== "score_total") return;
         // 升序/降序都按服务端键排；取消排序（order 为空）回到默认的最近采集在前。
-        setSort(order === "ascend" ? "score_asc" : order === "descend" ? "score_desc" : "created_desc");
+        setSort(
+          order === "ascend" ? "score_asc" : order === "descend" ? "score_desc" : "created_desc",
+        );
       }}
     />
   );
@@ -345,13 +340,39 @@ export default function CollectResultPanel({
   };
   const segments = splitByThreshold(candidates);
 
+  const header = (
+    <Space size={8} wrap>
+      <Typography.Text strong>{t("collectResult.title")}</Typography.Text>
+      <Segmented
+        size="small"
+        value={view}
+        onChange={(value) => setView(value as "pending" | "imported")}
+        options={[
+          { label: t("collectResult.view.pending"), value: "pending" },
+          { label: t("collectResult.view.imported"), value: "imported" },
+        ]}
+      />
+      <Typography.Text type="secondary">
+        {view === "pending" ? t("collectResult.hint") : t("collectResult.imported.hint")}
+      </Typography.Text>
+    </Space>
+  );
+
+  if (view === "imported") {
+    return (
+      <div className="apply-collect-result">
+        <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+          {header}
+          <CollectImportedPanel taskId={taskId} disabled={disabled} refreshKey={refreshKey} />
+        </Space>
+      </div>
+    );
+  }
+
   return (
     <div className="apply-collect-result">
       <Space orientation="vertical" size={8} style={{ width: "100%" }}>
-        <Space size={8} wrap>
-          <Typography.Text strong>{t("collectResult.title")}</Typography.Text>
-          <Typography.Text type="secondary">{t("collectResult.hint")}</Typography.Text>
-        </Space>
+        {header}
 
         {error && <Alert type="error" showIcon title={error} />}
 
@@ -400,7 +421,9 @@ export default function CollectResultPanel({
                   </Typography.Text>
                 </Typography.Text>
                 {segments.above.length === 0 ? (
-                  <EmptyState description={t("aiJobs.hunt.emptyAbove", { score: scoreThreshold })} />
+                  <EmptyState
+                    description={t("aiJobs.hunt.emptyAbove", { score: scoreThreshold })}
+                  />
                 ) : (
                   renderTable(segments.above)
                 )}

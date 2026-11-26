@@ -211,6 +211,28 @@ def delete_candidate_job(db: Session, candidate_id: int) -> bool:
     return True
 
 
+def bulk_delete_candidate_jobs(db: Session, candidate_ids: list[int]) -> tuple[int, int]:
+    """批量软删选中的候选岗位（移入回收站，可恢复），返回 ``(删除数, 缺失数)``。
+
+    **只动候选表，不碰正式岗位**：清理孤立记录的目的是"让同一个岗位能重新采集"，不是
+    删除用户已经导入的岗位。去重保序与 ``import_candidates`` 同口径：同一个 id 传两次
+    只删一次，缺失的 id 如实计数（过期页面勾选的记录可能已在别处被删）。
+
+    存活项一次 commit；一条都没有时不 commit——空事务只会白开一次写锁。
+    """
+    # 局部 import：``candidate_jobs_read`` 会经 ``apply._queue`` 触发 apply 包初始化，而
+    # 采集器又反过来 import 本模块；放模块顶层会在同一条加载路径上撞成半初始化循环导入。
+    from .candidate_jobs_read import candidates_by_ids
+
+    unique_ids = list(dict.fromkeys(candidate_ids))
+    candidates, missing = candidates_by_ids(db, unique_ids)
+    for candidate in candidates:
+        soft_delete(db, "candidate_job", candidate)
+    if candidates:
+        db.commit()
+    return len(candidates), len(missing)
+
+
 def stage_candidate_job(
     db: Session,
     *,
@@ -296,6 +318,7 @@ __all__ = [
     "MAX_CANDIDATE_TOOL_CHARS",
     "RECOGNITION_SOURCE_COLLECT",
     "RECOGNITION_SOURCE_MANUAL",
+    "bulk_delete_candidate_jobs",
     "candidate_brief",
     "candidate_or_none",
     "create_candidate_job",
