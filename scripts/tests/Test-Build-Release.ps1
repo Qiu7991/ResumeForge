@@ -246,7 +246,22 @@ try {
         # the launcher serves the built frontend from the backend, so the release
         # carries the build output even though git does not track it). This is
         # what a hand-made zip got wrong.
-        $trackedFiles = @(& git -C $ProjectRoot ls-tree -r --name-only HEAD)
+        # Disable quotepath and decode stdout as UTF-8 directly so tracked non-ASCII
+        # filenames match the zip's UTF-8 entries regardless of console code page.
+        $gitPsi = New-Object System.Diagnostics.ProcessStartInfo
+        $gitPsi.FileName = "git"
+        $gitPsi.Arguments = "-c core.quotepath=false ls-tree -r --name-only HEAD"
+        $gitPsi.WorkingDirectory = $ProjectRoot
+        $gitPsi.RedirectStandardOutput = $true
+        $gitPsi.RedirectStandardError = $true
+        $gitPsi.UseShellExecute = $false
+        $gitPsi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $gitProc = [System.Diagnostics.Process]::Start($gitPsi)
+        $gitStdout = $gitProc.StandardOutput.ReadToEnd()
+        $gitStderr = $gitProc.StandardError.ReadToEnd()
+        $gitProc.WaitForExit()
+        Assert-ReleaseTest -Condition ($gitProc.ExitCode -eq 0) -Message "git ls-tree failed: $gitStderr"
+        $trackedFiles = @($gitStdout -split "`r?`n" | Where-Object { $_ -ne "" })
         Assert-ReleaseTest -Condition ($trackedFiles.Count -gt 0) -Message "git ls-tree returned nothing."
         $distPaths = @($relativePaths | Where-Object { $_.StartsWith("frontend/dist/") })
         Assert-ReleaseTest `
