@@ -4,7 +4,7 @@ name: CodeQL
 # 结果出现在仓库的 Security → Code scanning 里，按 GitHub 默认策略告警。
 on:
   push:
-    branches: [main]
+    branches: [main, feat/jobforge]
   pull_request:
   schedule:
     # 每周一 03:20 UTC（北京 11:20）：避开整点 runner 高峰。

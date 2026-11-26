@@ -14,6 +14,6 @@ def _tool_search_product_docs(_db: Session, arguments: dict) -> ToolResult:
     limit = int(arguments.get("limit") or 5)
     return ToolResult(
         text=format_product_doc_results(query, limit),
-        summary=f"查阅了简历通本地文档「{query[:40]}」",
+        summary=f"查阅了求职通本地文档「{query[:40]}」",
     )
 

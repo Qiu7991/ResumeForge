@@ -353,7 +353,7 @@ rf_main() {
     log_ok "更新完成。"
     log_ok "用 start.command 重新启动即可；data/ 里的数据没有被改动。"
     if [ "$RF_RESTART" -eq 1 ]; then
-        log_info "==> 正在重新启动简历通"
+        log_info "==> 正在重新启动求职通"
         if [ -f "$RF_PROJECT_ROOT/start.command" ]; then
             open "$RF_PROJECT_ROOT/start.command"
         else

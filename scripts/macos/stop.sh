@@ -116,7 +116,7 @@ EOF
         record_path="$stale_dir/$record_name"
         recorded_pid=$(process_record_field "$record_path" "process_id") || recorded_pid=""
         log_warn "${display_name}：记录与当前进程对不上，**没有**停止任何进程。"
-        log_warn "记录里的 PID 是 ${recorded_pid}。如果确认那还是简历通的进程，可以手动停止："
+        log_warn "记录里的 PID 是 ${recorded_pid}。如果确认那还是求职通的进程，可以手动停止："
         log_warn "    kill ${recorded_pid}"
         log_warn "如果这个 PID 已经被系统分配给别人了（PID 会被复用），删掉记录即可："
         log_warn "    rm -f $record_path"
@@ -135,7 +135,7 @@ EOF
 #   1. 监听端口的进程命令行必须匹配本仓库的启动特征（后端 uvicorn app.main:app；
 #      前端带 --strictPort——这是启动器自己传的，普通 Vite 项目默认没有）；
 #   2. 该端口必须自报 ResumeForge：/api/health 的 name 字段；前端在后端已退出、
-#      代理不可用时退回检查首页标题里的 ResumeForge。
+#      代理不可用时退回检查首页标题里的 ResumeForge / 求职通 / JobForge。
 # 任一条件不满足就不动，绝不按进程名批量杀。
 rf_port_looks_like_resumeforge() {
     display_name=$1
@@ -147,7 +147,7 @@ rf_port_looks_like_resumeforge() {
     if [ "$display_name" = "frontend" ]; then
         page=$(curl -fsS --max-time 2 "http://127.0.0.1:${port}/" 2>/dev/null || true)
         case "$page" in
-            *ResumeForge*) return 0 ;;
+            *ResumeForge* | *求职通* | *JobForge*) return 0 ;;
         esac
     fi
     return 1
@@ -201,7 +201,7 @@ rf_stop_unrecorded() {
                 printf '%s\n' "$command_line" | grep -Eq "$pattern" || continue
                 rf_port_looks_like_resumeforge "$display_name" "$port" || continue
                 kill_target=$(rf_find_process_tree_root "$listener_pid" "$pattern")
-                log_info "${display_name}：没有运行记录，按端口 ${port} 识别为简历通，正在停止..."
+                log_info "${display_name}：没有运行记录，按端口 ${port} 识别为求职通，正在停止..."
                 stop_process_tree "$kill_target" TERM
                 waited=0
                 while [ "$waited" -lt 10 ] && kill -0 "$kill_target" 2>/dev/null; do

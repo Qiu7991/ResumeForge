@@ -135,7 +135,7 @@ def test_product_docs_search_finds_resume_preview_guidance():
 def test_product_docs_tool_is_registered_and_offline(db_session):
     assert "search_product_docs" in tool_names()
     result = execute_tool(db_session, "search_product_docs", {"query": "设置 应用"})
-    assert "简历通本地文档" in result.text
+    assert "求职通本地文档" in result.text
     assert result.changed is False
 
 
@@ -314,7 +314,7 @@ def test_default_limit_is_five_and_k_is_optional():
     assert len(search_product_docs("简历预览", k=999)) == MAX_RESULTS
     text = format_product_doc_results("简历预览", k=2)
     assert "[文档1]" in text and "[文档2]" in text and "[文档3]" not in text
-    assert "简历通本地文档" in text
+    assert "求职通本地文档" in text
 
 
 # ===== 20 问标注集（top1 必须命中人工标注标题） =====

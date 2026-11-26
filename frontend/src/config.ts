@@ -23,7 +23,7 @@ export const APP_VERSION: string = pkg.version;
 
 /** 公开仓库地址可被部署环境覆盖；默认值用于开源发行版的导航入口。 */
 export const GITHUB_REPO =
-  import.meta.env.VITE_GITHUB_REPO?.trim() || "https://github.com/magicapple123/ResumeForge";
+  import.meta.env.VITE_GITHUB_REPO?.trim() || "https://github.com/Qiu7991/ResumeForge";
 
 /**
  * JD/招聘原文类文本输入的统一硬上限（字符数）。

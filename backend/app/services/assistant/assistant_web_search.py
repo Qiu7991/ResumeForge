@@ -41,7 +41,9 @@ _MAX_CANDIDATE_RESULTS = 15
 _TAG_RE = re.compile(r"\s+")
 _RESUMEFORGE_MARKERS = (
     "简历通",
+    "求职通",
     "resumeforge",
+    "jobforge",
     "求职助手",
     "简历预览",
     "求职统计界面",

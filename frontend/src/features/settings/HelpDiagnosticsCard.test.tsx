@@ -80,7 +80,7 @@ describe("HelpDiagnosticsCard", () => {
 
     expect(screen.getByText("922830167")).toBeTruthy();
     expect(screen.getByText("GitHub Issues").getAttribute("href")).toBe(
-      "https://github.com/magicapple123/ResumeForge/issues",
+      "https://github.com/Qiu7991/ResumeForge/issues",
     );
   });
 

@@ -7,7 +7,10 @@ R08 起联网**只有一个入口**：模型自己发起的 ``web_search`` 工�
 
 from unittest.mock import AsyncMock
 
-from app.services.assistant.assistant_web_search import AssistantSearchError
+from app.services.assistant.assistant_web_search import (
+    AssistantSearchError,
+    is_local_resume_forge_question,
+)
 from app.services.llm.base import LLMDelta
 from tests.test_assistant import (
     _configure_llm,
@@ -150,7 +153,7 @@ def test_resume_forge_usage_question_skips_public_search(client, monkeypatch):
     assert not any(event["type"] == "sources" for event in events)
 
     model_text = _model_text(provider)
-    assert "这是 ResumeForge（简历通）本身的使用问题" in model_text
+    assert "这是求职通（JobForge）本身的使用问题" in model_text
     assert "不要为这个问题搜索公开网页" in model_text
 
     # 跳过公开搜索不再在用户消息的 context 里留标记（那个字段只服务于已删除的预搜）。
@@ -351,4 +354,14 @@ def test_web_search_tool_forwards_the_model_chosen_limit(client, monkeypatch):
 
     assert response.status_code == 200
     assert limits == [3, None]
+
+
+def test_new_brand_names_are_recognized_as_local_product_questions():
+    """「求职通」「JobForge」这些新叫法也要命中本地产品问题判定。"""
+    assert is_local_resume_forge_question("求职通怎么用")
+    assert is_local_resume_forge_question("JobForge 按钮在哪里")
+    # 旧叫法保留兼容，避免升级后老用户的问法漏判。
+    assert is_local_resume_forge_question("简历通怎么用")
+    # 不带动作词的纯品牌名不算"问用法"，仍可正常走联网搜索。
+    assert not is_local_resume_forge_question("求职通")
 

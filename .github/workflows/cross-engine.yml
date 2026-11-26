@@ -20,7 +20,7 @@ name: Cross-engine parity
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, feat/jobforge]
   pull_request:
     paths:
       # 前端排版/预览链路：草稿多列切分、页高测量、字宽探针都在这里

@@ -485,7 +485,7 @@ function Write-DependencySyncHint {
     Write-Host ""
     Write-Host "    Dependency sync failed: $Message" -ForegroundColor Yellow
     Write-Host "    如果报的是 EPERM / EBUSY / operation not permitted，说明还有进程占着" -ForegroundColor Yellow
-    Write-Host "    frontend\node_modules 或 backend\.venv 里的文件；最常见的原因是简历通还在" -ForegroundColor Yellow
+    Write-Host "    frontend\node_modules 或 backend\.venv 里的文件；最常见的原因是求职通还在" -ForegroundColor Yellow
     Write-Host "    运行（那个 start 窗口没关），杀毒软件也会占同一批文件。" -ForegroundColor Yellow
     Write-Host "    处理办法：双击 stop.cmd 关掉应用，再运行一次 update.cmd。" -ForegroundColor Yellow
 }
@@ -732,7 +732,7 @@ if ($DryRun) {
     # 而真正该被重启的桌面窗口并不会出现。这里只提示用户重新打开应用。
     if ($Restart -and $isDesktopPayload) {
         Write-Step "Restarting ResumeForge"
-        Write-Host "    桌面版请重新打开 简历通；更新文件已就位。" -ForegroundColor Yellow
+        Write-Host "    桌面版请重新打开 求职通；更新文件已就位。" -ForegroundColor Yellow
     }
     if ($Restart -and -not $isDesktopPayload) {
         Write-Step "Restarting ResumeForge"

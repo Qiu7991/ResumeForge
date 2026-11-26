@@ -400,11 +400,11 @@ rf_start_backend() {
         # 端口被占但健康检查不过：可能是我们自己上一次运行留下的、已经崩掉的后端
         # （进程还在，服务不响应）。记录能对上就自己收拾，否则明确说"这不是我的"。
         if process_record_match "$RF_BACKEND_RECORD" "$RF_BACKEND_COMMAND_PATTERN"; then
-            log_warn "上一次运行留下的简历通后端正占着端口 ${RF_BACKEND_PORT}，先停掉它再启动一个新的。"
+            log_warn "上一次运行留下的求职通后端正占着端口 ${RF_BACKEND_PORT}，先停掉它再启动一个新的。"
             stop_recorded_process "backend" "$RF_BACKEND_RECORD" "$RF_BACKEND_COMMAND_PATTERN"
             sleep 1
         else
-            die "端口 ${RF_BACKEND_PORT} 已被别的程序占用（不是简历通自己的后端，所以不会去动它）。" \
+            die "端口 ${RF_BACKEND_PORT} 已被别的程序占用（不是求职通自己的后端，所以不会去动它）。" \
                 "怎么办（二选一）：" \
                 "  1) 关掉占用该端口的程序（想知道是谁：ss -ltnp | grep :${RF_BACKEND_PORT} 或 lsof -nP -iTCP:${RF_BACKEND_PORT} -sTCP:LISTEN）；" \
                 "  2) 换一个端口启动：bash start.sh --backend-port 8010"
@@ -515,7 +515,7 @@ rf_start_frontend() {
 
     if tcp_port_in_use "$RF_FRONTEND_PORT"; then
         if process_record_match "$RF_FRONTEND_RECORD" "$RF_FRONTEND_COMMAND_PATTERN"; then
-            log_warn "上一次运行留下的简历通前端正占着端口 ${RF_FRONTEND_PORT}，先停掉它再启动一个新的。"
+            log_warn "上一次运行留下的求职通前端正占着端口 ${RF_FRONTEND_PORT}，先停掉它再启动一个新的。"
             stop_recorded_process "frontend" "$RF_FRONTEND_RECORD" "$RF_FRONTEND_COMMAND_PATTERN"
             sleep 1
         else
@@ -619,7 +619,7 @@ rf_main() {
     fi
 
     printf '\n'
-    log_ok "简历通已就绪。要关闭服务，执行 bash stop.sh（或双击项目根目录的 stop.sh）。"
+    log_ok "求职通已就绪。要关闭服务，执行 bash stop.sh（或双击项目根目录的 stop.sh）。"
     printf '打开地址：%s\n' "$rf_page_url"
 }
 

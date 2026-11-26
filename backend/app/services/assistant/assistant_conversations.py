@@ -73,7 +73,7 @@ def welcome_message() -> str:
     try:
         text = _WELCOME_PROMPT_PATH.read_text(encoding="utf-8").strip()
     except OSError:
-        text = "你好，我是简历通的求职助手。可以在下方输入框直接提问，或先关联岗位、简历和资料。"
+        text = "你好，我是求职通的求职助手。可以在下方输入框直接提问，或先关联岗位、简历和资料。"
     # 时间感知：欢迎对话只创建一次，这里是"首次打开的当地时间"——深夜/凌晨创建时
     # 附一句休息提醒，让投投的开场也知道看时候（与主助手 _local_time_note 同口径）。
     now = datetime.now().astimezone()

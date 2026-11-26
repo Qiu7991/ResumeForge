@@ -119,7 +119,7 @@ export default function HelpDiagnosticsCard() {
         <Typography.Text type="secondary">
           {t("settingsUi.help.feedbackLead")}
           <Typography.Link
-            href="https://github.com/magicapple123/ResumeForge/issues"
+            href="https://github.com/Qiu7991/ResumeForge/issues"
             target="_blank"
             rel="noreferrer"
           >

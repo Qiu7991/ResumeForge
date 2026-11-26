@@ -5,7 +5,7 @@ name: Dependency review
 # 互补：那两个按当前锁文件全量审计，这里按"这次 PR 新引入/升级了什么"增量把关。
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feat/jobforge]
 
 permissions:
   contents: read

@@ -83,10 +83,10 @@ async def _tool_web_search(
     if is_local_resume_forge_question(query):
         return ToolResult(
             text=(
-                "这是 ResumeForge（简历通）本身的使用问题。请依据系统提示中的本地能力地图、"
+                "这是求职通（JobForge）本身的使用问题。请依据系统提示中的本地能力地图、"
                 "平台启动说明和项目文档回答，不要为这个问题搜索公开网页。"
             ),
-            summary="这是简历通本身的使用问题，未进行无关联网搜索",
+            summary="这是求职通本身的使用问题，未进行无关联网搜索",
         )
     try:
         results = await aggregate_search(

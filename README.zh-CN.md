@@ -45,7 +45,7 @@
 
 ## ⚠️ 求职通（JobForge）个人 Fork：请从 `feat/jobforge` 分支取用
 
-**本仓库是基于上游 [magicapple123/ResumeForge](https://github.com/magicapple123/ResumeForge)（Apache-2.0 协议）深度二开的求职通（JobForge），默认分支保留上游原版；完整二开版本位于 [`feat/jobforge`](https://github.com/Qiu7991/ResumeForge/tree/feat/jobforge) 分支。**
+**本仓库是基于上游 [magicapple123/ResumeForge](https://github.com/magicapple123/ResumeForge)（Apache-2.0 协议）深度二开的求职通（JobForge），当前默认分支即为完整二开版 [`feat/jobforge`](https://github.com/Qiu7991/ResumeForge/tree/feat/jobforge)。**
 
 ```bash
 git clone -b feat/jobforge https://github.com/Qiu7991/ResumeForge.git JobForge
