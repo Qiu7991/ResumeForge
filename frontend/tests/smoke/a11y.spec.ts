@@ -114,7 +114,7 @@ test.describe("键盘操作", () => {
 
     // 首启动可能同时弹「使用指南」与「近期提醒」（激活数据集里有逾期提醒时，
     // 提醒弹窗也会接管焦点）。两者都清场后，Esc 与 Tab 验证的才是页面本身。
-    const guide = page.getByRole("dialog").filter({ hasText: "欢迎使用简历通" });
+    const guide = page.getByRole("dialog").filter({ hasText: "欢迎使用求职通" });
     const reminder = page.getByRole("dialog").filter({ hasText: "近期提醒" });
     await guide.waitFor({ state: "visible", timeout: 20_000 }).catch(() => {});
     for (let round = 0; round < 4; round += 1) {

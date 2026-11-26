@@ -18,7 +18,7 @@ const BACKEND_URL = process.env.SMOKE_BACKEND_URL ?? "http://127.0.0.1:8123";
 
 /** 等首启动引导弹出并关闭它；引导是 mount 后异步打开的，必须显式等。 */
 async function dismissGuide(page: Page) {
-  const guide = page.getByRole("dialog").filter({ hasText: "欢迎使用简历通" });
+  const guide = page.getByRole("dialog").filter({ hasText: "欢迎使用求职通" });
   await guide.waitFor({ state: "visible", timeout: 20_000 }).catch(() => {});
   if (await guide.isVisible().catch(() => false)) {
     await guide.getByRole("button", { name: /稍后查看/ }).click();
