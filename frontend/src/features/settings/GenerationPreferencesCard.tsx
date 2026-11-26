@@ -44,9 +44,7 @@ export default function GenerationPreferencesCard() {
             aria-label={t("settingsUi.generationPrefs.toggleAria")}
             onChange={(checked) => void onChange(checked)}
           />
-          <Typography.Text type="secondary">
-            {t("settingsUi.generationPrefs.hint")}
-          </Typography.Text>
+          <Typography.Text type="secondary">{t("settingsUi.generationPrefs.hint")}</Typography.Text>
         </Space>
       </LoadingBlock>
     </Card>

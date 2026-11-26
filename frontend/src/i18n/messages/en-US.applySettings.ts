@@ -21,7 +21,7 @@ const applySettings = {
     "Paste your preferred template, tone, or differentiator. Highest-priority constraint, while facts must still come from your resume. Blank uses default.",
   "applySettings.greetingReview.label": "Review the greeting before sending",
   "applySettings.greetingReview.extra":
-    "When enabled, queued jobs without a confirmed greeting are skipped and marked \"greeting missing\"; the default greeting is never sent on your behalf.",
+    'When enabled, queued jobs without a confirmed greeting are skipped and marked "greeting missing"; the default greeting is never sent on your behalf.',
   "applySettings.title": "Apply settings",
   "applySettings.intro":
     "These settings decide the rhythm and the safety net of applying: jobs wait a random interval between each other, consecutive failures pause the run automatically, and the daily limit only counts successful applications.",
@@ -63,8 +63,7 @@ const applySettings = {
   "applySettings.saveFailed": "Could not save the apply settings",
   "applySettings.greetingSalutation.label": "Start the greeting with a salutation",
   "applySettings.greetingSalutation.extra":
-    "On by default. Turn off to start directly with your capability label — BOSS previews only the first 10–18 chars, and \"Hello,\" uses 3.",
-
+    'On by default. Turn off to start directly with your capability label — BOSS previews only the first 10–18 chars, and "Hello," uses 3.',
 
   "applySettings.tab.cadence": "Pacing",
   "applySettings.tab.templates": "Greeting library",

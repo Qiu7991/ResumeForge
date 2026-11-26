@@ -9,17 +9,16 @@ import type { BrowserState } from "./tasks";
  */
 export type BrowserChoice = "auto" | "chrome" | "edge" | "ego" | "custom";
 
-export const BROWSER_CHOICE_META: Partial<
-  Record<BrowserChoice, { label: string; hint: string }>
-> = {
-  auto: { label: "自动（优先 Chrome）", hint: "优先用 Chrome；没装 Chrome 时自动回退 Edge。" },
-  chrome: { label: "Google Chrome", hint: "只用 Chrome；找不到会明确提示，不会改用别的浏览器。" },
-  edge: { label: "Microsoft Edge", hint: "只用 Edge；找不到会明确提示，不会改用别的浏览器。" },
-  custom: {
-    label: "自定义路径",
-    hint: "填写浏览器可执行文件的完整路径（必须真实存在）。",
-  },
-};
+export const BROWSER_CHOICE_META: Partial<Record<BrowserChoice, { label: string; hint: string }>> =
+  {
+    auto: { label: "自动（优先 Chrome）", hint: "优先用 Chrome；没装 Chrome 时自动回退 Edge。" },
+    chrome: { label: "Google Chrome", hint: "只用 Chrome；找不到会明确提示，不会改用别的浏览器。" },
+    edge: { label: "Microsoft Edge", hint: "只用 Edge；找不到会明确提示，不会改用别的浏览器。" },
+    custom: {
+      label: "自定义路径",
+      hint: "填写浏览器可执行文件的完整路径（必须真实存在）。",
+    },
+  };
 
 export interface ApplyConfig {
   interval_seconds: number;

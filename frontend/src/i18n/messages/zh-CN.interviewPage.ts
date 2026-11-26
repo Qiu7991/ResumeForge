@@ -61,8 +61,7 @@ const interviewPage = {
   "interviewPage.report.coachQuestion": "题目：",
   "interviewPage.report.coachGaps": "资料里还缺：",
   "interviewPage.report.coachGapSeparator": "；",
-  "interviewPage.report.coachPartial":
-    "含可迁移表述，别当成真实经历讲——真实面试追问细节会露馅。",
+  "interviewPage.report.coachPartial": "含可迁移表述，别当成真实经历讲——真实面试追问细节会露馅。",
   "interviewPage.report.saveToMaterial": "把这场面试存进资料箱",
 
   // ===== 面试计时器 / 准备好了 =====

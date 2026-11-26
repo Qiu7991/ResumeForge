@@ -71,7 +71,8 @@ const applyQueue = {
   "applyQueue.detail.defaultGreeting": "默认招呼语",
   "applyQueue.detail.noResume": "还没有岗位版简历",
   "applyQueue.greeting.unconfirmed": "招呼语未确认",
-  "applyQueue.greeting.unconfirmedHint": "还没确认招呼语：开始投递时会被跳过。点这条标签直接编辑，按岗位生成并保存即可。",
+  "applyQueue.greeting.unconfirmedHint":
+    "还没确认招呼语：开始投递时会被跳过。点这条标签直接编辑，按岗位生成并保存即可。",
   "applyQueue.greeting.pendingConfirm": "招呼语待确认",
   "applyQueue.greeting.pendingConfirmHint":
     "AI 已按岗位生成，但还没经你确认：开始投递时会被跳过。点这条标签编辑并保存，或点工具栏「确认招呼语」批量确认。",
@@ -86,7 +87,8 @@ const applyQueue = {
   "applyQueue.column.job": "岗位",
   "applyQueue.column.admission": "准入",
   "applyQueue.column.applyResult": "投递结果",
-  "applyQueue.admission.columnHint": "这条岗位能不能投 —— 「匹配度分析」的准入结论。这一列说的是\"要不要投\"，右边的「投递结果」才是\"投了没有、成没成\"。",
+  "applyQueue.admission.columnHint":
+    '这条岗位能不能投 —— 「匹配度分析」的准入结论。这一列说的是"要不要投"，右边的「投递结果」才是"投了没有、成没成"。',
   "applyQueue.applyResult.never": "未投递",
   "applyQueue.applyResult.success": "已投递",
   "applyQueue.applyResult.failed": "投递失败",
@@ -181,7 +183,6 @@ const applyQueue = {
   "applyQueue.action.batchGreetingNone": "勾选的岗位没有可用的简历，无法生成",
 
   "applyQueue.action.batchGreetingBusy": "上一批还在生成中，等它跑完再点",
-
 
   // 14A 投递前体检。
   "applyQueue.action.preflight": "投递前检查",

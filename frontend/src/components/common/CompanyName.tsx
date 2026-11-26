@@ -43,9 +43,7 @@ export default function CompanyName({ name, disabled = false }: Props) {
   // 查不了：说明原因，别让用户以为是按钮坏了。
   // 两种情况分开说——截断名要提示「补抓详情」，短名要说「招聘网站只给了品牌名」。
   const isTruncated = /\.\.\.$|…$/.test(raw);
-  const hint = isTruncated
-    ? t("company.truncatedHint")
-    : t("company.shortNameHint");
+  const hint = isTruncated ? t("company.truncatedHint") : t("company.shortNameHint");
   return (
     <Tooltip title={hint}>
       <Typography.Text>{raw}</Typography.Text>

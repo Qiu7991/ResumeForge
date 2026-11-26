@@ -6,7 +6,12 @@
  * （由宿主保存并重渲染），不走旧 v1 的 format_config.section_order。这样预览里
  * 调完的板块设置与制作台、导出看到的是同一份数据。
  */
-import { ArrowDownOutlined, ArrowUpOutlined, EyeInvisibleOutlined, EyeOutlined } from "@ant-design/icons";
+import {
+  ArrowDownOutlined,
+  ArrowUpOutlined,
+  EyeInvisibleOutlined,
+  EyeOutlined,
+} from "@ant-design/icons";
 import { App, Button, Modal, Space, Typography } from "antd";
 import { useState } from "react";
 import { useLocale } from "../../i18n/i18nContext";
@@ -63,7 +68,9 @@ export default function PreviewSectionsControl({
       ),
     ),
   );
-  const visibleTechStack = techStackItems.some((item) => item.kind === "field" && item.placement !== "hidden");
+  const visibleTechStack = techStackItems.some(
+    (item) => item.kind === "field" && item.placement !== "hidden",
+  );
   const toggleTechStack = () => {
     apply({
       ...document,
@@ -149,7 +156,12 @@ export default function PreviewSectionsControl({
             </Button>
           ) : null}
           {sectionOrder.length > 0 ? (
-            <Button size="small" style={{ marginBottom: 8 }} disabled={disabled} onClick={syncOrder}>
+            <Button
+              size="small"
+              style={{ marginBottom: 8 }}
+              disabled={disabled}
+              onClick={syncOrder}
+            >
               {t("workbench.sectionsVisibility.syncProfile")}
             </Button>
           ) : null}

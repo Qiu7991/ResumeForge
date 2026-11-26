@@ -122,7 +122,7 @@ const COLLECT_CONFIG: CollectConfigOut = {
   defaults: {
     source: "search",
     interest_max_pages: 10,
-  interest_scan_limit: 0,
+    interest_scan_limit: 0,
     keywords: [],
     city: "",
     salary_min: null,

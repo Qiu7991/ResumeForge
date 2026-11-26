@@ -132,7 +132,9 @@ export function startCollectTask(payload: {
  * 用途只有一个：**页面刷新后把进度接回来**。任务快照原本只在前端内存里，
  * 刷一下页面就 null——但采集/补 JD/评分在后台还在跑，用户只看到进度凭空消失。
  */
-export function getActiveCollectTask(): Promise<{ active: boolean } & Partial<CollectTaskSnapshot>> {
+export function getActiveCollectTask(): Promise<
+  { active: boolean } & Partial<CollectTaskSnapshot>
+> {
   return request("/job-hunt/collect/active");
 }
 

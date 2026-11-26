@@ -19,7 +19,9 @@ describe("PreviewSectionsControl", () => {
       </AntdApp>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: t("workbench.sectionsVisibility.trigger") }));
+    fireEvent.click(
+      screen.getByRole("button", { name: t("workbench.sectionsVisibility.trigger") }),
+    );
     fireEvent.click(
       await screen.findByRole("button", {
         name: t("workbench.sectionsVisibility.hide", { label: "专业技能" }),

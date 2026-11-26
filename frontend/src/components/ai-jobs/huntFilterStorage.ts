@@ -16,7 +16,11 @@
  * Select 显示一个选不中任何选项的空标签，用户既看不懂也删不掉。所以回填时只保留
  * 仍然合法的项；全都不合法就回退到出厂默认。
  */
-import { DEFAULT_FILTERS, DEFAULT_KEYWORDS, FILTER_OPTIONS } from "../../components/ai-jobs/HuntFilterForm";
+import {
+  DEFAULT_FILTERS,
+  DEFAULT_KEYWORDS,
+  FILTER_OPTIONS,
+} from "../../components/ai-jobs/HuntFilterForm";
 
 /** 存储键前缀。按字段分开存，改一个字段不需要读整包（也便于手工排查）。 */
 const PREFIX = "rf.aiJobs.hunt";

@@ -19,7 +19,12 @@ import { useCallback, useEffect, useState } from "react";
 import { addToQueue } from "../api/apply";
 import { importSelectedJobs, runJobHuntCollect } from "../api/jobHunt";
 import { listJobs } from "../api/jobs";
-import type { JobHuntCollectRequest, JobHuntCollectResult, JobHuntStub, JobHuntStatus } from "../types/jobHunt";
+import type {
+  JobHuntCollectRequest,
+  JobHuntCollectResult,
+  JobHuntStub,
+  JobHuntStatus,
+} from "../types/jobHunt";
 import type { JobList } from "../types/job";
 
 export interface NativeJobHuntState {
@@ -96,7 +101,10 @@ export function useJobHuntNative(status: JobHuntStatus | null) {
 
   /** Import the selected preview rows into the job library. */
   const importRows = useCallback(
-    async (siteKey: string, stubs: JobHuntStub[]): Promise<{ inserted: number; skipped: number; origin: string }> => {
+    async (
+      siteKey: string,
+      stubs: JobHuntStub[],
+    ): Promise<{ inserted: number; skipped: number; origin: string }> => {
       setState((prev) => ({ ...prev, enqueueing: true, error: "" }));
       try {
         const result = await importSelectedJobs({ site_key: siteKey, stubs, backfill_jd: true });

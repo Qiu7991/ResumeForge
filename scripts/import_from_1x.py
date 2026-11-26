@@ -187,7 +187,8 @@ def table_exists(conn: sqlite3.Connection, table: str) -> bool:
 
 
 def natural_key(row: sqlite3.Row, cols: list[str]) -> tuple:
-    return tuple(row[c] if c in row.keys() else None for c in cols)
+    row_cols = set(row.keys())
+    return tuple(row[c] if c in row_cols else None for c in cols)
 
 
 def plan_table(
@@ -296,7 +297,7 @@ def apply_table(
                 )
                 out["inserted"] += 1
         except Exception as exc:  # noqa: BLE001
-            out["errors"].append(f"row {row['id'] if 'id' in row.keys() else '?'}: {exc}")
+            out["errors"].append(f"row {row['id'] if 'id' in set(row.keys()) else '?'}: {exc}")
     return out
 
 
@@ -480,9 +481,10 @@ def main() -> int:
                     f"UPDATE app_setting SET {sets} WHERE rowid = ?", (*vals, existing[0])
                 )
             else:
+                col_list_sql = ", ".join(f'"{c}"' for c in keep)
+                placeholders_sql = ", ".join("?" for _ in keep)
                 dst.execute(
-                    f"INSERT INTO app_setting ({', '.join(f'"{c}"' for c in keep)}) "
-                    f"VALUES ({', '.join('?' for _ in keep)})",
+                    f"INSERT INTO app_setting ({col_list_sql}) VALUES ({placeholders_sql})",
                     vals,
                 )
 

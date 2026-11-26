@@ -162,7 +162,8 @@ const aiJobs = {
   "aiJobs.settings.save": "保存设置",
   "aiJobs.settings.saved": "设置已保存",
   "aiJobs.settings.ai": "模型配置（AI）",
-  "aiJobs.settings.aiReadOnly": "模型配置只读引用求职通全局设置页的配置，这里不重复填写；点同步把当前配置写给引擎",
+  "aiJobs.settings.aiReadOnly":
+    "模型配置只读引用求职通全局设置页的配置，这里不重复填写；点同步把当前配置写给引擎",
   "aiJobs.settings.llmSync": "同步模型配置给引擎",
   "aiJobs.settings.llmSynced": "已同步模型配置（{model}）",
   "aiJobs.history.action": "动作",
@@ -171,7 +172,8 @@ const aiJobs = {
   "aiJobs.history.empty": "还没有运行记录",
   // 发送闸门前端体现（B6）：状态来自空列表 deliver 探测（403=关/400=开）。
   "aiJobs.gate.checking": "正在检查发送闸门…",
-  "aiJobs.gate.closed": "发送闸门已关闭（AI_JOBS_ALLOW_SEND=0）：投递通道不可用。需要发送时请由管理员在服务环境里放开该开关。",
+  "aiJobs.gate.closed":
+    "发送闸门已关闭（AI_JOBS_ALLOW_SEND=0）：投递通道不可用。需要发送时请由管理员在服务环境里放开该开关。",
   "aiJobs.gate.unknown": "暂时无法确认发送闸门状态，发送已停用。",
   "aiJobs.gate.retry": "重新检查",
   "aiJobs.native.collectTitle": "采集岗位",
@@ -211,7 +213,8 @@ const aiJobs = {
   "aiJobs.hunt.salaryMin": "最低",
   "aiJobs.hunt.salaryMax": "最高",
   "aiJobs.hunt.salaryUnit": "K/月",
-  "aiJobs.hunt.salaryHint": "填数字即可（单位 K/月）。留空表示不限。站点只有粗档位，后端会先拉覆盖它的档位、再按这个区间精筛。",
+  "aiJobs.hunt.salaryHint":
+    "填数字即可（单位 K/月）。留空表示不限。站点只有粗档位，后端会先拉覆盖它的档位、再按这个区间精筛。",
   "aiJobs.hunt.newestFirst": "最新优先",
   "aiJobs.hunt.newestFirstHint": "按发布时间倒序取。关闭后每次翻到的都是同一批老岗位。",
   "aiJobs.hunt.comboHint": "{keywords} 个关键词 × {pages} 页 ≈ {total} 次翻页",
@@ -219,7 +222,8 @@ const aiJobs = {
   "aiJobs.hunt.filtersHint": "先定条件，再采集。采到的岗位会按分数分成两段：达标的在上，其余折叠。",
   "aiJobs.hunt.blocklistToggle": "黑名单（采集时跳过）",
   "aiJobs.hunt.threshold": "分数线",
-  "aiJobs.hunt.thresholdHint": "分数不低于这条线的岗位排在上面，是你优先要处理的；低于线的折叠在下面，仍可展开挑选。",
+  "aiJobs.hunt.thresholdHint":
+    "分数不低于这条线的岗位排在上面，是你优先要处理的；低于线的折叠在下面，仍可展开挑选。",
   "aiJobs.hunt.above": "优先处理（≥ {score} 分）",
   "aiJobs.hunt.below": "低于分数线（< {score} 分）",
   "aiJobs.hunt.unscored": "未评分",
@@ -275,7 +279,8 @@ const aiJobs = {
   "aiJobs.score.cap.sales_acquisition_core": "核心是销售获客且无对应证据（上限 65）",
   "aiJobs.score.cap.weak_core_transfer": "核心职责缺直接或相邻证据（上限 70）",
   "aiJobs.native.score": "评分",
-  "aiJobs.native.scoreHintMulti": "已选 {count} 个岗位。评分请只勾选一个查看，或到岗位广场逐条分析。",
+  "aiJobs.native.scoreHintMulti":
+    "已选 {count} 个岗位。评分请只勾选一个查看，或到岗位广场逐条分析。",
   "aiJobs.native.previewTitle": "采集结果预览（{count} 条，未入库）",
   "aiJobs.native.blockedCount": "黑名单已挡 {count} 条",
   "aiJobs.native.importSelected": "导入选中（{count}）",

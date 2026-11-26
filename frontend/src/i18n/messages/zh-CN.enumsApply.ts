@@ -118,7 +118,6 @@ const enumsApply = {
   "enumsApply.browserChoice.ego.hint":
     "使用 Ego Lite（Chromium 分支）；找不到会明确提示，不会改用别的浏览器。",
   "enumsApply.queueStatus.failed": "投递失败",
-
 } as const;
 
 export default enumsApply;

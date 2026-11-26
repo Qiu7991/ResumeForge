@@ -18,7 +18,8 @@ const aiJobs = {
   "aiJobs.connection.stopSuccess": "Engine stopped",
   "aiJobs.connection.stopUnowned": "No engine process to stop",
   "aiJobs.connection.startFailed": "Failed to start engine",
-  "aiJobs.page.description": "BossHunter runs collection, scoring and sending; JobForge owns the UI and data",
+  "aiJobs.page.description":
+    "BossHunter runs collection, scoring and sending; JobForge owns the UI and data",
 
   // ===== Workbench (P1) =====
   "aiJobs.workbench.tab": "Workbench",
@@ -26,7 +27,8 @@ const aiJobs = {
   "aiJobs.preflight.rerun": "Run checks again",
   "aiJobs.preflight.blocked": "Checks not passed; resolve the messages above first",
   "aiJobs.action.full": "Full flow",
-  "aiJobs.action.fullDesc": "Collect → score → confirm → send; every send needs manual confirmation",
+  "aiJobs.action.fullDesc":
+    "Collect → score → confirm → send; every send needs manual confirmation",
   "aiJobs.action.collect": "Collect only",
   "aiJobs.action.collectDesc": "Collect jobs only; no scoring, no sending",
   "aiJobs.action.monitor": "Monitor only",
@@ -53,7 +55,8 @@ const aiJobs = {
   "aiJobs.confirm.selected": "{count} job(s) selected",
   "aiJobs.confirm.quota": "Sent today {sent}/{daily_limit}, {remaining} left",
   "aiJobs.confirm.quotaExhausted": "Daily send quota exhausted",
-  "aiJobs.confirm.warning": "BossHunter will send with low-frequency pacing after confirmation; sends cannot be undone",
+  "aiJobs.confirm.warning":
+    "BossHunter will send with low-frequency pacing after confirmation; sends cannot be undone",
   "aiJobs.confirm.checkbox": "I have reviewed the greetings and target companies",
   "aiJobs.confirm.action": "Confirm send",
   "aiJobs.confirm.greetingMissing": "Greeting not confirmed",
@@ -162,7 +165,8 @@ const aiJobs = {
   "aiJobs.settings.save": "Save settings",
   "aiJobs.settings.saved": "Settings saved",
   "aiJobs.settings.ai": "Model config (AI)",
-  "aiJobs.settings.aiReadOnly": "Model config read-only references the global settings page; sync writes it to the engine",
+  "aiJobs.settings.aiReadOnly":
+    "Model config read-only references the global settings page; sync writes it to the engine",
   "aiJobs.settings.llmSync": "Sync model config to engine",
   "aiJobs.settings.llmSynced": "Model config synced ({model})",
   "aiJobs.history.action": "Action",
@@ -171,7 +175,8 @@ const aiJobs = {
   "aiJobs.history.empty": "No run history yet",
   // Send-gate UI (B6): state comes from the empty-list deliver probe (403=off / 400=on).
   "aiJobs.gate.checking": "Checking the send gate…",
-  "aiJobs.gate.closed": "The send gate is off (AI_JOBS_ALLOW_SEND=0): delivery is unavailable. To send, ask the administrator to enable it in the service environment.",
+  "aiJobs.gate.closed":
+    "The send gate is off (AI_JOBS_ALLOW_SEND=0): delivery is unavailable. To send, ask the administrator to enable it in the service environment.",
   "aiJobs.gate.unknown": "The send gate state could not be confirmed; sending is disabled.",
   "aiJobs.gate.retry": "Recheck",
   "aiJobs.native.collectTitle": "Collect jobs",
@@ -211,19 +216,24 @@ const aiJobs = {
   "aiJobs.hunt.salaryMin": "Min",
   "aiJobs.hunt.salaryMax": "Max",
   "aiJobs.hunt.salaryUnit": "K/mo",
-  "aiJobs.hunt.salaryHint": "Numbers in K/month. Leave empty for any. The site only has coarse tiers, so the backend fetches the covering tiers and filters locally.",
+  "aiJobs.hunt.salaryHint":
+    "Numbers in K/month. Leave empty for any. The site only has coarse tiers, so the backend fetches the covering tiers and filters locally.",
   "aiJobs.hunt.newestFirst": "Newest first",
-  "aiJobs.hunt.newestFirstHint": "Sort by posting date. Without it every run returns the same batch.",
+  "aiJobs.hunt.newestFirstHint":
+    "Sort by posting date. Without it every run returns the same batch.",
   "aiJobs.hunt.comboHint": "{keywords} keywords x {pages} pages = {total} page loads",
   "aiJobs.hunt.unapplied": "These filters did not apply: {list}",
-  "aiJobs.hunt.filtersHint": "Set the conditions first, then collect. Results split by score: above the line on top, the rest collapsed below.",
+  "aiJobs.hunt.filtersHint":
+    "Set the conditions first, then collect. Results split by score: above the line on top, the rest collapsed below.",
   "aiJobs.hunt.blocklistToggle": "Blocklist (skipped while collecting)",
   "aiJobs.hunt.threshold": "Score line",
-  "aiJobs.hunt.thresholdHint": "Jobs at or above this line are listed first — those are your priorities. Everything below is collapsed but still selectable.",
+  "aiJobs.hunt.thresholdHint":
+    "Jobs at or above this line are listed first — those are your priorities. Everything below is collapsed but still selectable.",
   "aiJobs.hunt.above": "Priorities (>= {score})",
   "aiJobs.hunt.below": "Below the line (< {score})",
   "aiJobs.hunt.unscored": "Not scored",
-  "aiJobs.hunt.emptyAbove": "No job reached {score} yet. Lower the line, or collect again with different keywords.",
+  "aiJobs.hunt.emptyAbove":
+    "No job reached {score} yet. Lower the line, or collect again with different keywords.",
   "aiJobs.hunt.poolTitle": "Imported jobs ({count})",
   "aiJobs.native.collectFailed": "Collection could not start",
   "aiJobs.native.startBrowser": "Start dedicated browser",
@@ -242,7 +252,8 @@ const aiJobs = {
   "aiJobs.progress.scoreErrors": "{count} jobs could not be scored",
   "aiJobs.native.candidateTitle": "Collected (not imported yet)",
   "aiJobs.native.autoScore": "Auto-score after collecting",
-  "aiJobs.native.autoScoreHint": "Fetch each job's JD and score it after collecting, so you can pick which ones to import by score.",
+  "aiJobs.native.autoScoreHint":
+    "Fetch each job's JD and score it after collecting, so you can pick which ones to import by score.",
   "aiJobs.candidate.score": "Score",
   "aiJobs.candidate.notScored": "Not scored",
   "aiJobs.candidate.jdMissing": "No JD",
@@ -256,16 +267,20 @@ const aiJobs = {
   "aiJobs.native.collect": "Start collecting",
   "aiJobs.native.refresh": "Refresh",
   "aiJobs.native.collectDone": "Done: {inserted} new jobs added, {skipped} duplicates skipped.",
-  "aiJobs.native.collectSummary": "This run: {inserted} added, {skipped} duplicates, {pages} pages.",
+  "aiJobs.native.collectSummary":
+    "This run: {inserted} added, {skipped} duplicates, {pages} pages.",
   "aiJobs.native.persistErrors": "{count} jobs could not be saved",
-  "aiJobs.native.analyzeStarted": "Background analysis started for the newly added jobs (already analyzed jobs are skipped).",
+  "aiJobs.native.analyzeStarted":
+    "Background analysis started for the newly added jobs (already analyzed jobs are skipped).",
   "aiJobs.native.poolTitle": "Job pool",
   "aiJobs.native.selected": "{n} selected",
   "aiJobs.native.enqueue": "Add to queue",
   "aiJobs.native.empty": "No jobs yet — collect a batch above first.",
-  "aiJobs.native.queuedHint": "{count} jobs added to the apply queue. Edit greetings one by one on the apply desk.",
+  "aiJobs.native.queuedHint":
+    "{count} jobs added to the apply queue. Edit greetings one by one on the apply desk.",
   "aiJobs.native.goApply": "Go to apply desk",
-  "aiJobs.native.replyNotAvailable": "Reply monitoring is not available in native mode yet (planned).",
+  "aiJobs.native.replyNotAvailable":
+    "Reply monitoring is not available in native mode yet (planned).",
   "aiJobs.native.col.title": "Job",
   "aiJobs.native.col.company": "Company",
   "aiJobs.native.col.location": "Location",
@@ -275,15 +290,18 @@ const aiJobs = {
   "aiJobs.score.cap.sales_acquisition_core": "Core is sales acquisition with no evidence (max 65)",
   "aiJobs.score.cap.weak_core_transfer": "Core duties lack direct or adjacent evidence (max 70)",
   "aiJobs.native.score": "Score",
-  "aiJobs.native.scoreHintMulti": "{count} jobs selected. Select a single job to see its score, or analyze them one by one in the job library.",
+  "aiJobs.native.scoreHintMulti":
+    "{count} jobs selected. Select a single job to see its score, or analyze them one by one in the job library.",
   "aiJobs.native.previewTitle": "Preview ({count} rows, not imported yet)",
   "aiJobs.native.blockedCount": "{count} blocked by blocklist",
   "aiJobs.native.importSelected": "Import selected ({count})",
-  "aiJobs.native.importDone": "Imported {inserted} jobs from {origin}, skipped {skipped} duplicates.",
+  "aiJobs.native.importDone":
+    "Imported {inserted} jobs from {origin}, skipped {skipped} duplicates.",
   "aiJobs.native.blocklistTitle": "Blocklist (skipped during collection)",
   "aiJobs.native.blocklistCompanies": "Blocked companies",
   "aiJobs.native.blocklistKeywords": "Blocked keywords",
-  "aiJobs.native.blocklistHint": "Press Enter to add; matches company or job title, case-insensitive.",
+  "aiJobs.native.blocklistHint":
+    "Press Enter to add; matches company or job title, case-insensitive.",
   "aiJobs.native.blocklistSave": "Save blocklist",
   "aiJobs.native.blocklistSaved": "Blocklist saved",
   "aiJobs.pipeline.collect": "Collect",

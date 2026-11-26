@@ -218,30 +218,27 @@ export default function HuntFilterForm({
         {(Object.keys(GROUP_LABEL_KEYS) as FilterGroupKey[])
           .filter((group) => group !== "salary")
           .map((group) => (
-          <Field key={group} label={t(GROUP_LABEL_KEYS[group])}>
-            <Select
-              mode="multiple"
-              allowClear
-              value={filters[group] ?? []}
-              onChange={(values) => setGroup(group, values as string[])}
-              placeholder={t("aiJobs.hunt.filterAny")}
-              options={FILTER_OPTIONS[group].map((label) => ({ value: label, label }))}
-              style={{ width: "100%" }}
-              // 标签多时收起成 +N。`responsive` 在网格里算不准宽度（父级的
-              // minmax(0,1fr) 让它量到 0），实测「应届生/1年以内/1-3年」三项会挤爆
-              // 格子、把右侧截断。固定上限 1 更稳：选 3 项就显示「应届生 +2」。
-              maxTagCount={1}
-              aria-label={t(GROUP_LABEL_KEYS[group])}
-            />
-          </Field>
-        ))}
+            <Field key={group} label={t(GROUP_LABEL_KEYS[group])}>
+              <Select
+                mode="multiple"
+                allowClear
+                value={filters[group] ?? []}
+                onChange={(values) => setGroup(group, values as string[])}
+                placeholder={t("aiJobs.hunt.filterAny")}
+                options={FILTER_OPTIONS[group].map((label) => ({ value: label, label }))}
+                style={{ width: "100%" }}
+                // 标签多时收起成 +N。`responsive` 在网格里算不准宽度（父级的
+                // minmax(0,1fr) 让它量到 0），实测「应届生/1年以内/1-3年」三项会挤爆
+                // 格子、把右侧截断。固定上限 1 更稳：选 3 项就显示「应届生 +2」。
+                maxTagCount={1}
+                aria-label={t(GROUP_LABEL_KEYS[group])}
+              />
+            </Field>
+          ))}
 
         <Field label={t("aiJobs.hunt.sortLabel")}>
           <Tooltip title={t("aiJobs.hunt.newestFirstHint")}>
-            <Checkbox
-              checked={newestFirst}
-              onChange={(e) => onNewestFirstChange(e.target.checked)}
-            >
+            <Checkbox checked={newestFirst} onChange={(e) => onNewestFirstChange(e.target.checked)}>
               {t("aiJobs.hunt.newestFirst")}
             </Checkbox>
           </Tooltip>

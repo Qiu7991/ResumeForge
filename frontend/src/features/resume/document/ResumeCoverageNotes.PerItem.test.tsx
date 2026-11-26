@@ -305,15 +305,18 @@ describe("per-item append (2026-11-08)", () => {
      * 一个「从资料补上这段」按钮，点一次只补这一条。
      * 组底部不再有整组的「补进简历」——那正是被抱怨"没法选择"的入口。
      */
-    const { container } = renderNotes([
-      note({
-        names: ["项目甲", "项目乙"],
-        filtered: ["项目甲", "项目乙"],
-        total: 2,
-        entry_ids: ["e1", "e2"],
-        entry_id_by_name: { 项目甲: "e1", 项目乙: "e2" },
-      }),
-    ], { resumeId: 7 });
+    const { container } = renderNotes(
+      [
+        note({
+          names: ["项目甲", "项目乙"],
+          filtered: ["项目甲", "项目乙"],
+          total: 2,
+          entry_ids: ["e1", "e2"],
+          entry_id_by_name: { 项目甲: "e1", 项目乙: "e2" },
+        }),
+      ],
+      { resumeId: 7 },
+    );
     expandBlock();
 
     const rowButtons = [...container.querySelectorAll(".resume-coverage-item-actions button")];
@@ -325,15 +328,18 @@ describe("per-item append (2026-11-08)", () => {
 
   it("does not offer a group-wide append button any more", () => {
     // 整组按钮被移除：选择权交回给每一条。
-    const { container } = renderNotes([
-      note({
-        names: ["项目甲"],
-        filtered: ["项目甲"],
-        total: 1,
-        entry_ids: ["e1"],
-        entry_id_by_name: { 项目甲: "e1" },
-      }),
-    ], { resumeId: 7 });
+    const { container } = renderNotes(
+      [
+        note({
+          names: ["项目甲"],
+          filtered: ["项目甲"],
+          total: 1,
+          entry_ids: ["e1"],
+          entry_id_by_name: { 项目甲: "e1" },
+        }),
+      ],
+      { resumeId: 7 },
+    );
     expandBlock();
     const groupActions = container.querySelector(".resume-coverage-actions");
     expect(groupActions?.querySelector("button")).toBeNull();

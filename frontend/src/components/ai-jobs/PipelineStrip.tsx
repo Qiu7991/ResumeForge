@@ -60,7 +60,10 @@ export default function PipelineStrip({ steps }: Props) {
           <Space direction="vertical" size={0} style={{ minWidth: 96 }}>
             <Space size={6}>
               {ICONS[step.state]}
-              <Text strong={step.state === "running"} type={step.state === "pending" ? "secondary" : undefined}>
+              <Text
+                strong={step.state === "running"}
+                type={step.state === "pending" ? "secondary" : undefined}
+              >
                 {step.label}
               </Text>
             </Space>

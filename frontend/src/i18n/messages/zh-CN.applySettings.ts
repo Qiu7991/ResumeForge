@@ -74,7 +74,6 @@ const applySettings = {
   "applySettings.greetingSalutation.extra":
     "默认开。关掉后第 1 句直接写能力标签——BOSS 后台在不点开会话时只显示开头 10–18 个字，「您好，」会占掉 3 个。想测试效果可以关掉对比。",
 
-
   // #14D/#14E：弹窗改成三个页签，新增「话术库」与「屏蔽清单」。
   "applySettings.tab.cadence": "投递节奏",
   "applySettings.tab.templates": "话术库",

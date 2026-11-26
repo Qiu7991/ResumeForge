@@ -268,9 +268,9 @@ describe("resolveCoverageAction decision table (3-A)", () => {
   it("still falls back to AI revise for skills whose entries cannot be located", () => {
     // 旧记录 / 生成后资料改过名：没有 entry_ids ⇒ 不能承诺"补哪一条"，但也不该送进
     // 制作台那条死路（技能本来就靠在正文里改写就能补）。
-    expect(
-      resolveCoverageAction({ section: "skills", rawSection: "skills", entryIds: [] }),
-    ).toBe("revise");
+    expect(resolveCoverageAction({ section: "skills", rawSection: "skills", entryIds: [] })).toBe(
+      "revise",
+    );
   });
 
   /*

@@ -114,9 +114,7 @@ export function QueueItemEditor({
         if (cancelled || !detail) return;
         const names = projectNamesOf(detail.content);
         setProjects(names);
-        setFocusProject((current) =>
-          current && names.includes(current) ? current : undefined,
-        );
+        setFocusProject((current) => (current && names.includes(current) ? current : undefined));
       })
       .catch(() => {
         if (!cancelled) setProjects([]);
@@ -261,11 +259,7 @@ export function QueueItemEditor({
           extra={t("applyQueue.editor.saveConfirmHint")}
         >
           {/* 从招呼语标签点进来时光标直接落在这里；7–16 行自适应，长招呼语不用一直滚。 */}
-          <HintedTextArea
-            autoSize={{ minRows: 7, maxRows: 16 }}
-            maxLength={1000}
-            autoFocus
-          />
+          <HintedTextArea autoSize={{ minRows: 7, maxRows: 16 }} maxLength={1000} autoFocus />
         </Form.Item>
       </Form>
       {/* 写招呼语时对照 JD：收起时只占一行链接，展开后是可滚动的只读正文。 */}
@@ -283,11 +277,17 @@ export function QueueItemEditor({
           <Typography.Text type="secondary">{t("applyQueue.editor.jdNoJob")}</Typography.Text>
         )}
         {jdOpen && item.job_id != null && (
-          <div className="apply-queue-jd-body" role="region" aria-label={t("applyQueue.editor.viewJd")}>
+          <div
+            className="apply-queue-jd-body"
+            role="region"
+            aria-label={t("applyQueue.editor.viewJd")}
+          >
             {jdLoading ? (
               <Space size={8}>
                 <Spin size="small" />
-                <Typography.Text type="secondary">{t("applyQueue.editor.jdLoading")}</Typography.Text>
+                <Typography.Text type="secondary">
+                  {t("applyQueue.editor.jdLoading")}
+                </Typography.Text>
               </Space>
             ) : jd === null ? null : !jd.description.trim() && !jd.requirements.trim() ? (
               <Typography.Text type="secondary">{t("applyQueue.editor.jdEmpty")}</Typography.Text>
@@ -303,7 +303,9 @@ export function QueueItemEditor({
                 ) : null}
                 {jd.requirements.trim() ? (
                   <div>
-                    <Typography.Text strong>{t("applyQueue.editor.jdRequirements")}</Typography.Text>
+                    <Typography.Text strong>
+                      {t("applyQueue.editor.jdRequirements")}
+                    </Typography.Text>
                     <Typography.Paragraph style={{ whiteSpace: "pre-wrap", margin: "2px 0 0" }}>
                       {jd.requirements}
                     </Typography.Paragraph>

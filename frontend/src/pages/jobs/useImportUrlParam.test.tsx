@@ -15,8 +15,7 @@ function Harness() {
   return null;
 }
 
-const ENTRY =
-  "/jobs?close_after=1&import_url=" + encodeURIComponent("https://example.com/job/1");
+const ENTRY = "/jobs?close_after=1&import_url=" + encodeURIComponent("https://example.com/job/1");
 
 beforeEach(() => {
   mocks.importJobFromUrl.mockReset();
@@ -40,10 +39,7 @@ describe("useImportUrlParam", () => {
     );
 
     await waitFor(() =>
-      expect(postMessage).toHaveBeenCalledWith(
-        { type: "resumeforge-import-started" },
-        "*",
-      ),
+      expect(postMessage).toHaveBeenCalledWith({ type: "resumeforge-import-started" }, "*"),
     );
   });
 

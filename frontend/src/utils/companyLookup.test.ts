@@ -9,9 +9,7 @@ describe("riskbirdUrl", () => {
     // URL 格式是实测确认的：ent/{全名}.html，不需要 entid。
     const name = "广州示例传媒科技有限公司";
     expect(isFullCompanyName(name)).toBe(true);
-    expect(riskbirdUrl(name)).toBe(
-      `https://www.riskbird.com/ent/${encodeURIComponent(name)}.html`,
-    );
+    expect(riskbirdUrl(name)).toBe(`https://www.riskbird.com/ent/${encodeURIComponent(name)}.html`);
   });
 
   it("括号等特殊字符被正确编码", () => {

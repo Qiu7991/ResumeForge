@@ -115,9 +115,7 @@ export default function BlocklistCard() {
           <Input
             value={keywordInput}
             onChange={(event) => setKeywordInput(event.target.value)}
-            onPressEnter={() =>
-              add(keywordInput, keywords, setKeywords, () => setKeywordInput(""))
-            }
+            onPressEnter={() => add(keywordInput, keywords, setKeywords, () => setKeywordInput(""))}
             placeholder={t("aiJobs.native.blocklistKeywords")}
             style={{ marginTop: 6 }}
           />

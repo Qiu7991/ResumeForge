@@ -47,7 +47,9 @@ export function CoachAnswerCard({
         />
       </div>
 
-      <Typography.Paragraph className="interview-coach-answer">{answer.answer}</Typography.Paragraph>
+      <Typography.Paragraph className="interview-coach-answer">
+        {answer.answer}
+      </Typography.Paragraph>
 
       {answer.outline.length > 0 ? (
         <div className="interview-coach-block">

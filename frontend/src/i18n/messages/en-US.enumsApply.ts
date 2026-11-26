@@ -121,7 +121,6 @@ const enumsApply = {
   "enumsApply.browserChoice.ego.hint":
     "Use Ego Lite (a Chromium build); if it is missing the app says so instead of falling back.",
   "enumsApply.queueStatus.failed": "Failed",
-
 } as const;
 
 export default enumsApply;

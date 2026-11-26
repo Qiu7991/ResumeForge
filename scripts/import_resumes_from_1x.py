@@ -88,7 +88,7 @@ def _load_1x(path: Path, ids: list[int]) -> list[dict]:
             ).fetchone()
             if row is None:
                 raise SystemExit(f"1.x 里没有 id={rid} 的简历")
-            rows.append(dict(zip(usable, row)))
+            rows.append(dict(zip(usable, row, strict=True)))
         return rows
     finally:
         conn.close()

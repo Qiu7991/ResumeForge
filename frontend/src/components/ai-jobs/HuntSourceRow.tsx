@@ -91,7 +91,11 @@ export default function HuntSourceRow({
         <div className="hunt-field">
           <span className="hunt-field-label">{t("aiJobs.native.city")}</span>
           <div className="hunt-field-control">
-            <Input value={city} onChange={(e) => onCityChange(e.target.value)} aria-label={t("aiJobs.native.city")} />
+            <Input
+              value={city}
+              onChange={(e) => onCityChange(e.target.value)}
+              aria-label={t("aiJobs.native.city")}
+            />
           </div>
         </div>
         <div className="hunt-field">
@@ -133,7 +137,12 @@ export default function HuntSourceRow({
             {t("aiJobs.native.autoScore")}
           </Checkbox>
         </Tooltip>
-        <Button type="primary" loading={starting || collecting} disabled={collecting} onClick={onCollect}>
+        <Button
+          type="primary"
+          loading={starting || collecting}
+          disabled={collecting}
+          onClick={onCollect}
+        >
           {t("aiJobs.native.collect")}
         </Button>
         {collecting && (

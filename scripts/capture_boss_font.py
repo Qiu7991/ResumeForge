@@ -78,9 +78,8 @@ def main() -> int:
             resp = params.get("response") or {}
             rtype = (resp.get("type") or "").lower()
             url = resp.get("url") or ""
-            if rtype == "font" or any(url.lower().endswith(ext) for ext in (".woff", ".woff2", ".ttf", ".otf")):
-                if url and url not in font_urls:
-                    font_urls.append(url)
+            if (rtype == "font" or any(url.lower().endswith(ext) for ext in (".woff", ".woff2", ".ttf", ".otf"))) and url and url not in font_urls:
+                font_urls.append(url)
 
         print(f"字体资源 {len(font_urls)} 个：")
         for u in font_urls:
@@ -96,11 +95,7 @@ def main() -> int:
         for url in font_urls:
             try:
                 # 用页内 fetch 取（同源、带 cookie），转 base64 传回
-                expr = (
-                    "fetch(%s).then(r => r.arrayBuffer())"
-                    ".then(b => btoa(String.fromCharCode(...new Uint8Array(b))))"
-                    % json.dumps(url)
-                )
+                expr = f"fetch({json.dumps(url)}).then(r => r.arrayBuffer()).then(b => btoa(String.fromCharCode(...new Uint8Array(b))))"
                 b64 = client.evaluate(expr)
                 if not isinstance(b64, str) or not b64:
                     print(f"  跳过（取不到内容）: {url[:80]}")
