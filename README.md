@@ -43,26 +43,26 @@ Version: `2.3.1` · [Releases](https://github.com/magicapple123/ResumeForge/rele
 
 ---
 
-## ⚠️ 求职通（JobForge）个人 Fork：请从 `feat/gongzuotong` 分支取用
+## ⚠️ 求职通（JobForge）个人 Fork：请从 `feat/jobforge` 分支取用
 
 **这个仓库是基于上游 [magicapple123/ResumeForge](https://github.com/magicapple123/ResumeForge)（Apache-2.0 协议）
 深度二开的求职通（JobForge），默认分支是上游原版。真正能用的版本在分支
-[`feat/gongzuotong`](https://github.com/Qiu7991/ResumeForge/tree/feat/gongzuotong)。**
+[`feat/jobforge`](https://github.com/Qiu7991/ResumeForge/tree/feat/jobforge)。**
 
 ```bash
-git clone -b feat/gongzuotong https://github.com/Qiu7991/ResumeForge.git 工作通
-cd 工作通
-start.cmd                                    # Windows：直接双击也行
+git clone -b feat/jobforge https://github.com/Qiu7991/ResumeForge.git JobForge
+cd JobForge
+start.cmd                                    # Windows：直接双击也行（或 start-jobforge.cmd）
 ```
 
-macOS 用上游自带的脚本，但**必须显式指定 8012 端口**（默认 8005 会和旧版 1.x 撞）：
+macOS 用上游自带的脚本，但**必须显式指定 8013 端口**（默认 8005 会和旧版 1.x 撞）：
 
 ```bash
-./scripts/macos/start.sh --backend-port 8012 --frontend-port 5176
+./scripts/macos/start.sh --backend-port 8013 --frontend-port 5176
 ```
 
 Linux 没有一键脚本（这个 Fork 未在 Linux 上验证过），需要手动装依赖后跑
-`cd backend && python -m uvicorn app.main:app --port 8012` + `cd frontend && npm run build`。
+`cd backend && python -m uvicorn app.main:app --port 8013` + `cd frontend && pnpm run build`。
 
 > 只在自己电脑上用一个版本的话，用默认端口也完全可以；上面的端口隔离是给
 > 「新旧两版并存」的场景准备的。
@@ -100,10 +100,10 @@ Linux 没有一键脚本（这个 Fork 未在 Linux 上验证过），需要手�
 ### 与上游的关系
 
 ```
-上游 main ──→ feat/resume-side（简历通 2.0 二开）──→ feat/gongzuotong（工作通 = 上面 + 求职采集）
+上游 main ──→ feat/resume-side（简历通 2.0 二开）──→ feat/jobforge（求职通 / JobForge = 上面 + 求职采集）
 ```
 
-上游更新后，作者会把改动合进 `feat/resume-side`，再合进 `feat/gongzuotong`。
+上游更新后，作者会把改动合进 `feat/resume-side`，再合进 `feat/jobforge`。
 如果你想跟进上游，建议直接关注上游仓库，不要从这个 Fork 拉。
 
 ---

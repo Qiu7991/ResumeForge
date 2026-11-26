@@ -15,8 +15,8 @@
 (() => {
   if (document.getElementById("resumeforge-capture")) return;
 
-  // 上游架构由后端直接提供前端页面：1.x 在 8005，2.0 独立实例在 8010（同源 dist）。
-  const APP_ORIGIN = "http://127.0.0.1:8010";
+  // 上游架构由后端直接提供前端页面：1.x 在 8005，2.0 独立实例在 8010，求职通主线在 8013（同源 dist）。
+  const APP_ORIGIN = "http://127.0.0.1:8013";
 
   // 原样带上完整地址：BOSS 的 securityId 是打开详情页所必需的；应用负责入库前规范化。
   const resolveJobUrl = () => {
