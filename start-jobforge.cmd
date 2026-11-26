@@ -9,5 +9,5 @@ rem and cmd.exe decodes batch files with the OEM code page (cp936 on a Chinese
 rem Windows). A multi-byte Chinese character whose trailing byte happens to be
 rem 0x0A/0x0D can swallow the line ending, so the tail of the comment gets
 rem executed as a command.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Start-ResumeForge.ps1" -BackendPort 8013 -FrontendPort 5176 -NoBrowser %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Start-ResumeForge.ps1" -BackendPort 8013 -FrontendPort 5176 %*
 if errorlevel 1 pause
