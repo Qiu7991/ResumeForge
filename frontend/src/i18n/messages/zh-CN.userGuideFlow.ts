@@ -138,7 +138,7 @@ const userGuideFlow = {
     "导出窗口可保存导出配置（格式、命名、水印/脱敏）并先预览真实 PDF；也能成套导出 zip（逐项哈希）并可选归档交付原件。弹窗顶部选「交付包」或「单独文件」。",
   "userGuideFlow.resume.step1.point40.lead": "给别人看",
   "userGuideFlow.resume.step1.point40.text":
-    "用「离线分享包」：脱敏 HTML/PDF + 只读快照 + 评论回传文件，可选只读或可评论；可评论的包在详情里逐条处理「对象批注」，对象改过要「重新关联」，不会自动挂到别的条目上。包里的 resume.html 页脚有一行“由简历通生成 · 日期”；导出的 PDF 与 Word 不加任何 logo 或页脚。",
+    "用「离线分享包」：脱敏 HTML/PDF + 只读快照 + 评论回传文件，可选只读或可评论；可评论的包在详情里逐条处理「对象批注」，对象改过要「重新关联」，不会自动挂到别的条目上。包里的 resume.html 页脚有一行“由求职通生成 · 日期”；导出的 PDF 与 Word 不加任何 logo 或页脚。",
   "userGuideFlow.resume.step1.point41.lead": "内容超出页数",
   "userGuideFlow.resume.step1.point41.text":
     "草稿预览会把多页**上下摞成几张 A4**（按 A4 高度切分的近似分页）并提示约需几页、超出多少；要看真实分页就切「精确」——那是导出引擎排出的同一份 PDF。",
@@ -294,7 +294,7 @@ const userGuideFlow = {
   "userGuideFlow.quickStart.sample.lead": "先体验示例数据",
   "userGuideFlow.quickStart.sample.text": "载入一份完整示例，与你的真实资料相互独立",
   // ── 弹窗自身的文案与 toast（UserGuideModal.tsx） ──
-  "userGuideFlow.modal.title": "欢迎使用简历通",
+  "userGuideFlow.modal.title": "欢迎使用求职通",
   "userGuideFlow.modal.quickStart.heading": "从这里开始",
   "userGuideFlow.modal.quickStart.description": "三条路都通向你的第一份可交付简历，选一条顺的走。",
   "userGuideFlow.modal.action.viewFullGuide": "查看完整指南（8 步）",

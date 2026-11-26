@@ -76,7 +76,7 @@ const appHeader = {
   "appHeader.desktopMenu.export.favoritesDone": "已导出收藏夹",
   "appHeader.desktopMenu.export.knowledgeDone": "已导出知识库",
   "appHeader.desktopMenu.export.failed": "导出失败",
-  "appHeader.desktopMenu.about.title": "关于简历通",
+  "appHeader.desktopMenu.about.title": "关于求职通",
   "appHeader.desktopMenu.about.version": "版本 {version}",
   "appHeader.desktopMenu.about.github": "GitHub 仓库",
   "appHeader.desktopMenu.about.website": "官网",
@@ -87,7 +87,7 @@ const appHeader = {
    * #34D 复制诊断信息：合成后的文本会原样贴给支持者，所以每一段的标题也从语言包来。
    * 值由诊断模块（desktopDiagnostics.ts）拼；API Key 永远只出现"已配置/未配置"。
    */
-  "appHeader.desktopMenu.diagnostics.title": "ResumeForge 诊断信息",
+  "appHeader.desktopMenu.diagnostics.title": "求职通诊断信息",
   "appHeader.desktopMenu.diagnostics.version": "版本：{version}",
   "appHeader.desktopMenu.diagnostics.platform": "平台：{platform}",
   "appHeader.desktopMenu.diagnostics.dataDir": "数据目录：{path}",

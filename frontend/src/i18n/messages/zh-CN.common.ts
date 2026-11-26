@@ -36,18 +36,18 @@ const common = {
   /** 批量删除按钮（`BatchDeleteButton`）。 */
   "common.batchBar.deleteSelected": "删除所选",
   /** 退出应用的二次确认标题。 */
-  "common.exitApp.title": "退出简历通？",
+  "common.exitApp.title": "退出求职通？",
   /** 桌面壳形态的确认正文：退出后只能从桌面快捷方式重新启动。 */
   "common.exitApp.confirm.desktop":
-    "应用会完全退出，后台服务一并停止。再次使用请从桌面快捷方式启动简历通。",
+    "应用会完全退出，后台服务一并停止。再次使用请从桌面快捷方式启动求职通。",
   /** 浏览器形态的确认正文：讲清哪些能力会立刻不可用，以及怎么再打开。 */
   "common.exitApp.confirm.browser":
     "前端与后端进程都会停止，当前页面上的查询与生成立即不可用（浏览器不允许脚本关闭本页，请顺手关掉这个标签页）。下次使用请在项目目录重新运行 start.cmd。",
   /** 退出完成后的结果页标题。 */
-  "common.exitApp.exited.title": "简历通已退出",
+  "common.exitApp.exited.title": "求职通已退出",
   /** 桌面壳形态的结果页正文。 */
   "common.exitApp.exited.desktop":
-    "前端、后端与桌面壳进程都已停止。再次使用请从桌面快捷方式启动简历通。",
+    "前端、后端与桌面壳进程都已停止。再次使用请从桌面快捷方式启动求职通。",
   /** 浏览器形态的结果页正文。 */
   "common.exitApp.exited.browser":
     "前端与后端进程都已停止，现在可以关闭这个标签页。要再次使用，请在项目目录运行 start.cmd。",

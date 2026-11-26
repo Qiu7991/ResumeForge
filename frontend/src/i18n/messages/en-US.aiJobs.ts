@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-/** AI jobs page copy (backend `/api/ai-jobs`). Engine by BossHunter, UI by ResumeForge. */
+/** AI jobs page copy (backend `/api/ai-jobs`). Engine by BossHunter, UI by JobForge. */
 const aiJobs = {
   "aiJobs.connection.title": "Engine connection",
   "aiJobs.connection.connected": "Connected to BossHunter",
@@ -18,7 +18,7 @@ const aiJobs = {
   "aiJobs.connection.stopSuccess": "Engine stopped",
   "aiJobs.connection.stopUnowned": "No engine process to stop",
   "aiJobs.connection.startFailed": "Failed to start engine",
-  "aiJobs.page.description": "BossHunter runs collection, scoring and sending; ResumeForge owns the UI and data",
+  "aiJobs.page.description": "BossHunter runs collection, scoring and sending; JobForge owns the UI and data",
 
   // ===== Workbench (P1) =====
   "aiJobs.workbench.tab": "Workbench",
@@ -158,7 +158,7 @@ const aiJobs = {
   "aiJobs.settings.enginePort": "Sidecar port",
   "aiJobs.settings.proxyPort": "CDP proxy port",
   "aiJobs.settings.browserPort": "Dedicated browser port",
-  "aiJobs.settings.autoStart": "Start engine when ResumeForge launches",
+  "aiJobs.settings.autoStart": "Start engine when JobForge launches",
   "aiJobs.settings.save": "Save settings",
   "aiJobs.settings.saved": "Settings saved",
   "aiJobs.settings.ai": "Model config (AI)",

@@ -41,7 +41,7 @@ describe("ExitAppButton", () => {
     fireEvent.click(screen.getByRole("button", { name: "退 出" }));
 
     await waitFor(() => expect(systemMocks.shutdownApp).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("简历通已退出")).toBeInTheDocument();
+    expect(await screen.findByText("求职通已退出")).toBeInTheDocument();
     // 提示里要写明两个进程都停了、以及标签页要自己关（浏览器不允许脚本关本页）。
     expect(screen.getByText(/前端与后端进程都已停止/)).toBeInTheDocument();
     expect(screen.getByText(/关闭这个标签页/)).toBeInTheDocument();
@@ -70,7 +70,7 @@ describe("ExitAppButton", () => {
     fireEvent.click(screen.getByRole("button", { name: "退 出" }));
 
     await waitFor(() => expect(systemMocks.shutdownApp).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("简历通已退出")).toBeInTheDocument();
+    expect(await screen.findByText("求职通已退出")).toBeInTheDocument();
     // shutdownApp 成功后追加退出壳进程。
     await waitFor(() => expect(quitApp).toHaveBeenCalledTimes(1));
     // 遮罩文案也面向桌面（没有"浏览器不允许/标签页"措辞）。

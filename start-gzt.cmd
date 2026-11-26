@@ -1,5 +1,5 @@
 @echo off
-title 工作通 (2.0 二开 + BossHunter) - 8012
+title 求职通 (JobForge) - 8012
 setlocal
 rem Dedicated ports 8012/5176: avoids clashing with 简历通 2.0 (8010/5174).
 rem Data dir is isolated by default: DATA_DIR points at this repo's backend/data.

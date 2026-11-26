@@ -38,18 +38,18 @@ const common = {
   /** Batch delete button (`BatchDeleteButton`). */
   "common.batchBar.deleteSelected": "Delete selected",
   /** Title of the quit confirmation. */
-  "common.exitApp.title": "Quit ResumeForge?",
+  "common.exitApp.title": "Quit JobForge?",
   /** Desktop shell: the only way back is the desktop shortcut. */
   "common.exitApp.confirm.desktop":
-    "The app will quit completely and the background services will stop too. To use it again, start ResumeForge from the desktop shortcut.",
+    "The app will quit completely and the background services will stop too. To use it again, start JobForge from the desktop shortcut.",
   /** Browser: says what stops working right away, and how to get back. */
   "common.exitApp.confirm.browser":
     "The frontend and backend processes will stop, so queries and generation on this page will stop working immediately (browsers do not let a script close its own tab, so please close this tab yourself). To use the app again, run start.cmd in the project directory.",
   /** Result page title after quitting. */
-  "common.exitApp.exited.title": "ResumeForge has quit",
+  "common.exitApp.exited.title": "JobForge has quit",
   /** Result page body in the desktop shell. */
   "common.exitApp.exited.desktop":
-    "The frontend, backend and desktop shell processes have all stopped. To use the app again, start ResumeForge from the desktop shortcut.",
+    "The frontend, backend and desktop shell processes have all stopped. To use the app again, start JobForge from the desktop shortcut.",
   /** Result page body in the browser. */
   "common.exitApp.exited.browser":
     "The frontend and backend processes have stopped, so you can close this tab now. To use the app again, run start.cmd in the project directory.",

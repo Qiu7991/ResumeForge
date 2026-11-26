@@ -19,7 +19,7 @@ const assistantUi = {
   "assistantUi.skillNames.separator": "、",
   "assistantUi.skillNames.overflow": "{names} 等 {count} 个",
   "assistantUi.empty.floatingDescription":
-    "我可以帮你解决简历通使用问题、分析简历和岗位，并在你明确要求时操作允许的数据。",
+    "我可以帮你解决求职通使用问题、分析简历和岗位，并在你明确要求时操作允许的数据。",
   "assistantUi.empty.pageDescription":
     "能帮你打磨简历、对照岗位查缺补漏、解答求职问题。可先关联岗位或简历，再按需开启资料和联网搜索。",
   "assistantUi.empty.starterPromptsAria": "常用求职提问",

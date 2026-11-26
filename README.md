@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/images/icon.png" width="88" alt="ResumeForge icon" />
+<img src="docs/images/icon.png" width="88" alt="JobForge (求职通) icon" />
 
-# ResumeForge
+# JobForge（求职通）
 
 [![CI](https://github.com/magicapple123/ResumeForge/actions/workflows/ci.yml/badge.svg)](https://github.com/magicapple123/ResumeForge/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/magicapple123/ResumeForge?label=release&color=2f81f7)](https://github.com/magicapple123/ResumeForge/releases)
@@ -14,6 +14,8 @@
 [![Tests](https://img.shields.io/badge/tests-11%2C000%2B%20passing-success)](.github/workflows/ci.yml)
 
 **A local-first AI resume workbench: no account, no sign-in, and all data stays on your machine.**
+
+*Built on [magicapple123/ResumeForge](https://github.com/magicapple123/ResumeForge) under the Apache-2.0 License.*
 
 <h3>
 <a href="https://magicapple123.github.io/ResumeForge-official/demo.html">Live demo (no install)</a>
@@ -41,10 +43,11 @@ Version: `2.3.1` · [Releases](https://github.com/magicapple123/ResumeForge/rele
 
 ---
 
-## ⚠️ 这是个人 Fork：请从 `feat/gongzuotong` 分支取用
+## ⚠️ 求职通（JobForge）个人 Fork：请从 `feat/gongzuotong` 分支取用
 
-**这个仓库是上游 [magicapple123/ResumeForge](https://github.com/magicapple123/ResumeForge) 的个人二开 Fork，
-默认分支是上游原版。真正能用的版本在分支 [`feat/gongzuotong`](https://github.com/Qiu7991/ResumeForge/tree/feat/gongzuotong)。**
+**这个仓库是基于上游 [magicapple123/ResumeForge](https://github.com/magicapple123/ResumeForge)（Apache-2.0 协议）
+深度二开的求职通（JobForge），默认分支是上游原版。真正能用的版本在分支
+[`feat/gongzuotong`](https://github.com/Qiu7991/ResumeForge/tree/feat/gongzuotong)。**
 
 ```bash
 git clone -b feat/gongzuotong https://github.com/Qiu7991/ResumeForge.git 工作通

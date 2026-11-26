@@ -7,7 +7,7 @@
  * （见 `services/assistant_tools.py` 的 `_TOOLS`）。
  */
 const toolCalls = {
-  "toolLabel.search_product_docs": "查阅简历通本地文档",
+  "toolLabel.search_product_docs": "查阅求职通本地文档",
   "toolLabel.get_overview": "查看整体概览",
   "toolLabel.list_jobs": "查询岗位",
   "toolLabel.get_job": "查看岗位详情",

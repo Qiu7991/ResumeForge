@@ -92,7 +92,7 @@ _SHARE_LOGO_SVG = (
 
 
 def _with_share_footer(content: bytes, created_at: datetime) -> bytes:
-    """在分享版 HTML 末尾追加「由简历通生成 · 日期」页脚（WF-18）。
+    """在分享版 HTML 末尾追加「由求职通生成 · 日期」页脚（WF-18）。
 
     只动分享包这一份产物：简历导出的 PDF/Word **不加任何 logo**（用户 2026-11-19 选的口径），
     分享包里的 ``resume.pdf`` 也保持干净。所以注入点必须在这里，而不是 ``export_pipeline``。
@@ -105,7 +105,7 @@ def _with_share_footer(content: bytes, created_at: datetime) -> bytes:
         f"font-family:inherit;font-size:12px;line-height:1.6;color:#8a94a6;"
         f"border-top:1px solid #e7ebf0;padding-top:12px;\">"
         f"{_SHARE_LOGO_SVG}"
-        f"<span>由简历通生成 · {created_at:%Y-%m-%d}</span>"
+        f"<span>由求职通生成 · {created_at:%Y-%m-%d}</span>"
         f"</footer>{_SHARE_FOOTER_MARK}"
     )
     text = content.decode("utf-8", errors="replace")
@@ -331,7 +331,7 @@ def create_share_package(
         "created_at": utcnow().isoformat(),
     }
     files = [
-        # 分享版**只有这一份**带「由简历通生成」页脚（WF-18）：导出接口与分享包里的
+        # 分享版**只有这一份**带「由求职通生成」页脚（WF-18）：导出接口与分享包里的
         # resume.pdf 都不加 logo，所以注入点必须在这里而不是 export_pipeline。
         _file_entry(
             directory,

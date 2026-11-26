@@ -8,7 +8,7 @@
  */
 const update = {
   "update.size.unknown": "Unknown size",
-  "update.toast.doneTitle": "ResumeForge updated",
+  "update.toast.doneTitle": "JobForge updated",
   "update.toast.doneBody":
     "Updated to {version}. Your Jobs, Resumes and settings stay in the original data directory.",
   "update.toast.failedTitle": "The last update failed",

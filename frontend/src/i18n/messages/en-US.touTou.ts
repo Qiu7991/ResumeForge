@@ -12,7 +12,7 @@ const touTou = {
   // ── Assistant card shell (TouTouAssistantCard) ──────────────
   "touTou.assistant.ariaLabel": "Toutou job assistant",
   "touTou.assistant.description":
-    "Toutou can help with ResumeForge questions, analyze your resume and jobs, and change permitted data only when you explicitly ask.",
+    "Toutou can help with JobForge questions, analyze your resume and jobs, and change permitted data only when you explicitly ask.",
   "touTou.assistant.gripLabel": "Move the Toutou assistant card",
   "touTou.assistant.gripTitle": "Hold and drag to move the card",
   "touTou.assistant.close": "Close the Toutou assistant",

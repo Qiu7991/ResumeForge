@@ -45,7 +45,7 @@ describe("first-visit guide", () => {
     // 浮层（如悬浮球的 Popover）会抢走 `aria-labelledby="test-id"` 的解析目标，于是
     // 按可访问名查会查不到——这是测试环境的 id 撞车，不是弹窗少了标题。
     const guide = await screen.findByRole("dialog");
-    expect(guide).toHaveTextContent("欢迎使用简历通");
+    expect(guide).toHaveTextContent("欢迎使用求职通");
     fireEvent.click(screen.getByRole("button", { name: "稍后查看" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     firstRender.unmount();
@@ -61,7 +61,7 @@ describe("first-visit guide", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "使用指南" }));
     const reopened = await screen.findByRole("dialog");
-    expect(reopened).toHaveTextContent("欢迎使用简历通");
+    expect(reopened).toHaveTextContent("欢迎使用求职通");
   });
 });
 

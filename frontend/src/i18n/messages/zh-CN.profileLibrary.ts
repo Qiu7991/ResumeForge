@@ -262,7 +262,7 @@ const profileLibrary = {
   "profileLibrary.webform.sectionEmptyHint": "点「填写网申资料」即可补上网申表单常问的那些栏目",
   "profileLibrary.webform.sectionEmptySearch": "没有匹配的网申资料",
   "profileLibrary.webform.fieldLearnedHint":
-    "填表时你填了这个框、而简历通里没有，于是问你要不要记住",
+    "填表时你填了这个框、而求职通里没有，于是问你要不要记住",
   "profileLibrary.webform.fieldLearnedTag": "学到",
   "profileLibrary.webform.fieldCustomHint":
     "标签与唯一预设字段精确对应时可自动匹配；放宽模式会尝试受约束的文本匹配，歧义项不猜、请复核",
@@ -291,7 +291,7 @@ const profileLibrary = {
   "profileLibrary.webform.customDeleteDescription": "保存后将从网申资料和实时识别中移除。",
   "profileLibrary.webform.customDeleteAria": "删除自定义字段：{label}",
   "profileLibrary.webform.customDelete": "删除",
-  "profileLibrary.webform.learningTitle": "本次填的 {count} 项简历通里没有，要记住吗？",
+  "profileLibrary.webform.learningTitle": "本次填的 {count} 项求职通里没有，要记住吗？",
   "profileLibrary.webform.learningCancel": "这次算了",
   "profileLibrary.webform.learningBody":
     "记住之后，下次遇到同一个框会自动填。已保存的内容可在「我的资料 → 网申资料」里修改或删除。",

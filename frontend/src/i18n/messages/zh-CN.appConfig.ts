@@ -10,7 +10,7 @@
 const appConfig = {
   // ── 品牌 ──────────────────────────────────────────────────
   /** 应用名的唯一真相（页头品牌区、文档标题、星标提示、源码入口的无障碍名都取它）。 */
-  "appConfig.brand.name": "简历通",
+  "appConfig.brand.name": "求职通",
 
   // ── 大模型预设（选择后自动填充 Base URL 与模型名）────────────
   "appConfig.preset.deepseek": "DeepSeek（深度求索）",

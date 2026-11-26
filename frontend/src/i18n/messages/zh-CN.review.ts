@@ -115,7 +115,7 @@ const review = {
   // ── 解析错误（`annotations.json` v1 fail-closed）──────────────
   "review.error.too-large": "文件超过 512 KB，请精简后重试",
   "review.error.not-json": "内容不是有效的 JSON",
-  "review.error.bad-format": "不是 ResumeForge 评审包",
+  "review.error.bad-format": "不是求职通评审包",
   "review.error.bad-version": "评审包版本不受支持，请升级后重试",
   "review.error.bad-token": "评审包缺少有效的分享码",
   "review.error.bad-snapshot": "评审包缺少分享包快照指纹",

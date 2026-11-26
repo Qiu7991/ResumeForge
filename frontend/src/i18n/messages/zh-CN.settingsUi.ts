@@ -190,8 +190,8 @@ const settingsUi = {
   // ── 开机自启（WF-08，仅桌面壳显示） ──────────────────────────
   "settingsUi.launchAtLogin.title": "开机时自动启动",
   "settingsUi.launchAtLogin.intro":
-    "登录 Windows 后自动启动 ResumeForge。这里读的就是安装器写的那条启动项，两边不会各存一份。",
-  "settingsUi.launchAtLogin.toggleAria": "登录 Windows 时自动启动 ResumeForge",
+    "登录 Windows 后自动启动求职通。这里读的就是安装器写的那条启动项，两边不会各存一份。",
+  "settingsUi.launchAtLogin.toggleAria": "登录 Windows 时自动启动求职通",
   "settingsUi.launchAtLogin.enableToast": "已开启：登录 Windows 后会自动启动",
   "settingsUi.launchAtLogin.disableToast": "已关闭：登录 Windows 后不再自动启动",
   "settingsUi.launchAtLogin.loadFailed": "读取开机自启状态失败",

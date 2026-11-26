@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/images/icon.png" width="88" alt="简历通 ResumeForge 图标" />
+<img src="docs/images/icon.png" width="88" alt="求职通 JobForge 图标" />
 
-# 简历通 ResumeForge
+# 求职通 JobForge
 
 [![CI](https://github.com/magicapple123/ResumeForge/actions/workflows/ci.yml/badge.svg)](https://github.com/magicapple123/ResumeForge/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/magicapple123/ResumeForge?label=release&color=2f81f7)](https://github.com/magicapple123/ResumeForge/releases)
@@ -14,6 +14,8 @@
 [![Tests](https://img.shields.io/badge/tests-11%2C000%2B%20passing-success)](.github/workflows/ci.yml)
 
 **本地优先的 AI 简历工作台：无需注册与登录，数据仅保存在本机。**
+
+基于开源项目 [magicapple123/ResumeForge](https://github.com/magicapple123/ResumeForge)（Apache-2.0 协议）深度二开。
 
 <h3>
 <a href="https://magicapple123.github.io/ResumeForge-official/demo.html">在线体验（免安装）</a>
@@ -48,7 +50,7 @@
 **首页**：进度清单、岗位与简历统计、按紧急度分色的近期提醒，单屏呈现当前应处理的事项。
 
 <p align="center">
-  <img src="docs/images/home.png" alt="简历通首页：从零到一份可交付简历的进度清单、岗位与简历统计、按紧急度分色的近期提醒列表" width="900">
+  <img src="docs/images/home.png" alt="求职通首页：从零到一份可交付简历的进度清单、岗位与简历统计、按紧急度分色的近期提醒列表" width="900">
 </p>
 
 **简历制作台**：左栏为排版参数与页面概览（页数上限、分页报告），中栏编辑内容，右栏为简历预览（**精确模式**，直接渲染导出用的那份 PDF）；任一参数改动，三栏同步更新。
@@ -59,12 +61,12 @@
 
 其余界面（岗位广场、投递台、网申填表、模拟面试、事实台账）以及简历预览的缩放、版面诊断与导出面板，均可在完成[安装](#-安装)后从侧栏进入；更多截图见[官网界面画廊](https://magicapple123.github.io/ResumeForge-official/#gallery)。
 
-## 简历通能干什么
+## 求职通能干什么
 
 覆盖从岗位筛选到面试复盘的完整链路，各环节产出均可回溯修改。
 
 <p align="center">
-  <img src="docs/images/what-it-does.png" alt="简历通能干什么：找到并读懂岗位 → 判断匹不匹配 → 写出站得住的简历 → 导出与交付 → 投递与跟进 → 面试与复盘" width="1000">
+  <img src="docs/images/what-it-does.png" alt="求职通能干什么：找到并读懂岗位 → 判断匹不匹配 → 写出站得住的简历 → 导出与交付 → 投递与跟进 → 面试与复盘" width="1000">
 </p>
 
 它针对一个具体问题：**求职期间的资料是分散的**——JD 存于浏览器收藏夹，简历文件出现多个「最终版」，投递进度记在备忘录，面试问题事后遗忘，修改多版后难以对应投递记录。

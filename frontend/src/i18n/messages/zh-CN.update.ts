@@ -8,7 +8,7 @@
  */
 const update = {
   "update.size.unknown": "未知大小",
-  "update.toast.doneTitle": "ResumeForge 已更新",
+  "update.toast.doneTitle": "求职通已更新",
   "update.toast.doneBody": "已更新到 {version}。你的岗位、简历和设置仍保留在原数据目录中。",
   "update.toast.failedTitle": "上次更新失败",
   "update.toast.interruptedTitle": "上次更新没有完成",

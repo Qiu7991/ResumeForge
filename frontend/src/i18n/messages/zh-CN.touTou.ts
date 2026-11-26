@@ -11,7 +11,7 @@ const touTou = {
   // ── 助手浮窗外壳（TouTouAssistantCard） ─────────────────────
   "touTou.assistant.ariaLabel": "投投求职助手",
   "touTou.assistant.description":
-    "投投可以帮助你解决简历通使用问题、分析简历和岗位，并在明确要求时操作允许的数据。",
+    "投投可以帮助你解决求职通使用问题、分析简历和岗位，并在明确要求时操作允许的数据。",
   "touTou.assistant.gripLabel": "拖动投投助手卡片",
   "touTou.assistant.gripTitle": "按住拖动卡片",
   "touTou.assistant.close": "关闭投投助手",

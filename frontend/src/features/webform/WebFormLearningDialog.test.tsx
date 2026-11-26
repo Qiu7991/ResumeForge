@@ -70,7 +70,7 @@ describe("WebFormLearningDialog", () => {
   it("把候选逐条列出来，标题写着有几项", () => {
     renderDialog();
 
-    expect(screen.getByText(/本次填的 2 项简历通里没有/)).toBeInTheDocument();
+    expect(screen.getByText(/本次填的 2 项求职通里没有/)).toBeInTheDocument();
     expect(screen.getByText("身高(cm)")).toBeInTheDocument();
     expect(screen.getByText("178")).toBeInTheDocument();
     expect(screen.getByText("招聘信息来源")).toBeInTheDocument();

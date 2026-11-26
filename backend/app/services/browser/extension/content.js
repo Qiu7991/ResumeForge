@@ -1,5 +1,5 @@
 /**
- * 招聘页右下角的悬浮按钮：「＋ 收录到简历通」。
+ * 招聘页右下角的悬浮按钮：「＋ 收录到求职通」。
  *
  * 支持的两种浏览形态：
  * 1. 独立详情页（地址是 /job_detail/…）：直接拿 location.href；
@@ -45,7 +45,7 @@
 
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = "＋ 收录到简历通";
+  button.textContent = "＋ 收录到求职通";
   button.style.cssText = [
     "padding:9px 14px",
     "border:0",
@@ -96,7 +96,7 @@
     clearTimeout(pendingTimer);
     pendingTimer = setTimeout(() => {
       button.disabled = false;
-      button.textContent = "＋ 收录到简历通";
+      button.textContent = "＋ 收录到求职通";
       showStatus(text, false);
     }, ms);
   };
@@ -120,8 +120,8 @@
       button.textContent = "✓ 已收录";
       showStatus(`已收录「${data.title || "该岗位"}」到岗位广场`, true);
     } else {
-      button.textContent = "＋ 收录到简历通";
-      showStatus(data.error || "收录失败：请确认简历通已启动", false);
+      button.textContent = "＋ 收录到求职通";
+      showStatus(data.error || "收录失败：请确认求职通已启动", false);
     }
   });
 
@@ -142,7 +142,7 @@
     window.focus();
     if (!popup || popup === window) {
       button.disabled = false;
-      button.textContent = "＋ 收录到简历通";
+      button.textContent = "＋ 收录到求职通";
       showStatus("浏览器拦截了弹窗：请允许本页弹窗后重试", false);
       return;
     }
@@ -150,7 +150,7 @@
     // 收到 started 后把上限放宽到 120 秒（招聘站慢时导入本身就可能几十秒）。
     armTimeout(
       12000,
-      "导入窗口没有回应：请确认简历通已启动，或稍后重试（" + APP_ORIGIN + "）",
+      "导入窗口没有回应：请确认求职通已启动，或稍后重试（" + APP_ORIGIN + "）",
     );
   });
 

@@ -158,10 +158,10 @@ const settingsUi = {
   // Start at login (WF-08, desktop shell only). Value comes from Windows itself.
   "settingsUi.launchAtLogin.title": "Start when you sign in",
   "settingsUi.launchAtLogin.intro":
-    "ResumeForge can start when you sign in to Windows. This is the same startup entry the installer writes.",
-  "settingsUi.launchAtLogin.toggleAria": "Start ResumeForge when you sign in to Windows",
-  "settingsUi.launchAtLogin.enableToast": "On: ResumeForge starts when you sign in",
-  "settingsUi.launchAtLogin.disableToast": "Off: ResumeForge no longer starts when you sign in",
+    "JobForge can start when you sign in to Windows. This is the same startup entry the installer writes.",
+  "settingsUi.launchAtLogin.toggleAria": "Start JobForge when you sign in to Windows",
+  "settingsUi.launchAtLogin.enableToast": "On: JobForge starts when you sign in",
+  "settingsUi.launchAtLogin.disableToast": "Off: JobForge no longer starts when you sign in",
   "settingsUi.launchAtLogin.loadFailed": "Could not read the startup setting",
   "settingsUi.launchAtLogin.saveFailed": "Could not change the startup setting",
   "settingsUi.launchAtLogin.unsupported":

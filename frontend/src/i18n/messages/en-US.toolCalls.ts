@@ -7,7 +7,7 @@
  * （见 `services/assistant_tools.py` 的 `_TOOLS`）。
  */
 const toolCalls = {
-  "toolLabel.search_product_docs": "Read ResumeForge local docs",
+  "toolLabel.search_product_docs": "Read JobForge local docs",
   "toolLabel.get_overview": "View the overall summary",
   "toolLabel.list_jobs": "List Jobs",
   "toolLabel.get_job": "View Job details",

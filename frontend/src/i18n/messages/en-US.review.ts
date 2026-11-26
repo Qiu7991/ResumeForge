@@ -70,7 +70,7 @@ const review = {
   "review.export.failed": "Could not export the review package; retry",
   "review.error.too-large": "The file exceeds 512 KB; reduce its size and retry",
   "review.error.not-json": "The content is not valid JSON",
-  "review.error.bad-format": "This is not a ResumeForge review package",
+  "review.error.bad-format": "This is not a JobForge review package",
   "review.error.bad-version": "This review package version is unsupported; upgrade and retry",
   "review.error.bad-token": "The review package has no valid share code",
   "review.error.bad-snapshot": "The review package is missing its share snapshot fingerprint",

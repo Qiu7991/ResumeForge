@@ -23,7 +23,7 @@ const assistantUi = {
   "assistantUi.skillNames.separator": ", ",
   "assistantUi.skillNames.overflow": "{names} ({count} total)",
   "assistantUi.empty.floatingDescription":
-    "I can help with ResumeForge questions, analyze your resume and the job, and change the data the assistant is allowed to touch when you explicitly ask.",
+    "I can help with JobForge questions, analyze your resume and the job, and change the data the assistant is allowed to touch when you explicitly ask.",
   "assistantUi.empty.pageDescription":
     "I can polish your resume, check it against a job to spot gaps, and answer job search questions. Link a job or resume first, then turn on profile data and web search as needed.",
   "assistantUi.empty.starterPromptsAria": "Common job search questions",

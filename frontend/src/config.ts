@@ -16,7 +16,7 @@ import type { MessageKey } from "./i18n";
  */
 export const APP_NAME_KEY: MessageKey = "appConfig.brand.name";
 /** 英文品牌名（常量口径，不是界面文案；界面上取 `APP_NAME_KEY` 的值）。 */
-export const APP_NAME_EN = "ResumeForge";
+export const APP_NAME_EN = "JobForge";
 
 /** 应用版本号（页头品牌区展示，如 "0.17.0"）。 */
 export const APP_VERSION: string = pkg.version;

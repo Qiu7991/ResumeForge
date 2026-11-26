@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-/** AI 求职页文案（后端 `/api/ai-jobs`）。引擎由 BossHunter 提供，界面由简历通提供。 */
+/** AI 求职页文案（后端 `/api/ai-jobs`）。引擎由 BossHunter 提供，界面由求职通提供。 */
 const aiJobs = {
   "aiJobs.connection.title": "引擎连接",
   "aiJobs.connection.connected": "已连接 BossHunter",
@@ -18,7 +18,7 @@ const aiJobs = {
   "aiJobs.connection.stopSuccess": "引擎已停止",
   "aiJobs.connection.stopUnowned": "没有可停止的引擎进程",
   "aiJobs.connection.startFailed": "引擎启动失败",
-  "aiJobs.page.description": "由 BossHunter 引擎执行采集、评分与发送，界面与数据归属简历通",
+  "aiJobs.page.description": "由 BossHunter 引擎执行采集、评分与发送，界面与数据归属求职通",
 
   // ===== 工作台（P1）=====
   "aiJobs.workbench.tab": "工作台",
@@ -158,11 +158,11 @@ const aiJobs = {
   "aiJobs.settings.enginePort": "sidecar 端口",
   "aiJobs.settings.proxyPort": "CDP 代理端口",
   "aiJobs.settings.browserPort": "专用浏览器端口",
-  "aiJobs.settings.autoStart": "启动简历通时自动拉起引擎",
+  "aiJobs.settings.autoStart": "启动求职通时自动拉起引擎",
   "aiJobs.settings.save": "保存设置",
   "aiJobs.settings.saved": "设置已保存",
   "aiJobs.settings.ai": "模型配置（AI）",
-  "aiJobs.settings.aiReadOnly": "模型配置只读引用简历通全局设置页的配置，这里不重复填写；点同步把当前配置写给引擎",
+  "aiJobs.settings.aiReadOnly": "模型配置只读引用求职通全局设置页的配置，这里不重复填写；点同步把当前配置写给引擎",
   "aiJobs.settings.llmSync": "同步模型配置给引擎",
   "aiJobs.settings.llmSynced": "已同步模型配置（{model}）",
   "aiJobs.history.action": "动作",

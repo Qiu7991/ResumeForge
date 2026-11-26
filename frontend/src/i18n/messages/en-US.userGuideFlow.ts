@@ -139,7 +139,7 @@ const userGuideFlow = {
     "The export dialog of a saved Resume can store export settings (format, naming rule, watermark/redaction), and watermark/redaction can be previewed on the real PDF first; you can also export a zip of several files (hashed item by item) and optionally archive the delivered originals (hashes plus font/render version list). The dialog first asks for an **export mode**: *bundle* (the zip flow above) or *separate files* (multi-select formats, exported one by one with “exporting 2/3” progress; a failure reports how many finished).",
   "userGuideFlow.resume.step1.point40.lead": "Sharing",
   "userGuideFlow.resume.step1.point40.text":
-    "Use an “Offline share package”: redacted HTML/PDF + a read-only snapshot + a comment return file, read-only or commentable; a commentable package handles “Object annotations” item by item, and annotations on a changed object must be “Re-link”ed rather than attach to another entry. Its resume.html carries one footer line, “Made with ResumeForge · date”; exported PDF and Word carry no logo or footer.",
+    "Use an “Offline share package”: redacted HTML/PDF + a read-only snapshot + a comment return file, read-only or commentable; a commentable package handles “Object annotations” item by item, and annotations on a changed object must be “Re-link”ed rather than attach to another entry. Its resume.html carries one footer line, “Made with JobForge · date”; exported PDF and Word carry no logo or footer.",
   "userGuideFlow.resume.step1.point41.lead": "Over the page limit",
   "userGuideFlow.resume.step1.point41.text":
     "The draft preview stacks multiple pages **as a few A4 sheets** (approximate pagination cut at A4 height) and says roughly how many pages are needed and how much overflows; for real pagination switch to “Exact” — the same PDF the export engine produced.",
@@ -300,7 +300,7 @@ const userGuideFlow = {
   "userGuideFlow.quickStart.sample.text":
     "Load a complete sample, kept separate from your real Profile",
   // ── Dialog copy and toasts (UserGuideModal.tsx) ──
-  "userGuideFlow.modal.title": "Welcome to ResumeForge",
+  "userGuideFlow.modal.title": "Welcome to JobForge",
   "userGuideFlow.modal.quickStart.heading": "Start here",
   "userGuideFlow.modal.quickStart.description":
     "All three roads lead to your first deliverable Resume — take whichever feels natural.",
