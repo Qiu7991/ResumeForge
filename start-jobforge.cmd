@@ -1,5 +1,5 @@
 @echo off
-title 求职通 (JobForge) - 8013
+title JobForge - 8013
 setlocal
 rem Dedicated ports 8013/5176: avoids clashing with 1.0 (8005) and 2.0 (8010/5174).
 rem Data dir is isolated by default: DATA_DIR points at this repo's backend/data.

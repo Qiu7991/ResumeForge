@@ -107,7 +107,7 @@ foreach ($relative in $DependencyTargets) { Remove-Target -Relative $relative }
 # Create-DesktopShortcut.ps1::Resolve-ShortcutFileName; the two files ship
 # separately, so scripts/tests/Test-DesktopShortcut.ps1 pins the sets equal.
 $desktopDirectory = [Environment]::GetFolderPath("Desktop")
-foreach ($shortcutName in @("简历通.lnk", "ResumeForge.lnk")) {
+foreach ($shortcutName in @("求职通.lnk", "JobForge.lnk")) {
     $desktopShortcut = Join-Path $desktopDirectory $shortcutName
     if (-not (Test-Path -LiteralPath $desktopShortcut)) {
         continue

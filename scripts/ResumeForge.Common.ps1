@@ -409,7 +409,7 @@ function Test-ResumeForgeFallbackIdentity {
         # 后端已经退出时 Vite 代理的健康检查必然失败；此时页面本身仍是简历通。
         try {
             $page = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/" -TimeoutSec 2
-            if ([string]$page.Content -match "ResumeForge|简历通") {
+            if ([string]$page.Content -match "ResumeForge|简历通|求职通|JobForge") {
                 return $true
             }
         }
@@ -516,7 +516,7 @@ function Stop-UnrecordedResumeForgeService {
             if (-not (Test-ResumeForgeFallbackOwnedByProject -ProcessChain $chain -ProjectRoot $ProjectRoot)) {
                 continue
             }
-            Write-Host "端口 $port 上的简历通暂时没有响应健康检查，但进程来自当前目录：按未记录实例停止。"
+            Write-Host "端口 $port 上的求职通暂时没有响应健康检查，但进程来自当前目录：按未记录实例停止。"
         }
 
         $killTarget = $listeningProcessId
@@ -538,7 +538,7 @@ function Stop-UnrecordedResumeForgeService {
             continue
         }
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "已停止未记录的简历通$displayName（端口 $port，PID $killTarget；没有启动记录，按命令行与健康检查识别）。"
+            Write-Host "已停止未记录的求职通$displayName（端口 $port，PID $killTarget；没有启动记录，按命令行与健康检查识别）。"
             $stoppedAny = $true
         }
     }

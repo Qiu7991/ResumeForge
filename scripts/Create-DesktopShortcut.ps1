@@ -45,9 +45,9 @@ function Resolve-ShortcutFileName {
 
     if (-not [string]::IsNullOrEmpty($UICultureName) -and
         $UICultureName.StartsWith("zh", [System.StringComparison]::OrdinalIgnoreCase)) {
-        return "简历通.lnk"
+        return "求职通.lnk"
     }
-    return "ResumeForge.lnk"
+    return "JobForge.lnk"
 }
 
 # Every shortcut name this launcher has ever used. -Remove and -IfMissing must
@@ -140,9 +140,9 @@ $shortcut.TargetPath = $env:ComSpec
 $shortcut.Arguments = "/c `"`"$startCmd`"`""
 $shortcut.WorkingDirectory = $projectRoot
 if ($icon) { $shortcut.IconLocation = "$icon,0" }
-$shortcut.Description = "ResumeForge - local resume workspace"
+$shortcut.Description = "JobForge - local job-hunt and resume workspace"
 $shortcut.Save()
 
 Write-Host "Created: $shortcutPath"
 if ($icon) { Write-Host "Icon: $icon" }
-Write-Host "Double-click it to start ResumeForge, just like start.cmd."
+Write-Host "Double-click it to start JobForge, just like start.cmd."

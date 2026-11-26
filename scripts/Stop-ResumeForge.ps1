@@ -19,7 +19,7 @@ $RuntimeDirectory = Join-Path $ProjectRoot "runtime"
 # 兜底是 2026-10-26 补的：实际遇到过"简历通已经在跑、但没有启动记录"的实例
 # （被别的窗口/脚本直接拉起、记录被清理等），此时 stop.cmd 静默返回，看起来
 # 就是"stop.cmd 失效"。兜底只停能自报 ResumeForge 的进程，详见 Common.ps1。
-Write-Host "正在停止简历通..."
+Write-Host "正在停止求职通..."
 $frontendStatus = Stop-RecordedProcess `
     -DisplayName "前端" `
     -RecordPath (Join-Path $RuntimeDirectory "frontend.json") `

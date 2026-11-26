@@ -44,9 +44,9 @@ function Assert-RunningServiceIsOwned {
         return
     }
 
-    throw ("端口 $Port 上有一个简历通$DisplayName在运行，但它不是从当前目录启动的，所以这次不会沿用它。`n" +
+    throw ("端口 $Port 上有一个求职通$DisplayName在运行，但它不是从当前目录启动的，所以这次不会沿用它。`n" +
         "当前目录：$ProjectRoot`n" +
-        "也就是说：刚解压的这份代码一行都没跑起来——浏览器里看到的可能是另一个位置的简历通，" +
+        "也就是说：刚解压的这份代码一行都没跑起来——浏览器里看到的可能是另一个位置的求职通，" +
         "也可能是上一次运行留下的残影，那正是「页面一片空白、依赖好像没装」的来源。`n" +
         "怎么办（二选一）：`n" +
         "  1) 关掉占用该端口的程序：先双击**当前目录**的 stop.cmd；它认不出来时，到任务管理器结束占用 $Port 的进程；`n" +
@@ -259,12 +259,12 @@ function Start-ResumeForge {
             # check (it crashed, or the process was replaced mid-flight). Stop that
             # one and start clean instead of telling the user to hunt it down.
             if ($null -eq (Get-ProcessRecordMatch -RecordPath $BackendPidPath -CommandPattern $backendRecordPattern)) {
-                throw ("端口 $BackendPort 已被别的程序占用（不是简历通自己的后端，所以不会去动它）。`n" +
+                throw ("端口 $BackendPort 已被别的程序占用（不是求职通自己的后端，所以不会去动它）。`n" +
                 "怎么办（二选一）：`n" +
                 "  1) 关掉占用该端口的程序；`n" +
                 "  2) 换一个端口启动：start.cmd -BackendPort 8010")
             }
-            Write-Warning "上一次运行留下的简历通后端正占着端口 $BackendPort，先停掉它再启动一个新的。"
+            Write-Warning "上一次运行留下的求职通后端正占着端口 $BackendPort，先停掉它再启动一个新的。"
             Stop-RecordedProcess -DisplayName "backend" -RecordPath $BackendPidPath -CommandPattern $backendRecordPattern
             Start-Sleep -Milliseconds 800
         }
@@ -291,7 +291,7 @@ function Start-ResumeForge {
         }
         else {
             if ($isWarmStart) {
-                Write-Host "`n简历通正在载入（依赖已经装好，这次不需要重新安装）..."
+                Write-Host "`n求职通正在载入（依赖已经装好，这次不需要重新安装）..."
                 Write-Host "接下来会启动后端与前端，中途终端可能几十秒没有新输出——那是在等它们就绪，属于正常现象，请不要关闭这个窗口。"
             }
 
@@ -459,7 +459,7 @@ function Start-ResumeForge {
                     "  1) 关掉占用该端口的程序；`n" +
                     "  2) 换一个端口启动：start.cmd -FrontendPort 5180")
                 }
-                Write-Warning "上一次运行留下的简历通前端正占着端口 $FrontendPort，先停掉它再启动一个新的。"
+                Write-Warning "上一次运行留下的求职通前端正占着端口 $FrontendPort，先停掉它再启动一个新的。"
                 Stop-RecordedProcess -DisplayName "frontend" -RecordPath $FrontendPidPath -CommandPattern $frontendRecordPattern
                 Start-Sleep -Milliseconds 800
             }
@@ -556,7 +556,7 @@ function Start-ResumeForge {
             }
         }
 
-        Write-Host "`n简历通已就绪。要关闭服务，双击 stop.cmd。"
+        Write-Host "`n求职通已就绪。要关闭服务，双击 stop.cmd。"
     }
     catch {
         Stop-StartedProcess -Process $startedFrontend

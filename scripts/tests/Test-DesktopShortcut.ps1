@@ -25,8 +25,8 @@ Set-StrictMode -Version Latest
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $ShortcutScript = Join-Path $ProjectRoot "scripts\Create-DesktopShortcut.ps1"
-$ChineseShortcutName = "简历通.lnk"
-$EnglishShortcutName = "ResumeForge.lnk"
+$ChineseShortcutName = "求职通.lnk"
+$EnglishShortcutName = "JobForge.lnk"
 $TemporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("resumeforge-shortcut-test-" + [Guid]::NewGuid().ToString("N"))
 
 function Assert-ShortcutTest {

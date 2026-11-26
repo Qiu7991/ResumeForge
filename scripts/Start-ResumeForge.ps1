@@ -90,6 +90,12 @@ $NodeToolsDirectory = Join-Path $RuntimeDirectory "tools"
 # a copy of the offending source line before the actual message). start.cmd
 # pauses on a non-zero exit, so the user can read all of it.
 try {
+    try {
+        $Host.UI.RawUI.WindowTitle = "求职通 (JobForge) - $BackendPort"
+    }
+    catch {
+        # 非交互或重定向宿主不支持修改窗口标题时忽略。
+    }
     # frontend-mode 的解析顺序：命令行 -FrontendMode > backend\.env 的 FRONTEND_MODE
     # > 默认 auto。显式传了参数就不要让 .env 反过来覆盖它。
     if (-not $PSBoundParameters.ContainsKey("FrontendMode")) {

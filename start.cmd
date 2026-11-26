@@ -1,5 +1,5 @@
 @echo off
-title 求职通 (JobForge) - 8013
+title JobForge - 8013
 setlocal
 rem This filename is inherited from upstream (whose start.cmd defaults to 8005).
 rem Here it points at JobForge's own ports so it never collides with 1.0 (8005)
